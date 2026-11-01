@@ -165,9 +165,7 @@ impl Joined {
             let warning = dropped(self.id, &self.name, kind);
             warn!("{}", warning);
             #[cfg(test)]
-            if let Ok(mut warned) = WARNED.lock() {
-                warned.push(warning.clone());
-            }
+            tests::warned(&warning);
             return Err(warning);
         }
         Ok(())
@@ -211,10 +209,6 @@ impl tokio_stream::Stream for Responses {
     }
 }
 
-/// Every warning a dropped message logged (unit tests).
-#[cfg(test)]
-static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
 /// The warning a message to a worker that could not be queued logs.
 fn dropped(id: u32, name: &str, kind: &str) -> String {
     format!("gaggle: worker {id} ({name}): {kind} not sent, its send queue full or closed")
@@ -246,14 +240,20 @@ struct Shared {
     plan_hash: u64,
     hash_check: bool,
     heartbeat_timeout: Duration,
-    /// Streams the handler ran for, past the token check (unit tests).
+    /// What unit tests watch and change.
     #[cfg(test)]
+    test: TestHooks,
+}
+
+/// What unit tests watch and change in a manager.
+#[cfg(test)]
+#[derive(Default)]
+struct TestHooks {
+    /// Streams the handler ran for, past the token check.
     handled: std::sync::atomic::AtomicUsize,
-    /// How long admitting a worker takes, in milliseconds (unit tests).
-    #[cfg(test)]
+    /// How long admitting a worker takes, in milliseconds.
     admit_delay_ms: std::sync::atomic::AtomicU64,
-    /// Worker streams being read (unit tests).
-    #[cfg(test)]
+    /// Worker streams being read.
     reading: std::sync::atomic::AtomicUsize,
 }
 
@@ -447,6 +447,7 @@ impl Gaggle for GaggleService {
     ) -> Result<tonic::Response<Self::ConnectStream>, tonic::Status> {
         #[cfg(test)]
         self.0
+            .test
             .handled
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let connection = request.extensions().get::<Peer>().cloned();
@@ -478,7 +479,7 @@ impl Gaggle for GaggleService {
         }
         #[cfg(test)]
         {
-            let delay = self.0.admit_delay_ms.load(Ordering::Relaxed);
+            let delay = self.0.test.admit_delay_ms.load(Ordering::Relaxed);
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         let (outbound, rx) = mpsc::channel(64);
@@ -619,38 +620,6 @@ impl tokio::io::AsyncWrite for Counted {
         }
         Pin::new(&mut this.stream).poll_shutdown(cx)
     }
-}
-
-/// A connection whose peer never reads, so the manager's writes stall, and
-/// on which no worker is admitted: its writes fail at its deadline (unit
-/// tests).
-#[cfg(test)]
-pub(crate) async fn stalled_write_closes_for_test() {
-    use tokio::io::AsyncWriteExt;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
-        .await
-        .unwrap();
-    let (stream, _) = listener.accept().await.unwrap();
-    let mut counted = Counted {
-        stream,
-        peer: Peer {
-            addr: None,
-            admitted: Arc::new(AtomicBool::new(false)),
-        },
-        admit_by: Box::pin(tokio::time::sleep(Duration::from_millis(500))),
-        _permit: Arc::new(tokio::sync::Semaphore::new(1))
-            .try_acquire_owned()
-            .unwrap(),
-    };
-    let chunk = vec![0u8; 64 << 10];
-    let error = loop {
-        if let Err(e) = counted.write_all(&chunk).await {
-            break e;
-        }
-    };
-    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-    drop(client);
 }
 
 /// Every connection `listener` accepts while a permit is free; one past
@@ -931,7 +900,7 @@ struct Reading(Arc<Shared>);
 #[cfg(test)]
 impl Reading {
     fn new(shared: &Arc<Shared>) -> Self {
-        shared.reading.fetch_add(1, Ordering::Relaxed);
+        shared.test.reading.fetch_add(1, Ordering::Relaxed);
         Reading(shared.clone())
     }
 }
@@ -939,7 +908,7 @@ impl Reading {
 #[cfg(test)]
 impl Drop for Reading {
     fn drop(&mut self) {
-        self.0.reading.fetch_sub(1, Ordering::Relaxed);
+        self.0.test.reading.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -1026,11 +995,7 @@ impl Manager {
             hash_check,
             heartbeat_timeout,
             #[cfg(test)]
-            handled: Default::default(),
-            #[cfg(test)]
-            admit_delay_ms: Default::default(),
-            #[cfg(test)]
-            reading: Default::default(),
+            test: Default::default(),
         });
         let expected_token = token_digest(token.as_deref().unwrap_or(""));
         // tonic sets one decoding limit for every message on a service:
@@ -1173,8 +1138,49 @@ impl Drop for Manager {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Every warning a dropped message logged.
+    static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    /// Keep `warning`, logged for a dropped message.
+    pub(super) fn warned(warning: &str) {
+        if let Ok(mut warned) = WARNED.lock() {
+            warned.push(warning.to_string());
+        }
+    }
+
+    /// A connection whose peer never reads, so the manager's writes stall, and
+    /// on which no worker is admitted: its writes fail at its deadline (unit
+    /// tests).
+    pub(crate) async fn stalled_write_closes_for_test() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut counted = Counted {
+            stream,
+            peer: Peer {
+                addr: None,
+                admitted: Arc::new(AtomicBool::new(false)),
+            },
+            admit_by: Box::pin(tokio::time::sleep(Duration::from_millis(500))),
+            _permit: Arc::new(tokio::sync::Semaphore::new(1))
+                .try_acquire_owned()
+                .unwrap(),
+        };
+        let chunk = vec![0u8; 64 << 10];
+        let error = loop {
+            if let Err(e) = counted.write_all(&chunk).await {
+                break e;
+            }
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        drop(client);
+    }
 
     #[test]
     fn worker_names_are_safe_folder_names() {
@@ -1404,6 +1410,7 @@ pub(crate) mod handshake_tests {
     fn handled(manager: &Manager) -> usize {
         manager
             .shared
+            .test
             .handled
             .load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -1457,7 +1464,7 @@ pub(crate) mod handshake_tests {
                 .unwrap();
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let mut inbound = inbound.unwrap();
-            let reading = || manager.shared.reading.load(Ordering::Relaxed);
+            let reading = || manager.shared.test.reading.load(Ordering::Relaxed);
             while reading() == 0 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -1911,6 +1918,7 @@ pub(crate) mod handshake_tests {
                 .unwrap();
             manager
                 .shared
+                .test
                 .admit_delay_ms
                 .store(2_000, Ordering::Relaxed);
             let connected = Instant::now();

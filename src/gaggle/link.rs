@@ -1185,7 +1185,7 @@ mod tests {
     /// reading: the deadline is checked on writes too.
     #[tokio::test]
     async fn an_unadmitted_connection_closes_with_its_writes_stalled() {
-        use super::super::manager::stalled_write_closes_for_test;
+        use super::super::manager::tests::stalled_write_closes_for_test;
         tokio::time::timeout(Duration::from_secs(30), stalled_write_closes_for_test())
             .await
             .expect("the stalled connection closes within 30 seconds");

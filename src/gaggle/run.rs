@@ -190,23 +190,6 @@ impl ManagerRun {
     }
 }
 
-/// Send `command` to the metrics processor: whether it went. With `hold`, a
-/// unit test's fault, it is kept unsent instead, as by a processor that
-/// never answers, and handed back to be held while its answer is awaited.
-fn send_or_hold(
-    goose_attack_run_state: &GooseAttackRunState,
-    command: MetricsCommand,
-    hold: bool,
-) -> (bool, Option<MetricsCommand>) {
-    if hold {
-        return (true, Some(command));
-    }
-    (
-        goose_attack_run_state.metrics_cmd_tx.send(command).is_ok(),
-        None,
-    )
-}
-
 /// Whether the metrics processor answered on `reply` within `wait`. A reply
 /// channel it dropped is no answer, as a timeout is not.
 async fn answered<T>(reply: tokio::sync::oneshot::Receiver<T>, wait: Duration) -> bool {
@@ -939,16 +922,23 @@ impl GooseAttack {
             running_users: goose_attack_run_state.running_users.clone(),
             ack,
         };
-        #[cfg(test)]
-        let hold = self.gaggle.test_faults.silent_reset;
-        #[cfg(not(test))]
-        let hold = false;
-        let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
-        if sent && !answered(acked, RESET_TIMEOUT).await {
-            return Err(format!(
+        let not_reset = || {
+            format!(
                 "the metrics processor did not reset within {} seconds",
                 RESET_TIMEOUT.as_secs()
-            ));
+            )
+        };
+        // A unit test's fault: a processor that never answers. The command
+        // is held unsent, its reply channel open, while the wait runs out.
+        #[cfg(test)]
+        if self.gaggle.test_faults.silent_reset {
+            let _unsent = command;
+            let _ = answered(acked, RESET_TIMEOUT).await;
+            return Err(not_reset());
+        }
+        let sent = goose_attack_run_state.metrics_cmd_tx.send(command).is_ok();
+        if sent && !answered(acked, RESET_TIMEOUT).await {
+            return Err(not_reset());
         }
         goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
         self.started = Some(std::time::Instant::now());
@@ -1037,17 +1027,23 @@ impl GooseAttack {
             outbox: run.link.outbox.clone(),
             respond,
         };
-        #[cfg(test)]
-        let hold = self.gaggle.test_faults.silent_final;
-        #[cfg(not(test))]
-        let hold = false;
-        let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
-        if sent && !answered(done, FINAL_TIMEOUT).await {
-            let why = format!(
+        let no_final = || {
+            format!(
                 "the metrics processor did not hand over the final metrics within {} seconds",
                 FINAL_TIMEOUT.as_secs()
-            );
-            return Err(worker_failed(&run.link, why).await);
+            )
+        };
+        // A unit test's fault: a processor that never answers. The command
+        // is held unsent, its reply channel open, while the wait runs out.
+        #[cfg(test)]
+        if self.gaggle.test_faults.silent_final {
+            let _unsent = command;
+            let _ = answered(done, FINAL_TIMEOUT).await;
+            return Err(worker_failed(&run.link, no_final()).await);
+        }
+        let sent = goose_attack_run_state.metrics_cmd_tx.send(command).is_ok();
+        if sent && !answered(done, FINAL_TIMEOUT).await {
+            return Err(worker_failed(&run.link, no_final()).await);
         }
         let (reason, canceled) = match &self.ended_by {
             Some((EndedBy::UsersExited, _)) => (Reason::UsersExited, String::new()),
