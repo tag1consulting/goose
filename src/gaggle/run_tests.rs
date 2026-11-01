@@ -496,8 +496,9 @@ async fn gaggle_stale_and_refused_workers_degrade_the_run() {
             ..Default::default()
         },
     ];
+    // Users that wait for no reset: the stale worker never gets one.
     let run = gaggle(
-        standard,
+        quick,
         3,
         server.base_url(),
         &folder,

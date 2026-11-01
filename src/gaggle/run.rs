@@ -573,6 +573,21 @@ impl GooseAttack {
             spec.worker, spec.workers, spec.users, spec.user_offset
         );
         spec.configure(&mut self.configuration);
+        // The loggers take the load test's defaults again as each run starts:
+        // the manager's spec decides every log, so none set in code returns.
+        let defaults = &mut self.defaults;
+        defaults.request_log = None;
+        defaults.request_format = None;
+        defaults.request_body = None;
+        defaults.transaction_log = None;
+        defaults.transaction_format = None;
+        defaults.scenario_log = None;
+        defaults.scenario_format = None;
+        defaults.error_log = None;
+        defaults.error_format = None;
+        defaults.debug_log = None;
+        defaults.debug_format = None;
+        defaults.no_debug_body = None;
         self.gaggle.client_command_line = spec.client_command_line;
         self.set_user_slice(spec.user_offset, spec.slice.clone());
         self.worker_data = Some(Arc::from(std::mem::take(&mut spec.custom_data)));
