@@ -60,6 +60,9 @@ struct WorkerTotal {
     got_final: bool,
     /// The worker is gone without a final delta.
     lost: bool,
+    /// The deltas from it that never arrived, as [`GaggleAccumulator::missing`]
+    /// counts them.
+    missing: u64,
 }
 
 /// Every worker's metrics, merged on demand.
@@ -137,6 +140,7 @@ impl GaggleAccumulator {
                     received: delta.first_seq,
                 });
             }
+            let missing = delta.first_seq.saturating_sub(1);
             self.workers.insert(
                 from,
                 WorkerTotal {
@@ -145,6 +149,7 @@ impl GaggleAccumulator {
                     finished: got_final,
                     got_final,
                     lost: false,
+                    missing,
                 },
             );
             return Ok(());
@@ -203,6 +208,8 @@ impl GaggleAccumulator {
                 expected,
                 received: delta.first_seq,
             });
+            // Above `expected`: a repeat or overlap returned earlier.
+            worker.missing += delta.first_seq - expected;
         }
         worker.last_seq = delta.seq;
         if new_epoch {
@@ -275,11 +282,7 @@ impl GaggleAccumulator {
     /// The deltas from `worker` that never arrived: every gap in its
     /// sequence, not a repeat, nor the loss of the worker itself.
     pub(crate) fn missing(&self, worker: u32) -> u64 {
-        self.gaps
-            .iter()
-            .filter(|gap| gap.worker == worker && gap.received != 0)
-            .map(|gap| gap.received.saturating_sub(gap.expected))
-            .sum()
+        self.workers.get(&worker).map_or(0, |total| total.missing)
     }
 
     /// The first second not yet complete: one that a worker still sending

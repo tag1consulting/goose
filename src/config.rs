@@ -4304,7 +4304,6 @@ impl GooseConfiguration {
         non_empty(&self.notes)
     }
 
-    /// The gzip level for every gzipped file: `--compress`, or 6.
     /// Whether a log given without a path is gzipped, `kind` its index in
     /// the log names: with `--compress`, or as a Gaggle worker's manager
     /// names it.
@@ -4317,6 +4316,7 @@ impl GooseConfiguration {
         self.compress.is_some()
     }
 
+    /// The gzip level for every gzipped file: `--compress`, or 6.
     pub(crate) fn compression_level(&self) -> u32 {
         self.compress.unwrap_or(DEFAULT_COMPRESSION_LEVEL)
     }

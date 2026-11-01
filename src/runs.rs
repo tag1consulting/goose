@@ -136,7 +136,7 @@ pub(crate) struct GaggleWorkerRecord {
     /// Why it was lost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lost_reason: Option<String>,
-    /// The sequence number of the last delta received from it, when lost.
+    /// The sequence number of the last delta merged from it, when lost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seq: Option<u64>,
     /// The metrics deltas the manager refused from it.
