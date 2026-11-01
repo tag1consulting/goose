@@ -55,6 +55,10 @@ const MAX_HEADERS: u32 = 16 << 10;
 /// for a worker that reconnects before its old connection is closed.
 const SPARE_CONNECTIONS: usize = 4;
 
+/// The events queued for the manager's main loop: past them, a worker's
+/// reader waits, and HTTP/2 flow control slows the worker.
+pub(crate) const EVENT_QUEUE: usize = 64;
+
 /// The metadata key a worker's token travels under, as `Bearer <token>`.
 pub(crate) const AUTHORIZATION: &str = "authorization";
 
@@ -327,7 +331,7 @@ impl Gaggle for GaggleService {
         let _ = outbound.try_send(Ok(ManagerMessage {
             message: Some(ToWorker::Welcome(Welcome { worker_id: id })),
         }));
-        let _ = self.0.events.send(Event::Joined);
+        let _ = self.0.events.send_async(Event::Joined).await;
         let heard = Arc::new(Mutex::new(Instant::now()));
         let lost = Arc::new(AtomicBool::new(false));
         tokio::spawn(read_worker(
@@ -566,13 +570,19 @@ impl http_body::Body for FirstMessage {
 }
 
 /// Report worker `id` lost, once.
-fn lose(shared: &Shared, id: u32, lost: &AtomicBool, why: String) {
+async fn lose(shared: &Shared, id: u32, lost: &AtomicBool, why: String) {
     if !lost.swap(true, Ordering::Relaxed) {
-        let _ = shared.events.send(Event::Lost { id, why });
+        let _ = shared.events.send_async(Event::Lost { id, why }).await;
     }
 }
 
-/// Read worker `id`'s stream until it ends, as events.
+/// Read worker `id`'s stream until it ends, as events. The event queue is
+/// bounded: while it is full this waits, reading nothing more, so HTTP/2
+/// flow control holds the worker back. Nothing the main loop waits on is
+/// held here while it waits: the main loop only ever takes events and
+/// sends with `try_send`, and the lock on `heard` is released before.
+/// `heard` is refreshed when an event is queued too, so a worker held back
+/// by a slow main loop is not taken for a silent one.
 async fn read_worker(
     id: u32,
     mut inbound: tonic::Streaming<WorkerMessage>,
@@ -597,7 +607,7 @@ async fn read_worker(
         let event = match message.message {
             Some(FromWorker::Heartbeat(_)) | None => continue,
             Some(FromWorker::Hello(_)) => {
-                lose(&shared, id, &lost, "it said Hello twice".to_string());
+                lose(&shared, id, &lost, "it said Hello twice".to_string()).await;
                 break;
             }
             Some(FromWorker::PrepareAck(ack)) => Event::PrepareAck {
@@ -618,15 +628,19 @@ async fn read_worker(
                         id,
                         &lost,
                         format!("it sent a delta that does not decode: {e}"),
-                    );
+                    )
+                    .await;
                     break;
                 }
             },
             Some(FromWorker::Stopped(stopped)) => Event::Stopped { id, stopped },
             Some(FromWorker::LogChunk(chunk)) => Event::Log { id, chunk },
         };
-        if shared.events.send(event).is_err() {
+        if shared.events.send_async(event).await.is_err() {
             break;
+        }
+        if let Ok(mut heard) = heard.lock() {
+            *heard = Instant::now();
         }
     }
     // A worker that stopped as told, then went away, is not lost: the
@@ -638,7 +652,7 @@ async fn read_worker(
         } else {
             "its stream closed before its final metrics"
         };
-        lose(&shared, id, &lost, why.to_string());
+        lose(&shared, id, &lost, why.to_string()).await;
     }
 }
 
@@ -673,7 +687,8 @@ async fn heartbeat_worker(
                     "nothing from it for {} seconds",
                     shared.heartbeat_timeout.as_secs()
                 ),
-            );
+            )
+            .await;
             let _ = outbound.try_send(Ok(ManagerMessage {
                 message: Some(ToWorker::Shutdown(Default::default())),
             }));
@@ -720,7 +735,7 @@ impl Manager {
                     detail: format!("the manager could not listen on {bind}: {e}"),
                 })?;
         let local_addr = listener.local_addr()?;
-        let (events_tx, events) = flume::unbounded();
+        let (events_tx, events) = flume::bounded(EVENT_QUEUE);
         let shared = Arc::new(Shared {
             expected,
             joined: Mutex::new(Vec::new()),
@@ -1192,6 +1207,59 @@ mod handshake_tests {
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
             .expect("within 30 seconds");
+    }
+
+    /// A worker streaming log chunks faster than the main loop takes them
+    /// waits for room: the event queue never holds more than its bound, and
+    /// every chunk arrives.
+    #[tokio::test]
+    async fn gaggle_event_queue_is_bounded() {
+        use super::super::proto::LogChunk;
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
+                .await
+                .unwrap();
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let _inbound = inbound.unwrap();
+            const CHUNKS: u64 = 4 * EVENT_QUEUE as u64;
+            let sender = tokio::spawn(async move {
+                for offset in 0..CHUNKS {
+                    let chunk = LogChunk {
+                        file: "requests.json".to_string(),
+                        offset,
+                        data: vec![b'x'; 16 << 10],
+                        last: offset + 1 == CHUNKS,
+                    };
+                    if tx
+                        .send(WorkerMessage {
+                            message: Some(FromWorker::LogChunk(chunk)),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                tx
+            });
+            let deadline = Instant::now() + Duration::from_secs(40);
+            let (mut chunks, mut most) = (0, 0);
+            while chunks < CHUNKS {
+                most = most.max(manager.events.len());
+                match manager.next_event(deadline).await {
+                    Some(Event::Log { .. }) => chunks += 1,
+                    Some(Event::Joined) => {}
+                    other => panic!("{:?}", other),
+                }
+                // A slow writer.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(most <= EVENT_QUEUE, "{} events queued", most);
+            drop(sender.await);
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
     }
 
     /// A client with no token, or a wrong one of any length, is refused by
