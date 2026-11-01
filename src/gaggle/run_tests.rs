@@ -1,5 +1,6 @@
 //! A manager and two workers in one process, against a mock server.
 
+use super::run::TestFaults;
 use crate::config::GooseConfiguration;
 use crate::goose::{Scenario, Transaction};
 use crate::metrics::GooseMetrics;
@@ -110,6 +111,17 @@ async fn gaggle_of(
     folder: &Path,
     manager_args: &[&str],
 ) -> Result<GooseMetrics, crate::GooseError> {
+    gaggle_with(count, server, folder, manager_args, &[]).await
+}
+
+/// [`gaggle_of`], the worker started `n`th given `faults[n]`.
+async fn gaggle_with(
+    count: usize,
+    server: &MockServer,
+    folder: &Path,
+    manager_args: &[&str],
+    faults: &[TestFaults],
+) -> Result<GooseMetrics, crate::GooseError> {
     let count_text = count.to_string();
     let host = server.base_url();
     let manager_folder = folder.join("manager").display().to_string();
@@ -148,7 +160,8 @@ async fn gaggle_of(
             "--quiet",
             "--output-dir",
             &worker_folder,
-        ]));
+        ]))
+        .gaggle_test_faults(faults.get(worker).copied().unwrap_or_default());
         workers.push(tokio::spawn(worker.execute()));
     }
     for worker in workers {
@@ -381,4 +394,135 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
     tokio::time::timeout(Duration::from_secs(30), test)
         .await
         .expect("within 30 seconds");
+}
+
+/// The run record of the run in `folder`, and its HTML report.
+fn record(folder: &Path) -> (serde_json::Value, String) {
+    let manager = folder.join("manager");
+    let report = std::fs::read_to_string(manager.join("report.json")).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report).unwrap();
+    let html = std::fs::read_to_string(manager.join("report.html")).unwrap();
+    (report["gaggle"].clone(), html)
+}
+
+/// A server answering every path the load test asks for.
+async fn answering() -> MockServer {
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(GET);
+            then.status(200).body("ok");
+        })
+        .await;
+    server
+}
+
+/// The one worker in a run record that `degraded` picks, and the others.
+fn split_workers(
+    gaggle: &serde_json::Value,
+    degraded: impl Fn(&serde_json::Value) -> bool,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    gaggle["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .cloned()
+        .partition(|worker| degraded(worker))
+}
+
+/// A worker that missed the metrics reset is left out of the results: the
+/// run is degraded, and its record and HTML report name the worker and why.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_on_a_stale_epoch_degrades_the_run() {
+    let server = answering().await;
+    let folder = scratch("stale-epoch");
+    let faults = [
+        TestFaults::default(),
+        TestFaults {
+            skip_reset: true,
+            ..Default::default()
+        },
+    ];
+    let run = gaggle_with(
+        2,
+        &server,
+        &folder,
+        &[
+            "--users",
+            "4",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "3",
+            "--report-file",
+        ],
+        &faults,
+    );
+    tokio::time::timeout(Duration::from_secs(30), run)
+        .await
+        .expect("the Gaggle ends within 30 seconds")
+        .expect("the manager exits cleanly");
+    let (gaggle, html) = record(&folder);
+    assert_eq!(gaggle["degraded"], true, "{gaggle}");
+    let (stale, others) = split_workers(&gaggle, |worker| {
+        worker["excluded_reason"]
+            .as_str()
+            .is_some_and(|why| why.contains("missed a metrics reset"))
+    });
+    assert_eq!((stale.len(), others.len()), (1, 1), "{gaggle}");
+    assert_eq!(stale[0]["state"], "finished", "{gaggle}");
+    let name = stale[0]["name"].as_str().unwrap();
+    assert!(
+        html.contains("Degraded") && html.contains(name),
+        "the HTML report names {name}"
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A worker whose delta the manager refuses: the run is degraded, and its
+/// record names the worker, the refusal and the delta that never merged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_refused_delta_degrades_the_run() {
+    let server = answering().await;
+    let folder = scratch("refused-delta");
+    let faults = [
+        TestFaults::default(),
+        TestFaults {
+            refused_delta: true,
+            ..Default::default()
+        },
+    ];
+    let run = gaggle_with(
+        2,
+        &server,
+        &folder,
+        &[
+            "--users",
+            "4",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "3",
+            "--report-file",
+        ],
+        &faults,
+    );
+    tokio::time::timeout(Duration::from_secs(30), run)
+        .await
+        .expect("the Gaggle ends within 30 seconds")
+        .expect("the manager exits cleanly");
+    let (gaggle, html) = record(&folder);
+    assert_eq!(gaggle["degraded"], true, "{gaggle}");
+    let (refused, others) = split_workers(&gaggle, |worker| {
+        worker["refused_deltas"].as_u64() == Some(1)
+    });
+    assert_eq!((refused.len(), others.len()), (1, 1), "{gaggle}");
+    let reason = refused[0]["refused_reason"].as_str().unwrap_or_default();
+    assert!(reason.starts_with("delta 1:"), "{gaggle}");
+    assert_eq!(refused[0]["missing_deltas"], 1, "{gaggle}");
+    let name = refused[0]["name"].as_str().unwrap();
+    assert!(html.contains("Degraded") && html.contains(name));
+    let _ = std::fs::remove_dir_all(&folder);
 }

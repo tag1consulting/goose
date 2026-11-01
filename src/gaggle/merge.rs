@@ -14,6 +14,27 @@ use crate::metrics::{
     GooseTransactionErrorMetricAggregate, ScenarioMetricAggregate, TransactionMetricAggregate,
 };
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+/// What the merge did with one worker's deltas, for the manager's run
+/// record: anything here but `last_seq` means the results undercount it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WorkerMerge {
+    /// The sequence number of the last delta merged.
+    pub(crate) last_seq: u64,
+    /// Deltas refused.
+    pub(crate) refused: u64,
+    /// Why the last refused delta was refused.
+    pub(crate) refusal: Option<String>,
+    /// Why the merge last built left the worker out, when it did.
+    pub(crate) excluded: Option<String>,
+    /// Deltas that never arrived: their graph rows are not in the results.
+    pub(crate) missing: u64,
+}
+
+/// Each worker's [`WorkerMerge`], written by the manager's metrics
+/// processor as it merges, read by the manager's run.
+pub(crate) type MergeHealth = Arc<Mutex<BTreeMap<u32, WorkerMerge>>>;
 
 /// A delta that did not follow the one before it from the same worker.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -250,6 +271,21 @@ impl GaggleAccumulator {
         &self.gaps
     }
 
+    /// The sequence number of the last delta merged from `worker`.
+    pub(crate) fn last_seq(&self, worker: u32) -> Option<u64> {
+        self.workers.get(&worker).map(|total| total.last_seq)
+    }
+
+    /// The deltas from `worker` that never arrived: every gap in its
+    /// sequence, not a repeat, nor the loss of the worker itself.
+    pub(crate) fn missing(&self, worker: u32) -> u64 {
+        self.gaps
+            .iter()
+            .filter(|gap| gap.worker == worker && gap.received != 0)
+            .map(|gap| gap.received.saturating_sub(gap.expected))
+            .sum()
+    }
+
     /// The first second not yet complete: one that a worker still sending
     /// could still add to. `None` once every worker finished or was lost.
     pub(crate) fn complete_before(&self) -> Option<Second> {
@@ -266,14 +302,21 @@ impl GaggleAccumulator {
     }
 
     /// The workers [`Self::merged`] leaves out, because their metrics epoch
-    /// is older than the newest any worker reached. Each worker counts its
-    /// own metrics resets, so one that missed a reset is left out rather
-    /// than mixed into another epoch's figures; in Gaggle step 2 the
-    /// manager owns the epochs and no worker can fall behind unseen. Also
-    /// any whose figures would take a sum past [`Bounds::MERGED`], which
-    /// [`Bounds::WORKER`] and [`super::delta::MAX_WORKERS`] rule out.
+    /// is older than the newest any worker reached, or the manager's own
+    /// after a reset. Each worker counts its own metrics resets, so one that
+    /// missed a reset is left out rather than mixed into another epoch's
+    /// figures. Also any whose figures would take a sum past
+    /// [`Bounds::MERGED`], which [`Bounds::WORKER`] and
+    /// [`super::delta::MAX_WORKERS`] rule out. Leaving a worker out
+    /// undercounts the results: the manager records each one, with
+    /// [`Self::merged_and_excluded`], and its run record marks the run
+    /// degraded and names the worker.
     pub(crate) fn excluded(&self) -> Vec<u32> {
-        self.merge_parts().3
+        self.merge_parts()
+            .3
+            .into_iter()
+            .map(|(worker, _)| worker)
+            .collect()
     }
 
     /// The metrics and graph data of every worker merged: the metrics of
@@ -281,18 +324,25 @@ impl GaggleAccumulator {
     /// seconds only. Every derived figure is worked out again from the
     /// merged counts. A worker left out is named by [`Self::excluded`].
     pub(crate) fn merged(&self) -> (GooseMetrics, GraphData) {
-        let (metrics, mut graph, series_origin, _) = self.merge_parts();
+        let (metrics, graph, _) = self.merged_and_excluded();
+        (metrics, graph)
+    }
+
+    /// [`Self::merged`], and each worker it left out with why.
+    pub(crate) fn merged_and_excluded(&self) -> (GooseMetrics, GraphData, Vec<(u32, String)>) {
+        let (metrics, mut graph, series_origin, excluded) = self.merge_parts();
         let complete = self.complete_before();
         graph.users = self.users_levels();
         (
             build_metrics(&self.template, &metrics),
             GraphData::gaggle_build(&graph, self.settings, series_origin, complete),
+            excluded,
         )
     }
 
     /// Every worker's figures of the newest epoch added up, the series
-    /// origin of the merge, and the workers left out.
-    fn merge_parts(&self) -> (MetricsPart, GraphPart, Option<Second>, Vec<u32>) {
+    /// origin of the merge, and the workers left out, with why.
+    fn merge_parts(&self) -> (MetricsPart, GraphPart, Option<Second>, Vec<(u32, String)>) {
         let epoch = Some(self.epoch().unwrap_or(0).max(self.min_epoch));
         let mut metrics = MetricsPart::default();
         let mut graph = GraphPart::default();
@@ -300,11 +350,24 @@ impl GaggleAccumulator {
         let mut excluded = Vec::new();
         for (&id, worker) in &self.workers {
             let (part, rows) = (&worker.total.metrics, &worker.total.graph);
-            let fits = Some(worker.total.epoch) == epoch
-                && metrics.add_pass(part, Pass::Check, Bounds::MERGED).is_ok()
+            if Some(worker.total.epoch) != epoch {
+                excluded.push((
+                    id,
+                    format!(
+                        "its metrics epoch {} is not the run's {}: it missed a metrics reset",
+                        worker.total.epoch,
+                        epoch.unwrap_or(0)
+                    ),
+                ));
+                continue;
+            }
+            let fits = metrics.add_pass(part, Pass::Check, Bounds::MERGED).is_ok()
                 && graph.add_rates(rows, Pass::Check, Bounds::MERGED).is_ok();
             if !fits {
-                excluded.push(id);
+                excluded.push((
+                    id,
+                    "its figures would take the merged sums past their bounds".to_string(),
+                ));
                 continue;
             }
             // Checked above, so these add every figure.

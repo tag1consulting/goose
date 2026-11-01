@@ -2248,7 +2248,8 @@ fn gaggle_merge_cost() {
 fn gaggle_save_report_on_a_manager_changes_the_merge() {
     super::within(30, || {
         let mut side = Side::new(0..0, Some(0));
-        side.processor.gaggle_enable_manager();
+        side.processor
+            .gaggle_enable_manager(DeltaLimits::default(), Default::default());
         let mut columns = |keep: bool| {
             side.processor
                 .handle_command_for_test(MetricsCommand::KeepGraph { keep, now: 0 });
@@ -2280,7 +2281,8 @@ fn gaggle_save_report_on_a_manager_changes_the_merge() {
 fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
     super::within(30, || {
         let mut side = Side::new(0..0, Some(0));
-        side.processor.gaggle_enable_manager();
+        side.processor
+            .gaggle_enable_manager(DeltaLimits::default(), Default::default());
         let made = |side: &mut Side| {
             let (respond, metrics) = tokio::sync::oneshot::channel();
             side.processor

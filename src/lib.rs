@@ -690,6 +690,9 @@ pub struct GooseAttack {
     /// Where a manager reports the address it listens on (unit tests).
     #[cfg(all(test, feature = "gaggle"))]
     gaggle_bound: Option<tokio::sync::oneshot::Sender<std::net::SocketAddr>>,
+    /// What a worker does wrong on purpose (unit tests).
+    #[cfg(all(test, feature = "gaggle"))]
+    gaggle_test_faults: gaggle::run::TestFaults,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
     /// Configuration object holding options set when launching the load test.
@@ -823,6 +826,8 @@ impl GooseAttack {
             gaggle: None,
             #[cfg(all(test, feature = "gaggle"))]
             gaggle_bound: None,
+            #[cfg(all(test, feature = "gaggle"))]
+            gaggle_test_faults: Default::default(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -882,6 +887,8 @@ impl GooseAttack {
             gaggle: None,
             #[cfg(all(test, feature = "gaggle"))]
             gaggle_bound: None,
+            #[cfg(all(test, feature = "gaggle"))]
+            gaggle_test_faults: Default::default(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -3971,7 +3978,8 @@ impl GooseAttack {
             self.gaggle_shadow = Some(outcome);
             goose_attack_run_state.gaggle_shadow_second = None;
         } else if self.gaggle_manager() {
-            processor.gaggle_enable_manager();
+            let (limits, health) = self.gaggle_merge_settings();
+            processor.gaggle_enable_manager(limits, health);
         } else if let Some(link) = self.gaggle_link() {
             processor.gaggle_enable(link.id);
         }

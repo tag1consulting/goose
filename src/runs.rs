@@ -111,9 +111,14 @@ pub(crate) struct GaggleRecord {
     /// Logs a worker still held when the manager stopped waiting for them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logs_left: Vec<GaggleLogLeft>,
-    /// A worker was lost: the results leave out what it did after.
+    /// A worker was lost, or some of a worker's metrics are not in the
+    /// results: each such worker's entry says why.
     #[serde(default)]
     pub degraded: bool,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// One worker of a Gaggle run.
@@ -134,6 +139,47 @@ pub(crate) struct GaggleWorkerRecord {
     /// The sequence number of the last delta received from it, when lost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seq: Option<u64>,
+    /// The metrics deltas the manager refused from it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub refused_deltas: u64,
+    /// Why the last delta refused was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_reason: Option<String>,
+    /// Why the results leave its metrics out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excluded_reason: Option<String>,
+    /// The metrics deltas from it that never arrived.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub missing_deltas: u64,
+}
+
+impl GaggleWorkerRecord {
+    /// Why the results undercount this worker, other than its loss.
+    fn shortfall(&self) -> Vec<String> {
+        let mut why = Vec::new();
+        if let Some(reason) = &self.excluded_reason {
+            why.push(format!("its metrics are left out: {reason}"));
+        }
+        if self.refused_deltas > 0 {
+            why.push(format!(
+                "{} of its metrics deltas were refused, the last for {}",
+                self.refused_deltas,
+                self.refused_reason.as_deref().unwrap_or("no reason given")
+            ));
+        }
+        if self.missing_deltas > 0 {
+            why.push(format!(
+                "{} of its metrics deltas never arrived",
+                self.missing_deltas
+            ));
+        }
+        why
+    }
+
+    /// Whether the results undercount this worker.
+    pub(crate) fn degraded(&self) -> bool {
+        self.state == "lost" || !self.shortfall().is_empty()
+    }
 }
 
 /// A log left on a worker.
@@ -157,12 +203,28 @@ impl GaggleRecord {
                 None => worker.name.clone(),
             })
             .collect();
-        if self.degraded {
+        let short: Vec<String> = self
+            .workers
+            .iter()
+            .filter_map(|worker| {
+                let why = worker.shortfall();
+                (!why.is_empty()).then(|| format!("{} ({})", worker.name, why.join("; ")))
+            })
+            .collect();
+        if self.degraded && !lost.is_empty() {
             intro.push(format!(
                 "Degraded: {} of the {} Gaggle workers were lost during the run: {}. The results hold what each sent before it was lost.",
                 lost.len(),
                 self.workers.len(),
                 lost.join(", ")
+            ));
+        }
+        if self.degraded && !short.is_empty() {
+            intro.push(format!(
+                "Degraded: the results leave out metrics from {} of the {} Gaggle workers: {}.",
+                short.len(),
+                self.workers.len(),
+                short.join(", ")
             ));
         }
         if !self.logs_left.is_empty() {

@@ -19,10 +19,10 @@ use super::proto::{
     PROTOCOL_VERSION,
 };
 use crate::GooseError;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -387,8 +387,7 @@ impl tokio::io::AsyncRead for Counted {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        if !this.peer.admitted.load(Ordering::Relaxed)
-            && this.admit_by.as_mut().poll(cx).is_ready()
+        if !this.peer.admitted.load(Ordering::Relaxed) && this.admit_by.as_mut().poll(cx).is_ready()
         {
             return Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
@@ -1335,11 +1334,9 @@ mod handshake_tests {
                 first.message().await.unwrap().unwrap().message,
                 Some(ToWorker::Welcome(_))
             ));
-            let second = tokio::time::timeout(
-                Duration::from_secs(3),
-                open(channel.clone(), hello(), None),
-            )
-            .await;
+            let second =
+                tokio::time::timeout(Duration::from_secs(3), open(channel.clone(), hello(), None))
+                    .await;
             assert!(second.is_err(), "a second stream was served");
             assert_eq!(handled(&manager), 1);
             drop(first_tx);
@@ -1379,19 +1376,16 @@ mod handshake_tests {
             assert!(matches!(closed, Ok(0) | Err(_)), "{:?}", closed);
             // Nothing admitted on the held connections: each is closed.
             for mut connection in held {
-                let closed = tokio::time::timeout(
-                    HELLO_TIMEOUT + Duration::from_secs(5),
-                    async {
-                        let mut buffer = [0u8; 1024];
-                        loop {
-                            match connection.read(&mut buffer).await {
-                                Ok(0) | Err(_) => break,
-                                // The server's HTTP/2 preface.
-                                Ok(_) => continue,
-                            }
+                let closed = tokio::time::timeout(HELLO_TIMEOUT + Duration::from_secs(5), async {
+                    let mut buffer = [0u8; 1024];
+                    loop {
+                        match connection.read(&mut buffer).await {
+                            Ok(0) | Err(_) => break,
+                            // The server's HTTP/2 preface.
+                            Ok(_) => continue,
                         }
-                    },
-                )
+                    }
+                })
                 .await;
                 assert!(closed.is_ok(), "an idle connection was held");
             }

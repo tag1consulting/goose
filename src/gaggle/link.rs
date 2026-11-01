@@ -68,6 +68,10 @@ pub(crate) struct Outbox {
     queued: Notify,
     /// Something left.
     sent: Notify,
+    /// Name another worker in the next delta, so the manager refuses it
+    /// (unit tests).
+    #[cfg(test)]
+    pub(crate) corrupt_next: AtomicBool,
 }
 
 impl Outbox {
@@ -88,6 +92,14 @@ impl Outbox {
     /// Queue a delta, coalescing it into the last queued delta when
     /// [`MAX_QUEUED_DELTAS`] are queued already.
     pub(crate) fn push_delta(&self, delta: GaggleDelta) {
+        #[cfg(test)]
+        let delta = {
+            let mut delta = delta;
+            if self.corrupt_next.swap(false, Ordering::Relaxed) {
+                delta.worker = u32::MAX;
+            }
+            delta
+        };
         if let Ok(mut state) = self.state.lock() {
             if state.closed {
                 return;

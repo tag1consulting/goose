@@ -11,6 +11,42 @@ pub(crate) struct ManagerMerge {
     /// The clock second the merge was last built in: a live read builds it
     /// at most once a second, as the workers' deltas arrive once a second.
     built: Option<u64>,
+    /// What the merge did with each worker's deltas, for the run record.
+    health: crate::gaggle::merge::MergeHealth,
+}
+
+impl ManagerMerge {
+    /// Record what the merge holds of `worker`: its last delta merged, and
+    /// the deltas that never arrived.
+    fn note(&self, worker: u32) {
+        if let Ok(mut health) = self.health.lock() {
+            let entry = health.entry(worker).or_default();
+            entry.last_seq = self.accumulator.last_seq(worker).unwrap_or(0);
+            entry.missing = self.accumulator.missing(worker);
+        }
+    }
+
+    /// Record a delta refused from `worker`.
+    fn refused(&self, worker: u32, refusal: String) {
+        if let Ok(mut health) = self.health.lock() {
+            let entry = health.entry(worker).or_default();
+            entry.refused += 1;
+            entry.refusal = Some(refusal);
+        }
+        self.note(worker);
+    }
+
+    /// Record the workers the merge just built left out, and no others.
+    fn excluded(&self, excluded: Vec<(u32, String)>) {
+        if let Ok(mut health) = self.health.lock() {
+            for entry in health.values_mut() {
+                entry.excluded = None;
+            }
+            for (worker, why) in excluded {
+                health.entry(worker).or_default().excluded = Some(why);
+            }
+        }
+    }
 }
 
 /// The metrics processor as a Gaggle manager.
@@ -18,17 +54,24 @@ impl MetricsProcessor {
     /// Run as a Gaggle manager: from now on `metrics` and `graph_data` are
     /// every worker's merged, built again before anything reads them. The
     /// processor's own metrics are left out, as the manager runs no users.
-    pub(crate) fn gaggle_enable_manager(&mut self) {
+    /// A delta past `limits` is refused; what the merge does with each
+    /// worker's deltas is written to `health`.
+    pub(crate) fn gaggle_enable_manager(
+        &mut self,
+        limits: crate::gaggle::delta::DeltaLimits,
+        health: crate::gaggle::merge::MergeHealth,
+    ) {
         let accumulator = crate::gaggle::merge::GaggleAccumulator::new(
             self.gaggle_template(),
             self.gaggle_graph_settings(),
-            crate::gaggle::delta::DeltaLimits::default(),
+            limits,
         );
         self.gaggle_merge = Some(Box::new(ManagerMerge {
             accumulator,
             dirty: true,
             clock: 0,
             built: None,
+            health,
         }));
     }
 
@@ -43,8 +86,14 @@ impl MetricsProcessor {
             MetricsCommand::GaggleApply { worker, delta } => {
                 let seq = delta.seq;
                 match merge.accumulator.apply(worker, *delta) {
-                    Ok(()) => merge.dirty = true,
-                    Err(e) => warn!("gaggle: refused delta {seq} from worker {worker}: {e}"),
+                    Ok(()) => {
+                        merge.dirty = true;
+                        merge.note(worker);
+                    }
+                    Err(e) => {
+                        warn!("gaggle: refused delta {seq} from worker {worker}: {e}");
+                        merge.refused(worker, format!("delta {seq}: {e}"));
+                    }
                 }
                 false
             }
@@ -114,7 +163,8 @@ impl MetricsProcessor {
         }
         merge.dirty = false;
         merge.built = Some(merge.clock);
-        let (merged, graph) = merge.accumulator.merged();
+        let (merged, graph, excluded) = merge.accumulator.merged_and_excluded();
+        merge.excluded(excluded);
         let GooseMetrics {
             requests,
             transactions,

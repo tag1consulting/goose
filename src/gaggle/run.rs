@@ -7,8 +7,10 @@
 //! says when to start the share it was handed, and is then driven by what the
 //! manager sends.
 
+use super::delta::DeltaLimits;
 use super::link::{Link, LinkEvent, LinkSettings};
 use super::manager::{Event, Manager};
+use super::merge::MergeHealth;
 use super::proto::{
     manager_message::Message as ToWorker, stopped::Reason, Prepare, ResetMetrics, SendLogs,
     StartAt, Stop, Stopped,
@@ -40,6 +42,22 @@ const LOGS_TIMEOUT: Duration = Duration::from_secs(600);
 /// the workers' clocks start within milliseconds of its own, and a delta is
 /// stamped up to a second late.
 const CLOCK_SLACK: u64 = 10;
+
+/// For Goose's own tests of a run across processes: a worker with this
+/// environment variable set ignores its manager's metrics reset, so its
+/// metrics stay on an older epoch than the run's, which the manager then
+/// leaves out of the results and reports.
+const TEST_SKIP_RESET_ENV: &str = "GOOSE_GAGGLE_TEST_SKIP_RESET";
+
+/// What a worker does wrong on purpose, in unit tests.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TestFaults {
+    /// Ignore the manager's metrics reset.
+    pub(crate) skip_reset: bool,
+    /// Send a first delta the manager refuses.
+    pub(crate) refused_delta: bool,
+}
 
 /// This process's side of a Gaggle.
 pub(crate) enum GaggleRole {
@@ -75,6 +93,8 @@ pub(crate) struct ManagerRun {
     /// The run already ended for every worker lost or every worker's users
     /// exited.
     ending: bool,
+    /// What the merge did with each worker's deltas.
+    health: MergeHealth,
 }
 
 /// The worker's side of a run.
@@ -92,6 +112,8 @@ pub(crate) struct WorkerRun {
     /// Each log, as the manager names it, and where it is here.
     log_files: Vec<(String, PathBuf)>,
     run_folder: Option<PathBuf>,
+    /// Ignore the manager's metrics reset ([`TEST_SKIP_RESET_ENV`]).
+    skip_reset: bool,
 }
 
 impl WorkerEntry {
@@ -149,12 +171,29 @@ impl GooseAttack {
         self.attack_mode == AttackMode::Worker
     }
 
+    /// What a manager's merge refuses a delta past, and where it records
+    /// what it did with each worker's deltas.
+    pub(crate) fn gaggle_merge_settings(&self) -> (DeltaLimits, MergeHealth) {
+        let health = match self.gaggle.as_ref() {
+            Some(GaggleRole::Manager(run)) => run.health.clone(),
+            _ => MergeHealth::default(),
+        };
+        (DeltaLimits::default(), health)
+    }
+
     /// The link to a worker's manager.
     pub(crate) fn gaggle_link(&self) -> Option<&Link> {
         match self.gaggle.as_ref() {
             Some(GaggleRole::Worker(run)) => Some(&run.link),
             _ => None,
         }
+    }
+
+    /// Have a worker do something wrong on purpose (unit tests).
+    #[cfg(test)]
+    pub(crate) fn gaggle_test_faults(mut self, faults: TestFaults) -> Self {
+        self.gaggle_test_faults = faults;
+        self
     }
 
     /// Have the manager report the address it listens on (unit tests).
@@ -333,6 +372,7 @@ impl GooseAttack {
             clock_second: None,
             stop_sent: false,
             ending: false,
+            health: MergeHealth::default(),
         })));
         tokio::time::sleep_until(start).await;
         info!(
@@ -396,6 +436,15 @@ impl GooseAttack {
         spec.configure(&mut self.configuration);
         self.set_user_slice(spec.user_offset, spec.slice.clone());
         self.worker_data = Some(Arc::from(std::mem::take(&mut spec.custom_data)));
+        let skip_reset = std::env::var_os(TEST_SKIP_RESET_ENV).is_some();
+        #[cfg(test)]
+        let skip_reset = skip_reset || self.gaggle_test_faults.skip_reset;
+        #[cfg(test)]
+        if self.gaggle_test_faults.refused_delta {
+            link.outbox
+                .corrupt_next
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.gaggle = Some(GaggleRole::Worker(Box::new(WorkerRun {
             link,
             spec,
@@ -405,6 +454,7 @@ impl GooseAttack {
             tick_second: None,
             log_files: Vec::new(),
             run_folder: None,
+            skip_reset,
         })));
         Ok(())
     }
@@ -631,6 +681,9 @@ impl GooseAttack {
             match event {
                 LinkEvent::Prepare(_) => warn!("gaggle: a second Prepare ignored"),
                 LinkEvent::StartAt(at) => run.start_at = Some(at),
+                LinkEvent::ResetMetrics(epoch) if run.skip_reset => {
+                    warn!("gaggle: metrics reset to epoch {epoch} ignored ({TEST_SKIP_RESET_ENV})");
+                }
                 LinkEvent::ResetMetrics(epoch) if !running => {
                     // Before the start, as when the ramp ends in the
                     // milliseconds before this worker's start instant: reset
@@ -865,29 +918,41 @@ impl GooseAttack {
         let Some(GaggleRole::Manager(run)) = self.gaggle.as_ref() else {
             return None;
         };
+        let health = run
+            .health
+            .lock()
+            .map(|health| health.clone())
+            .unwrap_or_default();
         let workers: Vec<GaggleWorkerRecord> = run
             .workers
             .iter()
-            .map(|worker| GaggleWorkerRecord {
-                id: worker.id,
-                name: worker.name.clone(),
-                users: worker.users,
-                state: match (&worker.lost, worker.stopped) {
-                    (Some(_), _) => "lost",
-                    (None, Some(Reason::UsersExited)) => "users_exited",
-                    (None, Some(_)) => "finished",
-                    (None, None) => "running",
+            .map(|worker| {
+                let merge = health.get(&worker.id).cloned().unwrap_or_default();
+                GaggleWorkerRecord {
+                    id: worker.id,
+                    name: worker.name.clone(),
+                    users: worker.users,
+                    state: match (&worker.lost, worker.stopped) {
+                        (Some(_), _) => "lost",
+                        (None, Some(Reason::UsersExited)) => "users_exited",
+                        (None, Some(_)) => "finished",
+                        (None, None) => "running",
+                    }
+                    .to_string(),
+                    lost_at: worker
+                        .lost
+                        .as_ref()
+                        .map(|(at, _)| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                    lost_reason: worker.lost.as_ref().map(|(_, why)| why.clone()),
+                    last_seq: worker.lost.as_ref().map(|_| worker.last_seq),
+                    refused_deltas: merge.refused,
+                    refused_reason: merge.refusal,
+                    excluded_reason: merge.excluded,
+                    missing_deltas: merge.missing,
                 }
-                .to_string(),
-                lost_at: worker
-                    .lost
-                    .as_ref()
-                    .map(|(at, _)| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
-                lost_reason: worker.lost.as_ref().map(|(_, why)| why.clone()),
-                last_seq: worker.lost.as_ref().map(|_| worker.last_seq),
             })
             .collect();
-        let degraded = workers.iter().any(|worker| worker.state == "lost");
+        let degraded = workers.iter().any(GaggleWorkerRecord::degraded);
         Some(GaggleRecord {
             workers,
             logs_left: run.logs_left.clone(),
