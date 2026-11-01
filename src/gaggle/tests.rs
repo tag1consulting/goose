@@ -2451,6 +2451,7 @@ fn gaggle_epoch_ahead_of_the_manager_is_refused() {
             .handle_command_for_test(MetricsCommand::GaggleApply {
                 worker,
                 delta: Box::new(delta),
+                bytes: None,
             });
     };
     apply(0, counted(0, 1, 0));
