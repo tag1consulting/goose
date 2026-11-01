@@ -35,6 +35,9 @@ const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the manager waits for every worker's final metrics after `Stop`.
 const FINAL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a worker waits for its metrics processor to reset.
+const RESET_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// How long the manager waits for every worker's logs.
 const LOGS_TIMEOUT: Duration = Duration::from_secs(600);
 
@@ -57,6 +60,10 @@ pub(crate) struct TestFaults {
     pub(crate) skip_reset: bool,
     /// Send a first delta the manager refuses.
     pub(crate) refused_delta: bool,
+    /// The metrics processor never sends the final metrics.
+    pub(crate) silent_final: bool,
+    /// The metrics processor never answers a reset.
+    pub(crate) silent_reset: bool,
 }
 
 /// This process's side of a Gaggle.
@@ -149,6 +156,21 @@ impl ManagerRun {
             .iter()
             .filter(|worker| worker.lost.is_none() && worker.stopped.is_none())
     }
+}
+
+/// A worker that cannot finish a phase of its run: it stops every user, tells
+/// the manager it failed (no final metrics follow, so the manager marks it
+/// lost), gives that a moment to leave, and exits with an error.
+async fn worker_failed(link: &Link, why: String) -> GooseError {
+    error!("gaggle: {why}; this worker failed");
+    link.stop_users();
+    link.stopped(Stopped {
+        reason: Reason::Failed as i32,
+        canceled: why.clone(),
+        run_folder: String::new(),
+    });
+    link.flush().await;
+    GooseError::Gaggle { detail: why }
 }
 
 /// The failure that ends a manager before its run: every worker is told to
@@ -517,7 +539,12 @@ impl GooseAttack {
         };
         if let Some(epoch) = pending {
             debug!("gaggle: metrics reset that came before the start, epoch {epoch}");
-            self.gaggle_worker_reset(goose_attack_run_state).await;
+            if let Err(why) = self.gaggle_worker_reset(goose_attack_run_state).await {
+                return Err(match self.gaggle_link() {
+                    Some(link) => worker_failed(link, why).await,
+                    None => GooseError::Gaggle { detail: why },
+                });
+            }
         }
         if self.test_plan.total_users() == 0 && self.configuration.iterations() > 0 {
             self.set_ended_by(EndedBy::UsersExited, None);
@@ -623,6 +650,12 @@ impl GooseAttack {
             Event::Stopped { id, stopped } => {
                 let stop_sent = run.stop_sent;
                 let reason = stopped.reason();
+                // No final metrics came, nor will: lost, whenever it says so.
+                if reason == Reason::Failed {
+                    let why = format!("it could not finish its run: {}", stopped.canceled);
+                    self.lose_worker(goose_attack_run_state, run, id, why);
+                    return;
+                }
                 let Some(worker) = run.worker(id) else {
                     return;
                 };
@@ -706,7 +739,9 @@ impl GooseAttack {
                 }
                 LinkEvent::ResetMetrics(epoch) => {
                     debug!("gaggle: metrics reset, epoch {epoch}");
-                    self.gaggle_worker_reset(goose_attack_run_state).await;
+                    if let Err(why) = self.gaggle_worker_reset(goose_attack_run_state).await {
+                        return Err(worker_failed(&run.link, why).await);
+                    }
                     let own = goose_attack_run_state
                         .metrics_epoch
                         .load(std::sync::atomic::Ordering::Relaxed);
@@ -763,26 +798,48 @@ impl GooseAttack {
     }
 
     /// The manager's metrics reset: a worker resets its own metrics, the
-    /// users still running counted again.
-    async fn gaggle_worker_reset(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+    /// users still running counted again. An error, why, when its metrics
+    /// processor does not answer within [`RESET_TIMEOUT`].
+    async fn gaggle_worker_reset(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), String> {
         self.update_duration();
         let (ack, acked) = tokio::sync::oneshot::channel();
-        let sent = goose_attack_run_state
-            .metrics_cmd_tx
-            .send(MetricsCommand::Reset {
-                duration: self.metrics.duration,
-                total_users: self.metrics.total_users,
-                maximum_users: self.metrics.maximum_users,
-                active_users: goose_attack_run_state.active_users,
-                series_elapsed_secs: self.series_elapsed_secs(),
-                running_users: goose_attack_run_state.running_users.clone(),
-                ack,
-            });
-        if sent.is_ok() {
-            let _ = acked.await;
+        let command = MetricsCommand::Reset {
+            duration: self.metrics.duration,
+            total_users: self.metrics.total_users,
+            maximum_users: self.metrics.maximum_users,
+            active_users: goose_attack_run_state.active_users,
+            series_elapsed_secs: self.series_elapsed_secs(),
+            running_users: goose_attack_run_state.running_users.clone(),
+            ack,
+        };
+        // A processor that never answers: the command, and its ack, held.
+        #[cfg(test)]
+        let _held;
+        #[cfg(test)]
+        let command = if self.gaggle_test_faults.silent_reset {
+            _held = command;
+            None
+        } else {
+            Some(command)
+        };
+        #[cfg(not(test))]
+        let command = Some(command);
+        let sent = match command {
+            Some(command) => goose_attack_run_state.metrics_cmd_tx.send(command).is_ok(),
+            None => true,
+        };
+        if sent && tokio::time::timeout(RESET_TIMEOUT, acked).await.is_err() {
+            return Err(format!(
+                "the metrics processor did not reset within {} seconds",
+                RESET_TIMEOUT.as_secs()
+            ));
         }
         goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
         self.started = Some(std::time::Instant::now());
+        Ok(())
     }
 
     /// The manager's metrics reset, at the end of its ramp: every worker
@@ -801,15 +858,19 @@ impl GooseAttack {
     pub(crate) async fn gaggle_end_of_run(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
-    ) {
+    ) -> Result<(), GooseError> {
         let Some(mut role) = self.gaggle.take() else {
-            return;
+            return Ok(());
         };
-        match &mut role {
-            GaggleRole::Manager(run) => self.manager_stop(goose_attack_run_state, run).await,
+        let result = match &mut role {
+            GaggleRole::Manager(run) => {
+                self.manager_stop(goose_attack_run_state, run).await;
+                Ok(())
+            }
             GaggleRole::Worker(run) => self.worker_stopped(goose_attack_run_state, run).await,
-        }
+        };
         self.gaggle = Some(role);
+        result
     }
 
     async fn manager_stop(
@@ -847,23 +908,44 @@ impl GooseAttack {
         }
     }
 
+    /// A worker whose users stopped: send its final metrics, then `Stopped`.
+    /// One whose metrics processor does not hand over the final metrics
+    /// within [`FINAL_TIMEOUT`], as long as the manager waits for them,
+    /// fails.
     async fn worker_stopped(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut WorkerRun,
-    ) {
+    ) -> Result<(), GooseError> {
         let now = self.series_elapsed_secs();
         let (respond, done) = tokio::sync::oneshot::channel();
-        if goose_attack_run_state
-            .metrics_cmd_tx
-            .send(MetricsCommand::GaggleFinal {
-                now,
-                outbox: run.link.outbox.clone(),
-                respond,
-            })
-            .is_ok()
-        {
-            let _ = done.await;
+        let command = MetricsCommand::GaggleFinal {
+            now,
+            outbox: run.link.outbox.clone(),
+            respond,
+        };
+        // A processor that never answers: the command, and its answer, held.
+        #[cfg(test)]
+        let _held;
+        #[cfg(test)]
+        let command = if self.gaggle_test_faults.silent_final {
+            _held = command;
+            None
+        } else {
+            Some(command)
+        };
+        #[cfg(not(test))]
+        let command = Some(command);
+        let sent = match command {
+            Some(command) => goose_attack_run_state.metrics_cmd_tx.send(command).is_ok(),
+            None => true,
+        };
+        if sent && tokio::time::timeout(FINAL_TIMEOUT, done).await.is_err() {
+            let why = format!(
+                "the metrics processor did not hand over the final metrics within {} seconds",
+                FINAL_TIMEOUT.as_secs()
+            );
+            return Err(worker_failed(&run.link, why).await);
         }
         let (reason, canceled) = match &self.ended_by {
             Some((EndedBy::UsersExited, _)) => (Reason::UsersExited, String::new()),
@@ -891,6 +973,7 @@ impl GooseAttack {
                 .map(|folder| folder.display().to_string())
                 .unwrap_or_default(),
         });
+        Ok(())
     }
 
     /// A worker about to exit: give what it queued a moment to leave.

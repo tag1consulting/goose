@@ -63,6 +63,9 @@ message Stopped {
     REASON_CANCELED = 2;
     // Every user exited (--iterations).
     REASON_USERS_EXITED = 3;
+    // The worker could not finish its run and sent no final metrics: canceled
+    // says why.
+    REASON_FAILED = 4;
   }
   Reason reason = 1;
   string canceled = 2;

@@ -3102,7 +3102,7 @@ impl GooseAttack {
             // metrics; a worker sends its own.
             #[cfg(feature = "gaggle")]
             if self.run_in_progress {
-                self.gaggle_end_of_run(goose_attack_run_state).await;
+                self.gaggle_end_of_run(goose_attack_run_state).await?;
             }
 
             // Run test_stop and mark the metrics final, only when a run

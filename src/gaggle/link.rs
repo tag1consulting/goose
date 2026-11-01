@@ -465,6 +465,16 @@ impl Link {
         }
     }
 
+    /// Stop every user at once, and any started later, as the switch does.
+    pub(crate) fn stop_users(&self) {
+        if let Ok(users) = self.users.lock() {
+            self.fired.store(true, Ordering::SeqCst);
+            for user in users.iter() {
+                user.abort();
+            }
+        }
+    }
+
     /// The next event if one is waiting.
     pub(crate) fn try_event(&self) -> Option<LinkEvent> {
         self.events.try_recv().ok()

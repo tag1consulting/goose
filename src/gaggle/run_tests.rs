@@ -122,6 +122,24 @@ async fn gaggle_with(
     manager_args: &[&str],
     faults: &[TestFaults],
 ) -> Result<GooseMetrics, crate::GooseError> {
+    let (manager, workers) = gaggle_ends(count, server, folder, manager_args, faults).await;
+    for worker in workers {
+        worker.expect("the worker exits cleanly");
+    }
+    manager
+}
+
+/// [`gaggle_with`]: the manager's result, and each worker's.
+async fn gaggle_ends(
+    count: usize,
+    server: &MockServer,
+    folder: &Path,
+    manager_args: &[&str],
+    faults: &[TestFaults],
+) -> (
+    Result<GooseMetrics, crate::GooseError>,
+    Vec<Result<GooseMetrics, crate::GooseError>>,
+) {
     let count_text = count.to_string();
     let host = server.base_url();
     let manager_folder = folder.join("manager").display().to_string();
@@ -164,13 +182,11 @@ async fn gaggle_with(
         .gaggle_test_faults(faults.get(worker).copied().unwrap_or_default());
         workers.push(tokio::spawn(worker.execute()));
     }
+    let mut ends = Vec::new();
     for worker in workers {
-        worker
-            .await
-            .expect("the worker task ends")
-            .expect("the worker exits cleanly");
+        ends.push(worker.await.expect("the worker task ends"));
     }
-    manager.await.expect("the manager task ends")
+    (manager.await.expect("the manager task ends"), ends)
 }
 
 /// B1: one manager and two workers. The manager's totals are the server's
@@ -525,4 +541,80 @@ async fn gaggle_refused_delta_degrades_the_run() {
     let name = refused[0]["name"].as_str().unwrap();
     assert!(html.contains("Degraded") && html.contains(name));
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A worker whose metrics processor never hands over its final metrics, or
+/// never answers the metrics reset, fails within the phase's deadline: it
+/// exits with an error naming the phase, and the manager marks it lost.
+async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
+    let server = answering().await;
+    let folder = scratch("failed-phase");
+    let started = std::time::Instant::now();
+    let run = gaggle_ends(
+        2,
+        &server,
+        &folder,
+        &[
+            "--users",
+            "4",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "3",
+            "--report-file",
+        ],
+        &[TestFaults::default(), faults],
+    );
+    let (manager, workers) = tokio::time::timeout(Duration::from_secs(90), run)
+        .await
+        .expect("the Gaggle ends within 90 seconds");
+    manager.expect("the manager exits cleanly");
+    // Joining, a 2 second start, a ramp, 3 seconds of run, and the
+    // deadline: 30 seconds for the final metrics, 10 for a reset.
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(workers[0].is_ok(), "{:?}", workers[0].as_ref().map(|_| ()));
+    match &workers[1] {
+        Err(crate::GooseError::Gaggle { detail }) => assert!(detail.contains(phase), "{detail}"),
+        other => panic!("{:?}", other.as_ref().map(|_| ())),
+    }
+    let (gaggle, _) = record(&folder);
+    assert_eq!(gaggle["degraded"], true, "{gaggle}");
+    let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+    assert_eq!(lost.len(), 1, "{gaggle}");
+    let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.contains("could not finish") && reason.contains(phase),
+        "{gaggle}"
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_fails_without_its_final_metrics() {
+    worker_fails_a_phase(
+        TestFaults {
+            silent_final: true,
+            ..Default::default()
+        },
+        "final metrics",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_fails_without_its_reset() {
+    worker_fails_a_phase(
+        TestFaults {
+            silent_reset: true,
+            ..Default::default()
+        },
+        "did not reset",
+    )
+    .await;
 }

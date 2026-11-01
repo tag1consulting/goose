@@ -88,6 +88,9 @@ pub mod stopped {
         Canceled = 2,
         /// Every user exited (--iterations).
         UsersExited = 3,
+        /// The worker could not finish its run and sent no final metrics: canceled
+        /// says why.
+        Failed = 4,
     }
     impl Reason {
         /// String value of the enum field names used in the ProtoBuf definition.
@@ -100,6 +103,7 @@ pub mod stopped {
                 Self::Stopped => "REASON_STOPPED",
                 Self::Canceled => "REASON_CANCELED",
                 Self::UsersExited => "REASON_USERS_EXITED",
+                Self::Failed => "REASON_FAILED",
             }
         }
         /// Creates an enum from field names used in the ProtoBuf definition.
@@ -109,6 +113,7 @@ pub mod stopped {
                 "REASON_STOPPED" => Some(Self::Stopped),
                 "REASON_CANCELED" => Some(Self::Canceled),
                 "REASON_USERS_EXITED" => Some(Self::UsersExited),
+                "REASON_FAILED" => Some(Self::Failed),
                 _ => None,
             }
         }
