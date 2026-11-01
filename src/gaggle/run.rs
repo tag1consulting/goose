@@ -1144,10 +1144,22 @@ fn worker_file(log: &LogSpec) -> String {
     file
 }
 
-/// One log arriving from a worker.
+/// One log arriving from a worker, written to `part` until its last chunk,
+/// when it is renamed to `path`: a log cut off part way never shows under
+/// its real name.
 struct Incoming {
     file: tokio::fs::File,
     written: u64,
+    part: PathBuf,
+    path: PathBuf,
+}
+
+impl Incoming {
+    /// Give the log up: what arrived of it is deleted.
+    async fn abandon(self) {
+        drop(self.file);
+        let _ = tokio::fs::remove_file(&self.part).await;
+    }
 }
 
 async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
@@ -1210,14 +1222,24 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                 if !open.contains_key(&key) {
                     let name = &run.workers[id as usize].name;
                     let dir = folder.join("workers").join(name);
+                    let path = dir.join(&chunk.file);
+                    let part = dir.join(format!("{}.part", chunk.file));
                     let created = async {
                         tokio::fs::create_dir_all(&dir).await?;
-                        tokio::fs::File::create(dir.join(&chunk.file)).await
+                        tokio::fs::File::create(&part).await
                     }
                     .await;
                     match created {
                         Ok(file) => {
-                            open.insert(key.clone(), Incoming { file, written: 0 });
+                            open.insert(
+                                key.clone(),
+                                Incoming {
+                                    file,
+                                    written: 0,
+                                    part,
+                                    path,
+                                },
+                            );
                         }
                         Err(e) => {
                             warn!(
@@ -1235,30 +1257,42 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     continue;
                 };
                 use tokio::io::AsyncWriteExt;
-                let ok = chunk.offset == incoming.written
+                let mut ok = chunk.offset == incoming.written
                     && incoming.file.write_all(&chunk.data).await.is_ok();
+                if ok {
+                    incoming.written += chunk.data.len() as u64;
+                }
+                if ok && chunk.last {
+                    ok = incoming.file.flush().await.is_ok()
+                        && tokio::fs::rename(&incoming.part, &incoming.path)
+                            .await
+                            .is_ok();
+                    if ok {
+                        open.remove(&key);
+                        files.remove(&chunk.file);
+                        continue;
+                    }
+                }
                 if !ok {
                     warn!(
                         "gaggle: worker {id}'s {} arrived out of order or could not be written",
                         chunk.file
                     );
-                    open.remove(&key);
+                    if let Some(incoming) = open.remove(&key) {
+                        incoming.abandon().await;
+                    }
                     if let Some(log) = files.remove(&chunk.file) {
                         run.logs_left.push(left(&run.workers[id as usize], &log));
                     }
-                    continue;
-                }
-                incoming.written += chunk.data.len() as u64;
-                if chunk.last {
-                    let _ = incoming.file.flush().await;
-                    open.remove(&key);
-                    files.remove(&chunk.file);
                 }
             }
             Event::Lost { id, why } => {
                 warn!("gaggle: worker {id} lost while sending its logs: {why}");
                 if let Some(files) = pending.get_mut(&id) {
-                    for (_, log) in std::mem::take(files) {
+                    for (file, log) in std::mem::take(files) {
+                        if let Some(incoming) = open.remove(&(id, file)) {
+                            incoming.abandon().await;
+                        }
                         run.logs_left.push(left(&run.workers[id as usize], &log));
                     }
                 }
@@ -1267,7 +1301,10 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
         }
     }
     for (id, files) in pending {
-        for (_, log) in files {
+        for (file, log) in files {
+            if let Some(incoming) = open.remove(&(id, file)) {
+                incoming.abandon().await;
+            }
             let entry = left(&run.workers[id as usize], &log);
             warn!(
                 "gaggle: worker {}'s log {} was not complete within {} seconds; it stays on the worker",
@@ -1337,6 +1374,163 @@ mod tests {
             gone: false,
             run_folder: Some("/runs/w".to_string()),
         }
+    }
+
+    /// A manager run of one finished worker, connected through a client of
+    /// the test's own, collecting `logs`: the run, the client's sender, and
+    /// its stream from the manager, past the Welcome.
+    async fn collecting(
+        logs: Vec<LogSpec>,
+    ) -> (
+        ManagerRun,
+        tokio::sync::mpsc::Sender<crate::gaggle::proto::WorkerMessage>,
+        tonic::Streaming<crate::gaggle::proto::ManagerMessage>,
+    ) {
+        use crate::gaggle::manager::handshake_tests::{channel, hello, open};
+        let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+        let mut inbound = inbound.unwrap();
+        let welcome = inbound.message().await.unwrap().unwrap();
+        assert!(matches!(welcome.message, Some(ToWorker::Welcome(_))));
+        let run = ManagerRun {
+            manager,
+            workers: vec![WorkerEntry {
+                stopped: Some(Reason::Stopped),
+                ..entry()
+            }],
+            logs,
+            logs_left: Vec::new(),
+            clock_second: None,
+            stop_sent: true,
+            ending: false,
+            health: MergeHealth::default(),
+        };
+        (run, tx, inbound)
+    }
+
+    /// The request log, as `--request-log` without a path asks for it.
+    fn request_log() -> LogSpec {
+        LogSpec {
+            kind: 0,
+            format: None,
+            manager_file: "requests.json".to_string(),
+            gzip: false,
+        }
+    }
+
+    /// Wait on `inbound` for `SendLogs`, skipping heartbeats.
+    async fn send_logs_asked(
+        inbound: &mut tonic::Streaming<crate::gaggle::proto::ManagerMessage>,
+    ) {
+        loop {
+            match inbound.message().await.unwrap().and_then(|m| m.message) {
+                Some(ToWorker::SendLogs(_)) => return,
+                Some(ToWorker::Heartbeat(_)) => continue,
+                other => panic!("{:?}", other),
+            }
+        }
+    }
+
+    /// A log chunk, as a worker sends it.
+    fn chunk(
+        file: &str,
+        offset: u64,
+        data: &[u8],
+        last: bool,
+    ) -> crate::gaggle::proto::WorkerMessage {
+        crate::gaggle::proto::WorkerMessage {
+            message: Some(crate::gaggle::proto::worker_message::Message::LogChunk(
+                crate::gaggle::proto::LogChunk {
+                    file: file.to_string(),
+                    offset,
+                    data: data.to_vec(),
+                    last,
+                },
+            )),
+        }
+    }
+
+    /// Every file under `folder`, relative to it.
+    fn files_under(folder: &std::path::Path) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut dirs = vec![folder.to_path_buf()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else {
+                    found.push(
+                        path.strip_prefix(folder)
+                            .unwrap()
+                            .display()
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        found.sort();
+        found
+    }
+
+    /// A worker lost part way through sending a log leaves no file under
+    /// the log's name, nor any part of it, and the log is recorded as left
+    /// on the worker; a log that arrives whole is renamed into place.
+    #[tokio::test]
+    async fn a_log_cut_off_part_way_leaves_no_file() {
+        let test = async {
+            let folder = std::env::temp_dir().join(format!(
+                "goose-gaggle-cut-log-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&folder);
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                tx.send(chunk("requests.json", 0, b"half", false))
+                    .await
+                    .unwrap();
+                // The worker goes before the rest of the log.
+                drop(tx);
+                drop(inbound);
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            worker.await.unwrap();
+            assert_eq!(files_under(&folder), Vec::<String>::new());
+            assert_eq!(
+                run.logs_left,
+                [GaggleLogLeft {
+                    worker: "w".to_string(),
+                    path: "/runs/w/requests.json".to_string(),
+                }]
+            );
+
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                tx.send(chunk("requests.json", 0, b"whole ", false))
+                    .await
+                    .unwrap();
+                tx.send(chunk("requests.json", 6, b"log", true))
+                    .await
+                    .unwrap();
+                (tx, inbound)
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            drop(worker.await.unwrap());
+            assert_eq!(files_under(&folder), ["workers/w/requests.json"]);
+            assert_eq!(
+                std::fs::read(folder.join("workers/w/requests.json")).unwrap(),
+                b"whole log"
+            );
+            assert!(run.logs_left.is_empty(), "{:?}", run.logs_left);
+            let _ = std::fs::remove_dir_all(&folder);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
     }
 
     /// A worker that finished after sending metrics, but whose final delta

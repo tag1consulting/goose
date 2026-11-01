@@ -26,6 +26,16 @@ const MIN_HEARTBEAT_TIMEOUT_SECS: u64 = 3;
 /// given.
 pub(crate) const TOKEN_ENV: &str = "GOOSE_GAGGLE_TOKEN";
 
+/// The option that sets each log, by its index in
+/// [`LOG_NAMES`](crate::runs::LOG_NAMES).
+const LOG_OPTIONS: [&str; crate::runs::LOG_NAMES.len()] = [
+    "--request-log",
+    "--transaction-log",
+    "--scenario-log",
+    "--error-log",
+    "--debug-log",
+];
+
 /// The error a refused Gaggle option combination returns.
 fn refused(option: &str, value: impl ToString, detail: impl Into<String>) -> GooseError {
     GooseError::InvalidOption {
@@ -345,6 +355,25 @@ impl GooseConfiguration {
                     ),
                 ));
             }
+            // The manager keeps each worker's logs in one folder, by the
+            // name each log flag gives.
+            let logs = crate::gaggle::spec::log_specs(self);
+            for (at, log) in logs.iter().enumerate() {
+                if let Some(other) = logs[at + 1..]
+                    .iter()
+                    .find(|other| other.manager_file.eq_ignore_ascii_case(&log.manager_file))
+                {
+                    let (first, second) = (LOG_OPTIONS[log.kind as usize], LOG_OPTIONS[other.kind as usize]);
+                    return Err(refused(
+                        second,
+                        &other.manager_file,
+                        format!(
+                            "{first} and {second} both name their log {:?}: a manager keeps each worker's logs in one folder, so each needs a file name of its own.",
+                            log.manager_file
+                        ),
+                    ));
+                }
+            }
             // A worker with no users, when there are more workers than
             // users, takes no share of the throttle.
             let workers = self.expect_workers.unwrap_or(1);
@@ -508,6 +537,21 @@ mod tests {
                 (
                     with(&["--no-hash-check"], &[]),
                     "--no-hash-check needs --manager or --worker",
+                ),
+                (
+                    with(
+                        &manager,
+                        &["--request-log", "a/x.log", "--error-log", "b/X.log"],
+                    ),
+                    "--request-log and --error-log both name their log \"x.log\"",
+                ),
+                (
+                    // A path that takes a log's default name.
+                    with(
+                        &manager,
+                        &["--transaction-log", "--debug-log", "elsewhere/transactions.json"],
+                    ),
+                    "--transaction-log and --debug-log both name their log \"transactions.json\"",
                 ),
                 (
                     with(&worker, &["--gaggle-token", "two words"]),

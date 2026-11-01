@@ -1091,12 +1091,12 @@ mod tests {
 }
 
 #[cfg(test)]
-mod handshake_tests {
+pub(crate) mod handshake_tests {
     use super::super::proto::gaggle_client::GaggleClient;
     use super::*;
 
     /// A channel to `manager`.
-    async fn channel(manager: &Manager) -> tonic::transport::Channel {
+    pub(crate) async fn channel(manager: &Manager) -> tonic::transport::Channel {
         tonic::transport::Endpoint::from_shared(format!("http://{}", manager.local_addr))
             .unwrap()
             .connect()
@@ -1106,7 +1106,7 @@ mod handshake_tests {
 
     /// Open a stream on `channel` that says `hello`, presenting `token`:
     /// what is left to send on it, and its answer.
-    async fn open(
+    pub(crate) async fn open(
         channel: tonic::transport::Channel,
         hello: Hello,
         token: Option<&str>,
@@ -1253,7 +1253,7 @@ mod handshake_tests {
             .expect("within 30 seconds");
     }
 
-    fn hello() -> Hello {
+    pub(crate) fn hello() -> Hello {
         Hello {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_version: PROTOCOL_VERSION,
