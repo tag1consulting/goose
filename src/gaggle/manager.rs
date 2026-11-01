@@ -768,8 +768,9 @@ async fn lose(shared: &Shared, id: u32, lost: &AtomicBool, why: String) {
 /// flow control holds the worker back. Nothing the main loop waits on is
 /// held here while it waits: the main loop only ever takes events and
 /// sends with `try_send`, and the lock on `heard` is released before.
-/// `heard` is refreshed when an event is queued too, so a worker held back
-/// by a slow main loop is not taken for a silent one.
+/// `heard` is refreshed as each message arrives, before it is queued, and
+/// again while a full queue holds it, so a worker held back by a slow main
+/// loop is never taken for a silent one.
 async fn read_worker(
     worker: Joined,
     mut inbound: tonic::Streaming<WorkerMessage>,
@@ -850,15 +851,24 @@ async fn read_worker(
                 .ok();
             shared.events.send_async((event, permit)).await
         };
-        let queued = tokio::select! {
-            queued = queue => queued,
-            () = closing => break,
+        let (mut queue, mut closing) = (std::pin::pin!(queue), std::pin::pin!(closing));
+        // While the queue is full, the manager is what holds the worker
+        // back: it has not gone silent.
+        let mut holding =
+            tokio::time::interval(HEARTBEAT_INTERVAL.min(shared.heartbeat_timeout / 2));
+        let queued = loop {
+            tokio::select! {
+                queued = &mut queue => break Some(queued),
+                () = &mut closing => break None,
+                _ = holding.tick() => {
+                    if let Ok(mut heard) = heard.lock() {
+                        *heard = Instant::now();
+                    }
+                }
+            }
         };
-        if queued.is_err() {
+        if !matches!(queued, Some(Ok(()))) {
             break;
-        }
-        if let Ok(mut heard) = heard.lock() {
-            *heard = Instant::now();
         }
     }
     // A worker that stopped as told, then went away, is not lost: the
@@ -1560,6 +1570,59 @@ pub(crate) mod handshake_tests {
                 ..hello()
             };
             assert_eq!(answer(&unchecked, other_plan, None).await, Ok(0));
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A worker held back by a full event queue for longer than the
+    /// heartbeat timeout is not lost: the manager, not the worker, is what
+    /// holds it.
+    #[tokio::test]
+    async fn a_worker_held_by_a_full_queue_is_not_lost() {
+        use super::super::proto::LogChunk;
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(1))
+                .await
+                .unwrap();
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let _inbound = inbound.unwrap();
+            const CHUNKS: u64 = 2 * EVENT_QUEUE as u64;
+            let sender = tokio::spawn(async move {
+                for offset in 0..CHUNKS {
+                    let chunk = LogChunk {
+                        file: "requests.json".to_string(),
+                        offset,
+                        data: vec![b'x'; 1 << 10],
+                        last: offset + 1 == CHUNKS,
+                        error: None,
+                    };
+                    if tx
+                        .send(WorkerMessage {
+                            message: Some(FromWorker::LogChunk(chunk)),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                tx
+            });
+            // Three heartbeat timeouts with the queue full and nothing taken.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            assert_eq!(manager.events.len(), EVENT_QUEUE);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut chunks = 0;
+            while chunks < CHUNKS {
+                match manager.next_event(deadline).await {
+                    Some(Event::Log { .. }) => chunks += 1,
+                    Some(Event::Joined) => {}
+                    other => panic!("{:?}", other),
+                }
+            }
+            drop(sender.await);
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
