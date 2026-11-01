@@ -1275,6 +1275,19 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     continue;
                 }
                 let key = (id, chunk.file.clone());
+                if let Some(why) = chunk.error.as_deref() {
+                    warn!(
+                        "gaggle: worker {id} could not send its {}: {why}",
+                        chunk.file
+                    );
+                    if let Some(incoming) = open.remove(&key) {
+                        incoming.abandon().await;
+                    }
+                    if let Some(log) = files.remove(&chunk.file) {
+                        run.logs_left.push(left(&run.workers[id as usize], &log));
+                    }
+                    continue;
+                }
                 if !open.contains_key(&key) {
                     let name = &run.workers[id as usize].name;
                     let dir = folder.join("workers").join(name);
@@ -1488,6 +1501,37 @@ mod tests {
         }
     }
 
+    /// A log the worker says it could not read is recorded as left on it,
+    /// and the manager creates no file for it.
+    #[tokio::test]
+    async fn a_log_the_worker_could_not_read_is_left_on_it() {
+        let test = async {
+            let folder = std::env::temp_dir()
+                .join(format!("goose-gaggle-unread-log-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&folder);
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                let mut failed = chunk("requests.json", 0, b"", true);
+                if let Some(crate::gaggle::proto::worker_message::Message::LogChunk(chunk)) =
+                    failed.message.as_mut()
+                {
+                    chunk.error = Some("permission denied".to_string());
+                }
+                tx.send(failed).await.unwrap();
+                (tx, inbound)
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            drop(worker.await.unwrap());
+            assert_eq!(files_under(&folder), Vec::<String>::new());
+            assert_eq!(run.logs_left.len(), 1, "{:?}", run.logs_left);
+            let _ = std::fs::remove_dir_all(&folder);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// A log chunk, as a worker sends it.
     fn chunk(
         file: &str,
@@ -1502,6 +1546,7 @@ mod tests {
                     offset,
                     data: data.to_vec(),
                     last,
+                    error: None,
                 },
             )),
         }

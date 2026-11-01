@@ -671,13 +671,15 @@ impl Link {
             for (file, path) in logs {
                 if let Err(e) = send_log(&outbox, &file, &path).await {
                     warn!("gaggle: could not send log {}: {e}", path.display());
-                    // End the file, so the manager does not wait for it.
+                    // End the file with why, so the manager stops waiting
+                    // for it and records it left here.
                     outbox
                         .push_chunk(LogChunk {
                             file,
-                            offset: u64::MAX,
+                            offset: 0,
                             data: Vec::new(),
                             last: true,
+                            error: Some(e.to_string()),
                         })
                         .await;
                 }
@@ -722,6 +724,7 @@ async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::i
                     offset: 0,
                     data: Vec::new(),
                     last: true,
+                    error: None,
                 })
                 .await;
             return Ok(());
@@ -750,6 +753,7 @@ async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::i
                     offset,
                     data: chunk,
                     last: end,
+                    error: None,
                 })
                 .await;
             offset += filled as u64;

@@ -132,6 +132,10 @@ pub struct LogChunk {
     /// The file's last chunk.
     #[prost(bool, tag = "4")]
     pub last: bool,
+    /// Why the worker could not read the log: no data comes, and the log
+    /// stays on the worker.
+    #[prost(string, optional, tag = "5")]
+    pub error: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// What a manager sends.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

@@ -81,6 +81,9 @@ message LogChunk {
   bytes data = 3;
   // The file's last chunk.
   bool last = 4;
+  // Why the worker could not read the log: no data comes, and the log
+  // stays on the worker.
+  optional string error = 5;
 }
 
 // What a manager sends.
