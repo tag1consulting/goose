@@ -1009,8 +1009,7 @@ impl GooseAttack {
                 .folder
                 .as_ref()
                 .map(|folder| folder.path.clone());
-            let compress = self.configuration.compress.is_some();
-            collect_logs(run, folder, compress).await;
+            collect_logs(run, folder).await;
         }
         self.gaggle = Some(role);
     }
@@ -1081,12 +1080,12 @@ fn last_merged(health: &MergeHealth, id: u32) -> u64 {
 }
 
 /// The name a worker gives log `log` in its own run folder.
-fn worker_file(log: &LogSpec, compress: bool) -> String {
+fn worker_file(log: &LogSpec) -> String {
     let mut file = log_file_name(
         LOG_NAMES[log.kind as usize % LOG_NAMES.len()],
         log.format.as_ref(),
     );
-    if compress {
+    if log.gzip {
         file.push_str(".gz");
     }
     file
@@ -1098,15 +1097,15 @@ struct Incoming {
     written: u64,
 }
 
-async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>, compress: bool) {
+async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     if run.logs.is_empty() {
         return;
     }
     let left = |worker: &WorkerEntry, log: &LogSpec| GaggleLogLeft {
         worker: worker.name.clone(),
         path: match &worker.run_folder {
-            Some(folder) => format!("{folder}/{}", worker_file(log, compress)),
-            None => worker_file(log, compress),
+            Some(folder) => format!("{folder}/{}", worker_file(log)),
+            None => worker_file(log),
         },
     };
     // Each worker's logs still to come, by the name the manager keeps them

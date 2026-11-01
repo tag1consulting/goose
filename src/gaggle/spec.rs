@@ -19,6 +19,9 @@ pub(crate) struct LogSpec {
     pub(crate) format: Option<GooseLogFormat>,
     /// The file name the manager keeps it under, as its log flag gives it.
     pub(crate) manager_file: String,
+    /// Whether the worker writes it gzipped: whether `manager_file` ends in
+    /// `.gz`, as one process gzips a log of that name and no other.
+    pub(crate) gzip: bool,
 }
 
 /// A worker's share of the load test.
@@ -183,6 +186,7 @@ pub(crate) fn log_specs(configuration: &GooseConfiguration) -> Vec<LogSpec> {
             Some(LogSpec {
                 kind: kind as u8,
                 format: (*format).clone(),
+                gzip: manager_file.ends_with(".gz"),
                 manager_file,
             })
         })
@@ -292,6 +296,13 @@ impl WorkerRunSpec {
         configuration.request_body = self.request_body;
         configuration.no_debug_body = self.no_debug_body;
         configuration.compress = self.compress;
+        let mut gzip = [false; 5];
+        for log in &self.logs {
+            if let Some(gzipped) = gzip.get_mut(log.kind as usize) {
+                *gzipped = log.gzip;
+            }
+        }
+        configuration.gaggle_log_gzip = Some(gzip);
         for log in &self.logs {
             let run_folder = Some(RUN_FOLDER.to_string());
             match log.kind {
@@ -329,7 +340,7 @@ impl WorkerRunSpec {
             .iter()
             .map(|log| {
                 let mut file = log_file_name(LOG_NAMES[log.kind as usize % 5], log.format.as_ref());
-                if self.compress.is_some() {
+                if log.gzip {
                     file.push_str(".gz");
                 }
                 (log.manager_file.clone(), folder.file(&file))

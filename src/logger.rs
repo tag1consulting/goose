@@ -1145,7 +1145,7 @@ impl GooseConfiguration {
         // named in the run's folder.
         let mut configuration = self.clone();
         if let Some(folder) = folder {
-            for (log, name, format) in [
+            for (kind, (log, name, format)) in IntoIterator::into_iter([
                 (
                     &mut configuration.request_log,
                     LOG_NAMES[0],
@@ -1171,10 +1171,12 @@ impl GooseConfiguration {
                     LOG_NAMES[4],
                     &self.debug_format,
                 ),
-            ] {
+            ])
+            .enumerate()
+            {
                 if log.as_deref() == Some(RUN_FOLDER) {
                     let mut file = log_file_name(name, format.as_ref());
-                    if self.compress.is_some() {
+                    if self.gzips_log(kind) {
                         file.push_str(".gz");
                     }
                     let path = folder.file(&file);

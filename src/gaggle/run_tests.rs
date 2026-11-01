@@ -707,3 +707,71 @@ async fn gaggle_manager_client_options_win_on_workers() {
         .await
         .expect("within 60 seconds");
 }
+
+/// Each worker's copy of the request log in the run in `folder`.
+fn worker_logs(folder: &Path, file: &str) -> Vec<Vec<u8>> {
+    let workers = folder.join("manager").join("workers");
+    let mut logs: Vec<Vec<u8>> = std::fs::read_dir(&workers)
+        .unwrap_or_else(|e| panic!("{}: {e}", workers.display()))
+        .map(|entry| {
+            let path = entry.unwrap().path().join(file);
+            std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        })
+        .collect();
+    logs.sort();
+    logs
+}
+
+/// A collected log's bytes match its name: one named `.gz` arrives gzipped
+/// without --compress, and one named without `.gz` arrives plain with it,
+/// as one process writes a log of either name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_collected_logs_match_their_names() {
+    use std::io::Read;
+    for (file, compress) in [("custom.json.gz", false), ("plain.json", true)] {
+        let server = answering().await;
+        let folder = scratch("log-names");
+        let log = folder.join(file).display().to_string();
+        let mut args = vec![
+            "--users",
+            "2",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "2",
+            "--request-log",
+            &log,
+        ];
+        if compress {
+            args.push("--compress");
+        }
+        let run = gaggle(&server, &folder, &args);
+        tokio::time::timeout(Duration::from_secs(30), run)
+            .await
+            .expect("the Gaggle ends within 30 seconds")
+            .expect("the manager exits cleanly");
+        let logs = worker_logs(&folder, file);
+        assert_eq!(logs.len(), 2, "{file}");
+        for bytes in logs {
+            let gzipped = bytes.starts_with(&[0x1f, 0x8b]);
+            assert_eq!(gzipped, file.ends_with(".gz"), "{file}");
+            let text = if gzipped {
+                let mut text = String::new();
+                flate2::read::MultiGzDecoder::new(&bytes[..])
+                    .read_to_string(&mut text)
+                    .unwrap_or_else(|e| panic!("{file} is not valid gzip: {e}"));
+                text
+            } else {
+                String::from_utf8(bytes).unwrap()
+            };
+            assert!(text.lines().count() > 0, "{file} is empty");
+            assert!(
+                text.starts_with('{'),
+                "{file}: {}",
+                &text[..text.len().min(80)]
+            );
+        }
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+}

@@ -999,6 +999,13 @@ pub struct GooseConfiguration {
     #[arg(skip)]
     #[serde(skip)]
     pub(crate) gaggle_records_graph: bool,
+    /// Which logs a Gaggle worker gzips, by index into the log names: each
+    /// one whose name its manager keeps ends in `.gz`, and no other, as one
+    /// process writes a log of that name, whatever `--compress` says.
+    #[cfg(feature = "gaggle")]
+    #[arg(skip)]
+    #[serde(skip)]
+    pub(crate) gaggle_log_gzip: Option<[bool; 5]>,
 }
 
 /// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an
@@ -1130,6 +1137,8 @@ impl std::fmt::Debug for GooseConfiguration {
             gaggle_heartbeat_timeout,
             #[cfg(feature = "gaggle")]
             gaggle_records_graph,
+            #[cfg(feature = "gaggle")]
+            gaggle_log_gzip,
         } = self;
         let mut debug = f.debug_struct("GooseConfiguration");
         debug
@@ -1224,7 +1233,8 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("gaggle_token", &shown_token(gaggle_token))
             .field("no_hash_check", no_hash_check)
             .field("gaggle_heartbeat_timeout", gaggle_heartbeat_timeout)
-            .field("gaggle_records_graph", gaggle_records_graph);
+            .field("gaggle_records_graph", gaggle_records_graph)
+            .field("gaggle_log_gzip", gaggle_log_gzip);
         debug.finish()
     }
 }
@@ -4292,6 +4302,18 @@ impl GooseConfiguration {
     }
 
     /// The gzip level for every gzipped file: `--compress`, or 6.
+    /// Whether a log given without a path is gzipped, `kind` its index in
+    /// the log names: with `--compress`, or as a Gaggle worker's manager
+    /// names it.
+    pub(crate) fn gzips_log(&self, kind: usize) -> bool {
+        #[cfg(feature = "gaggle")]
+        if let Some(gzip) = self.gaggle_log_gzip {
+            return gzip.get(kind).copied().unwrap_or(false);
+        }
+        let _ = kind;
+        self.compress.is_some()
+    }
+
     pub(crate) fn compression_level(&self) -> u32 {
         self.compress.unwrap_or(DEFAULT_COMPRESSION_LEVEL)
     }
