@@ -123,7 +123,7 @@ pub(crate) struct GaggleAccumulator {
     /// worker is left out until it reports the new epoch, rather than show
     /// the old epoch's figures as current, and a delta from a later epoch is
     /// refused.
-    min_epoch: u64,
+    epoch: u64,
     /// The merged figures, kept as deltas arrive and built again on demand.
     merged: RefCell<Merged>,
 }
@@ -172,7 +172,7 @@ impl GaggleAccumulator {
             workers: BTreeMap::new(),
             gaps: None,
             gaps_dropped: 0,
-            min_epoch: 0,
+            epoch: 0,
             merged: RefCell::new(Merged {
                 current: true,
                 ..Merged::default()
@@ -192,12 +192,12 @@ impl GaggleAccumulator {
     ///
     /// The delta is untrusted: one that fails [`GaggleDelta::validate`],
     /// names another worker, is of an epoch past the manager's own (see
-    /// [`Self::set_min_epoch`]), follows the worker's final delta, covers
+    /// [`Self::set_epoch`]), follows the worker's final delta, covers
     /// sequence numbers partly applied already, or would take the worker
     /// past [`DeltaLimits::max_names`] or [`Bounds::WORKER`] is refused,
     /// and changes nothing.
     pub(crate) fn apply(&mut self, from: u32, delta: GaggleDelta) -> Result<(), DeltaError> {
-        let run_epoch = self.run_epoch();
+        let run_epoch = self.epoch;
         let known = self.workers.contains_key(&from);
         let taken = self.take(from, &delta)?;
         let merged = self.merged.get_mut();
@@ -238,9 +238,9 @@ impl GaggleAccumulator {
             });
         }
         delta.validate(&self.limits)?;
-        let ahead = (delta.epoch > self.min_epoch).then_some(DeltaError::EpochAhead {
+        let ahead = (delta.epoch > self.epoch).then_some(DeltaError::EpochAhead {
             epoch: delta.epoch,
-            run: self.min_epoch,
+            run: self.epoch,
         });
         let Some(worker) = self.workers.get_mut(&from) else {
             if let Some(ahead) = ahead {
@@ -407,11 +407,12 @@ impl GaggleAccumulator {
         self.settings.columns = keep;
     }
 
-    /// Merge only metrics epoch `epoch` or newer from now on: the manager
-    /// reset the metrics, starting it.
-    pub(crate) fn set_min_epoch(&mut self, epoch: u64) {
-        if epoch > self.min_epoch {
-            self.min_epoch = epoch;
+    /// Merge only metrics epoch `epoch` from now on, the manager having
+    /// reset its metrics: a worker on an older epoch is left out, and a
+    /// delta of a newer one is refused.
+    pub(crate) fn set_epoch(&mut self, epoch: u64) {
+        if epoch > self.epoch {
+            self.epoch = epoch;
             self.merged.get_mut().current = false;
         }
     }
@@ -466,12 +467,6 @@ impl GaggleAccumulator {
             .filter(|worker| !worker.finished && !worker.lost)
             .map(|worker| worker.total.now.saturating_sub(1))
             .min()
-    }
-
-    /// The epoch whose metrics are merged: the manager's own, never one a
-    /// worker reports.
-    fn run_epoch(&self) -> u64 {
-        self.min_epoch
     }
 
     /// The workers [`Self::merged_and_excluded`] leaves out (tests).
@@ -565,8 +560,7 @@ impl GaggleAccumulator {
     /// Every worker's figures of the run's epoch added up, from their
     /// totals, and the workers left out, with why.
     fn merge_parts(&self) -> Merged {
-        let run_epoch = self.run_epoch();
-        let epoch = Some(run_epoch);
+        let run_epoch = self.epoch;
         let mut merged = Merged {
             current: true,
             ..Merged::default()
@@ -579,7 +573,7 @@ impl GaggleAccumulator {
         } = &mut merged;
         for (&id, worker) in &self.workers {
             let (part, rows) = (&worker.total.metrics, &worker.total.graph);
-            if Some(worker.total.epoch) != epoch {
+            if worker.total.epoch != run_epoch {
                 excluded.push((
                     id,
                     format!(

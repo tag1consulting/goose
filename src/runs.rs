@@ -122,7 +122,8 @@ fn is_zero(n: &u64) -> bool {
 }
 
 /// Where a Gaggle worker stood when the manager wrote its run record.
-/// Non exhaustive, so a state added later is not a breaking change.
+/// Non exhaustive for when the run record types are made public: adding a
+/// state then breaks no `match` outside Goose.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -145,6 +146,7 @@ pub(crate) struct GaggleWorkerRecord {
     pub name: String,
     /// The users it started over the run.
     pub users: usize,
+    /// Where it stood when the record was written.
     pub state: WorkerState,
     /// When it was lost, RFC 3339, UTC.
     #[serde(default, skip_serializing_if = "Option::is_none")]

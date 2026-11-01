@@ -73,7 +73,7 @@ impl MetricsProcessor {
         accumulator.set_max_second(crate::gaggle::run::CLOCK_SLACK);
         // The run's epoch is this processor's: the run's start began it on
         // the manager, as on every worker.
-        accumulator.set_min_epoch(self.metrics_epoch.load(AtomicOrdering::Relaxed));
+        accumulator.set_epoch(self.metrics_epoch.load(AtomicOrdering::Relaxed));
         self.gaggle_merge = Some(Box::new(ManagerMerge {
             accumulator,
             dirty: true,
@@ -149,7 +149,7 @@ impl MetricsProcessor {
                     // hold `rps` rules count from, holds none of the ramp.
                     let epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
                     if let Some(merge) = self.gaggle_merge.as_mut() {
-                        merge.accumulator.set_min_epoch(epoch);
+                        merge.accumulator.set_epoch(epoch);
                         merge.dirty = true;
                         merge.built = None;
                     }

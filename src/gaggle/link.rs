@@ -618,7 +618,6 @@ impl Link {
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
             forced: link.forced.clone(),
-            last_resort_after: LAST_RESORT_AFTER,
             // A unit test's worker never ends the test binary, unless told.
             #[cfg(test)]
             record_exit: !settings.exit_for_real,
@@ -858,8 +857,6 @@ struct Switch {
     done: Arc<AtomicBool>,
     /// Set when the last resort ends the process.
     forced: Arc<AtomicBool>,
-    /// How long the last resort waits for `execute()` to return.
-    last_resort_after: Duration,
     /// The last resort records that it would have ended the process, in
     /// `forced`, instead of ending it (unit tests).
     #[cfg(test)]
@@ -901,7 +898,7 @@ impl Switch {
     fn last_resort(&self, message: &'static str) {
         let done = self.done.clone();
         let forced = self.forced.clone();
-        let after = self.last_resort_after;
+        let after = LAST_RESORT_AFTER;
         #[cfg(test)]
         let record_exit = self.record_exit;
         std::thread::spawn(move || {
@@ -1105,7 +1102,7 @@ mod tests {
         outbox.close();
         let mut accumulator = crate::gaggle::tests::accumulator();
         // The deltas here are of epoch 1, the manager's own.
-        accumulator.set_min_epoch(1);
+        accumulator.set_epoch(1);
         while let Some(message) = next(&outbox).await {
             if let Some(ToManager::Metrics(metrics)) = message.message {
                 accumulator
@@ -1221,7 +1218,6 @@ mod tests {
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(true)),
             forced: Arc::new(AtomicBool::new(false)),
-            last_resort_after: LAST_RESORT_AFTER,
             record_exit: true,
         };
         (switch, received, outbox)

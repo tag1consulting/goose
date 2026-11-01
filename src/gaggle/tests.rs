@@ -569,7 +569,7 @@ pub(crate) fn accumulator() -> GaggleAccumulator {
 /// taken. A delta of a newer epoch follows the manager's own reset, which
 /// started it.
 fn apply(accumulator: &mut GaggleAccumulator, delta: &GaggleDelta) {
-    accumulator.set_min_epoch(delta.epoch);
+    accumulator.set_epoch(delta.epoch);
     accumulator.apply(delta.worker, wire(delta)).unwrap();
 }
 
@@ -1560,7 +1560,7 @@ fn held() -> GaggleAccumulator {
     )
     .keeping_gaps();
     // The manager reset its metrics once, starting epoch 1.
-    accumulator.set_min_epoch(1);
+    accumulator.set_epoch(1);
     let mut first = counted(0, 1, 1);
     first
         .graph
