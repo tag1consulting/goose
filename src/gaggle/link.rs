@@ -349,13 +349,6 @@ impl Outbox {
         self.state.lock().map_or(true, |state| state.closed)
     }
 
-    /// Whether nothing is queued.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.state
-            .lock()
-            .map_or(true, |state| state.queue.is_empty())
-    }
-
     /// The deltas queued (unit tests).
     #[cfg(test)]
     pub(crate) fn queued_deltas(&self) -> usize {
@@ -405,6 +398,10 @@ pub(crate) struct Link {
     fired: Arc<AtomicBool>,
     /// Set when the switch's last resort ends the process.
     forced: Arc<AtomicBool>,
+    /// Set once the request stream ended, everything queued taken.
+    sent_all: tokio::sync::watch::Receiver<bool>,
+    /// Closed once the manager's stream ended.
+    manager_open: tokio::sync::watch::Receiver<()>,
 }
 
 /// What [`Link::connect`] needs. No `Debug`: it holds the token.
@@ -445,12 +442,20 @@ pub(crate) fn worker_name() -> String {
 }
 
 /// The request stream: everything the outbox gives, in order.
+/// `ended` is set once the outbox is closed and everything queued was
+/// taken: the request stream then ends.
 fn outbound(
     outbox: Arc<Outbox>,
+    ended: tokio::sync::watch::Sender<bool>,
 ) -> impl tokio_stream::Stream<Item = WorkerMessage> + Send + 'static {
-    futures::stream::unfold(outbox, |outbox| async move {
-        let message = outbox.next().await?;
-        Some((message, outbox))
+    futures::stream::unfold((outbox, ended), |(outbox, ended)| async move {
+        match outbox.next().await {
+            Some(message) => Some((message, (outbox, ended))),
+            None => {
+                let _ = ended.send(true);
+                None
+            }
+        }
     })
 }
 
@@ -531,7 +536,8 @@ impl Link {
             .max_encoding_message_size(MAX_MESSAGE);
         let outbox = Arc::new(Outbox::default());
         outbox.push_message(ToManager::Hello(settings.hello.clone()));
-        let mut request = tonic::Request::new(outbound(outbox.clone()));
+        let (ended, sent_all) = tokio::sync::watch::channel(false);
+        let mut request = tonic::Request::new(outbound(outbox.clone(), ended));
         if let Some(token) = settings.token.as_deref() {
             // The options refuse a token that is not printable ASCII.
             let mut value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> =
@@ -576,6 +582,8 @@ impl Link {
             settings.address
         );
         let (events_tx, events) = flume::unbounded();
+        // Held by the reader of the manager's stream until that stream ends.
+        let (open, manager_open) = tokio::sync::watch::channel(());
         let link = Link {
             id,
             outbox,
@@ -586,6 +594,8 @@ impl Link {
             users_stopped: Arc::new(AtomicBool::new(false)),
             fired: Arc::new(AtomicBool::new(false)),
             forced: Arc::new(AtomicBool::new(false)),
+            sent_all,
+            manager_open,
         };
         let heard = Arc::new(Mutex::new(Instant::now()));
         let switch = Switch {
@@ -604,6 +614,7 @@ impl Link {
         };
         tokio::spawn(read_manager(
             inbound,
+            open,
             events_tx,
             heard.clone(),
             link.shutdown.clone(),
@@ -692,13 +703,20 @@ impl Link {
         self.outbox.close();
     }
 
-    /// Close the stream, and give what is queued up to 2 seconds to leave.
+    /// Close the stream, and give what is queued up to 2 seconds to reach
+    /// the manager: until the request stream has ended, everything queued
+    /// sent, and then the manager's stream has closed, as it does once the
+    /// manager has read the worker's last message and shut it down. An
+    /// empty queue alone is not enough: its last message may still wait
+    /// behind flow control.
     pub(crate) async fn flush(&self) {
         self.close();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline && !self.outbox.is_empty() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        let (mut sent_all, mut manager_open) = (self.sent_all.clone(), self.manager_open.clone());
+        let _ = tokio::time::timeout(Duration::from_secs(2), async move {
+            let _ = sent_all.wait_for(|&sent| sent).await;
+            while manager_open.changed().await.is_ok() {}
+        })
+        .await;
     }
 }
 
@@ -889,6 +907,8 @@ impl Switch {
 /// Read the manager's stream until it ends, as events.
 async fn read_manager(
     mut inbound: tonic::Streaming<super::proto::ManagerMessage>,
+    // Dropped as this returns: the manager's stream has ended.
+    _open: tokio::sync::watch::Sender<()>,
     events: flume::Sender<LinkEvent>,
     heard: Arc<Mutex<Instant>>,
     shutdown: Arc<AtomicBool>,
@@ -1206,6 +1226,8 @@ mod tests {
             users_stopped: switch.users_stopped.clone(),
             fired: switch.fired.clone(),
             forced: switch.forced.clone(),
+            sent_all: tokio::sync::watch::channel(true).1,
+            manager_open: tokio::sync::watch::channel(()).1,
         }
     }
 
@@ -1458,6 +1480,61 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(60), test)
             .await
             .expect("within 60 seconds");
+    }
+
+    /// A worker that fails, its last message behind a slow link, gives it
+    /// time to arrive: `flush` returns only once the manager has read it and
+    /// shut the worker down, never as soon as the queue is empty.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn flush_waits_for_the_last_message_to_arrive() {
+        use super::super::manager::{Event, Manager};
+        let test = async {
+            let manager = Arc::new(
+                Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
+                    .await
+                    .unwrap(),
+            );
+            let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(200)).await;
+            let link = Link::connect(LinkSettings {
+                address: proxy.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(30),
+                hello: LinkSettings::hello(7, "failing".to_string()),
+                token: None,
+                exit_for_real: false,
+            })
+            .await
+            .unwrap();
+            // The manager, as its run does: a worker that failed is shut down.
+            let stopped = Arc::new(AtomicBool::new(false));
+            let watching = {
+                let (manager, stopped) = (manager.clone(), stopped.clone());
+                tokio::spawn(async move {
+                    let deadline = Instant::now() + Duration::from_secs(20);
+                    while let Some(event) = manager.next_event(deadline).await {
+                        if let Event::Stopped { id, .. } = event {
+                            stopped.store(true, Ordering::SeqCst);
+                            manager.shut_down(id);
+                            return;
+                        }
+                    }
+                })
+            };
+            link.stopped(Stopped {
+                reason: Reason::Failed as i32,
+                canceled: "test".to_string(),
+                run_folder: String::new(),
+            });
+            link.flush().await;
+            assert!(
+                stopped.load(Ordering::SeqCst),
+                "flush returned before the manager had the last message"
+            );
+            watching.await.unwrap();
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
     }
 
     /// A start delay past a minute is refused, never a panic, up to the
