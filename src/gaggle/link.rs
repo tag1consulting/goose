@@ -254,6 +254,17 @@ impl Outbox {
         self.queued.notify_one();
     }
 
+    /// Queue a heartbeat ahead of everything queued, unless one waits there
+    /// already: a stalled link never gathers heartbeats to send in a burst.
+    fn push_heartbeat(&self) {
+        if let Ok(state) = self.state.lock() {
+            if let Some(Outgoing::Message(ToManager::Heartbeat(_))) = state.queue.front() {
+                return;
+            }
+        }
+        self.push(Outgoing::Message(ToManager::Heartbeat(Heartbeat {})), true);
+    }
+
     /// Queue a message after everything queued.
     pub(crate) fn push_message(&self, message: ToManager) {
         self.push(Outgoing::Message(message), false);
@@ -986,7 +997,7 @@ async fn heartbeat_manager(
         }
         if last_sent.elapsed() >= HEARTBEAT_INTERVAL {
             last_sent = Instant::now();
-            outbox.push(Outgoing::Message(ToManager::Heartbeat(Heartbeat {})), true);
+            outbox.push_heartbeat();
         }
     }
 }
@@ -1181,14 +1192,21 @@ mod tests {
             .expect("the stalled connection closes within 30 seconds");
     }
 
-    /// A heartbeat goes ahead of what is queued.
+    /// A heartbeat goes ahead of what is queued, and only one waits: on a
+    /// stalled link they never pile up to leave in a burst.
     #[tokio::test]
     async fn heartbeats_go_first() {
         let outbox = Outbox::default();
         outbox.push_delta(delta(1));
-        outbox.push(Outgoing::Message(ToManager::Heartbeat(Heartbeat {})), true);
+        for _ in 0..3 {
+            outbox.push_heartbeat();
+        }
+        outbox.close();
         let first = next(&outbox).await.unwrap();
         assert!(matches!(first.message, Some(ToManager::Heartbeat(_))));
+        let second = next(&outbox).await.unwrap();
+        assert!(matches!(second.message, Some(ToManager::Metrics(_))));
+        assert!(next(&outbox).await.is_none());
     }
 
     /// A switch over `users`, its events and outbox; `done` set, and its
