@@ -667,9 +667,6 @@ pub struct GooseAttack {
     scenario_machine_names: HashSet<String>,
     /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
-    /// How the `--gaggle-shadow-merge` self check ended, once it has.
-    #[cfg(feature = "gaggle")]
-    gaggle_shadow: Option<Arc<Mutex<Option<gaggle::shadow::ShadowOutcome>>>>,
     /// The global ordinal of this process's first user: 0, unless it runs a
     /// share of a Gaggle's users. User indexes, the users each scenario
     /// counts and coordinated omission events all count from it.
@@ -684,25 +681,9 @@ pub struct GooseAttack {
     worker_data_hook: Option<Arc<WorkerDataHook>>,
     /// What the hook returned for this process, given to every user.
     worker_data: Option<Arc<[u8]>>,
-    /// The manager or worker side of a Gaggle, with `--manager` or `--worker`.
+    /// Everything a Gaggle manager or worker keeps, and the shadow merge.
     #[cfg(feature = "gaggle")]
-    gaggle: Option<gaggle::run::GaggleRole>,
-    /// Where a manager reports the address it listens on (unit tests).
-    #[cfg(all(test, feature = "gaggle"))]
-    gaggle_bound: Option<tokio::sync::oneshot::Sender<std::net::SocketAddr>>,
-    /// What a worker does wrong on purpose (unit tests).
-    #[cfg(all(test, feature = "gaggle"))]
-    gaggle_test_faults: gaggle::run::TestFaults,
-    /// Where a manager reports each worker joining (unit tests).
-    #[cfg(all(test, feature = "gaggle"))]
-    gaggle_joins: Option<tokio::sync::mpsc::UnboundedSender<usize>>,
-    /// Where the client settings every user gets are reported (unit tests).
-    #[cfg(all(test, feature = "gaggle"))]
-    gaggle_client_report: Option<tokio::sync::oneshot::Sender<client::GooseClientConfig>>,
-    /// The client options the command line gave: a Gaggle manager hands its
-    /// own to each worker, and a worker takes them in place of its own.
-    #[cfg(feature = "gaggle")]
-    client_command_line: client::CommandLineClientOptions,
+    gaggle: gaggle::run::GaggleState,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
     /// Configuration object holding options set when launching the load test.
@@ -825,25 +806,13 @@ impl GooseAttack {
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
             #[cfg(feature = "gaggle")]
-            gaggle_shadow: None,
-            #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
             user_slice: None,
             worker_data_hook: None,
             worker_data: None,
             #[cfg(feature = "gaggle")]
-            gaggle: None,
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_bound: None,
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_test_faults: Default::default(),
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_joins: None,
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_client_report: None,
-            #[cfg(feature = "gaggle")]
-            client_command_line: Default::default(),
+            gaggle: Default::default(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -892,25 +861,13 @@ impl GooseAttack {
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
             #[cfg(feature = "gaggle")]
-            gaggle_shadow: None,
-            #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
             user_slice: None,
             worker_data_hook: None,
             worker_data: None,
             #[cfg(feature = "gaggle")]
-            gaggle: None,
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_bound: None,
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_test_faults: Default::default(),
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_joins: None,
-            #[cfg(all(test, feature = "gaggle"))]
-            gaggle_client_report: None,
-            #[cfg(feature = "gaggle")]
-            client_command_line: Default::default(),
+            gaggle: Default::default(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -1331,7 +1288,7 @@ impl GooseAttack {
             Some(builder) => {
                 let config = builder.resolve(command_line_client_options, &self.configuration);
                 #[cfg(all(test, feature = "gaggle"))]
-                if let Some(report) = self.gaggle_client_report.take() {
+                if let Some(report) = self.gaggle.client_report.take() {
                     let _ = report.send(config.clone());
                 }
                 Some(config.into_strategy()?)
@@ -1373,7 +1330,7 @@ impl GooseAttack {
     /// directory without one, and an error.
     #[cfg(feature = "gaggle")]
     fn gaggle_shadow_report(&mut self) -> Result<(), GooseError> {
-        let Some(slot) = self.gaggle_shadow.take() else {
+        let Some(slot) = self.gaggle.shadow.take() else {
             return Ok(());
         };
         let outcome = slot.lock().ok().and_then(|mut outcome| outcome.take());
@@ -1812,7 +1769,7 @@ impl GooseAttack {
             client::CommandLineClientOptions::from_command_line(&self.configuration);
         #[cfg(feature = "gaggle")]
         {
-            self.client_command_line = command_line_client_options;
+            self.gaggle.client_command_line = command_line_client_options;
         }
 
         // A worker takes every option that shapes the load from its manager.
@@ -1876,7 +1833,7 @@ impl GooseAttack {
         // Gaggle worker's options came from its manager's command line, and win
         // over its builder as a command line does.
         #[cfg(feature = "gaggle")]
-        let command_line_client_options = self.client_command_line;
+        let command_line_client_options = self.gaggle.client_command_line;
         self.build_client_strategy(command_line_client_options)?;
 
         // With a validated GooseConfiguration, enter a run mode.
@@ -3774,12 +3731,6 @@ impl GooseAttack {
         !self.is_gaggle_worker() && !self.configuration.no_autostart
     }
 
-    /// Whether Idle waits for something other than a Controller: a Gaggle
-    /// worker waits for its manager.
-    fn gaggle_waits_idle(&self) -> bool {
-        self.is_gaggle_worker()
-    }
-
     /// Whether this process is a Gaggle manager: never without the `gaggle`
     /// feature, which alone sets that mode.
     pub(crate) fn is_gaggle_manager(&self) -> bool {
@@ -3964,7 +3915,7 @@ impl GooseAttack {
         if self.configuration.gaggle_shadow_merge {
             let outcome = Arc::new(Mutex::new(None));
             processor.gaggle_enable_shadow(outcome.clone());
-            self.gaggle_shadow = Some(outcome);
+            self.gaggle.shadow = Some(outcome);
             goose_attack_run_state.gaggle_shadow_second = None;
         } else if self.is_gaggle_manager() {
             let (limits, health) = self.gaggle_merge_settings();
@@ -4054,8 +4005,9 @@ impl GooseAttack {
             match self.attack_phase {
                 // In the Idle phase the Goose configuration can be changed by a Controller,
                 // and otherwise nothing happens but sleeping an checking for messages.
-                AttackPhase::Idle if self.gaggle_waits_idle() => {
-                    #[cfg(feature = "gaggle")]
+                // A Gaggle worker waits for its manager, not a Controller.
+                #[cfg(feature = "gaggle")]
+                AttackPhase::Idle if self.is_gaggle_worker() => {
                     self.gaggle_worker_idle(goose_attack_run_state).await?;
                 }
                 AttackPhase::Idle => {
@@ -4131,7 +4083,7 @@ impl GooseAttack {
 
             // `--gaggle-shadow-merge`: one delta each second.
             #[cfg(feature = "gaggle")]
-            if self.gaggle_shadow.is_some() && self.series_started.is_some() {
+            if self.gaggle.shadow.is_some() && self.series_started.is_some() {
                 let now = self.series_elapsed_secs();
                 if goose_attack_run_state.gaggle_shadow_second != Some(now) {
                     goose_attack_run_state.gaggle_shadow_second = Some(now);

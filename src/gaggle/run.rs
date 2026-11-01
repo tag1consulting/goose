@@ -73,6 +73,31 @@ pub(crate) struct TestFaults {
     pub(crate) exit_for_real: bool,
 }
 
+/// What a [`GooseAttack`] keeps for a Gaggle.
+#[derive(Default)]
+pub(crate) struct GaggleState {
+    /// The manager or worker side, with `--manager` or `--worker`.
+    pub(crate) role: Option<GaggleRole>,
+    /// How the `--gaggle-shadow-merge` self check ended, once it has.
+    pub(crate) shadow: Option<Arc<std::sync::Mutex<Option<super::shadow::ShadowOutcome>>>>,
+    /// The client options the command line gave: a manager hands its own to
+    /// each worker, and a worker takes them in place of its own.
+    pub(crate) client_command_line: crate::client::CommandLineClientOptions,
+    /// Where a manager reports the address it listens on (unit tests).
+    #[cfg(test)]
+    pub(crate) bound: Option<tokio::sync::oneshot::Sender<std::net::SocketAddr>>,
+    /// What a worker does wrong on purpose (unit tests).
+    #[cfg(test)]
+    pub(crate) test_faults: TestFaults,
+    /// Where a manager reports each worker joining (unit tests).
+    #[cfg(test)]
+    pub(crate) joins: Option<tokio::sync::mpsc::UnboundedSender<usize>>,
+    /// Where the client settings every user gets are reported (unit tests).
+    #[cfg(test)]
+    pub(crate) client_report:
+        Option<tokio::sync::oneshot::Sender<crate::client::GooseClientConfig>>,
+}
+
 /// This process's side of a Gaggle.
 pub(crate) enum GaggleRole {
     Manager(Box<ManagerRun>),
@@ -256,7 +281,7 @@ impl GooseAttack {
     /// what it did with each worker's deltas: user ordinals below the
     /// users this run starts, worker ids below the workers it expects.
     pub(crate) fn gaggle_merge_settings(&self) -> (DeltaLimits, MergeHealth) {
-        let health = match self.gaggle.as_ref() {
+        let health = match self.gaggle.role.as_ref() {
             Some(GaggleRole::Manager(run)) => run.health.clone(),
             _ => MergeHealth::default(),
         };
@@ -271,7 +296,7 @@ impl GooseAttack {
 
     /// The link to a worker's manager.
     pub(crate) fn gaggle_link(&self) -> Option<&Link> {
-        match self.gaggle.as_ref() {
+        match self.gaggle.role.as_ref() {
             Some(GaggleRole::Worker(run)) => Some(&run.link),
             _ => None,
         }
@@ -280,7 +305,7 @@ impl GooseAttack {
     /// Have a worker do something wrong on purpose (unit tests).
     #[cfg(test)]
     pub(crate) fn gaggle_test_faults(mut self, faults: TestFaults) -> Self {
-        self.gaggle_test_faults = faults;
+        self.gaggle.test_faults = faults;
         self
     }
 
@@ -290,7 +315,7 @@ impl GooseAttack {
         mut self,
         report: tokio::sync::oneshot::Sender<crate::client::GooseClientConfig>,
     ) -> Self {
-        self.gaggle_client_report = Some(report);
+        self.gaggle.client_report = Some(report);
         self
     }
 
@@ -298,7 +323,7 @@ impl GooseAttack {
     /// tests).
     #[cfg(test)]
     pub(crate) fn report_joins(mut self, joins: tokio::sync::mpsc::UnboundedSender<usize>) -> Self {
-        self.gaggle_joins = Some(joins);
+        self.gaggle.joins = Some(joins);
         self
     }
 
@@ -308,7 +333,7 @@ impl GooseAttack {
         mut self,
         bound: tokio::sync::oneshot::Sender<std::net::SocketAddr>,
     ) -> Self {
-        self.gaggle_bound = Some(bound);
+        self.gaggle.bound = Some(bound);
         self
     }
 
@@ -332,7 +357,7 @@ impl GooseAttack {
         )
         .await?;
         #[cfg(test)]
-        if let Some(bound) = self.gaggle_bound.take() {
+        if let Some(bound) = self.gaggle.bound.take() {
             let _ = bound.send(manager.local_addr);
         }
 
@@ -343,7 +368,7 @@ impl GooseAttack {
                 Some(Event::Joined) => {
                     joined += 1;
                     #[cfg(test)]
-                    if let Some(joins) = self.gaggle_joins.as_ref() {
+                    if let Some(joins) = self.gaggle.joins.as_ref() {
                         let _ = joins.send(joined);
                     }
                 }
@@ -385,7 +410,7 @@ impl GooseAttack {
         };
         let specs = spec::worker_specs(
             &self.configuration,
-            self.client_command_line,
+            self.gaggle.client_command_line,
             &self.test_plan.steps,
             &order,
             expected,
@@ -480,7 +505,7 @@ impl GooseAttack {
             "gaggle: every worker is ready; starting in {} seconds",
             START_DELAY.as_secs()
         );
-        self.gaggle = Some(GaggleRole::Manager(Box::new(ManagerRun {
+        self.gaggle.role = Some(GaggleRole::Manager(Box::new(ManagerRun {
             manager,
             workers,
             logs: spec::log_specs(&self.configuration),
@@ -517,7 +542,7 @@ impl GooseAttack {
             hello,
             token: self.configuration.gaggle_token().map(str::to_string),
             #[cfg(test)]
-            exit_for_real: self.gaggle_test_faults.exit_for_real,
+            exit_for_real: self.gaggle.test_faults.exit_for_real,
         })
         .await?;
         // The manager waits for its other workers and runs test_start: the
@@ -554,24 +579,24 @@ impl GooseAttack {
             spec.worker, spec.workers, spec.users, spec.user_offset
         );
         spec.configure(&mut self.configuration);
-        self.client_command_line = spec.client_command_line;
+        self.gaggle.client_command_line = spec.client_command_line;
         self.set_user_slice(spec.user_offset, spec.slice.clone());
         self.worker_data = Some(Arc::from(std::mem::take(&mut spec.custom_data)));
         let skip_reset = std::env::var_os(TEST_SKIP_RESET_ENV).is_some();
         #[cfg(test)]
-        let skip_reset = skip_reset || self.gaggle_test_faults.skip_reset;
+        let skip_reset = skip_reset || self.gaggle.test_faults.skip_reset;
         #[cfg(test)]
-        if self.gaggle_test_faults.refused_delta {
+        if self.gaggle.test_faults.refused_delta {
             link.outbox
                 .corrupt_next
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         #[cfg(test)]
         link.outbox.corrupt_from.store(
-            self.gaggle_test_faults.refuse_from,
+            self.gaggle.test_faults.refuse_from,
             std::sync::atomic::Ordering::Relaxed,
         );
-        self.gaggle = Some(GaggleRole::Worker(Box::new(WorkerRun {
+        self.gaggle.role = Some(GaggleRole::Worker(Box::new(WorkerRun {
             link,
             spec,
             start_at: None,
@@ -598,7 +623,7 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        let start_at = match self.gaggle.as_mut() {
+        let start_at = match self.gaggle.role.as_mut() {
             Some(GaggleRole::Worker(run)) => run.start_at,
             _ => None,
         };
@@ -613,7 +638,7 @@ impl GooseAttack {
         }
         tokio::time::sleep_until(at).await;
         let late = tokio::time::Instant::now().saturating_duration_since(at);
-        if let Some(GaggleRole::Worker(run)) = self.gaggle.as_mut() {
+        if let Some(GaggleRole::Worker(run)) = self.gaggle.role.as_mut() {
             run.start_at = None;
             run.started_late = Some(late);
         }
@@ -632,7 +657,7 @@ impl GooseAttack {
         self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
         // A worker holding no users, with --iterations, has nothing to
         // run: its users have all exited, as the manager waits to hear.
-        let pending = match self.gaggle.as_mut() {
+        let pending = match self.gaggle.role.as_mut() {
             Some(GaggleRole::Worker(run)) => run.pending_reset.take(),
             _ => None,
         };
@@ -659,14 +684,14 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        let Some(mut role) = self.gaggle.take() else {
+        let Some(mut role) = self.gaggle.role.take() else {
             return Ok(());
         };
         let result = match &mut role {
             GaggleRole::Manager(run) => self.manager_tick(goose_attack_run_state, run).await,
             GaggleRole::Worker(run) => self.worker_tick(goose_attack_run_state, run).await,
         };
-        self.gaggle = Some(role);
+        self.gaggle.role = Some(role);
         result
     }
 
@@ -915,7 +940,7 @@ impl GooseAttack {
             ack,
         };
         #[cfg(test)]
-        let hold = self.gaggle_test_faults.silent_reset;
+        let hold = self.gaggle.test_faults.silent_reset;
         #[cfg(not(test))]
         let hold = false;
         let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
@@ -933,7 +958,7 @@ impl GooseAttack {
     /// The manager's metrics reset, at the end of its ramp: every worker
     /// resets too.
     pub(crate) fn gaggle_manager_reset(&self, epoch: u64) {
-        if let Some(GaggleRole::Manager(run)) = self.gaggle.as_ref() {
+        if let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_ref() {
             info!("gaggle: resetting every worker's metrics");
             run.manager
                 .broadcast(ToWorker::ResetMetrics(ResetMetrics { epoch }));
@@ -947,7 +972,7 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        let Some(mut role) = self.gaggle.take() else {
+        let Some(mut role) = self.gaggle.role.take() else {
             return Ok(());
         };
         let result = match &mut role {
@@ -957,7 +982,7 @@ impl GooseAttack {
             }
             GaggleRole::Worker(run) => self.worker_stopped(goose_attack_run_state, run).await,
         };
-        self.gaggle = Some(role);
+        self.gaggle.role = Some(role);
         result
     }
 
@@ -1013,7 +1038,7 @@ impl GooseAttack {
             respond,
         };
         #[cfg(test)]
-        let hold = self.gaggle_test_faults.silent_final;
+        let hold = self.gaggle.test_faults.silent_final;
         #[cfg(not(test))]
         let hold = false;
         let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
@@ -1066,7 +1091,7 @@ impl GooseAttack {
     /// gives up its transfers; a log not whole then
     /// stays on its worker, and the run record says so.
     pub(crate) async fn gaggle_collect_logs(&mut self) {
-        let Some(mut role) = self.gaggle.take() else {
+        let Some(mut role) = self.gaggle.role.take() else {
             return;
         };
         if let GaggleRole::Manager(run) = &mut role {
@@ -1077,19 +1102,19 @@ impl GooseAttack {
                 .map(|folder| folder.path.clone());
             collect_logs(run, folder).await;
         }
-        self.gaggle = Some(role);
+        self.gaggle.role = Some(role);
     }
 
     /// The manager, after its reports: tell every worker to shut down.
     pub(crate) async fn gaggle_shut_down(&mut self) {
-        if let Some(GaggleRole::Manager(run)) = self.gaggle.as_mut() {
+        if let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_mut() {
             run.manager.shut_down_all().await;
         }
     }
 
     /// The Gaggle section of the manager's run record.
     pub(crate) fn gaggle_run_record(&self) -> Option<GaggleRecord> {
-        let Some(GaggleRole::Manager(run)) = self.gaggle.as_ref() else {
+        let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_ref() else {
             return None;
         };
         let health = run
@@ -1648,7 +1673,7 @@ mod tests {
                 crate::config::GooseConfiguration::parse_args_default(&["--host", "http://h"])
                     .unwrap();
             let mut attack = GooseAttack::initialize_with_config(configuration).unwrap();
-            attack.gaggle = Some(GaggleRole::Manager(Box::new(ManagerRun {
+            attack.gaggle.role = Some(GaggleRole::Manager(Box::new(ManagerRun {
                 manager,
                 workers: vec![WorkerEntry {
                     stopped: Some(Reason::Stopped),
