@@ -339,8 +339,11 @@ pub(crate) struct Link {
     /// Set when the worker's `execute()` returns, so the switch's last resort
     /// never ends a process that went on to do something else.
     pub(crate) done: Arc<AtomicBool>,
-    /// Set once the dead man's switch fired, or `Shutdown` came: a user
-    /// started after it is stopped at once.
+    /// Set once every user was stopped, by the dead man's switch, `Shutdown`
+    /// or [`Link::stop_users`]: a user started after it is stopped at once.
+    users_stopped: Arc<AtomicBool>,
+    /// Set only when the dead man's switch fires: the heartbeats stop and
+    /// it fires no more.
     fired: Arc<AtomicBool>,
     /// Set when the switch's last resort ends the process.
     forced: Arc<AtomicBool>,
@@ -355,6 +358,10 @@ pub(crate) struct LinkSettings {
     pub(crate) hello: Hello,
     /// The token, sent in the request's metadata.
     pub(crate) token: Option<String>,
+    /// The switch's last resort ends the process for real, rather than
+    /// record that it would have (unit tests).
+    #[cfg(test)]
+    pub(crate) exit_for_real: bool,
 }
 
 impl LinkSettings {
@@ -513,18 +520,24 @@ impl Link {
             users: Arc::new(Mutex::new(Vec::new())),
             shutdown: Arc::new(AtomicBool::new(false)),
             done: Arc::new(AtomicBool::new(false)),
+            users_stopped: Arc::new(AtomicBool::new(false)),
             fired: Arc::new(AtomicBool::new(false)),
             forced: Arc::new(AtomicBool::new(false)),
         };
         let heard = Arc::new(Mutex::new(Instant::now()));
         let switch = Switch {
             fired: link.fired.clone(),
+            users_stopped: link.users_stopped.clone(),
             users: link.users.clone(),
             events: events_tx.clone(),
             outbox: link.outbox.clone(),
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
             forced: link.forced.clone(),
+            last_resort_after: LAST_RESORT_AFTER,
+            // A unit test's worker never ends the test binary, unless told.
+            #[cfg(test)]
+            record_exit: !settings.exit_for_real,
         };
         tokio::spawn(read_manager(
             inbound,
@@ -545,9 +558,9 @@ impl Link {
     /// Watch a user task, so the dead man's switch can stop it.
     pub(crate) fn watch(&self, user: tokio::task::AbortHandle) {
         if let Ok(mut users) = self.users.lock() {
-            // The switch sets `fired` before it takes this lock to abort
-            // every user, so either it sees this user or this sees `fired`.
-            if self.fired.load(Ordering::SeqCst) {
+            // Every user is stopped by setting `users_stopped` before taking
+            // this lock, so either that sees this user or this sees the flag.
+            if self.users_stopped.load(Ordering::SeqCst) {
                 user.abort();
                 return;
             }
@@ -558,8 +571,9 @@ impl Link {
     }
 
     /// Stop every user at once, and any started later, as the switch does.
+    /// The switch stays armed, and the heartbeats go on.
     pub(crate) fn stop_users(&self) {
-        abort_users(&self.users, &self.fired, false);
+        abort_users(&self.users, &self.users_stopped, false);
     }
 
     /// The next event if one is waiting.
@@ -696,20 +710,19 @@ fn error_chain(error: &dyn std::error::Error) -> String {
     text
 }
 
-/// In a unit test the switch's last resort records that it would have
-/// ended the process, instead of ending the test binary.
-#[cfg(test)]
-pub(crate) static RECORD_EXITS: AtomicBool = AtomicBool::new(false);
+/// How long after the switch fires, or `Shutdown` finds users running, a
+/// worker whose `execute()` has not returned ends its process.
+const LAST_RESORT_AFTER: Duration = Duration::from_secs(2);
 
 /// Stop users at once, every one or, with `running_only`, those not yet
-/// finished, and any started later: `fired` is set before `users` is
+/// finished, and any started later: `stopped` is set before `users` is
 /// locked, so [`Link::watch`] sees one or the other. How many it stopped.
 fn abort_users(
     users: &Mutex<Vec<tokio::task::AbortHandle>>,
-    fired: &AtomicBool,
+    stopped: &AtomicBool,
     running_only: bool,
 ) -> usize {
-    fired.store(true, Ordering::SeqCst);
+    stopped.store(true, Ordering::SeqCst);
     let Ok(users) = users.lock() else {
         return 0;
     };
@@ -727,7 +740,9 @@ fn abort_users(
 /// The dead man's switch.
 #[derive(Clone)]
 struct Switch {
+    /// Set when it fires, and only then.
     fired: Arc<AtomicBool>,
+    users_stopped: Arc<AtomicBool>,
     users: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
     events: flume::Sender<LinkEvent>,
     outbox: Arc<Outbox>,
@@ -735,6 +750,12 @@ struct Switch {
     done: Arc<AtomicBool>,
     /// Set when the last resort ends the process.
     forced: Arc<AtomicBool>,
+    /// How long the last resort waits for `execute()` to return.
+    last_resort_after: Duration,
+    /// The last resort records that it would have ended the process, in
+    /// `forced`, instead of ending it (unit tests).
+    #[cfg(test)]
+    record_exit: bool,
 }
 
 impl Switch {
@@ -747,7 +768,7 @@ impl Switch {
             return;
         }
         error!("gaggle: lost the manager ({why}); stopping every user");
-        abort_users(&self.users, &self.fired, false);
+        abort_users(&self.users, &self.users_stopped, false);
         self.outbox.close();
         let _ = self.events.send(LinkEvent::Lost(why));
         self.last_resort("gaggle: lost the manager and the worker has not exited; exiting now");
@@ -758,7 +779,7 @@ impl Switch {
     /// worker whose `execute()` has not returned 2 seconds later exits with
     /// an error status, as when the switch fires: the main loop may be held.
     fn shut_down(&self) {
-        let running = abort_users(&self.users, &self.fired, true);
+        let running = abort_users(&self.users, &self.users_stopped, true);
         if running > 0 {
             warn!("gaggle: the manager said shut down with {running} users running; stopping them");
             self.last_resort(
@@ -767,18 +788,21 @@ impl Switch {
         }
     }
 
-    /// End the process with an error status 2 seconds from now, unless the
-    /// worker's `execute()` has returned by then.
+    /// End the process with an error status [`LAST_RESORT_AFTER`] from now,
+    /// unless the worker's `execute()` has returned by then.
     fn last_resort(&self, message: &'static str) {
         let done = self.done.clone();
         let forced = self.forced.clone();
+        let after = self.last_resort_after;
+        #[cfg(test)]
+        let record_exit = self.record_exit;
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(after);
             if !done.load(Ordering::Relaxed) {
                 eprintln!("{message}");
                 forced.store(true, Ordering::Relaxed);
                 #[cfg(test)]
-                if RECORD_EXITS.load(Ordering::Relaxed) {
+                if record_exit {
                     return;
                 }
                 std::process::exit(1);
@@ -1044,8 +1068,8 @@ mod tests {
         assert!(matches!(first.message, Some(ToManager::Heartbeat(_))));
     }
 
-    /// A switch over `users`, its events and outbox; `done` set, so its last
-    /// resort never ends the test binary.
+    /// A switch over `users`, its events and outbox; `done` set, and its
+    /// last resort recording, so it never ends the test binary.
     fn switch(
         users: Vec<tokio::task::AbortHandle>,
         heartbeat_timeout: Duration,
@@ -1054,14 +1078,70 @@ mod tests {
         let outbox = Arc::new(Outbox::default());
         let switch = Switch {
             fired: Arc::new(AtomicBool::new(false)),
+            users_stopped: Arc::new(AtomicBool::new(false)),
             users: Arc::new(Mutex::new(users)),
             events,
             outbox: outbox.clone(),
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(true)),
             forced: Arc::new(AtomicBool::new(false)),
+            last_resort_after: LAST_RESORT_AFTER,
+            record_exit: true,
         };
         (switch, received, outbox)
+    }
+
+    /// A link over `switch`'s users, events and flags.
+    fn link_of(switch: &Switch, outbox: Arc<Outbox>, events: flume::Receiver<LinkEvent>) -> Link {
+        Link {
+            id: 0,
+            outbox,
+            events,
+            users: switch.users.clone(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            done: switch.done.clone(),
+            users_stopped: switch.users_stopped.clone(),
+            fired: switch.fired.clone(),
+            forced: switch.forced.clone(),
+        }
+    }
+
+    /// Stopping the users, as a worker that fails a phase does, leaves the
+    /// switch armed: heartbeats still go, and a manager that then goes
+    /// silent fires it.
+    #[tokio::test]
+    async fn stopping_users_leaves_the_switch_armed() {
+        let user = tokio::spawn(std::future::pending::<()>());
+        let (switch, events, outbox) = switch(
+            vec![user.abort_handle()],
+            HEARTBEAT_INTERVAL + Duration::from_secs(1),
+        );
+        let link = link_of(&switch, outbox.clone(), events);
+        let heard = Arc::new(Mutex::new(Instant::now()));
+        let task = tokio::spawn(heartbeat_manager(
+            outbox.clone(),
+            heard,
+            link.shutdown.clone(),
+            switch.clone(),
+        ));
+        link.stop_users();
+        let ended = tokio::time::timeout(Duration::from_secs(30), user)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
+        assert!(!switch.fired.load(Ordering::SeqCst));
+        // A heartbeat still leaves, after the users stopped.
+        let first = next(&outbox).await.expect("a heartbeat");
+        assert!(matches!(first.message, Some(ToManager::Heartbeat(_))));
+        // Nothing heard from the manager: the switch fires.
+        tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .expect("the heartbeat task ends")
+            .unwrap();
+        assert!(switch.fired.load(Ordering::SeqCst));
+        assert!(
+            matches!(link.try_event(), Some(LinkEvent::Lost(why)) if why.starts_with("nothing from it"))
+        );
     }
 
     /// The dead man's switch aborts every user at once, tells the main loop,
@@ -1107,16 +1187,7 @@ mod tests {
     #[tokio::test]
     async fn a_user_started_after_the_switch_is_stopped() {
         let (switch, events, outbox) = switch(Vec::new(), Duration::from_secs(10));
-        let link = Link {
-            id: 0,
-            outbox,
-            events,
-            users: switch.users.clone(),
-            shutdown: Arc::new(AtomicBool::new(false)),
-            done: switch.done.clone(),
-            fired: switch.fired.clone(),
-            forced: switch.forced.clone(),
-        };
+        let link = link_of(&switch, outbox, events);
         switch.fire("test".to_string());
         let late = tokio::spawn(std::future::pending::<()>());
         link.watch(late.abort_handle());
@@ -1130,11 +1201,9 @@ mod tests {
     /// held: every user is stopped at once, and the last resort ends the
     /// worker 2 seconds later, as when the switch fires.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial_test::serial]
     async fn shutdown_stops_users_while_the_main_loop_is_held() {
         use super::super::manager::Manager;
         let test = async {
-            RECORD_EXITS.store(true, Ordering::Relaxed);
             let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
                 .await
                 .unwrap();
@@ -1144,6 +1213,7 @@ mod tests {
                 heartbeat_timeout: Duration::from_secs(10),
                 hello: LinkSettings::hello(7, "held".to_string()),
                 token: None,
+                exit_for_real: false,
             })
             .await
             .unwrap();
@@ -1173,9 +1243,7 @@ mod tests {
     /// `Shutdown` after every user finished, as at the end of a run, stops
     /// nothing and arms no last resort.
     #[tokio::test]
-    #[serial_test::serial]
     async fn shutdown_after_the_run_arms_nothing() {
-        RECORD_EXITS.store(true, Ordering::Relaxed);
         let finished = tokio::spawn(async {});
         let handle = finished.abort_handle();
         finished.await.unwrap();
@@ -1222,6 +1290,7 @@ mod tests {
                 heartbeat_timeout: Duration::from_secs(10),
                 hello: LinkSettings::hello(7, "stalled".to_string()),
                 token: None,
+                exit_for_real: false,
             }),
         )
         .await

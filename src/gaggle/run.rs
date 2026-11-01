@@ -67,6 +67,8 @@ pub(crate) struct TestFaults {
     pub(crate) silent_final: bool,
     /// The metrics processor never answers a reset.
     pub(crate) silent_reset: bool,
+    /// The dead man's switch's last resort ends the process for real.
+    pub(crate) exit_for_real: bool,
 }
 
 /// This process's side of a Gaggle.
@@ -502,6 +504,8 @@ impl GooseAttack {
             heartbeat_timeout: self.configuration.gaggle_heartbeat_timeout(),
             hello,
             token: self.configuration.gaggle_token().map(str::to_string),
+            #[cfg(test)]
+            exit_for_real: self.gaggle_test_faults.exit_for_real,
         })
         .await?;
         // The manager waits for its other workers and runs test_start: the

@@ -157,10 +157,6 @@ async fn gaggle_ends(
     Vec<Result<GooseMetrics, crate::GooseError>>,
 ) {
     no_token_from_the_environment();
-    // A worker that fails, or is shut down with users still running, arms
-    // the switch's last resort: here it records, rather than ends this
-    // test binary.
-    super::link::RECORD_EXITS.store(true, std::sync::atomic::Ordering::Relaxed);
     let count_text = count.to_string();
     let host = server.base_url();
     let manager_folder = folder.join("manager").display().to_string();
@@ -383,9 +379,6 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
 async fn gaggle_worker_survives_its_manager_going_before_the_run() {
     let test = async {
         no_token_from_the_environment();
-        // The last resort ends the process for real here: that it does not
-        // is what this test checks.
-        super::link::RECORD_EXITS.store(false, std::sync::atomic::Ordering::Relaxed);
         let server = MockServer::start_async().await;
         let host = server.base_url();
         let (bound, address) = tokio::sync::oneshot::channel();
@@ -419,7 +412,13 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             "--manager-port",
             &port,
             "--quiet",
-        ]));
+        ]))
+        // The last resort ends the process for real here: that it does not
+        // is what this test checks.
+        .gaggle_test_faults(TestFaults {
+            exit_for_real: true,
+            ..Default::default()
+        });
         let worker = tokio::spawn(worker.execute());
         // Once it joined, the manager goes.
         assert_eq!(joined.recv().await, Some(1));
@@ -435,9 +434,9 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
         // itself done, the process would have exited.
         tokio::time::sleep(Duration::from_secs(5)).await;
     };
-    let result = tokio::time::timeout(Duration::from_secs(30), test).await;
-    super::link::RECORD_EXITS.store(true, std::sync::atomic::Ordering::Relaxed);
-    result.expect("within 30 seconds");
+    tokio::time::timeout(Duration::from_secs(30), test)
+        .await
+        .expect("within 30 seconds");
 }
 
 /// The run record of the run in `folder`, and its HTML report.
