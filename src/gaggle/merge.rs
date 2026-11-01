@@ -656,3 +656,125 @@ fn build_metrics(template: &GooseMetrics, part: &MetricsPart) -> GooseMetrics {
     }
     metrics
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gaggle::delta::{Average, Histogram, RequestPart, Timing};
+    use crate::metrics::buckets::bucket_floor;
+    use std::time::Instant;
+
+    /// One second of one worker's figures, `names` request names each with
+    /// a few response times, as delta `seq`, covering `first_seq` on.
+    fn second(
+        worker: u32,
+        first_seq: u64,
+        seq: u64,
+        seconds: std::ops::Range<u64>,
+        names: usize,
+    ) -> GaggleDelta {
+        let mut delta = GaggleDelta::new(worker, seq, 0, DeltaKind::Delta);
+        delta.first_seq = first_seq;
+        delta.now = seconds.end;
+        for name in 0..names {
+            let key = format!("GET /{name}");
+            let mut request =
+                RequestPart::new(&format!("/{name}"), crate::goose::GooseMethod::Get, "");
+            let count = seconds.end - seconds.start;
+            let times: Vec<u64> = [1_000, 5_000, 20_000]
+                .iter()
+                .map(|&us| bucket_floor(us + name as u64 * 100))
+                .collect();
+            request.raw = Timing {
+                buckets: times.iter().map(|&us| (us, count)).collect(),
+                minimum_us: times[0],
+                maximum_us: times[2],
+                total_us: times.iter().sum::<u64>() * count,
+                count: 3 * count,
+            };
+            request.status_codes.insert(200, 3 * count);
+            request.success = 3 * count as i64;
+            delta.metrics.requests.insert(key.clone(), request);
+            for s in seconds.clone() {
+                delta
+                    .graph
+                    .requests
+                    .entry(key.clone())
+                    .or_default()
+                    .insert(s, 3);
+                delta.graph.averages.entry(key.clone()).or_default().insert(
+                    s,
+                    Average {
+                        count: 3,
+                        sum_ms: 26.0 + 0.3 * name as f64,
+                    },
+                );
+                delta.graph.latency.entry(key.clone()).or_default().insert(
+                    s,
+                    Histogram {
+                        rows: vec![(10, 1), (20, 1), (30, 1)],
+                        minimum_us: times[0],
+                        maximum_us: times[2],
+                        total_us: times.iter().sum(),
+                        count: 3,
+                    },
+                );
+            }
+        }
+        for s in seconds {
+            delta.graph.transactions.insert(s, 3 * names as u64);
+            delta.graph.users.insert(s, 10);
+        }
+        delta
+    }
+
+    /// Not a test: how long one refresh of a long run's merge takes, 50
+    /// workers of 30 request names each an hour in, one more second from
+    /// each worker merged and the merge built. Run it with
+    /// `cargo test --release --features gaggle --lib merge_refresh_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn merge_refresh_cost() {
+        const WORKERS: u32 = 50;
+        const NAMES: usize = 30;
+        const SECONDS: u64 = 3_600;
+        let settings = GraphSettings {
+            records: true,
+            latency: true,
+            synthetic: false,
+            columns: false,
+        };
+        let mut accumulator =
+            GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+        let started = Instant::now();
+        for worker in 0..WORKERS {
+            accumulator
+                .apply(worker, second(worker, 1, SECONDS, 0..SECONDS, NAMES))
+                .unwrap();
+        }
+        let _ = accumulator.merged_and_excluded();
+        eprintln!(
+            "filled {WORKERS} workers x {NAMES} names x {SECONDS} s in {:?}",
+            started.elapsed()
+        );
+        let mut refreshes = Vec::new();
+        for next in 0..5 {
+            let at = SECONDS + next;
+            let started = Instant::now();
+            for worker in 0..WORKERS {
+                accumulator
+                    .apply(worker, second(worker, at + 1, at + 1, at..at + 1, NAMES))
+                    .unwrap();
+            }
+            let applied = started.elapsed();
+            let (metrics, _, excluded) = accumulator.merged_and_excluded();
+            let total = started.elapsed();
+            assert!(excluded.is_empty());
+            assert_eq!(metrics.requests.len(), NAMES);
+            refreshes.push(total);
+            eprintln!("refresh {next}: {total:?} ({applied:?} applying {WORKERS} deltas)");
+        }
+        refreshes.sort();
+        eprintln!("median refresh {:?}", refreshes[refreshes.len() / 2]);
+    }
+}
