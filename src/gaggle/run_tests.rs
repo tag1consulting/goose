@@ -1171,3 +1171,56 @@ async fn gaggle_threshold_stops_every_worker() {
     assert_eq!(a.calls_async().await, after, "every worker stopped");
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+/// Two workers running a test plan that goes up, down and up again, under
+/// a throttle: the manager counts the users the plan starts and the most it
+/// runs at once, the merged scenarios hold every user the workers started,
+/// and the workers' throttle shares add up to the throttle.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_test_plan_and_throttle_across_workers() {
+    let server = MockServer::start_async().await;
+    let a = server
+        .mock_async(|when, then| {
+            when.method(GET).path("/a");
+            then.status(200).body("ok");
+        })
+        .await;
+    let folder = scratch("plan-throttle");
+    let started = std::time::Instant::now();
+    // 6 users, 2, then 6 again: 10 started, at most 6 at once.
+    let run = gaggle(
+        quick,
+        2,
+        &server.base_url(),
+        &folder,
+        &[
+            "--test-plan",
+            "6,1s;2,1s;6,1s;6,1s;0,0s",
+            "--throttle-requests",
+            "6",
+        ],
+        &[],
+        &[],
+    );
+    let metrics = clean(
+        tokio::time::timeout(Duration::from_secs(60), run)
+            .await
+            .expect("the Gaggle ends within 60 seconds"),
+    );
+    let took = started.elapsed();
+    assert_eq!((metrics.total_users, metrics.maximum_users), (10, 6));
+    let users: usize = scenario_users(&metrics).iter().map(BTreeSet::len).sum();
+    assert_eq!(users, 10);
+    // Unthrottled, 6 users against a server that answers at once make
+    // thousands of requests a second: the shares hold them to about 6.
+    let requests = a.calls_async().await;
+    assert!(requests > 0);
+    assert!(
+        requests as f64 <= 6.0 * took.as_secs_f64() + 12.0,
+        "{} requests in {:?}",
+        requests,
+        took
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}

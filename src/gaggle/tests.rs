@@ -1153,6 +1153,28 @@ fn counted(worker: u32, seq: u64, epoch: u64) -> GaggleDelta {
     delta
 }
 
+/// A worker's first delta that starts past sequence number 1, its earlier
+/// deltas lost on the way: they are counted missing, and the gap recorded.
+#[test]
+fn gaggle_first_delta_past_one_counts_the_missing() {
+    let mut accumulator = accumulator();
+    let mut first = counted(0, 3, 0);
+    first.first_seq = 3;
+    accumulator.apply(0, first).unwrap();
+    assert_eq!(accumulator.missing(0), 2);
+    assert_eq!(
+        accumulator.gaps(),
+        &[super::merge::SeqGap {
+            worker: 0,
+            expected: 1,
+            received: 3,
+        }]
+    );
+    // The next follows on, adding nothing missing.
+    accumulator.apply(0, counted(0, 4, 0)).unwrap();
+    assert_eq!(accumulator.missing(0), 2);
+}
+
 /// Repeats of a delta grow no list on a manager: each is counted for its
 /// worker. Where gaps are kept, for the shadow merge, at most 1,000 are,
 /// the rest counted.

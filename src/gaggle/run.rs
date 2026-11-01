@@ -1545,6 +1545,225 @@ mod tests {
             .expect("within 30 seconds");
     }
 
+    /// Log collection's failure paths: a file the manager did not ask for
+    /// is never written; a chunk out of order abandons its log; a log that
+    /// cannot be created, and every log of a run with no folder, is left on
+    /// its worker. None leaves a file under a log's name.
+    #[tokio::test]
+    async fn log_collection_failures_leave_logs_on_their_worker() {
+        let test = async {
+            let folder = std::env::temp_dir()
+                .join(format!("goose-gaggle-log-failures-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&folder);
+            // Not asked for, then the log asked for, whole.
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                tx.send(chunk("other.json", 0, b"unasked", true))
+                    .await
+                    .unwrap();
+                tx.send(chunk("requests.json", 0, b"asked", true))
+                    .await
+                    .unwrap();
+                (tx, inbound)
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            drop(worker.await.unwrap());
+            assert_eq!(files_under(&folder), ["workers/w/requests.json"]);
+            assert!(run.logs_left.is_empty(), "{:?}", run.logs_left);
+            let _ = std::fs::remove_dir_all(&folder);
+
+            // Out of order.
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                tx.send(chunk("requests.json", 0, b"first", false))
+                    .await
+                    .unwrap();
+                tx.send(chunk("requests.json", 99, b"later", true))
+                    .await
+                    .unwrap();
+                (tx, inbound)
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            drop(worker.await.unwrap());
+            assert_eq!(files_under(&folder), Vec::<String>::new());
+            assert_eq!(run.logs_left.len(), 1, "{:?}", run.logs_left);
+            let _ = std::fs::remove_dir_all(&folder);
+
+            // The run folder is a file: no log can be created in it.
+            std::fs::write(&folder, b"not a folder").unwrap();
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                tx.send(chunk("requests.json", 0, b"log", true))
+                    .await
+                    .unwrap();
+                (tx, inbound)
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            drop(worker.await.unwrap());
+            assert_eq!(run.logs_left.len(), 1, "{:?}", run.logs_left);
+            assert_eq!(std::fs::read(&folder).unwrap(), b"not a folder");
+            let _ = std::fs::remove_file(&folder);
+
+            // No run folder: nothing is asked for, every log stays.
+            let (mut run, _tx, _inbound) = collecting(vec![request_log()]).await;
+            collect_logs(&mut run, None).await;
+            assert_eq!(
+                run.logs_left,
+                [GaggleLogLeft {
+                    worker: "w".to_string(),
+                    path: "/runs/w/requests.json".to_string(),
+                }]
+            );
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A worker, idle, its link joined to `manager`, holding its share of
+    /// one user and a start instant a minute away; and its run state.
+    async fn idle_worker(manager: &Manager) -> (GooseAttack, GooseAttackRunState) {
+        let link = Link::connect(LinkSettings {
+            address: manager.local_addr.to_string(),
+            connect_timeout: Duration::from_secs(10),
+            heartbeat_timeout: Duration::from_secs(30),
+            hello: LinkSettings::hello(7, "idle".to_string()),
+            token: None,
+            exit_for_real: false,
+        })
+        .await
+        .unwrap();
+        let configuration = crate::config::GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://127.0.0.1:9",
+            "--users",
+            "1",
+            "--no-telnet",
+            "--quiet",
+        ])
+        .unwrap();
+        let spec = spec::worker_specs(
+            &configuration,
+            Default::default(),
+            &[(1, 1_000), (0, 0)],
+            &[0],
+            1,
+            true,
+        )
+        .remove(0);
+        let mut attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(crate::goose::Scenario::new("A").register_transaction(
+                crate::goose::Transaction::new(std::sync::Arc::new(|_| Box::pin(async { Ok(()) }))),
+            ));
+        attack.test_plan = crate::test_plan::TestPlan::build(&attack.configuration).unwrap();
+        let run_state = attack.initialize_attack().await.unwrap();
+        attack.attack_mode = AttackMode::Worker;
+        attack.gaggle.role = Some(GaggleRole::Worker(Box::new(WorkerRun {
+            link,
+            spec,
+            start_at: Some(tokio::time::Instant::now() + Duration::from_secs(60)),
+            started_late: None,
+            tick_second: None,
+            pending_reset: None,
+            log_files: Vec::new(),
+            run_folder: None,
+            skip_reset: false,
+        })));
+        (attack, run_state)
+    }
+
+    /// A `Stop` that comes before the worker's start instant, as when the
+    /// manager's run ends in the milliseconds before it: the worker never
+    /// starts, and says it stopped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_stop_before_the_start_never_starts() {
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
+                .await
+                .unwrap();
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            manager.send(
+                0,
+                ToWorker::Stop(Stop {
+                    reason: "the run ended".to_string(),
+                }),
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let stopped = loop {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                match manager.try_event() {
+                    Some(Event::Stopped { stopped, .. }) => break stopped,
+                    Some(_) => {}
+                    None => {
+                        assert!(Instant::now() < deadline, "no Stopped");
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                }
+            };
+            assert_eq!(stopped.reason(), Reason::Stopped);
+            match attack.gaggle.role.as_ref() {
+                Some(GaggleRole::Worker(run)) => assert!(run.start_at.is_none()),
+                _ => panic!("not a worker"),
+            }
+            assert_eq!(attack.attack_phase, AttackPhase::Idle);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A metrics reset that comes before the worker's start instant, as
+    /// when the ramp ends in the milliseconds before it, is held, and made
+    /// once the worker starts: its metrics are then on the run's epoch.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_reset_before_the_start_is_made_after_it() {
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
+                .await
+                .unwrap();
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            let epoch = || {
+                run_state
+                    .metrics_epoch
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            };
+            let before = epoch();
+            manager.send(0, ToWorker::ResetMetrics(ResetMetrics { epoch: 1 }));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                match attack.gaggle.role.as_mut() {
+                    Some(GaggleRole::Worker(run)) if run.pending_reset == Some(1) => {
+                        // Now due.
+                        run.start_at = Some(tokio::time::Instant::now());
+                        break;
+                    }
+                    _ => {}
+                }
+                assert!(Instant::now() < deadline, "the reset was not held");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            // Held, not made, before the start.
+            assert_eq!(epoch(), before);
+            attack.gaggle_worker_idle(&mut run_state).await.unwrap();
+            // The start begins an epoch, as on any run, and the held reset
+            // the next.
+            assert_eq!(epoch(), before + 2, "the held reset was made at the start");
+            match attack.gaggle.role.as_ref() {
+                Some(GaggleRole::Worker(run)) => assert!(run.pending_reset.is_none()),
+                _ => panic!("not a worker"),
+            }
+            assert_eq!(attack.attack_phase, AttackPhase::Increase);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// A log chunk, as a worker sends it.
     fn chunk(
         file: &str,
