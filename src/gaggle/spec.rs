@@ -102,6 +102,11 @@ pub(crate) fn users_started(steps: &[(usize, usize)]) -> usize {
     })
 }
 
+/// The most users a test plan runs at once.
+pub(crate) fn peak_users(steps: &[(usize, usize)]) -> usize {
+    steps.iter().map(|&(users, _)| users).max().unwrap_or(0)
+}
+
 /// `throttle` split in proportion to `users`, the remainder spread: every
 /// worker with users gets at least 1, and a worker with none gets 0, so the
 /// shares add up to `throttle` whenever any worker has users and `throttle`
@@ -207,7 +212,11 @@ pub(crate) fn worker_specs(
 ) -> Vec<WorkerRunSpec> {
     let plans = plans(steps, workers);
     let users: Vec<usize> = plans.iter().map(|plan| users_started(plan)).collect();
-    let throttles = throttle_shares(configuration.throttle_requests(), &users);
+    // The throttle follows the users each worker runs at once, at its peak:
+    // for a plan that goes up, down and up again, the users it starts over
+    // the run would count some twice.
+    let peaks: Vec<usize> = plans.iter().map(|plan| peak_users(plan)).collect();
+    let throttles = throttle_shares(configuration.throttle_requests(), &peaks);
     let logs = log_specs(configuration);
     let mut offset = 0usize;
     plans
@@ -507,6 +516,32 @@ mod tests {
             }
             assert_eq!(workers_with_users(&[(2, 1_000), (0, 0)], 3), 2);
             assert_eq!(workers_with_users(&[(9, 1_000)], 3), 3);
+            // A plan that goes up, down and up again: each worker's share
+            // follows the users it runs at its peak, 4, 4 and 3, never the
+            // users it starts over the run, 7, 6 and 5.
+            let configuration = GooseConfiguration::parse_args_default(&[
+                "--host",
+                "http://h",
+                "--throttle-requests",
+                "11",
+            ])
+            .unwrap();
+            let steps = [(10, 1_000), (3, 1_000), (11, 1_000), (0, 0)];
+            let specs = worker_specs(
+                &configuration,
+                CommandLineClientOptions::default(),
+                &steps,
+                &[0; 18],
+                3,
+                true,
+            );
+            let shares: Vec<usize> = specs.iter().map(|spec| spec.throttle_requests).collect();
+            assert_eq!(shares, [4, 4, 3]);
+            // A plain ramp: the peak is the users started.
+            let ramp = [(9, 1_000), (9, 5_000), (0, 0)];
+            for plan in plans(&ramp, 3) {
+                assert_eq!(peak_users(&plan), users_started(&plan));
+            }
         });
     }
 
