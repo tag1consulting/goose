@@ -96,27 +96,33 @@ pub(crate) struct Joined {
 
 impl Joined {
     /// Send `message` to the worker, unless it is closed; never waits.
-    fn send(&self, message: ToWorker) {
+    /// Whether it was queued: a message that finds the queue full or closed
+    /// is dropped, with a warning naming it and the worker.
+    fn send(&self, message: ToWorker) -> bool {
         if self.closed.load(Ordering::Relaxed) {
-            return;
+            return false;
         }
         let message = ManagerMessage {
             message: Some(message),
         };
         let kind = message_kind(&message);
-        if self.outbound.try_send(Ok(message)).is_err() {
-            warn!(
-                "gaggle: worker {} ({}): {kind} not sent, its send queue full or closed",
-                self.id, self.name
-            );
+        let queued = self.outbound.try_send(Ok(message)).is_ok();
+        if !queued {
+            warn!("{}", dropped(self.id, &self.name, kind));
         }
+        queued
     }
 
     /// Send `Shutdown`, then close the worker's stream.
     fn shut_down(&self) {
-        self.send(ToWorker::Shutdown(Default::default()));
+        let _ = self.send(ToWorker::Shutdown(Default::default()));
         self.closed.store(true, Ordering::Relaxed);
     }
+}
+
+/// The warning a message to a worker that could not be queued logs.
+fn dropped(id: u32, name: &str, kind: &str) -> String {
+    format!("gaggle: worker {id} ({name}): {kind} not sent, its send queue full or closed")
 }
 
 /// The name of a message to a worker, for a log line.
@@ -237,7 +243,9 @@ impl Shared {
     }
 
     /// Admit a worker named `name`: its id, unique name and stream, or
-    /// `None` when the Gaggle has all its workers.
+    /// `None` when the Gaggle has all its workers. Names are unique ignoring
+    /// case, as folders on a case insensitive file system are: one taken
+    /// already gets the worker's id appended.
     fn admit(
         &self,
         name: &str,
@@ -251,7 +259,10 @@ impl Shared {
         let base = folder_name(name);
         let mut unique = base.clone();
         let mut n = id;
-        while joined.iter().any(|worker| worker.name == unique) {
+        while joined
+            .iter()
+            .any(|worker| worker.name.eq_ignore_ascii_case(&unique))
+        {
             unique = format!("{base}-{n}");
             n += 1;
         }
@@ -810,7 +821,7 @@ impl Manager {
     pub(crate) fn send(&self, id: u32, message: ToWorker) {
         if let Ok(joined) = self.shared.joined.lock() {
             if let Some(worker) = joined.get(id as usize) {
-                worker.send(message);
+                let _ = worker.send(message);
             }
         }
     }
@@ -819,7 +830,7 @@ impl Manager {
     pub(crate) fn broadcast(&self, message: ToWorker) {
         if let Ok(joined) = self.shared.joined.lock() {
             for worker in joined.iter() {
-                worker.send(message.clone());
+                let _ = worker.send(message.clone());
             }
         }
     }
@@ -898,6 +909,43 @@ mod tests {
             assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
             assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
         });
+    }
+
+    /// Worker names that differ only in case get folders of their own.
+    #[tokio::test]
+    async fn worker_names_are_unique_ignoring_case() {
+        let manager = Manager::start("127.0.0.1", 0, 3, None, 7, true, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let (tx, _) = mpsc::channel(1);
+        for name in ["Pod-A", "pod-a", "POD-A"] {
+            assert!(manager.shared.admit(name, tx.clone()).is_some());
+        }
+        let names: Vec<String> = manager
+            .workers()
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(names, ["Pod-A", "pod-a-1", "POD-A-2"]);
+    }
+
+    /// A message that finds a worker's queue full is dropped, and the
+    /// warning names the message and the worker.
+    #[tokio::test]
+    async fn a_dropped_message_is_named() {
+        let (outbound, _rx) = mpsc::channel(1);
+        let worker = Joined {
+            id: 3,
+            name: "w".to_string(),
+            outbound,
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(worker.send(ToWorker::Heartbeat(Heartbeat {})));
+        assert!(!worker.send(ToWorker::Stop(Default::default())));
+        assert_eq!(
+            dropped(3, "w", "Stop"),
+            "gaggle: worker 3 (w): Stop not sent, its send queue full or closed"
+        );
     }
 
     /// The token a request presents.
