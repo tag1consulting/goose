@@ -5,7 +5,7 @@
 //! What a client without the token can make the manager hold is bounded
 //! before any message is read: at most `expected + 4` connections, each
 //! closed unless a worker is admitted on it within [`HELLO_TIMEOUT`], even
-//! one that stalls the manager's writes; one stream on each; HTTP/2 windows
+//! one that stalls the manager's writes; one stream at a time on each; HTTP/2 windows
 //! of [`WINDOW`], so a client can never have more unread data buffered,
 //! and header blocks of at most [`MAX_HEADERS`]; and a token checked on the
 //! request's metadata, before the stream's first message is decoded. Such
@@ -333,8 +333,16 @@ impl Gaggle for GaggleService {
             );
             return Ok(tonic::Response::new(reject(reason)));
         }
+        // Held open from now on, so the deadline cannot close the
+        // connection of a worker as it is admitted.
+        if let Some(connection) = connection.as_ref() {
+            connection.admitted.store(true, Ordering::Relaxed);
+        }
         let (outbound, rx) = mpsc::channel(64);
         let Some((id, name, closed)) = self.0.admit(&hello.worker_name, outbound.clone()) else {
+            if let Some(connection) = connection.as_ref() {
+                connection.admitted.store(false, Ordering::Relaxed);
+            }
             let reason = format!(
                 "the Gaggle has all {} of its workers already",
                 self.0.expected
@@ -345,9 +353,6 @@ impl Gaggle for GaggleService {
             );
             return Ok(tonic::Response::new(reject(reason)));
         };
-        if let Some(connection) = connection {
-            connection.admitted.store(true, Ordering::Relaxed);
-        }
         info!("gaggle: worker {id} ({name}) joined from {peer}");
         let _ = outbound.try_send(Ok(ManagerMessage {
             message: Some(ToWorker::Welcome(Welcome { worker_id: id })),
