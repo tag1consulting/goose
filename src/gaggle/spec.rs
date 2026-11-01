@@ -350,10 +350,12 @@ impl WorkerRunSpec {
                     configuration.error_log = run_folder;
                     configuration.error_format.clone_from(&log.format);
                 }
-                _ => {
+                4 => {
                     configuration.debug_log = run_folder;
                     configuration.debug_format.clone_from(&log.format);
                 }
+                // Refused by `validate`.
+                _ => {}
             }
         }
     }
@@ -367,16 +369,38 @@ impl WorkerRunSpec {
         self.logs
             .iter()
             .map(|log| {
-                let mut file = log_file_name(
-                    LOG_NAMES[log.kind as usize % LOG_NAMES.len()],
-                    log.format.as_ref(),
-                );
+                let mut file = log_file_name(LOG_NAMES[log.kind as usize], log.format.as_ref());
                 if log.gzip {
                     file.push_str(".gz");
                 }
                 (log.manager_file.clone(), folder.file(&file))
             })
             .collect()
+    }
+
+    /// Why a worker whose load test has `scenarios` scenarios cannot run
+    /// this spec, when it cannot: a log of no kind a worker writes, or a
+    /// user given a scenario the load test lacks. A worker's manager is
+    /// trusted no more than its network, so a bad spec fails `Prepare`
+    /// rather than the worker.
+    pub(crate) fn validate(&self, scenarios: usize) -> Result<(), String> {
+        if let Some(log) = self
+            .logs
+            .iter()
+            .find(|log| log.kind as usize >= LOG_NAMES.len())
+        {
+            return Err(format!(
+                "the run spec asks for a log of kind {}, and only {} kinds exist",
+                log.kind,
+                LOG_NAMES.len()
+            ));
+        }
+        if let Some(&scenario) = self.slice.iter().find(|&&scenario| scenario >= scenarios) {
+            return Err(format!(
+                "the run spec gives a user scenario {scenario}, and this load test has {scenarios}"
+            ));
+        }
+        Ok(())
     }
 
     /// The spec, postcard encoded.
@@ -529,6 +553,30 @@ mod tests {
             let decoded = WorkerRunSpec::decode(&specs[1].encode().unwrap()).unwrap();
             assert_eq!(decoded, specs[1]);
         });
+    }
+
+    /// A spec with a log of no kind, or a user given a scenario the load
+    /// test lacks, is refused with the reason.
+    #[test]
+    fn a_bad_spec_is_refused() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--host", "http://h", "--debug-log"]).unwrap();
+        let spec = worker_specs(
+            &configuration,
+            CommandLineClientOptions::default(),
+            &[(4, 1_000), (0, 0)],
+            &[0, 1, 0, 1],
+            2,
+            true,
+        )
+        .remove(0);
+        assert_eq!(spec.validate(2), Ok(()));
+        let mut kind = spec.clone();
+        kind.logs[0].kind = LOG_NAMES.len() as u8;
+        let why = kind.validate(2).unwrap_err();
+        assert!(why.contains("log of kind 5"), "{}", why);
+        let why = spec.validate(1).unwrap_err();
+        assert!(why.contains("scenario 1"), "{}", why);
     }
 
     /// A spec configures every option it carries, so a worker runs exactly

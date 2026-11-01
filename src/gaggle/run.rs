@@ -538,10 +538,12 @@ impl GooseAttack {
                 _ => {}
             }
         };
-        let mut spec = match WorkerRunSpec::decode(&bytes) {
+        let decoded = WorkerRunSpec::decode(&bytes)
+            .map_err(|e| format!("could not read the run spec: {e}"))
+            .and_then(|spec| spec.validate(self.scenarios.len()).map(|()| spec));
+        let mut spec = match decoded {
             Ok(spec) => spec,
-            Err(e) => {
-                let detail = format!("could not read the run spec: {e}");
+            Err(detail) => {
                 link.prepared(Some(detail.clone()));
                 link.flush().await;
                 return Err(GooseError::Gaggle { detail });
@@ -1152,10 +1154,7 @@ fn last_merged(health: &MergeHealth, id: u32) -> u64 {
 
 /// The name a worker gives log `log` in its own run folder.
 fn worker_file(log: &LogSpec) -> String {
-    let mut file = log_file_name(
-        LOG_NAMES[log.kind as usize % LOG_NAMES.len()],
-        log.format.as_ref(),
-    );
+    let mut file = log_file_name(LOG_NAMES[log.kind as usize], log.format.as_ref());
     if log.gzip {
         file.push_str(".gz");
     }
