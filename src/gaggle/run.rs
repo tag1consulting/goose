@@ -54,7 +54,11 @@ const RESET_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the manager waits for the next chunk of a worker's logs: a
 /// transfer that goes this long with none fails. No deadline caps a
 /// transfer that keeps moving, whatever its size.
+#[cfg(not(test))]
 const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Shorter in unit tests, as [`FINAL_TIMEOUT`].
+#[cfg(test)]
+const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How far past its own series clock the manager takes a worker's second:
 /// the workers' clocks start within milliseconds of its own, and a delta is
@@ -1296,7 +1300,6 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                 let Some(files) = pending.get_mut(&id) else {
                     continue;
                 };
-                heard.insert(id, Instant::now());
                 if !files.contains_key(&chunk.file) {
                     warn!(
                         "gaggle: worker {id} sent a log the manager did not ask for: {:?}",
@@ -1360,6 +1363,11 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     && incoming.file.write_all(&chunk.data).await.is_ok();
                 if ok {
                     incoming.written += chunk.data.len() as u64;
+                    // Only progress keeps a transfer alive: an empty chunk
+                    // that is not the last, which no worker sends, does not.
+                    if !chunk.data.is_empty() || chunk.last {
+                        heard.insert(id, Instant::now());
+                    }
                 }
                 if ok && chunk.last {
                     ok = incoming.file.flush().await.is_ok()
@@ -1770,6 +1778,45 @@ mod tests {
                 _ => panic!("not a worker"),
             }
             assert_eq!(attack.attack_phase, AttackPhase::Increase);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A worker that sends chunks that move nothing, of a file never asked
+    /// for or empty and not the last, is not kept alive by them: its log
+    /// is left on it once the idle deadline passes.
+    #[tokio::test]
+    async fn chunks_without_progress_do_not_keep_a_transfer_alive() {
+        let test = async {
+            let folder =
+                std::env::temp_dir().join(format!("goose-gaggle-idle-log-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&folder);
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                for _ in 0..20 {
+                    let unasked = chunk("other.json", 0, b"", false);
+                    let empty = chunk("requests.json", 0, b"", false);
+                    if tx.send(unasked).await.is_err() || tx.send(empty).await.is_err() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                (tx, inbound)
+            });
+            let started = Instant::now();
+            collect_logs(&mut run, Some(folder.clone())).await;
+            assert!(
+                started.elapsed() < LOG_IDLE_TIMEOUT * 3,
+                "{:?}",
+                started.elapsed()
+            );
+            assert_eq!(run.logs_left.len(), 1, "{:?}", run.logs_left);
+            assert_eq!(files_under(&folder), Vec::<String>::new());
+            worker.abort();
+            let _ = std::fs::remove_dir_all(&folder);
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await

@@ -96,8 +96,10 @@ const SPARE_CONNECTIONS: usize = 4;
 pub(crate) const EVENT_QUEUE: usize = 64;
 
 /// The most bytes the events queued for the manager's main loop may hold,
-/// counted as their messages' encoded sizes: past it, as past
-/// [`EVENT_QUEUE`] events, a worker's reader waits.
+/// counted as their messages' encoded sizes, taken before a delta is
+/// decoded: past it, as past [`EVENT_QUEUE`] events, a worker's reader
+/// waits. A decoded delta holds more than its encoded bytes, so this bounds
+/// the queue's memory to a multiple of the budget, not the budget itself.
 const EVENT_BYTES: u64 = 256 << 20;
 
 /// An event as queued, holding its share of [`EVENT_BYTES`] until the main
@@ -823,7 +825,22 @@ async fn read_worker(
         if let Ok(mut heard) = heard.lock() {
             *heard = Instant::now();
         }
-        let bytes = message.encoded_len() as u64;
+        if matches!(message.message, Some(FromWorker::Heartbeat(_)) | None) {
+            continue;
+        }
+        // Its share of the byte budget first, before a delta is decoded, so
+        // no reader holds a decoded delta outside the budget.
+        let bytes = (message.encoded_len() as u64).min(EVENT_BYTES) as u32;
+        let permit = held(
+            shared.event_bytes.clone().acquire_many_owned(bytes),
+            &worker,
+            &shared,
+            &heard,
+        )
+        .await;
+        let Some(permit) = permit else {
+            break;
+        };
         let event = match message.message {
             Some(FromWorker::Heartbeat(_)) | None => continue,
             Some(FromWorker::Hello(_)) => {
@@ -856,37 +873,13 @@ async fn read_worker(
             Some(FromWorker::Stopped(stopped)) => Event::Stopped { id, stopped },
             Some(FromWorker::LogChunk(chunk)) => Event::Log { id, chunk },
         };
-        let closing = worker.closing.notified();
-        if worker.closed.load(Ordering::Relaxed) {
-            break;
-        }
-        // Its share of the byte budget first, then a place in the queue.
-        let queue = async {
-            let bytes = bytes.min(EVENT_BYTES) as u32;
-            let permit = shared
-                .event_bytes
-                .clone()
-                .acquire_many_owned(bytes)
-                .await
-                .ok();
-            shared.events.send_async((event, permit)).await
-        };
-        let (mut queue, mut closing) = (std::pin::pin!(queue), std::pin::pin!(closing));
-        // While the queue is full, the manager is what holds the worker
-        // back: it has not gone silent.
-        let mut holding =
-            tokio::time::interval(HEARTBEAT_INTERVAL.min(shared.heartbeat_timeout / 2));
-        let queued = loop {
-            tokio::select! {
-                queued = &mut queue => break Some(queued),
-                () = &mut closing => break None,
-                _ = holding.tick() => {
-                    if let Ok(mut heard) = heard.lock() {
-                        *heard = Instant::now();
-                    }
-                }
-            }
-        };
+        let queued = held(
+            shared.events.send_async((event, permit.ok())),
+            &worker,
+            &shared,
+            &heard,
+        )
+        .await;
         if !matches!(queued, Some(Ok(()))) {
             break;
         }
@@ -901,6 +894,35 @@ async fn read_worker(
             "its stream closed before its final metrics"
         };
         lose(&shared, id, &lost, why.to_string()).await;
+    }
+}
+
+/// Wait for `future`, which the manager holds back, as when its event queue
+/// is full: `heard` is kept fresh meanwhile, as the worker has not gone
+/// silent. `None` once the worker is closed.
+async fn held<T>(
+    future: impl Future<Output = T>,
+    worker: &Joined,
+    shared: &Shared,
+    heard: &Mutex<Instant>,
+) -> Option<T> {
+    // Created before the check, so a close between them still wakes it.
+    let closing = worker.closing.notified();
+    if worker.closed.load(Ordering::Relaxed) {
+        return None;
+    }
+    let (mut future, mut closing) = (std::pin::pin!(future), std::pin::pin!(closing));
+    let mut holding = tokio::time::interval(HEARTBEAT_INTERVAL.min(shared.heartbeat_timeout / 2));
+    loop {
+        tokio::select! {
+            out = &mut future => return Some(out),
+            () = &mut closing => return None,
+            _ = holding.tick() => {
+                if let Ok(mut heard) = heard.lock() {
+                    *heard = Instant::now();
+                }
+            }
+        }
     }
 }
 
