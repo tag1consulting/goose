@@ -900,15 +900,16 @@ pub struct GooseConfiguration {
     ///
     /// Waits for --expect-workers workers to connect, splits the load test's users
     /// between them, starts them together, and merges their metrics into its own
-    /// reports, dashboard and threshold checks. The manager runs no users itself. Can't
-    /// be used with --worker or --no-autostart.
+    /// reports, dashboard and threshold checks. The manager runs no users itself. A
+    /// --throttle-requests below the number of workers that run users is refused. Can't
+    /// be used with --worker, --no-autostart or --gaggle-shadow-merge.
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long)]
     pub manager: bool,
     /// Workers to wait for
     ///
-    /// How many workers a --manager waits for before the load test starts; at least 1.
-    /// Required with --manager.
+    /// How many workers a --manager waits for before the load test starts; at least 1
+    /// and at most 2048. Required with --manager.
     ///
     /// Example: --expect-workers 3.
     #[cfg(feature = "gaggle")]
@@ -971,7 +972,8 @@ pub struct GooseConfiguration {
     ///
     /// A secret the manager and every worker must share; a worker with another token is
     /// turned away. Also read from the GOOSE_GAGGLE_TOKEN environment variable. Never
-    /// shown in output.
+    /// shown in output. Printable ASCII. The token, and all Gaggle traffic, cross the
+    /// network unencrypted until TLS arrives: run a Gaggle on a network you trust.
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long, value_name = "TOKEN")]
     #[serde(serialize_with = "serialize_token")]
@@ -985,9 +987,10 @@ pub struct GooseConfiguration {
     pub no_hash_check: bool,
     /// Heartbeat timeout [default: 10s]
     ///
-    /// How long the manager and a worker wait to hear from each other. A manager marks a
-    /// silent worker lost and carries on; a worker that loses its manager stops all its
-    /// users at once and exits with an error.
+    /// How long the manager and a worker wait to hear from each other, at least 3s, as
+    /// heartbeats go every 2 seconds. A manager marks a silent worker lost and carries
+    /// on; a worker that loses its manager stops all its users at once and exits with an
+    /// error.
     ///
     /// Example: --gaggle-heartbeat-timeout 30s.
     #[cfg(feature = "gaggle")]

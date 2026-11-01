@@ -20,7 +20,7 @@ A manager that listens on any address but loopback needs `--gaggle-token`, or th
 
 - Users are split as evenly as they go, the remainder one each to the first workers. Each worker's users are numbered as one process running every user would number them, and run the scenarios that process would give them, so the merged per scenario counts are the same.
 - Each step of the test plan, or the ramp `--users`, `--increase-rate` and `--run-time` give, is split the same way: every step's users add up to the step's. A worker may hold 0 users in a step.
-- `--throttle-requests` is split in proportion to each worker's users, and never 0 for a worker: a throttle smaller than the number of workers is refused.
+- `--throttle-requests` is split in proportion to each worker's users, never 0 for a worker that runs users, and 0 for one that runs none: the shares add up to the throttle, and a throttle smaller than the number of workers that run users is refused.
 - Custom data: see [Custom data for each worker](worker.md#custom-data-for-each-worker).
 
 ## While it runs
@@ -31,7 +31,7 @@ Ctrl-C on the manager stops every worker, waits for their final metrics, and wri
 
 ## Lost workers
 
-The manager marks a worker lost when nothing has come from it for `--gaggle-heartbeat-timeout` (10 seconds by default), when its connection closes before its final metrics, or when it is stopped on its own machine. What the worker sent stays in the results, the run goes on with the others, and the manager tells the lost worker to exit if it can still reach it. The run's record, in `report.json`, lists every worker with its state, and for a lost worker when it was lost and the last metrics it sent; the HTML, Markdown and PDF reports open with a line saying the run is degraded. If every worker is lost, the run ends, recorded as ended by losing its workers.
+The manager marks a worker lost when nothing has come from it for `--gaggle-heartbeat-timeout` (10 seconds by default), when its connection closes before its final metrics, or when it is stopped on its own machine. What the worker sent stays in the results, the run goes on with the others, and the manager tells the lost worker to exit if it can still reach it. The run's record, in `report.json`, lists every worker with its state, and for a lost worker when it was lost and the last metrics it sent; the HTML, Markdown and PDF reports open with a line saying the run is degraded. A worker whose metrics are not all in the results degrades the run too, named with why: one that missed the metrics reset, whose metrics the merge leaves out, one whose metrics the manager refused, or one some of whose metrics never arrived. A worker that cannot hand over its final metrics within 30 seconds, or reset its metrics within 10, tells the manager it failed, which marks it lost, and exits with an error. If every worker is lost, the run ends, recorded as ended by losing its workers.
 
 ## Logs
 

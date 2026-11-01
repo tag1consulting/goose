@@ -22,13 +22,14 @@ Thresholds are judged on the merged metrics, by the manager, as a run of one pro
 - One metrics reset when every user has started, across the whole Gaggle.
 - `test_start` and `test_stop` run once, on the manager.
 - [Custom data for each worker](worker.md#custom-data-for-each-worker), such as its share of a pool of accounts.
-- A lost worker does not stop the run: the run goes on with the others, and its reports say it is degraded. A worker that loses its manager stops all of its load within seconds.
+- A lost worker does not stop the run: the run goes on with the others, and its reports say it is degraded. So does a worker whose metrics are not all in the results, as one that missed the metrics reset. A worker that loses its manager stops all of its load within seconds.
+- Once every user has started, a Gaggle runs the same scenario mix one process would. During a ramp the order users start in differs, as each worker starts its own share at its own pace.
 
 ## What comes next
 
 - Runtime control: the manager's Controllers and dashboard can read the run but not yet change it. Starting, stopping and changing users, rates, the test plan, the throttle or the host while a Gaggle runs is refused with `not supported in Gaggle mode yet`, and `--no-autostart` can't be used with `--manager`. Ctrl-C on the manager stops the whole Gaggle.
 - Per worker tables in the reports, and a Gaggle view on the dashboard.
-- TLS between the manager and its workers, workers joining a running Gaggle, and workers reconnecting. Until then, run a Gaggle on a network you trust, and give it a `--gaggle-token`.
+- TLS between the manager and its workers, workers joining a running Gaggle, and workers reconnecting. Until TLS arrives the token, and all Gaggle traffic, cross the network unencrypted: run a Gaggle on a network you trust, and give it a `--gaggle-token`.
 
 ## An example on one machine
 

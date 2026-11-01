@@ -177,6 +177,7 @@ impl GaggleWorkerRecord {
     }
 
     /// Whether the results undercount this worker.
+    #[cfg(feature = "gaggle")]
     pub(crate) fn degraded(&self) -> bool {
         self.state == "lost" || !self.shortfall().is_empty()
     }
