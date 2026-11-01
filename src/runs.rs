@@ -121,6 +121,23 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
+/// Where a Gaggle worker stood when the manager wrote its run record.
+/// Non exhaustive, so a state added later is not a breaking change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub(crate) enum WorkerState {
+    /// It had not stopped.
+    #[default]
+    Running,
+    /// It stopped and sent its final metrics.
+    Finished,
+    /// Every one of its users exited (`--iterations`).
+    UsersExited,
+    /// It was lost: what it sent before stays in the results.
+    Lost,
+}
+
 /// One worker of a Gaggle run.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct GaggleWorkerRecord {
@@ -128,8 +145,7 @@ pub(crate) struct GaggleWorkerRecord {
     pub name: String,
     /// The users it started over the run.
     pub users: usize,
-    /// `finished`, `users_exited` or `lost`.
-    pub state: String,
+    pub state: WorkerState,
     /// When it was lost, RFC 3339, UTC.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lost_at: Option<String>,
@@ -186,7 +202,7 @@ impl GaggleWorkerRecord {
     /// Whether the results undercount this worker.
     #[cfg(feature = "gaggle")]
     pub(crate) fn degraded(&self) -> bool {
-        self.state == "lost" || !self.shortfall().is_empty()
+        self.state == WorkerState::Lost || !self.shortfall().is_empty()
     }
 }
 
@@ -205,7 +221,7 @@ impl GaggleRecord {
         let lost: Vec<String> = self
             .workers
             .iter()
-            .filter(|worker| worker.state == "lost")
+            .filter(|worker| worker.state == WorkerState::Lost)
             .map(|worker| match &worker.lost_reason {
                 Some(reason) => format!("{} ({reason})", worker.name),
                 None => worker.name.clone(),
@@ -1722,6 +1738,25 @@ mod tests {
         assert!(!listed[0].record.in_progress && !listed[0].running);
         assert_eq!(listed[0].requests, 12345);
         std::fs::remove_dir_all(&parent).ok();
+    }
+
+    /// A manager's run record written while a worker's state was a string
+    /// loads, each state read as its variant, and writes the same JSON.
+    #[test]
+    fn gaggle_worker_states_read_and_write_as_before() {
+        let written = r#"{"workers":[{"id":0,"name":"a","users":2,"state":"finished"},{"id":1,"name":"b","users":2,"state":"users_exited"},{"id":2,"name":"c","users":1,"state":"lost","lost_at":"2026-10-30T10:00:00Z","lost_reason":"nothing from it for 10 seconds","last_seq":4},{"id":3,"name":"d","users":0,"state":"running"}],"degraded":true}"#;
+        let record: GaggleRecord = serde_json::from_str(written).unwrap();
+        let states: Vec<WorkerState> = record.workers.iter().map(|w| w.state).collect();
+        assert_eq!(
+            states,
+            [
+                WorkerState::Finished,
+                WorkerState::UsersExited,
+                WorkerState::Lost,
+                WorkerState::Running
+            ]
+        );
+        assert_eq!(serde_json::to_string(&record).unwrap(), written);
     }
 
     #[test]

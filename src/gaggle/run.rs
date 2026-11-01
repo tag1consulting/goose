@@ -18,7 +18,7 @@ use super::proto::{
 use super::spec::{self, LogSpec, WorkerRunSpec};
 use crate::metrics::MetricsCommand;
 use crate::runs::{
-    log_file_name, EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, LOG_NAMES,
+    log_file_name, EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, WorkerState, LOG_NAMES,
 };
 use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError, WorkerShare};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1084,21 +1084,21 @@ impl GooseAttack {
             .map(|worker| {
                 let merge = health.get(&worker.id).cloned().unwrap_or_default();
                 let state = match (&worker.lost, worker.stopped) {
-                    (Some(_), _) => "lost",
-                    (None, Some(Reason::UsersExited)) => "users_exited",
-                    (None, Some(_)) => "finished",
-                    (None, None) => "running",
+                    (Some(_), _) => WorkerState::Lost,
+                    (None, Some(Reason::UsersExited)) => WorkerState::UsersExited,
+                    (None, Some(_)) => WorkerState::Finished,
+                    (None, None) => WorkerState::Running,
                 };
                 // A worker that stopped after sending metrics sent its final
                 // delta first: without it, its last running totals stand.
-                let final_missing = matches!(state, "finished" | "users_exited")
+                let final_missing = matches!(state, WorkerState::Finished | WorkerState::UsersExited)
                     && merge.last_seq > 0
                     && !merge.final_merged;
                 GaggleWorkerRecord {
                     id: worker.id,
                     name: worker.name.clone(),
                     users: worker.users,
-                    state: state.to_string(),
+                    state,
                     lost_at: worker
                         .lost
                         .as_ref()
