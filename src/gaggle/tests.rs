@@ -858,7 +858,7 @@ fn gaggle_merge_built_as_it_goes_equals_one_built_at_the_end() {
                 .collect()
         })
         .collect();
-    let mut builds = 0;
+    let mut applied = Vec::new();
     while queues.iter().any(|queue| !queue.is_empty()) {
         let open: Vec<usize> = (0..queues.len())
             .filter(|&queue| !queues[queue].is_empty())
@@ -867,12 +867,19 @@ fn gaggle_merge_built_as_it_goes_equals_one_built_at_the_end() {
         let delta = queues[queue].pop_front().unwrap();
         apply(&mut accumulator, delta);
         let _ = accumulator.merged();
-        builds += 1;
+        applied.push(delta);
     }
+    assert!(applied.len() > 10, "{} builds", applied.len());
+    // Before any worker is done, which builds from the totals again: the
+    // running total and the graph built a range at a time, against the same
+    // deltas built once.
+    assert_none(
+        "running total",
+        &merge_diff(&accumulator, &apply_all(applied.iter().copied())),
+    );
     for worker in 0..deltas.len() {
         accumulator.done(worker as u32);
     }
-    assert!(builds > 10, "{} builds", builds);
     assert_none(
         "built as it goes",
         &merge_diff(&accumulator, &merge(&deltas, false, 3)),
