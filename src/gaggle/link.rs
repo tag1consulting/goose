@@ -618,10 +618,7 @@ impl Link {
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
             forced: link.forced.clone(),
-            #[cfg(not(test))]
             last_resort_after: LAST_RESORT_AFTER,
-            #[cfg(test)]
-            last_resort_after: TEST_LAST_RESORT_AFTER,
             // A unit test's worker never ends the test binary, unless told.
             #[cfg(test)]
             record_exit: !settings.exit_for_real,
@@ -819,11 +816,11 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 
 /// How long after the switch fires, or `Shutdown` finds users running, a
 /// worker whose `execute()` has not returned ends its process.
+#[cfg(not(test))]
 const LAST_RESORT_AFTER: Duration = Duration::from_secs(2);
-
-/// The last resort's wait in unit tests, which wait it out.
+/// Shorter in unit tests, which wait it out.
 #[cfg(test)]
-const TEST_LAST_RESORT_AFTER: Duration = Duration::from_millis(200);
+const LAST_RESORT_AFTER: Duration = Duration::from_millis(200);
 
 /// Stop users at once, every one or, with `running_only`, those not yet
 /// finished, and any started later: `stopped` is set before `users` is
@@ -1222,7 +1219,7 @@ mod tests {
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(true)),
             forced: Arc::new(AtomicBool::new(false)),
-            last_resort_after: TEST_LAST_RESORT_AFTER,
+            last_resort_after: LAST_RESORT_AFTER,
             record_exit: true,
         };
         (switch, received, outbox)
@@ -1373,7 +1370,7 @@ mod tests {
                 );
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            assert!(sent.elapsed() >= TEST_LAST_RESORT_AFTER);
+            assert!(sent.elapsed() >= LAST_RESORT_AFTER);
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
@@ -1390,7 +1387,7 @@ mod tests {
         let (switch, _events, _outbox) = switch(vec![handle], Duration::from_secs(10));
         switch.done.store(false, Ordering::Relaxed);
         switch.shut_down();
-        tokio::time::sleep(TEST_LAST_RESORT_AFTER * 2).await;
+        tokio::time::sleep(LAST_RESORT_AFTER * 2).await;
         let forced = switch.forced.load(Ordering::Relaxed);
         switch.done.store(true, Ordering::Relaxed);
         assert!(!forced);
