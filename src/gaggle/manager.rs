@@ -348,14 +348,22 @@ impl Shared {
         None
     }
 
-    /// Admit a worker named `name`: its id, unique name and stream, or
-    /// `None` when the Gaggle has all its workers. Names are unique ignoring
-    /// case, as folders on a case insensitive file system are: one taken
-    /// already gets the worker's id appended.
-    fn admit(&self, name: &str, outbound: Outbound) -> Option<Joined> {
-        let mut joined = self.joined.lock().ok()?;
+    /// Admit a worker named `name`: its id, unique name and stream, or why
+    /// not: the Gaggle has all its workers, or the list of them can no
+    /// longer be trusted, a thread having panicked while it held it. Names
+    /// are unique ignoring case, as folders on a case insensitive file
+    /// system are: one taken already gets the worker's id appended.
+    fn admit(&self, name: &str, outbound: Outbound) -> Result<Joined, String> {
+        let Ok(mut joined) = self.joined.lock() else {
+            let why = "the manager's list of workers is unusable, a thread having panicked while it held it".to_string();
+            error!("gaggle: could not admit a worker: {why}");
+            return Err(why);
+        };
         if joined.len() >= self.expected {
-            return None;
+            return Err(format!(
+                "the Gaggle has all {} of its workers already",
+                self.expected
+            ));
         }
         let id = joined.len() as u32;
         let base = folder_name(name);
@@ -377,7 +385,7 @@ impl Shared {
             closing: Default::default(),
         };
         joined.push(worker.clone());
-        Some(worker)
+        Ok(worker)
     }
 }
 
@@ -441,19 +449,18 @@ impl Gaggle for GaggleService {
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         let (outbound, rx) = mpsc::channel(64);
-        let Some(worker) = self.0.admit(&hello.worker_name, outbound) else {
-            if let Some(connection) = connection.as_ref() {
-                connection.admitted.store(false, Ordering::Relaxed);
+        let worker = match self.0.admit(&hello.worker_name, outbound) {
+            Ok(worker) => worker,
+            Err(reason) => {
+                if let Some(connection) = connection.as_ref() {
+                    connection.admitted.store(false, Ordering::Relaxed);
+                }
+                warn!(
+                    "gaggle: refused worker {:?} from {peer}: {reason}",
+                    folder_name(&hello.worker_name)
+                );
+                return Ok(tonic::Response::new(reject(reason)));
             }
-            let reason = format!(
-                "the Gaggle has all {} of its workers already",
-                self.0.expected
-            );
-            warn!(
-                "gaggle: refused worker {:?} from {peer}: {reason}",
-                folder_name(&hello.worker_name)
-            );
-            return Ok(tonic::Response::new(reject(reason)));
         };
         let id = worker.id;
         info!("gaggle: worker {id} ({}) joined from {peer}", worker.name);
@@ -1156,7 +1163,7 @@ mod tests {
             .unwrap();
         let (tx, _) = mpsc::channel(1);
         for name in ["Pod-A", "pod-a", "POD-A"] {
-            assert!(manager.shared.admit(name, tx.clone()).is_some());
+            assert!(manager.shared.admit(name, tx.clone()).is_ok());
         }
         let names: Vec<String> = manager
             .workers()
@@ -1178,6 +1185,27 @@ mod tests {
         // 64 KiB floor at 2,048 workers.
         assert_eq!(u64::from(window(124)) * 128, UNREAD_BUDGET);
         assert_eq!(u64::from(window(2048)) * 2052, UNREAD_BUDGET + (256 << 10));
+    }
+
+    /// A Gaggle that is full and one whose worker list is unusable refuse a
+    /// worker each for its own reason.
+    #[tokio::test]
+    async fn admit_names_why_it_refuses() {
+        let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let (tx, _) = mpsc::channel(1);
+        assert!(manager.shared.admit("a", tx.clone()).is_ok());
+        let full = manager.shared.admit("b", tx.clone()).unwrap_err();
+        assert!(full.contains("all 1 of its workers"), "{}", full);
+        let shared = manager.shared.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = shared.joined.lock().unwrap();
+            panic!("poison the worker list");
+        })
+        .join();
+        let poisoned = manager.shared.admit("c", tx).unwrap_err();
+        assert!(poisoned.contains("panicked"), "{}", poisoned);
     }
 
     /// A message that finds a worker's queue full is dropped, and the
