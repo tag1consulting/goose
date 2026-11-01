@@ -12,7 +12,7 @@ use super::delta::{DeltaKind, GaggleDelta};
 use super::manager::{AUTHORIZATION, HEARTBEAT_INTERVAL, MAX_MESSAGE};
 use super::merge::coalesce;
 use super::proto::{
-    gaggle_client::GaggleClient, manager_message::Message as FromManager,
+    gaggle_client::GaggleClient, manager_message::Message as FromManager, stopped::Reason,
     worker_message::Message as ToManager, Heartbeat, Hello, LogChunk, Metrics, PrepareAck, Stopped,
     WorkerMessage, PROTOCOL_VERSION,
 };
@@ -159,6 +159,9 @@ pub(crate) struct Outbox {
     /// for none (unit tests).
     #[cfg(test)]
     pub(crate) corrupt_from: std::sync::atomic::AtomicU64,
+    /// Fail to encode every delta (unit tests).
+    #[cfg(test)]
+    unencodable: AtomicBool,
 }
 
 impl Outbox {
@@ -293,13 +296,35 @@ impl Outbox {
                 self.sent.notify_waiters();
                 let message = match item {
                     Outgoing::Message(message) => message,
-                    Outgoing::Delta(delta) => match delta.encode() {
-                        Ok(bytes) => ToManager::Metrics(Metrics { delta: bytes }),
-                        Err(e) => {
-                            warn!("gaggle: could not encode delta {}: {e}", delta.seq);
-                            continue;
+                    Outgoing::Delta(delta) => {
+                        let encoded = delta.encode();
+                        #[cfg(test)]
+                        let encoded = match self.unencodable.load(Ordering::Relaxed) {
+                            true => Err(postcard::Error::SerializeBufferFull),
+                            false => encoded,
+                        };
+                        match encoded {
+                            Ok(bytes) => ToManager::Metrics(Metrics { delta: bytes }),
+                            // No final metrics will reach the manager: say
+                            // so, so it records them missing, rather than
+                            // wait for them.
+                            Err(e) if delta.kind == DeltaKind::Final => {
+                                error!(
+                                    "gaggle: could not encode the final metrics delta {}: {e}",
+                                    delta.seq
+                                );
+                                ToManager::Stopped(Stopped {
+                                    reason: Reason::Failed as i32,
+                                    canceled: format!("it could not encode its final metrics: {e}"),
+                                    run_folder: String::new(),
+                                })
+                            }
+                            Err(e) => {
+                                warn!("gaggle: could not encode delta {}: {e}", delta.seq);
+                                continue;
+                            }
                         }
-                    },
+                    }
                 };
                 return Some(WorkerMessage {
                     message: Some(message),
@@ -1091,6 +1116,34 @@ mod tests {
             }
         }
         assert_eq!(kinds.last(), Some(&DeltaKind::Final));
+    }
+
+    /// A final delta that cannot be encoded is never dropped unsaid: the
+    /// manager is told the worker failed, so it records the final metrics
+    /// missing. Any other delta that cannot be encoded is dropped, leaving
+    /// a gap.
+    #[tokio::test]
+    async fn an_unencodable_final_delta_says_the_worker_failed() {
+        let outbox = Outbox::default();
+        outbox.unencodable.store(true, Ordering::Relaxed);
+        outbox.push_delta(delta(1));
+        let mut last_final = delta(2);
+        last_final.kind = DeltaKind::Final;
+        outbox.push_delta(last_final);
+        outbox.close();
+        let sent = next(&outbox).await.expect("a message for the final delta");
+        match sent.message {
+            Some(ToManager::Stopped(stopped)) => {
+                assert_eq!(stopped.reason(), Reason::Failed);
+                assert!(
+                    stopped.canceled.contains("final metrics"),
+                    "{}",
+                    stopped.canceled
+                );
+            }
+            other => panic!("{:?}", other),
+        }
+        assert!(next(&outbox).await.is_none());
     }
 
     /// A connection on which no worker is admitted is closed at its
