@@ -191,9 +191,9 @@ impl GaggleAccumulator {
         let merged = self.merged.get_mut();
         match taken {
             Taken::Ignored => {}
-            // The run's epoch moved, or a worker joined the merge: every
-            // worker's place in it is worked out again.
-            _ if self.run_epoch() != run_epoch || !known => merged.current = false,
+            // A worker's first delta: whether it is merged, and where, is
+            // worked out with every other worker's.
+            _ if !known => merged.current = false,
             Taken::Restarted => merged.current = false,
             Taken::Added if delta.epoch != run_epoch => {}
             Taken::Added if !merged.current => {}
