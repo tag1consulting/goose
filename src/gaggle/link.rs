@@ -464,9 +464,12 @@ impl Link {
         let mut request = tonic::Request::new(outbound(outbox.clone()));
         if let Some(token) = settings.token.as_deref() {
             // The options refuse a token that is not printable ASCII.
-            let value = format!("Bearer {token}").parse().map_err(|_| {
-                Refusal::Refused("the --gaggle-token is not printable ASCII".to_string())
-            })?;
+            let mut value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> =
+                format!("Bearer {token}").parse().map_err(|_| {
+                    Refusal::Refused("the --gaggle-token is not printable ASCII".to_string())
+                })?;
+            // Kept out of any debug output of the request.
+            value.set_sensitive(true);
             request.metadata_mut().insert(AUTHORIZATION, value);
         }
         let response = client.connect(request).await.map_err(|status| {

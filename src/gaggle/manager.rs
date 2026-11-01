@@ -189,14 +189,17 @@ fn same_digest(a: &TokenDigest, b: &TokenDigest) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// A value no token can be: a token is printable ASCII.
+const NOT_A_TOKEN: &str = "\0not a token";
+
 /// The token a request presents, `Bearer <token>` in its `authorization`
-/// metadata: empty without one, and the whole value when it is not a
-/// bearer token, which then matches no token.
+/// metadata: empty without one, and a value no token can be when it is not
+/// a bearer token, so it matches no token, the empty one included.
 fn presented_token(metadata: &tonic::metadata::MetadataMap) -> &str {
     match metadata.get(AUTHORIZATION).map(|value| value.to_str()) {
         None => "",
-        Some(Ok(value)) => value.strip_prefix("Bearer ").unwrap_or(value),
-        Some(Err(_)) => "\0not a token",
+        Some(Ok(value)) => value.strip_prefix("Bearer ").unwrap_or(NOT_A_TOKEN),
+        Some(Err(_)) => NOT_A_TOKEN,
     }
 }
 
@@ -1086,6 +1089,20 @@ mod tests {
             // A token to a manager without one is refused too.
             assert_eq!(refused("", Some("x")), wrong);
             assert_eq!(token_digest("secret").len(), token_digest("s").len());
+            // Only a bearer token: the right token on its own is refused.
+            let bare = |value: &str| {
+                let mut request = tonic::Request::new(());
+                request
+                    .metadata_mut()
+                    .insert(AUTHORIZATION, value.parse().unwrap());
+                authorize(&token_digest("secret"), request)
+                    .err()
+                    .map(|status| (status.code(), status.message().to_string()))
+            };
+            for value in ["secret", "bearer secret", "Basic secret", "Bearer"] {
+                assert_eq!(bare(value), wrong, "{:?}", value);
+            }
+            assert_eq!(bare("Bearer secret"), None);
         });
     }
 }
