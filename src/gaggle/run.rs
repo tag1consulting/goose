@@ -234,6 +234,14 @@ impl GooseAttack {
         self
     }
 
+    /// Have the manager report how many workers joined, as each does (unit
+    /// tests).
+    #[cfg(test)]
+    pub(crate) fn report_joins(mut self, joins: tokio::sync::mpsc::UnboundedSender<usize>) -> Self {
+        self.gaggle_joins = Some(joins);
+        self
+    }
+
     /// Have the manager report the address it listens on (unit tests).
     #[cfg(test)]
     pub(crate) fn report_manager_address(
@@ -272,7 +280,13 @@ impl GooseAttack {
         let mut joined = 0;
         while joined < expected {
             match manager.next_event(deadline).await {
-                Some(Event::Joined) => joined += 1,
+                Some(Event::Joined) => {
+                    joined += 1;
+                    #[cfg(test)]
+                    if let Some(joins) = self.gaggle_joins.as_ref() {
+                        let _ = joins.send(joined);
+                    }
+                }
                 Some(Event::Lost { id, why }) => {
                     return Err(fail(
                         &mut manager,

@@ -401,10 +401,13 @@ mod tests {
         }
     }
 
-    /// B3: every combination A3 refuses, with its message.
+    /// B3: every combination A3 refuses, with its message. Serial, with no
+    /// token from the environment, which a manager or worker reads.
     #[test]
+    #[serial_test::serial]
     fn gaggle_refused_option_combinations() {
         crate::gaggle::within(30, || {
+            std::env::remove_var(TOKEN_ENV);
             let manager = ["--manager", "--expect-workers", "2", "--host", "http://h"];
             let worker = ["--worker", "--manager-host", "m"];
             let with = |base: &[&str], more: &[&str]| -> Vec<String> {
@@ -639,6 +642,7 @@ mod tests {
     #[serial_test::serial]
     fn gaggle_token_never_shows() {
         crate::gaggle::within(30, || {
+            std::env::remove_var(TOKEN_ENV);
             let token = "tok-7f3a-never-shown";
             let mut configuration = parse(&[
                 "--manager",

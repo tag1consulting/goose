@@ -22,17 +22,25 @@ fn get(path: &'static str) -> Transaction {
 }
 
 /// Each user, first: GET /pre, and GET /data/ with its worker data; then a
-/// pause past the metrics reset, so every later request is measured. With
-/// the ramp at 10 users a second, a worker's users start 200 ms apart, so a
-/// worker's start may slip that much before more than its last user's /pre
-/// races the reset.
+/// wait until its worker's metrics reset, at most 10 seconds, so every later
+/// request is measured. With the ramp at 10 users a second, a worker's users
+/// start 200 ms apart, so a worker's start may slip that much before more
+/// than its last user's /pre races the reset.
 fn on_start() -> Transaction {
     Transaction::new(Arc::new(|user| {
         Box::pin(async move {
             let _ = user.get("/pre").await;
             let data = String::from_utf8_lossy(user.worker_data()).into_owned();
             let _ = user.get(&format!("/data/{data}")).await;
-            tokio::time::sleep(Duration::from_millis(2000)).await;
+            let reset = || {
+                user.metrics_epoch
+                    .as_ref()
+                    .is_some_and(|epoch| epoch.load(std::sync::atomic::Ordering::Relaxed) > 0)
+            };
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !reset() && std::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
             Ok(())
         })
     }))
@@ -122,24 +130,32 @@ async fn gaggle_with(
     manager_args: &[&str],
     faults: &[TestFaults],
 ) -> Result<GooseMetrics, crate::GooseError> {
-    let (manager, workers) = gaggle_ends(count, server, folder, manager_args, faults).await;
+    let (manager, workers) = gaggle_ends(count, server, folder, manager_args, &[], faults).await;
     for worker in workers {
         worker.expect("the worker exits cleanly");
     }
     manager
 }
 
-/// [`gaggle_with`]: the manager's result, and each worker's.
+/// No token from the environment: each test gives its own, if any.
+fn no_token_from_the_environment() {
+    std::env::remove_var(super::options::TOKEN_ENV);
+}
+
+/// [`gaggle_with`], each worker also given `worker_args`: the manager's
+/// result, and each worker's.
 async fn gaggle_ends(
     count: usize,
     server: &MockServer,
     folder: &Path,
     manager_args: &[&str],
+    worker_args: &[&str],
     faults: &[TestFaults],
 ) -> (
     Result<GooseMetrics, crate::GooseError>,
     Vec<Result<GooseMetrics, crate::GooseError>>,
 ) {
+    no_token_from_the_environment();
     let count_text = count.to_string();
     let host = server.base_url();
     let manager_folder = folder.join("manager").display().to_string();
@@ -168,7 +184,7 @@ async fn gaggle_ends(
     let mut workers = Vec::new();
     for worker in 0..count {
         let worker_folder = folder.join(format!("worker{worker}")).display().to_string();
-        let worker = load_test(configuration(&[
+        let mut args = vec![
             "--worker",
             "--manager-host",
             "127.0.0.1",
@@ -178,8 +194,10 @@ async fn gaggle_ends(
             "--quiet",
             "--output-dir",
             &worker_folder,
-        ]))
-        .gaggle_test_faults(faults.get(worker).copied().unwrap_or_default());
+        ];
+        args.extend_from_slice(worker_args);
+        let worker = load_test(configuration(&args))
+            .gaggle_test_faults(faults.get(worker).copied().unwrap_or_default());
         workers.push(tokio::spawn(worker.execute()));
     }
     let mut ends = Vec::new();
@@ -360,9 +378,11 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
 #[serial_test::serial]
 async fn gaggle_worker_survives_its_manager_going_before_the_run() {
     let test = async {
+        no_token_from_the_environment();
         let server = MockServer::start_async().await;
         let host = server.base_url();
         let (bound, address) = tokio::sync::oneshot::channel();
+        let (joins, mut joined) = tokio::sync::mpsc::unbounded_channel();
         // Two workers expected and one started: the manager waits.
         let manager = load_test(configuration(&[
             "--manager",
@@ -377,7 +397,8 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             "--users",
             "2",
         ]))
-        .report_manager_address(bound);
+        .report_manager_address(bound)
+        .report_joins(joins);
         let manager = tokio::spawn(manager.execute());
         let port = address
             .await
@@ -394,7 +415,8 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             "--quiet",
         ]));
         let worker = tokio::spawn(worker.execute());
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Once it joined, the manager goes.
+        assert_eq!(joined.recv().await, Some(1));
         manager.abort();
         let result = worker.await.expect("the worker task ends");
         match result {
@@ -565,6 +587,7 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
             "3",
             "--report-file",
         ],
+        &[],
         &faults,
     );
     let (manager, workers) = tokio::time::timeout(Duration::from_secs(90), run)
@@ -626,6 +649,7 @@ async fn gaggle_worker_fails_without_its_reset() {
 /// builder asking for a 30 second timeout, gzip and checked certificates,
 /// under a manager given `manager_args`.
 async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClientConfig {
+    no_token_from_the_environment();
     let server = answering().await;
     let host = server.base_url();
     let mut args = vec![
@@ -774,4 +798,146 @@ async fn gaggle_collected_logs_match_their_names() {
         }
         let _ = std::fs::remove_dir_all(&folder);
     }
+}
+
+/// A manager listening on every address, which needs a token, admits the
+/// workers presenting it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_non_loopback_manager_with_a_token_admits_its_workers() {
+    let server = answering().await;
+    let folder = scratch("non-loopback");
+    let run = gaggle_ends(
+        2,
+        &server,
+        &folder,
+        &[
+            "--manager-bind-host",
+            "0.0.0.0",
+            "--gaggle-token",
+            "tok-non-loopback",
+            "--users",
+            "2",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "2",
+        ],
+        &["--gaggle-token", "tok-non-loopback"],
+        &[],
+    );
+    let (manager, workers) = tokio::time::timeout(Duration::from_secs(30), run)
+        .await
+        .expect("the Gaggle ends within 30 seconds");
+    let metrics = manager.expect("the manager exits cleanly");
+    assert_eq!(metrics.total_users, 2);
+    for worker in workers {
+        worker.expect("the worker exits cleanly");
+    }
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A load test of one scenario, GET /a, whose worker data hook returns
+/// `bytes` bytes for each worker.
+fn with_worker_data(configuration: GooseConfiguration, bytes: usize) -> GooseAttack {
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(Scenario::new("A").register_transaction(get("/a")))
+        .set_worker_data(move |_| vec![b'x'; bytes])
+}
+
+/// A manager and one worker of [`with_worker_data`]: their results.
+async fn worker_data_run(
+    bytes: usize,
+) -> (
+    Result<GooseMetrics, crate::GooseError>,
+    Result<GooseMetrics, crate::GooseError>,
+) {
+    no_token_from_the_environment();
+    let server = answering().await;
+    let host = server.base_url();
+    let (bound, address) = tokio::sync::oneshot::channel();
+    let manager = tokio::spawn(
+        with_worker_data(
+            configuration(&[
+                "--manager",
+                "--expect-workers",
+                "1",
+                "--manager-bind-port",
+                "0",
+                "--no-telnet",
+                "--quiet",
+                "--host",
+                &host,
+                "--users",
+                "1",
+                "--run-time",
+                "1",
+            ]),
+            bytes,
+        )
+        .report_manager_address(bound)
+        .execute(),
+    );
+    let port = address
+        .await
+        .expect("the manager listens")
+        .port()
+        .to_string();
+    let worker = tokio::spawn(
+        with_worker_data(
+            configuration(&[
+                "--worker",
+                "--manager-host",
+                "127.0.0.1",
+                "--manager-port",
+                &port,
+                "--no-telnet",
+                "--quiet",
+            ]),
+            0,
+        )
+        .execute(),
+    );
+    let worker = worker.await.expect("the worker task ends");
+    (manager.await.expect("the manager task ends"), worker)
+}
+
+/// Worker data of MAX_WORKER_DATA bytes is handed over; one byte more is
+/// refused by the manager with its documented error, and the workers are
+/// shut down rather than left waiting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_data_is_capped() {
+    let test = async {
+        let (manager, worker) = worker_data_run(crate::MAX_WORKER_DATA + 1).await;
+        match manager {
+            Err(crate::GooseError::InvalidOption { detail, .. }) => assert!(
+                detail.contains(&format!(
+                    "{} bytes for worker 0, more than the {} allowed",
+                    crate::MAX_WORKER_DATA + 1,
+                    crate::MAX_WORKER_DATA
+                )),
+                "{}",
+                detail
+            ),
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        match worker {
+            Err(crate::GooseError::Gaggle { detail }) => {
+                assert!(
+                    detail.contains("shut down before the run started"),
+                    "{}",
+                    detail
+                )
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        let (manager, worker) = worker_data_run(crate::MAX_WORKER_DATA).await;
+        manager.expect("the manager hands over the largest data allowed");
+        worker.expect("the worker runs with it");
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
 }

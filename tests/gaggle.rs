@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-/// How long a heartbeat may go unanswered in these tests.
-const HEARTBEAT: u64 = 3;
+/// How long a heartbeat may go unanswered in these tests: twice the 3
+/// second minimum, so a slow machine does not lose a peer between two
+/// heartbeats, which go every 2 seconds.
+const HEARTBEAT: u64 = 6;
 
 /// An example binary, built by `cargo test` beside this test.
 fn example(name: &str) -> PathBuf {
@@ -49,8 +51,8 @@ fn within<F: FnOnce() + Send + 'static>(test: F) {
     }
 }
 
-/// A free TCP port on 127.0.0.1.
-fn free_port() -> u16 {
+/// A TCP port on 127.0.0.1 nothing listens on: bound, then released.
+fn unused_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -111,6 +113,29 @@ impl Process {
         std::fs::read_to_string(&self.output).unwrap_or_default()
     }
 
+    /// The port a manager started on port 0 listens on, from the line it
+    /// logs once it does, waiting at most 30 seconds.
+    fn port(&self) -> String {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let output = self.output();
+            let address = output
+                .split("manager listening on ")
+                .nth(1)
+                .and_then(|rest| rest.split_whitespace().next());
+            if let Some(port) = address.and_then(|address| address.rsplit(':').next()) {
+                return port.to_string();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} never listened: {}",
+                self.name,
+                output
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// Kill the process at once, as SIGKILL does.
     fn kill(&mut self) -> Instant {
         self.child.kill().unwrap();
@@ -139,24 +164,20 @@ fn mock_simple(server: &MockServer, delay: Duration) -> httpmock::Mock<'_> {
     })
 }
 
-/// The manager's arguments for `port`, the host and `extra`.
-fn manager_args<'a>(
-    port: &'a str,
-    host: &'a str,
-    workers: &'a str,
-    extra: &[&'a str],
-) -> Vec<&'a str> {
+/// The manager's arguments for the host and `extra`: it listens on a port
+/// the system picks, which [`Process::port`] reads back.
+fn manager_args<'a>(host: &'a str, workers: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
     let mut args = vec![
         "--manager",
         "--expect-workers",
         workers,
         "--manager-bind-port",
-        port,
+        "0",
         "--host",
         host,
         "--no-telnet",
         "--gaggle-heartbeat-timeout",
-        "3s",
+        "6s",
         "--gaggle-connect-timeout",
         "20s",
     ];
@@ -174,7 +195,7 @@ fn worker_args<'a>(port: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
         port,
         "--no-telnet",
         "--gaggle-heartbeat-timeout",
-        "3s",
+        "6s",
         "--gaggle-connect-timeout",
         "20s",
     ];
@@ -223,7 +244,6 @@ fn worker_lost_mid_run(frozen: bool) {
         let server = MockServer::start();
         let index = mock_simple(&server, Duration::ZERO);
         let folder = scratch("worker-killed");
-        let port = free_port().to_string();
         let host = server.base_url();
         let manager_folder = folder.join("manager").display().to_string();
         let simple = example("simple");
@@ -232,7 +252,6 @@ fn worker_lost_mid_run(frozen: bool) {
             "manager",
             &folder,
             &manager_args(
-                &port,
                 &host,
                 "2",
                 &[
@@ -251,6 +270,7 @@ fn worker_lost_mid_run(frozen: bool) {
             ),
         );
         let token = ["--gaggle-token", "tok-b21-secret"];
+        let port = manager.port();
         let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
         let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
         until_load(|| index.calls(), Duration::from_secs(30));
@@ -338,7 +358,6 @@ fn manager_lost_mid_run(frozen: bool) {
         let server = MockServer::start();
         let index = mock_simple(&server, Duration::ZERO);
         let folder = scratch("manager-killed");
-        let port = free_port().to_string();
         let host = server.base_url();
         let simple = example("simple");
         let mut manager = Process::start(
@@ -346,7 +365,6 @@ fn manager_lost_mid_run(frozen: bool) {
             "manager",
             &folder,
             &manager_args(
-                &port,
                 &host,
                 "2",
                 &[
@@ -359,6 +377,7 @@ fn manager_lost_mid_run(frozen: bool) {
                 ],
             ),
         );
+        let port = manager.port();
         let mut workers = [
             Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
@@ -427,15 +446,15 @@ fn gaggle_handshake_refusals() {
                 "refused this worker: token:",
             ),
         ] {
-            let port = free_port().to_string();
             let mut extra = vec!["--users", "2", "--run-time", "2s"];
             extra.extend(manager_extra);
             let mut manager = Process::start(
                 &example("simple"),
                 &format!("manager-{case}"),
                 &folder,
-                &manager_args(&port, &host, "1", &extra),
+                &manager_args(&host, "1", &extra),
             );
+            let port = manager.port();
             let mut worker = Process::start(
                 &example(worker_binary),
                 &format!("worker-{case}"),
@@ -470,14 +489,15 @@ fn gaggle_handshake_refusals() {
     });
 }
 
-/// B2.4: a worker with no manager to reach exits with an error, without a
+/// B2.4: a worker with no manager to reach keeps trying, waiting 1, 2 and
+/// then 4 seconds between attempts, and then exits with an error, without a
 /// panic, within the connect timeout plus 5 seconds.
 #[test]
 #[serial_test::serial]
 fn gaggle_worker_without_a_manager() {
     within(|| {
         let folder = scratch("no-manager");
-        let port = free_port().to_string();
+        let port = unused_port().to_string();
         let started = Instant::now();
         let mut worker = Process::start(
             &example("simple"),
@@ -491,19 +511,20 @@ fn gaggle_worker_without_a_manager() {
                 &port,
                 "--no-telnet",
                 "--gaggle-connect-timeout",
-                "4s",
+                "10s",
             ],
         );
         let (status, exited) = worker
-            .wait(Duration::from_secs(20))
+            .wait(Duration::from_secs(30))
             .expect("the worker gives up");
         assert!(!status.success());
-        assert!(
-            exited.duration_since(started) <= Duration::from_secs(4 + 5),
-            "{:?}",
-            exited.duration_since(started)
-        );
+        // Its first three waits, 1, 2 and 4 seconds, passed; the next, 8,
+        // would pass the timeout.
+        let took = exited.duration_since(started);
+        assert!(took >= Duration::from_secs(1 + 2 + 4), "{:?}", took);
+        assert!(took <= Duration::from_secs(10 + 5), "{:?}", took);
         let output = worker.output();
+        assert!(output.matches("trying again").count() >= 3, "{}", output);
         assert!(output.contains("could not reach the manager"), "{}", output);
         assert!(!output.contains("panicked"), "{}", output);
         let _ = std::fs::remove_dir_all(&folder);
@@ -519,7 +540,6 @@ fn gaggle_without_metrics_exits_cleanly() {
         let server = MockServer::start();
         let index = mock_simple(&server, Duration::ZERO);
         let folder = scratch("no-metrics");
-        let port = free_port().to_string();
         let host = server.base_url();
         let simple = example("simple");
         let started = Instant::now();
@@ -528,7 +548,6 @@ fn gaggle_without_metrics_exits_cleanly() {
             "manager",
             &folder,
             &manager_args(
-                &port,
                 &host,
                 "2",
                 &[
@@ -542,6 +561,7 @@ fn gaggle_without_metrics_exits_cleanly() {
                 ],
             ),
         );
+        let port = manager.port();
         let mut workers = [
             Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
@@ -576,7 +596,6 @@ fn gaggle_threshold_stops_every_worker() {
         let server = MockServer::start();
         let index = mock_simple(&server, Duration::from_millis(30));
         let folder = scratch("threshold");
-        let port = free_port().to_string();
         let host = server.base_url();
         let simple = example("simple");
         let started = Instant::now();
@@ -585,7 +604,6 @@ fn gaggle_threshold_stops_every_worker() {
             "manager",
             &folder,
             &manager_args(
-                &port,
                 &host,
                 "2",
                 &[
@@ -600,6 +618,7 @@ fn gaggle_threshold_stops_every_worker() {
                 ],
             ),
         );
+        let port = manager.port();
         let mut workers = [
             Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
@@ -624,6 +643,162 @@ fn gaggle_threshold_stops_every_worker() {
         let after = index.calls();
         std::thread::sleep(Duration::from_secs(2));
         assert_eq!(index.calls(), after, "every worker stopped");
+        let _ = std::fs::remove_dir_all(&folder);
+    });
+}
+
+/// Send process `pid` SIGINT, as Ctrl-C does.
+fn interrupt(pid: u32) {
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .unwrap();
+}
+
+/// The run record in `folder`'s manager folder.
+fn manager_record(folder: &Path) -> serde_json::Value {
+    let report = std::fs::read_to_string(folder.join("manager/report.json")).unwrap();
+    serde_json::from_str(&report).unwrap()
+}
+
+/// Ctrl-C on the manager mid run: it stops every worker, each of which
+/// sends its final metrics and exits 0, and it writes its reports, the run
+/// recorded as canceled and not degraded.
+#[test]
+#[serial_test::serial]
+fn gaggle_manager_interrupted() {
+    within(|| {
+        let server = MockServer::start();
+        let index = mock_simple(&server, Duration::ZERO);
+        let folder = scratch("manager-interrupted");
+        let host = server.base_url();
+        let manager_folder = folder.join("manager").display().to_string();
+        let simple = example("simple");
+        let mut manager = Process::start(
+            &simple,
+            "manager",
+            &folder,
+            &manager_args(
+                &host,
+                "2",
+                &[
+                    "--users",
+                    "20",
+                    "--increase-rate",
+                    "20",
+                    "--run-time",
+                    "60s",
+                    "--report-file",
+                    "--output-dir",
+                    &manager_folder,
+                ],
+            ),
+        );
+        let port = manager.port();
+        let mut workers = [
+            Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
+            Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
+        ];
+        until_load(|| index.calls(), Duration::from_secs(30));
+        interrupt(manager.child.id());
+        manager
+            .wait(Duration::from_secs(60))
+            .unwrap_or_else(|| panic!("the manager ends: {}", manager.output()));
+        for worker in workers.iter_mut() {
+            let (status, _) = worker
+                .wait(Duration::from_secs(30))
+                .unwrap_or_else(|| panic!("{} exits: {}", worker.name, worker.output()));
+            assert!(status.success(), "{}: {}", worker.name, worker.output());
+        }
+        let report = manager_record(&folder);
+        assert_eq!(report["ended_by"], "canceled", "{}", manager.output());
+        let gaggle = &report["gaggle"];
+        assert_eq!(gaggle["degraded"], false, "{}", gaggle);
+        let workers = gaggle["workers"].as_array().unwrap();
+        assert_eq!(workers.len(), 2, "{}", gaggle);
+        for worker in workers {
+            assert_eq!(worker["state"], "finished", "{}", gaggle);
+        }
+        assert!(folder.join("manager/report.html").is_file());
+        let _ = std::fs::remove_dir_all(&folder);
+    });
+}
+
+/// Ctrl-C on a worker mid run: its final metrics reach the manager, which
+/// marks it lost, and the run finishes on the other, degraded.
+#[test]
+#[serial_test::serial]
+fn gaggle_worker_interrupted() {
+    within(|| {
+        let server = MockServer::start();
+        let index = mock_simple(&server, Duration::ZERO);
+        let folder = scratch("worker-interrupted");
+        let host = server.base_url();
+        let manager_folder = folder.join("manager").display().to_string();
+        let simple = example("simple");
+        let mut manager = Process::start(
+            &simple,
+            "manager",
+            &folder,
+            &manager_args(
+                &host,
+                "2",
+                &[
+                    "--users",
+                    "20",
+                    "--increase-rate",
+                    "20",
+                    "--run-time",
+                    "12s",
+                    "--report-file",
+                    "--output-dir",
+                    &manager_folder,
+                ],
+            ),
+        );
+        let port = manager.port();
+        let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &[]));
+        let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &[]));
+        until_load(|| index.calls(), Duration::from_secs(30));
+        interrupt(second.child.id());
+        second
+            .wait(Duration::from_secs(30))
+            .unwrap_or_else(|| panic!("the interrupted worker exits: {}", second.output()));
+        let (status, _) = manager
+            .wait(Duration::from_secs(60))
+            .expect("the manager finishes");
+        assert!(status.success(), "{}", manager.output());
+        let (status, _) = first
+            .wait(Duration::from_secs(10))
+            .expect("the other worker exits");
+        assert!(status.success(), "{}", first.output());
+        let gaggle = &manager_record(&folder)["gaggle"];
+        assert_eq!(gaggle["degraded"], true, "{}", gaggle);
+        let workers = gaggle["workers"].as_array().unwrap();
+        let lost: Vec<&serde_json::Value> = workers
+            .iter()
+            .filter(|worker| worker["state"] == "lost")
+            .collect();
+        assert_eq!(lost.len(), 1, "{}", gaggle);
+        assert_eq!(lost[0]["name"], "second", "{}", gaggle);
+        // Stopped on the worker, which sends its final metrics first on the
+        // same stream: not a stream closed before them.
+        let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.starts_with("it was stopped on the worker"),
+            "{}",
+            gaggle
+        );
+        assert!(lost[0]["last_seq"].as_u64().unwrap_or(0) > 0, "{}", gaggle);
+        assert!(lost[0].get("missing_deltas").is_none(), "{}", gaggle);
+        assert!(
+            workers
+                .iter()
+                .any(|worker| worker["name"] == "first" && worker["state"] == "finished"),
+            "{}",
+            gaggle
+        );
         let _ = std::fs::remove_dir_all(&folder);
     });
 }

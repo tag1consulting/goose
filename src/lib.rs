@@ -693,6 +693,9 @@ pub struct GooseAttack {
     /// What a worker does wrong on purpose (unit tests).
     #[cfg(all(test, feature = "gaggle"))]
     gaggle_test_faults: gaggle::run::TestFaults,
+    /// Where a manager reports each worker joining (unit tests).
+    #[cfg(all(test, feature = "gaggle"))]
+    gaggle_joins: Option<tokio::sync::mpsc::UnboundedSender<usize>>,
     /// Where the client settings every user gets are reported (unit tests).
     #[cfg(all(test, feature = "gaggle"))]
     gaggle_client_report: Option<tokio::sync::oneshot::Sender<client::GooseClientConfig>>,
@@ -836,6 +839,8 @@ impl GooseAttack {
             #[cfg(all(test, feature = "gaggle"))]
             gaggle_test_faults: Default::default(),
             #[cfg(all(test, feature = "gaggle"))]
+            gaggle_joins: None,
+            #[cfg(all(test, feature = "gaggle"))]
             gaggle_client_report: None,
             #[cfg(feature = "gaggle")]
             client_command_line: Default::default(),
@@ -900,6 +905,8 @@ impl GooseAttack {
             gaggle_bound: None,
             #[cfg(all(test, feature = "gaggle"))]
             gaggle_test_faults: Default::default(),
+            #[cfg(all(test, feature = "gaggle"))]
+            gaggle_joins: None,
             #[cfg(all(test, feature = "gaggle"))]
             gaggle_client_report: None,
             #[cfg(feature = "gaggle")]
