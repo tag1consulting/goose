@@ -4,8 +4,6 @@
 /settings.json.code-workspace
 **swp
 /Cargo.lock
-# The proto generator pins its versions, so its output is reproducible.
-!/proto/gen/Cargo.lock
 /src/docs/*/book
 /.idea
 /.env

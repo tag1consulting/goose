@@ -1105,9 +1105,9 @@ impl GooseAttack {
 
     /// The manager, once its workers stopped and before the reports: ask
     /// every worker for its logs and keep them in `workers/<name>/` in the
-    /// run's folder. A worker that sends no chunk for [`LOG_IDLE_TIMEOUT`]
-    /// gives up its transfers; a log not whole then
-    /// stays on its worker, and the run record says so.
+    /// run's folder. A worker whose transfers move nothing for
+    /// [`LOG_IDLE_TIMEOUT`] gives them up: a log not whole then stays on its
+    /// worker, and the run record says so.
     pub(crate) async fn gaggle_collect_logs(&mut self) {
         let Some(mut role) = self.gaggle.role.take() else {
             return;

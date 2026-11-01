@@ -133,7 +133,7 @@ jobs:
     # build compiles it and a new generator release cannot change its output.
     - name: 🔎 Gaggle protocol code is current
       if: ${{ matrix.features == 'gaggle' }}
-      run: cargo run --manifest-path proto/gen/Cargo.toml -- --check
+      run: cargo run --locked --manifest-path proto/gen/Cargo.toml -- --check
 
     # headless_chrome's fetch feature pulled in zip 8.x. On 2026-10-16 every zip release but 9.0.3
     # was yanked, so no Goose build resolved (#753). If a new dependency needs zip, confirm it
