@@ -23,7 +23,9 @@ pub mod worker_message {
         LogChunk(super::LogChunk),
     }
 }
-/// The first message on a stream.
+/// The first message on a stream. The shared token is not in it: it travels
+/// in the request's `authorization` metadata, as `Bearer <token>`, checked
+/// before any message is read.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Hello {
     /// The worker's Goose version, which must equal the manager's.
@@ -35,11 +37,8 @@ pub struct Hello {
     /// The hash of the load test's scenarios and transactions.
     #[prost(uint64, tag = "3")]
     pub plan_hash: u64,
-    /// An optional build id of the load test binary.
-    #[prost(string, optional, tag = "4")]
-    pub build_id: ::core::option::Option<::prost::alloc::string::String>,
     /// The worker's name, for logs and the run folder.
-    #[prost(string, tag = "6")]
+    #[prost(string, tag = "4")]
     pub worker_name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

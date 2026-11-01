@@ -437,7 +437,6 @@ impl LinkSettings {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_version: PROTOCOL_VERSION,
             plan_hash,
-            build_id: None,
             worker_name: name,
         }
     }

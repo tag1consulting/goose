@@ -24,7 +24,9 @@ message WorkerMessage {
   }
 }
 
-// The first message on a stream.
+// The first message on a stream. The shared token is not in it: it travels
+// in the request's `authorization` metadata, as `Bearer <token>`, checked
+// before any message is read.
 message Hello {
   // The worker's Goose version, which must equal the manager's.
   string goose_version = 1;
@@ -32,14 +34,8 @@ message Hello {
   uint32 protocol_version = 2;
   // The hash of the load test's scenarios and transactions.
   uint64 plan_hash = 3;
-  // An optional build id of the load test binary.
-  optional string build_id = 4;
-  // The shared token travels in the request's `authorization` metadata, as
-  // `Bearer <token>`, checked before any message is read.
-  reserved 5;
-  reserved "token";
   // The worker's name, for logs and the run folder.
-  string worker_name = 6;
+  string worker_name = 4;
 }
 
 message PrepareAck {

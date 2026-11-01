@@ -1547,7 +1547,6 @@ pub(crate) mod handshake_tests {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_version: PROTOCOL_VERSION,
             plan_hash: 7,
-            build_id: None,
             worker_name: "w".to_string(),
         }
     }
