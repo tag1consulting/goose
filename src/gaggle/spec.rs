@@ -3,6 +3,7 @@
 //! serialized `GooseConfiguration`, whose serde output hides the dashboard
 //! token and is no faithful copy.
 
+use crate::client::CommandLineClientOptions;
 use crate::config::{GooseConfiguration, RUN_FOLDER};
 use crate::logger::GooseLogFormat;
 use crate::metrics::GooseCoordinatedOmissionMitigation;
@@ -47,6 +48,10 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) no_gzip: bool,
     pub(crate) sticky_follow: bool,
     pub(crate) accept_invalid_certs: bool,
+    /// Which of the timeout, gzip and certificate options the manager's
+    /// command line gave: they win over the worker's client builder, as on
+    /// one process.
+    pub(crate) client_command_line: CommandLineClientOptions,
     pub(crate) no_metrics: bool,
     pub(crate) no_transaction_metrics: bool,
     pub(crate) no_scenario_metrics: bool,
@@ -190,6 +195,7 @@ pub(crate) fn log_specs(configuration: &GooseConfiguration) -> Vec<LogSpec> {
 /// graph data. The custom data is added by the caller.
 pub(crate) fn worker_specs(
     configuration: &GooseConfiguration,
+    client_command_line: CommandLineClientOptions,
     steps: &[(usize, usize)],
     order: &[usize],
     workers: usize,
@@ -223,6 +229,7 @@ pub(crate) fn worker_specs(
                 no_gzip: configuration.no_gzip,
                 sticky_follow: configuration.sticky_follow,
                 accept_invalid_certs: configuration.accept_invalid_certs,
+                client_command_line,
                 no_metrics: configuration.no_metrics,
                 no_transaction_metrics: configuration.no_transaction_metrics,
                 no_scenario_metrics: configuration.no_scenario_metrics,
@@ -453,7 +460,14 @@ mod tests {
             .unwrap();
             let steps = [(7, 1_000), (7, 10_000), (0, 0)];
             let order: Vec<usize> = (0..7).map(|user| user % 3).collect();
-            let specs = worker_specs(&configuration, &steps, &order, 3, true);
+            let specs = worker_specs(
+                &configuration,
+                CommandLineClientOptions::default(),
+                &steps,
+                &order,
+                3,
+                true,
+            );
             assert_eq!(
                 specs
                     .iter()
@@ -494,7 +508,15 @@ mod tests {
                 "--scenario-log",
             ])
             .unwrap();
-            let spec = worker_specs(&manager, &[(5, 1_000), (0, 0)], &[0; 5], 2, true).remove(1);
+            let spec = worker_specs(
+                &manager,
+                CommandLineClientOptions::default(),
+                &[(5, 1_000), (0, 0)],
+                &[0; 5],
+                2,
+                true,
+            )
+            .remove(1);
             // What the load test may have set in code, as configuring a worker
             // with its defaults gives it.
             let mut worker = GooseConfiguration {

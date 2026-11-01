@@ -693,6 +693,13 @@ pub struct GooseAttack {
     /// What a worker does wrong on purpose (unit tests).
     #[cfg(all(test, feature = "gaggle"))]
     gaggle_test_faults: gaggle::run::TestFaults,
+    /// Where the client settings every user gets are reported (unit tests).
+    #[cfg(all(test, feature = "gaggle"))]
+    gaggle_client_report: Option<tokio::sync::oneshot::Sender<client::GooseClientConfig>>,
+    /// The client options the command line gave: a Gaggle manager hands its
+    /// own to each worker, and a worker takes them in place of its own.
+    #[cfg(feature = "gaggle")]
+    client_command_line: client::CommandLineClientOptions,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
     /// Configuration object holding options set when launching the load test.
@@ -828,6 +835,10 @@ impl GooseAttack {
             gaggle_bound: None,
             #[cfg(all(test, feature = "gaggle"))]
             gaggle_test_faults: Default::default(),
+            #[cfg(all(test, feature = "gaggle"))]
+            gaggle_client_report: None,
+            #[cfg(feature = "gaggle")]
+            client_command_line: Default::default(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -889,6 +900,10 @@ impl GooseAttack {
             gaggle_bound: None,
             #[cfg(all(test, feature = "gaggle"))]
             gaggle_test_faults: Default::default(),
+            #[cfg(all(test, feature = "gaggle"))]
+            gaggle_client_report: None,
+            #[cfg(feature = "gaggle")]
+            client_command_line: Default::default(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -1304,11 +1319,14 @@ impl GooseAttack {
         command_line_client_options: client::CommandLineClientOptions,
     ) -> Result<(), GooseError> {
         self.client_strategy = match &self.client_builder {
-            Some(builder) => Some(
-                builder
-                    .resolve(command_line_client_options, &self.configuration)
-                    .into_strategy()?,
-            ),
+            Some(builder) => {
+                let config = builder.resolve(command_line_client_options, &self.configuration);
+                #[cfg(all(test, feature = "gaggle"))]
+                if let Some(report) = self.gaggle_client_report.take() {
+                    let _ = report.send(config.clone());
+                }
+                Some(config.into_strategy()?)
+            }
             None => None,
         };
         Ok(())
@@ -1817,6 +1835,10 @@ impl GooseAttack {
         // are merged in: those win over a client builder, the defaults do not.
         let command_line_client_options =
             client::CommandLineClientOptions::from_command_line(&self.configuration);
+        #[cfg(feature = "gaggle")]
+        {
+            self.client_command_line = command_line_client_options;
+        }
 
         // A worker takes every option that shapes the load from its manager.
         #[cfg(feature = "gaggle")]
@@ -1875,7 +1897,11 @@ impl GooseAttack {
 
         // A client builder gives users clients built from its settings. Build
         // them, or the one shared client, now: before any user starts, and once
-        // for the whole run, so users a Controller adds later share it too.
+        // for the whole run, so users a Controller adds later share it too. A
+        // Gaggle worker's options came from its manager's command line, and win
+        // over its builder as a command line does.
+        #[cfg(feature = "gaggle")]
+        let command_line_client_options = self.client_command_line;
         self.build_client_strategy(command_line_client_options)?;
 
         // With a validated GooseConfiguration, enter a run mode.

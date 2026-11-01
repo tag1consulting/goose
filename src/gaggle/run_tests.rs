@@ -621,3 +621,89 @@ async fn gaggle_worker_fails_without_its_reset() {
     )
     .await;
 }
+
+/// The client settings a worker's users get, its load test's client
+/// builder asking for a 30 second timeout, gzip and checked certificates,
+/// under a manager given `manager_args`.
+async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClientConfig {
+    let server = answering().await;
+    let host = server.base_url();
+    let mut args = vec![
+        "--manager",
+        "--expect-workers",
+        "1",
+        "--manager-bind-port",
+        "0",
+        "--no-telnet",
+        "--quiet",
+        "--host",
+        &host,
+        "--users",
+        "1",
+        "--run-time",
+        "1",
+    ];
+    args.extend_from_slice(manager_args);
+    let (bound, address) = tokio::sync::oneshot::channel();
+    let manager = tokio::spawn(
+        load_test(configuration(&args))
+            .report_manager_address(bound)
+            .execute(),
+    );
+    let port = address
+        .await
+        .expect("the manager listens")
+        .port()
+        .to_string();
+    let builder = crate::client::GooseClientBuilder::new()
+        .without_cookies()
+        .timeout(Duration::from_secs(30))
+        .gzip(true)
+        .accept_invalid_certs(false);
+    let (report, reported) = tokio::sync::oneshot::channel();
+    let worker = load_test(configuration(&[
+        "--worker",
+        "--manager-host",
+        "127.0.0.1",
+        "--manager-port",
+        &port,
+        "--no-telnet",
+        "--quiet",
+    ]))
+    .set_client_builder_without_cookies(builder)
+    .unwrap()
+    .report_client_config(report);
+    let worker = tokio::spawn(worker.execute());
+    let config = reported.await.expect("the worker builds its clients");
+    worker
+        .await
+        .expect("the worker task ends")
+        .expect("the worker exits cleanly");
+    manager
+        .await
+        .expect("the manager task ends")
+        .expect("the manager exits cleanly");
+    config
+}
+
+/// The manager's --timeout, --no-gzip and --accept-invalid-certs win over a
+/// worker's client builder, as a command line wins over a builder on one
+/// process; without them, the builder's settings stand.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_manager_client_options_win_on_workers() {
+    let test = async {
+        let config =
+            worker_client_config(&["--timeout", "1", "--no-gzip", "--accept-invalid-certs"]).await;
+        assert_eq!(config.timeout, Some(Duration::from_secs(1)));
+        assert!(!config.gzip);
+        assert!(config.accept_invalid_certs);
+        let config = worker_client_config(&[]).await;
+        assert_eq!(config.timeout, Some(Duration::from_secs(30)));
+        assert!(config.gzip);
+        assert!(!config.accept_invalid_certs);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}

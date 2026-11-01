@@ -224,6 +224,16 @@ impl GooseAttack {
         self
     }
 
+    /// Have a worker report the client settings its users get (unit tests).
+    #[cfg(test)]
+    pub(crate) fn report_client_config(
+        mut self,
+        report: tokio::sync::oneshot::Sender<crate::client::GooseClientConfig>,
+    ) -> Self {
+        self.gaggle_client_report = Some(report);
+        self
+    }
+
     /// Have the manager report the address it listens on (unit tests).
     #[cfg(test)]
     pub(crate) fn report_manager_address(
@@ -301,6 +311,7 @@ impl GooseAttack {
         };
         let mut specs = spec::worker_specs(
             &self.configuration,
+            self.client_command_line,
             &self.test_plan.steps,
             &order,
             expected,
@@ -461,6 +472,7 @@ impl GooseAttack {
             spec.worker, spec.workers, spec.users, spec.user_offset
         );
         spec.configure(&mut self.configuration);
+        self.client_command_line = spec.client_command_line;
         self.set_user_slice(spec.user_offset, spec.slice.clone());
         self.worker_data = Some(Arc::from(std::mem::take(&mut spec.custom_data)));
         let skip_reset = std::env::var_os(TEST_SKIP_RESET_ENV).is_some();
