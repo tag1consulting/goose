@@ -1248,7 +1248,7 @@ pub(crate) mod tests {
             .unwrap();
         let (tx, _) = mpsc::channel(1);
         assert!(manager.shared.admit("a", tx.clone()).is_ok());
-        let full = manager.shared.admit("b", tx.clone()).unwrap_err();
+        let full = manager.shared.admit("b", tx.clone()).err().unwrap();
         assert!(full.contains("all 1 of its workers"), "{}", full);
         let shared = manager.shared.clone();
         let _ = std::thread::spawn(move || {
@@ -1256,7 +1256,7 @@ pub(crate) mod tests {
             panic!("poison the worker list");
         })
         .join();
-        let poisoned = manager.shared.admit("c", tx).unwrap_err();
+        let poisoned = manager.shared.admit("c", tx).err().unwrap();
         assert!(poisoned.contains("panicked"), "{}", poisoned);
     }
 
