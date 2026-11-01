@@ -5,16 +5,17 @@
 //! What a client without the token can make the manager hold is bounded
 //! before any message is read: at most `expected + 4` connections, each
 //! closed unless a worker is admitted on it within [`HELLO_TIMEOUT`], even
-//! one that stalls the manager's writes; one stream at a time on each; HTTP/2
-//! windows that share [`UNREAD_BUDGET`] between the connections (see
-//! [`window`]), so the manager never holds more unread data than that, from
-//! every client together; and header blocks of at most [`MAX_HEADERS`]; and a
-//! token checked on the
-//! request's metadata, before the stream's first message is decoded. Such
-//! a client can still take every connection slot, again each time one is
-//! closed, keeping workers out until their connect timeout: the network
-//! must be trusted until TLS arrives. The first
-//! message, `Hello`, may be at most [`MAX_HELLO`] bytes.
+//! one that stalls the manager's writes; one stream at a time on each;
+//! HTTP/2 windows that share [`UNREAD_BUDGET`] between the connections (see
+//! [`window`]), so the manager holds at most about that much unread data,
+//! from every client together; header blocks of at most [`MAX_HEADERS`]; and
+//! a token checked on the request's metadata, before the stream's first
+//! message is decoded. Once a worker is admitted, its stream may also hold
+//! one message of at most [`MAX_MESSAGE`] as it is decoded. A client
+//! without the token can still take every connection slot, again each time
+//! one is closed, keeping workers out until their connect timeout: the
+//! network must be trusted until TLS arrives. The first message, `Hello`,
+//! may be at most [`MAX_HELLO`] bytes.
 
 use super::delta::{DeltaKind, GaggleDelta};
 use super::proto::{
@@ -73,7 +74,7 @@ const MAX_WINDOW: u64 = 1 << 20;
 /// connections it allows, `expected + SPARE_CONNECTIONS`, from 64 KiB to 1
 /// MiB. A worker moves at most one window each round trip: at 100 ms, 1 MiB
 /// is about 10 MB/s, for 2 workers or 124, and the 64 KiB that 2,048 get
-/// about 640 KB/s each, 1.3 GB/s for all of them. The windows are fixed for
+/// about 650 KB/s each, 1.3 GB/s for all of them. The windows are fixed for
 /// the run, never grown with the link's bandwidth, so the budget holds
 /// whatever a worker sends.
 fn window(expected: usize) -> u32 {

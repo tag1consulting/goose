@@ -23,13 +23,13 @@ The manager and its workers speak gRPC, with [tonic](https://docs.rs/tonic/) and
 
 Messages are limited to 64 MiB each way, which holds the largest custom data a worker may be handed, 16 MiB, and a worker's final metrics; a `Hello` is limited to 64 KiB. Before any worker is admitted, what a client can make the manager hold is bounded: at most `--expect-workers` plus 4 connections, each closed unless a worker is admitted on it within 10 seconds, and one stream at a time on each. The 4 spare connections absorb connections that never become workers, such as a client without the token or a worker turned away, until their deadline.
 
-The manager never holds more than 128 MiB that its workers sent and it has not read yet, across every connection: each connection's HTTP/2 stream and connection windows are an equal share of that budget, `128 MiB / (--expect-workers + 4)`, at least 64 KiB and at most 1 MiB, set when the manager starts and fixed for the run. (With more than 2,044 workers the 64 KiB floor takes the total just past the budget, to 128.25 MiB at 2,048.) A worker's transfers to the manager move at most one window each round trip, so at a round trip of 100 ms:
+The manager holds at most about 128 MiB that its workers sent and it has not read yet, across every connection: each connection's HTTP/2 stream and connection windows are an equal share of that budget, `128 MiB / (--expect-workers + 4)`, at least 64 KiB and at most 1 MiB, set when the manager starts and fixed for the run. (With more than 2,044 workers the 64 KiB floor takes the total just past the budget, to 128.25 MiB at 2,048.) A worker's transfers to the manager move at most one window each round trip, so at a round trip of 100 ms:
 
 | Workers | Window | Each worker | All workers |
 |---|---|---|---|
 | 2 | 1 MiB | about 10 MB/s | about 20 MB/s |
 | 100 | 1 MiB | about 10 MB/s | about 1 GB/s |
-| 2,048 | 64 KiB | about 640 KB/s | about 1.3 GB/s |
+| 2,048 | 64 KiB | about 650 KB/s | about 1.3 GB/s |
 
 A worker offers its manager windows of 1 MiB. Neither side sends HTTP/2 keepalive pings: the heartbeats, every 2 seconds each way, find a peer that is gone. The manager queues at most 64 messages from its workers, holding at most 256 MiB counted as their encoded sizes; past either, a worker is held back by HTTP/2 flow control. A manager keeps per worker counts of the gaps and repeats in each worker's sequence of deltas, never a list that grows with them, and it makes each worker's custom data, encodes it into that worker's `Prepare` and drops it before making the next worker's, so it never holds every worker's custom data at once.
 
