@@ -1651,7 +1651,9 @@ mod tests {
     }
 
     /// A worker, idle, its link joined to `manager`, holding its share of
-    /// one user and a start instant a minute away; and its run state.
+    /// one user and a start instant a minute away; and its run state. It
+    /// calls `initialize_attack`, which resets the process wide killswitch,
+    /// so every test that uses it is serial.
     async fn idle_worker(manager: &Manager) -> (GooseAttack, GooseAttackRunState) {
         let link = Link::connect(LinkSettings {
             address: manager.local_addr.to_string(),
@@ -1707,6 +1709,7 @@ mod tests {
     /// manager's run ends in the milliseconds before it: the worker never
     /// starts, and says it stopped.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
     async fn a_stop_before_the_start_never_starts() {
         let test = async {
             let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
@@ -1747,6 +1750,7 @@ mod tests {
     /// when the ramp ends in the milliseconds before it, is held, and made
     /// once the worker starts: its metrics are then on the run's epoch.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
     async fn a_reset_before_the_start_is_made_after_it() {
         let test = async {
             let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))

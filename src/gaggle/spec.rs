@@ -409,6 +409,12 @@ impl WorkerRunSpec {
                 LOG_NAMES.len()
             ));
         }
+        if self.user_offset.checked_add(self.users).is_none() {
+            return Err(format!(
+                "the run spec's {} users from ordinal {} pass the largest ordinal",
+                self.users, self.user_offset
+            ));
+        }
         if let Some(&scenario) = self.slice.iter().find(|&&scenario| scenario >= scenarios) {
             return Err(format!(
                 "the run spec gives a user scenario {scenario}, and this load test has {scenarios}"
@@ -609,6 +615,10 @@ mod tests {
         assert!(why.contains("log of kind 5"), "{}", why);
         let why = spec.validate(1).unwrap_err();
         assert!(why.contains("scenario 1"), "{}", why);
+        let mut offset = spec.clone();
+        offset.user_offset = usize::MAX;
+        let why = offset.validate(2).unwrap_err();
+        assert!(why.contains("largest ordinal"), "{}", why);
     }
 
     /// A spec configures every option it carries, so a worker runs exactly

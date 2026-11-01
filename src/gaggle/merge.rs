@@ -387,6 +387,9 @@ impl GaggleAccumulator {
             }
             total.lost = true;
         }
+        // Built from the totals again, so the figures are added in worker
+        // order, as a build from nothing adds them, not in arrival order.
+        self.merged.get_mut().current = false;
     }
 
     /// The worker has sent its last delta and will send no final one: its
@@ -395,6 +398,8 @@ impl GaggleAccumulator {
         if let Some(worker) = self.workers.get_mut(&worker) {
             worker.finished = true;
         }
+        // As in `lose`: the last build adds the figures in worker order.
+        self.merged.get_mut().current = false;
     }
 
     /// Refuse, from now on, a delta carrying a second past `second`: the
