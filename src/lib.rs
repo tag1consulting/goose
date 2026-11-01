@@ -1540,10 +1540,8 @@ impl GooseAttack {
     /// The index in `scenarios` of each of `total_users` users one process
     /// running them all would start, by global ordinal: the first user
     /// started is ordinal 0. Under the `Random` scheduler each call draws
-    /// again, so a Gaggle draws once and hands each worker its slice.
-    // Called by the Gaggle manager in step 2; tested here.
+    /// again, so a Gaggle manager draws once and hands each worker its slice.
     #[cfg(feature = "gaggle")]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn user_scenarios(&mut self, total_users: usize) -> Result<Vec<usize>, GooseError> {
         let saved = self.user_slice.take();
         let order = self.user_scenario_order(total_users);
@@ -1556,42 +1554,10 @@ impl GooseAttack {
     /// Run the users with global ordinals `offset` on, whose index in
     /// `scenarios` is each of `slice` in turn: a Gaggle worker's share of a
     /// load test, for any scheduler.
-    // Called by a Gaggle worker in step 2; tested here.
     #[cfg(feature = "gaggle")]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_user_slice(&mut self, offset: usize, slice: Vec<usize>) {
         self.user_offset = offset;
         self.user_slice = Some(slice);
-    }
-
-    /// Run `users` users from global ordinal `offset` of a load test of
-    /// `total` users, as one process running them all would assign them
-    /// scenarios: for the `RoundRobin` and `Serial` schedulers, which
-    /// allocate the same way every time. A share past the last user is an
-    /// error.
-    // Called by a Gaggle worker in step 2; tested here.
-    #[cfg(feature = "gaggle")]
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn set_user_ordinals(
-        &mut self,
-        offset: usize,
-        users: usize,
-        total: usize,
-    ) -> Result<(), GooseError> {
-        let end = offset.checked_add(users).filter(|&end| end <= total);
-        let Some(end) = end else {
-            return Err(GooseError::InvalidOption {
-                option: "--users".to_string(),
-                value: users.to_string(),
-                detail: format!(
-                    "a Gaggle worker's {users} users from ordinal {offset} run past the last of {total}"
-                ),
-            });
-        };
-        let all = self.user_scenarios(total)?;
-        let slice = all[offset.min(all.len())..end.min(all.len())].to_vec();
-        self.set_user_slice(offset, slice);
-        Ok(())
     }
 
     /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
@@ -1957,7 +1923,7 @@ impl GooseAttack {
         // A manager waits for its workers, prepares them, and starts its own
         // run with theirs.
         #[cfg(feature = "gaggle")]
-        if self.gaggle_manager() {
+        if self.is_gaggle_manager() {
             self.gaggle_manager_start().await?;
         }
 
@@ -2098,10 +2064,7 @@ impl GooseAttack {
 
         // A Gaggle worker may hold no users, when there are more workers than
         // users.
-        #[cfg(feature = "gaggle")]
-        let share_of_none = self.gaggle_worker();
-        #[cfg(not(feature = "gaggle"))]
-        let share_of_none = false;
+        let share_of_none = self.is_gaggle_worker();
 
         // A load test with no users never starts: weighting zero users never ends.
         if self.test_plan.total_users() == 0 && !share_of_none {
@@ -2138,7 +2101,7 @@ impl GooseAttack {
 
         // A Gaggle manager runs no users of its own.
         #[cfg(feature = "gaggle")]
-        if self.gaggle_manager() {
+        if self.is_gaggle_manager() {
             return Ok(());
         }
 
@@ -2911,22 +2874,12 @@ impl GooseAttack {
                 // Convert from milliseconds to seconds.
                 * 1_000.0;
 
-            // A Gaggle manager's users run on its workers: it counts them as
-            // its plan starts them, to keep the run's clock.
+            // A Gaggle manager's users run on its workers.
             #[cfg(feature = "gaggle")]
-            if self.gaggle_manager() {
-                if goose_attack_run_state.adjust_due() {
-                    goose_attack_run_state.schedule_next_adjust(Duration::from_secs_f64(
-                        1.0 / f64::from(increase_rate),
-                    ));
-                    goose_attack_run_state.active_users += 1;
-                    self.metrics.total_users += 1;
-                    if goose_attack_run_state.active_users > self.metrics.maximum_users {
-                        self.metrics.maximum_users = goose_attack_run_state.active_users;
-                    }
-                } else {
-                    goose_attack_run_state.sleep_until_adjust().await;
-                }
+            if self
+                .gaggle_manager_increase(goose_attack_run_state, increase_rate)
+                .await
+            {
                 return Ok(());
             }
 
@@ -3320,9 +3273,7 @@ impl GooseAttack {
 
                 // A Gaggle manager's users run on its workers.
                 #[cfg(feature = "gaggle")]
-                if self.gaggle_manager() {
-                    goose_attack_run_state.completed_users += 1;
-                    goose_attack_run_state.active_users -= 1;
+                if self.gaggle_manager_decrease(goose_attack_run_state) {
                     return Ok(());
                 }
 
@@ -3805,11 +3756,7 @@ impl GooseAttack {
     async fn stop_attack(&mut self) -> Result<(), GooseError> {
         // Run any configured test_stop() functions: a Gaggle worker never
         // does, its manager runs them once.
-        #[cfg(feature = "gaggle")]
-        let worker = self.gaggle_worker();
-        #[cfg(not(feature = "gaggle"))]
-        let worker = false;
-        if !worker {
+        if !self.is_gaggle_worker() {
             self.run_test_stop().await?;
         }
 
@@ -3822,22 +3769,25 @@ impl GooseAttack {
     /// Whether Goose shuts down once a run stops: after an autostarted run,
     /// but never a Gaggle worker, which waits for its manager to say so.
     fn shuts_down_after_stop(&self) -> bool {
-        #[cfg(feature = "gaggle")]
-        if self.gaggle_worker() {
-            return false;
-        }
-        !self.configuration.no_autostart
+        !self.is_gaggle_worker() && !self.configuration.no_autostart
     }
 
     /// Whether Idle waits for something other than a Controller: a Gaggle
     /// worker waits for its manager.
     fn gaggle_waits_idle(&self) -> bool {
-        #[cfg(feature = "gaggle")]
-        {
-            self.gaggle_worker()
-        }
-        #[cfg(not(feature = "gaggle"))]
-        false
+        self.is_gaggle_worker()
+    }
+
+    /// Whether this process is a Gaggle manager: never without the `gaggle`
+    /// feature, which alone sets that mode.
+    pub(crate) fn is_gaggle_manager(&self) -> bool {
+        self.attack_mode == AttackMode::Manager
+    }
+
+    /// Whether this process is a Gaggle worker: never without the `gaggle`
+    /// feature, which alone sets that mode.
+    pub(crate) fn is_gaggle_worker(&self) -> bool {
+        self.attack_mode == AttackMode::Worker
     }
 
     // Reset the GooseAttackRunState before starting a load test. This is to allow a Controller
@@ -3851,11 +3801,7 @@ impl GooseAttack {
 
         // Run any configured test_start() functions: a Gaggle manager ran
         // them before its workers started, and a worker never does.
-        #[cfg(feature = "gaggle")]
-        let gaggle = self.gaggle_manager() || self.gaggle_worker();
-        #[cfg(not(feature = "gaggle"))]
-        let gaggle = false;
-        if !gaggle {
+        if !self.is_gaggle_manager() && !self.is_gaggle_worker() {
             self.run_test_start().await?;
             // A run of one process is worker 0 of 1 to the worker data hook.
             let share = WorkerShare {
@@ -3940,7 +3886,7 @@ impl GooseAttack {
         // If enabled, spawn a logger thread. A Gaggle manager writes no logs
         // of its own: its workers write them, and send them at the end.
         #[cfg(feature = "gaggle")]
-        let (logger_handle, all_threads_logger_tx) = if self.gaggle_manager() {
+        let (logger_handle, all_threads_logger_tx) = if self.is_gaggle_manager() {
             (None, None)
         } else {
             self.configuration
@@ -4010,7 +3956,7 @@ impl GooseAttack {
             processor.gaggle_enable_shadow(outcome.clone());
             self.gaggle_shadow = Some(outcome);
             goose_attack_run_state.gaggle_shadow_second = None;
-        } else if self.gaggle_manager() {
+        } else if self.is_gaggle_manager() {
             let (limits, health) = self.gaggle_merge_settings();
             processor.gaggle_enable_manager(limits, health);
         } else if let Some(link) = self.gaggle_link() {
@@ -5944,14 +5890,11 @@ mod tests {
                         let mut started = Vec::new();
                         let mut offset = 0;
                         for users in split {
+                            // The manager draws once, and hands each worker
+                            // its slice.
                             let mut worker = gaggle_attack(scheduler.clone());
-                            match scheduler {
-                                GooseScheduler::Random => worker.set_user_slice(
-                                    offset,
-                                    expected[offset..offset + users].to_vec(),
-                                ),
-                                _ => worker.set_user_ordinals(offset, users, total).unwrap(),
-                            }
+                            worker
+                                .set_user_slice(offset, expected[offset..offset + users].to_vec());
                             assert_eq!(worker.user_offset, offset);
                             // The worker builds its users in this order and
                             // pops them, last first.
@@ -6007,25 +5950,22 @@ mod tests {
         );
     }
 
-    /// A worker's share that runs past the last user, or past the last
-    /// ordinal there is, is an error, not a shorter share.
+    /// A worker's slice sets its share: its first user's ordinal, and the
+    /// scenario of each of its users, in the order they start.
     #[cfg(feature = "gaggle")]
     #[test]
-    fn gaggle_worker_share_past_the_end_is_an_error() {
+    fn gaggle_worker_slice_sets_its_share() {
+        let mut single = gaggle_attack(GooseScheduler::RoundRobin);
+        let all = single.user_scenarios(10).unwrap();
         let mut attack = gaggle_attack(GooseScheduler::RoundRobin);
-        for (offset, users) in [(8, 3), (usize::MAX, 2), (1, usize::MAX)] {
-            assert!(
-                matches!(
-                    attack.set_user_ordinals(offset, users, 10),
-                    Err(GooseError::InvalidOption { .. })
-                ),
-                "{} {}",
-                offset,
-                users
-            );
+        attack.set_user_slice(7, all[7..10].to_vec());
+        assert_eq!(attack.user_offset, 7);
+        let mut built = attack.user_scenario_order(3).unwrap();
+        let mut started = Vec::new();
+        while let Some(scenario) = built.pop() {
+            started.push(scenario);
         }
-        attack.set_user_ordinals(7, 3, 10).unwrap();
-        assert_eq!(attack.user_scenario_order(3).unwrap().len(), 3);
+        assert_eq!(started, all[7..10]);
     }
 
     /// A worker's users start with global ordinals from its offset on: each

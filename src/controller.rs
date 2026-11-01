@@ -838,7 +838,7 @@ impl GooseAttack {
         // A Gaggle manager answers what it can read; a command that changes
         // the run is refused until runtime control reaches the workers.
         #[cfg(feature = "gaggle")]
-        if self.gaggle_manager() && command.changes_the_run() {
+        if self.is_gaggle_manager() && command.changes_the_run() {
             let refused = self.control_outcome(
                 goose_attack_run_state,
                 false,

@@ -222,8 +222,6 @@ impl GaggleAccumulator {
     /// and its seconds no longer hold back which seconds are complete. The
     /// loss of a worker that sent anything is recorded in [`Self::gaps`] as
     /// a gap from its next sequence number, with nothing (0) received.
-    // Called by the manager in Gaggle step 2; tested here.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn lose(&mut self, worker: u32) {
         if let Some(total) = self.workers.get_mut(&worker) {
             if !total.lost && !total.finished {
@@ -248,8 +246,6 @@ impl GaggleAccumulator {
     /// Refuse, from now on, a delta carrying a second past `second`: the
     /// manager's own series clock, plus slack, at most the cap the
     /// accumulator was built with.
-    // Called by the manager each second in Gaggle step 2; tested here.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_max_second(&mut self, second: Second) {
         self.limits.max_second = second.min(self.cap_second);
     }
@@ -420,8 +416,6 @@ impl GaggleAccumulator {
 /// oldest kept, where applying both keeps up to the cap from each; and a
 /// final `a` followed by a delta of a newer epoch does not mark the worker
 /// finished. Refused, as [`GaggleDelta::add`], past [`Bounds::WORKER`].
-// Bounds a worker's send queue in Gaggle step 2; tested here.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> Result<GaggleDelta, DeltaError> {
     if b.epoch < a.epoch {
         return Ok(a.clone());

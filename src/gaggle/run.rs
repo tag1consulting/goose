@@ -182,14 +182,44 @@ async fn fail(manager: &mut Manager, detail: String) -> GooseError {
 }
 
 impl GooseAttack {
-    /// Whether this process is a Gaggle manager.
-    pub(crate) fn gaggle_manager(&self) -> bool {
-        self.attack_mode == AttackMode::Manager
+    /// A manager's step of a ramp up: its users run on its workers, so it
+    /// counts them as its plan starts them, to keep the run's clock. Whether
+    /// this process is a manager, which starts no user of its own.
+    pub(crate) async fn gaggle_manager_increase(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        increase_rate: f32,
+    ) -> bool {
+        if !self.is_gaggle_manager() {
+            return false;
+        }
+        if goose_attack_run_state.adjust_due() {
+            goose_attack_run_state
+                .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(increase_rate)));
+            goose_attack_run_state.active_users += 1;
+            self.metrics.total_users += 1;
+            if goose_attack_run_state.active_users > self.metrics.maximum_users {
+                self.metrics.maximum_users = goose_attack_run_state.active_users;
+            }
+        } else {
+            goose_attack_run_state.sleep_until_adjust().await;
+        }
+        true
     }
 
-    /// Whether this process is a Gaggle worker.
-    pub(crate) fn gaggle_worker(&self) -> bool {
-        self.attack_mode == AttackMode::Worker
+    /// A manager's step of a ramp down, once a user is due to stop: it
+    /// counts one fewer. Whether this process is a manager, which stops no
+    /// user of its own.
+    pub(crate) fn gaggle_manager_decrease(
+        &self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> bool {
+        if !self.is_gaggle_manager() {
+            return false;
+        }
+        goose_attack_run_state.completed_users += 1;
+        goose_attack_run_state.active_users -= 1;
+        true
     }
 
     /// What a manager's merge refuses a delta past, and where it records
