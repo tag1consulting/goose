@@ -1091,9 +1091,10 @@ impl GooseAttack {
                 };
                 // A worker that stopped after sending metrics sent its final
                 // delta first: without it, its last running totals stand.
-                let final_missing = matches!(state, WorkerState::Finished | WorkerState::UsersExited)
-                    && merge.last_seq > 0
-                    && !merge.final_merged;
+                let final_missing =
+                    matches!(state, WorkerState::Finished | WorkerState::UsersExited)
+                        && merge.last_seq > 0
+                        && !merge.final_merged;
                 GaggleWorkerRecord {
                     id: worker.id,
                     name: worker.name.clone(),
@@ -1421,9 +1422,7 @@ mod tests {
     }
 
     /// Wait on `inbound` for `SendLogs`, skipping heartbeats.
-    async fn send_logs_asked(
-        inbound: &mut tonic::Streaming<crate::gaggle::proto::ManagerMessage>,
-    ) {
+    async fn send_logs_asked(inbound: &mut tonic::Streaming<crate::gaggle::proto::ManagerMessage>) {
         loop {
             match inbound.message().await.unwrap().and_then(|m| m.message) {
                 Some(ToWorker::SendLogs(_)) => return,
@@ -1462,12 +1461,7 @@ mod tests {
                 if path.is_dir() {
                     dirs.push(path);
                 } else {
-                    found.push(
-                        path.strip_prefix(folder)
-                            .unwrap()
-                            .display()
-                            .to_string(),
-                    );
+                    found.push(path.strip_prefix(folder).unwrap().display().to_string());
                 }
             }
         }
@@ -1481,10 +1475,8 @@ mod tests {
     #[tokio::test]
     async fn a_log_cut_off_part_way_leaves_no_file() {
         let test = async {
-            let folder = std::env::temp_dir().join(format!(
-                "goose-gaggle-cut-log-{}",
-                std::process::id()
-            ));
+            let folder =
+                std::env::temp_dir().join(format!("goose-gaggle-cut-log-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&folder);
             let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
             let worker = tokio::spawn(async move {

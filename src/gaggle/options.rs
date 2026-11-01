@@ -363,7 +363,10 @@ impl GooseConfiguration {
                     .iter()
                     .find(|other| other.manager_file.eq_ignore_ascii_case(&log.manager_file))
                 {
-                    let (first, second) = (LOG_OPTIONS[log.kind as usize], LOG_OPTIONS[other.kind as usize]);
+                    let (first, second) = (
+                        LOG_OPTIONS[log.kind as usize],
+                        LOG_OPTIONS[other.kind as usize],
+                    );
                     return Err(refused(
                         second,
                         &other.manager_file,
@@ -442,7 +445,8 @@ mod tests {
             let with = |base: &[&str], more: &[&str]| -> Vec<String> {
                 base.iter().chain(more).map(|arg| arg.to_string()).collect()
             };
-            let cases: Vec<(Vec<String>, &str)> = vec![
+            let cases: Vec<(Vec<String>, &str)> =
+                vec![
                 (
                     with(&["--manager"], &[]),
                     "--manager needs --expect-workers",
