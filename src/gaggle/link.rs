@@ -51,6 +51,9 @@ fn start_instant(delay_ms: u64) -> Result<tokio::time::Instant, String> {
 /// A log chunk's size.
 pub(crate) const LOG_CHUNK: usize = 1 << 20;
 
+/// The HTTP/2 stream and connection windows a worker offers its manager.
+const WORKER_WINDOW: u32 = 1 << 20;
+
 /// The backoff between connection attempts: 1, 2, 4 and 8 seconds, then
 /// every 10 seconds.
 fn backoff(attempt: u32) -> Duration {
@@ -61,6 +64,11 @@ fn backoff(attempt: u32) -> Duration {
         3 => 8,
         _ => 10,
     })
+}
+
+/// The delta in `slot`, an empty one left in its place.
+fn take(slot: &mut GaggleDelta) -> GaggleDelta {
+    std::mem::replace(slot, GaggleDelta::new(0, 0, 0, DeltaKind::Delta))
 }
 
 /// What leaves the worker.
@@ -101,19 +109,29 @@ impl OutboxState {
             .collect();
         for pair in deltas.windows(2).rev() {
             let (before, newest) = (pair[0], pair[1]);
-            let joined = match (&self.queue[before], &self.queue[newest]) {
-                (Outgoing::Delta(a), Outgoing::Delta(b))
-                    if b.first_seq == a.seq.saturating_add(1) =>
-                {
-                    coalesce(a, b)
-                }
-                _ => continue,
+            let follows = match (&self.queue[before], &self.queue[newest]) {
+                (Outgoing::Delta(a), Outgoing::Delta(b)) => b.first_seq == a.seq.saturating_add(1),
+                _ => false,
             };
-            if let Ok(joined) = joined {
-                self.queue[before] = Outgoing::Delta(Box::new(joined));
-                let _ = self.queue.remove(newest);
-                self.deltas -= 1;
-                return true;
+            if !follows {
+                continue;
+            }
+            let Some(Outgoing::Delta(b)) = self.queue.remove(newest) else {
+                continue;
+            };
+            let Outgoing::Delta(a) = &mut self.queue[before] else {
+                continue;
+            };
+            match coalesce(take(a), &b) {
+                Ok(joined) => {
+                    **a = joined;
+                    self.deltas -= 1;
+                    return true;
+                }
+                Err((unchanged, _)) => {
+                    **a = unchanged;
+                    self.queue.insert(newest, Outgoing::Delta(b));
+                }
             }
         }
         false
@@ -189,10 +207,20 @@ impl Outbox {
                         Some(Err("no queued delta could make room".to_string()))
                     }
                 } else {
+                    // Joined in place: the queued delta is taken out, joined
+                    // and put back, never copied.
                     state
                         .last_delta()
-                        .map(|last| coalesce(last, &delta).map(|joined| **last = joined))
-                        .map(|done| done.map_err(|e| e.to_string()))
+                        .map(|last| match coalesce(take(last), &delta) {
+                            Ok(joined) => {
+                                **last = joined;
+                                Ok(())
+                            }
+                            Err((unchanged, e)) => {
+                                **last = unchanged;
+                                Err(e.to_string())
+                            }
+                        })
                 };
                 match coalesced {
                     Some(Ok(())) => return,
@@ -289,6 +317,11 @@ impl Outbox {
         self.queued.notify_waiters();
         self.queued.notify_one();
         self.sent.notify_waiters();
+    }
+
+    /// Whether it is closed: nothing more is queued.
+    fn is_closed(&self) -> bool {
+        self.state.lock().map_or(true, |state| state.closed)
     }
 
     /// Whether nothing is queued.
@@ -411,7 +444,12 @@ impl Link {
                 detail: format!("--manager-host {}: {e}", settings.address),
             })?
             .connect_timeout(Duration::from_secs(5))
-            .http2_keep_alive_interval(HEARTBEAT_INTERVAL)
+            // One connection, to its own manager: a window of 1 MiB lets the
+            // manager's messages, custom data among them, move 1 MiB each
+            // round trip. No HTTP/2 keepalive: the heartbeats find a dead
+            // manager.
+            .initial_stream_window_size(WORKER_WINDOW)
+            .initial_connection_window_size(WORKER_WINDOW)
             .tcp_nodelay(true);
         let mut attempt = 0;
         loop {
@@ -669,15 +707,23 @@ async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::i
     let mut data = vec![0u8; LOG_CHUNK];
     let mut filled = 0;
     loop {
+        // Nothing more leaves once the outbox is closed: stop reading.
+        if outbox.is_closed() {
+            return Ok(());
+        }
         let read = reader.read(&mut data[filled..]).await?;
         filled += read;
         let end = read == 0;
         if filled == LOG_CHUNK || end {
+            // The buffer moves into the chunk, and a fresh one takes its
+            // place: no chunk is copied.
+            let mut chunk = std::mem::replace(&mut data, vec![0u8; LOG_CHUNK]);
+            chunk.truncate(filled);
             outbox
                 .push_chunk(LogChunk {
                     file: file.to_string(),
                     offset,
-                    data: data[..filled].to_vec(),
+                    data: chunk,
                     last: end,
                 })
                 .await;
@@ -1254,6 +1300,107 @@ mod tests {
         let forced = switch.forced.load(Ordering::Relaxed);
         switch.done.store(true, Ordering::Relaxed);
         assert!(!forced);
+    }
+
+    /// Relay every connection to `to`, each byte held `delay` each way:
+    /// the address it listens on.
+    async fn delaying_proxy(to: std::net::SocketAddr, delay: Duration) -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn relay(
+            mut from: tokio::net::tcp::OwnedReadHalf,
+            mut to: tokio::net::tcp::OwnedWriteHalf,
+            delay: Duration,
+        ) {
+            let (tx, mut rx) =
+                tokio::sync::mpsc::unbounded_channel::<(tokio::time::Instant, Vec<u8>)>();
+            let writer = tokio::spawn(async move {
+                while let Some((due, bytes)) = rx.recv().await {
+                    tokio::time::sleep_until(due).await;
+                    if to.write_all(&bytes).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            let mut buffer = vec![0u8; 64 << 10];
+            while let Ok(read) = from.read(&mut buffer).await {
+                if read == 0
+                    || tx
+                        .send((tokio::time::Instant::now() + delay, buffer[..read].to_vec()))
+                        .is_err()
+                {
+                    break;
+                }
+            }
+            drop(tx);
+            let _ = writer.await;
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let Ok(server) = tokio::net::TcpStream::connect(to).await else {
+                    continue;
+                };
+                let (client_read, client_write) = client.into_split();
+                let (server_read, server_write) = server.into_split();
+                tokio::spawn(relay(client_read, server_write, delay));
+                tokio::spawn(relay(server_read, client_write, delay));
+            }
+        });
+        address
+    }
+
+    /// Across a link of 100 ms round trips, a manager of 2 workers takes a
+    /// worker's 8 MiB log in under 4 seconds: its 1 MiB window moves about
+    /// 10 MB/s, where a 64 KiB one moved 640 KB/s, 13 seconds for the log.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_log_crosses_a_slow_link_at_the_window_rate() {
+        use super::super::manager::{Event, Manager};
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 2, None, 7, true, Duration::from_secs(30))
+                .await
+                .unwrap();
+            let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(50)).await;
+            let link = Link::connect(LinkSettings {
+                address: proxy.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(30),
+                hello: LinkSettings::hello(7, "far".to_string()),
+                token: None,
+                exit_for_real: false,
+            })
+            .await
+            .unwrap();
+            let path =
+                std::env::temp_dir().join(format!("goose-gaggle-far-log-{}", std::process::id()));
+            const SIZE: usize = 8 << 20;
+            std::fs::write(&path, vec![b'x'; SIZE]).unwrap();
+            let sent = Instant::now();
+            link.send_logs(vec![("requests.json".to_string(), path.clone())]);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut received = 0;
+            loop {
+                match manager.next_event(deadline).await {
+                    Some(Event::Log { chunk, .. }) => {
+                        assert_eq!(chunk.offset, received as u64);
+                        received += chunk.data.len();
+                        if chunk.last {
+                            break;
+                        }
+                    }
+                    Some(Event::Joined) => {}
+                    other => panic!("{:?}", other),
+                }
+            }
+            let took = sent.elapsed();
+            let _ = std::fs::remove_file(&path);
+            assert_eq!(received, SIZE);
+            println!("8 MiB across 100 ms round trips in {took:?}");
+            assert!(took < Duration::from_secs(4), "8 MiB took {took:?}");
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
     }
 
     /// A start delay past a minute is refused, never a panic, up to the

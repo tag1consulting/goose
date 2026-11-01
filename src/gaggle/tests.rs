@@ -1094,7 +1094,7 @@ fn gaggle_coalesce_equals_apply_apply() {
     }
     let expected = apply_all(deltas.iter().flatten());
     for (worker, at) in pairs {
-        let joined = coalesce(&deltas[worker][at], &deltas[worker][at + 1]).unwrap();
+        let joined = coalesce(deltas[worker][at].clone(), &deltas[worker][at + 1]).unwrap();
         let replaced: Vec<GaggleDelta> = deltas
             .iter()
             .enumerate()
@@ -1753,7 +1753,11 @@ fn gaggle_refuses_an_overflow() {
 fn gaggle_coalesce_refuses_an_overflow() {
     let mut a = counted(0, 1, 1);
     a.metrics.requests.get_mut("GET /a").unwrap().success = super::delta::MAX_COUNT as i64;
-    assert_eq!(coalesce(&a, &counted(0, 2, 1)), Err(DeltaError::Overflow));
+    assert_eq!(
+        coalesce(a.clone(), &counted(0, 2, 1)),
+        Err((a.clone(), DeltaError::Overflow)),
+        "a refused join leaves the first delta as it was"
+    );
 }
 
 /// A new worker's refused first delta leaves no trace of the worker.

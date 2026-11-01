@@ -38,8 +38,10 @@ const FINAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a worker waits for its metrics processor to reset.
 const RESET_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long the manager waits for every worker's logs.
-const LOGS_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long the manager waits for the next chunk of a worker's logs: a
+/// transfer that goes this long with none fails. No deadline caps a
+/// transfer that keeps moving, whatever its size.
+const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How far past its own series clock the manager takes a worker's second:
 /// the workers' clocks start within milliseconds of its own, and a delta is
@@ -1048,7 +1050,8 @@ impl GooseAttack {
 
     /// The manager, once its workers stopped and before the reports: ask
     /// every worker for its logs and keep them in `workers/<name>/` in the
-    /// run's folder. One deadline covers them all; a log not whole by then
+    /// run's folder. A worker that sends no chunk for [`LOG_IDLE_TIMEOUT`]
+    /// gives up its transfers; a log not whole then
     /// stays on its worker, and the run record says so.
     pub(crate) async fn gaggle_collect_logs(&mut self) {
         let Some(mut role) = self.gaggle.take() else {
@@ -1205,17 +1208,56 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
         warn!("gaggle: this run has no folder, so its workers' logs stay on them");
         return;
     };
-    let deadline = Instant::now() + LOGS_TIMEOUT;
+    // When each worker last sent a chunk, from when it was asked.
+    let asked = Instant::now();
+    let mut heard: BTreeMap<u32, Instant> = pending.keys().map(|&id| (id, asked)).collect();
     let mut open: BTreeMap<(u32, String), Incoming> = BTreeMap::new();
     while pending.values().any(|files| !files.is_empty()) {
+        let deadline = pending
+            .iter()
+            .filter(|(_, files)| !files.is_empty())
+            .filter_map(|(id, _)| heard.get(id))
+            .min()
+            .map_or(asked, |&last| last + LOG_IDLE_TIMEOUT);
         let Some(event) = run.manager.next_event(deadline).await else {
-            break;
+            // Every worker that sent nothing for the idle timeout: its logs
+            // still to come stay on it.
+            let now = Instant::now();
+            if now < deadline {
+                // No event, and no worker idle yet: the event queue closed.
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                continue;
+            }
+            for (&id, files) in pending.iter_mut() {
+                if files.is_empty()
+                    || heard
+                        .get(&id)
+                        .is_some_and(|&last| now < last + LOG_IDLE_TIMEOUT)
+                {
+                    continue;
+                }
+                for (file, log) in std::mem::take(files) {
+                    if let Some(incoming) = open.remove(&(id, file)) {
+                        incoming.abandon().await;
+                    }
+                    let entry = left(&run.workers[id as usize], &log);
+                    warn!(
+                        "gaggle: no part of worker {}'s log {} came for {} seconds; it stays on the worker",
+                        entry.worker,
+                        entry.path,
+                        LOG_IDLE_TIMEOUT.as_secs()
+                    );
+                    run.logs_left.push(entry);
+                }
+            }
+            continue;
         };
         match event {
             Event::Log { id, chunk } => {
                 let Some(files) = pending.get_mut(&id) else {
                     continue;
                 };
+                heard.insert(id, Instant::now());
                 if !files.contains_key(&chunk.file) {
                     warn!(
                         "gaggle: worker {id} sent a log the manager did not ask for: {:?}",
@@ -1303,21 +1345,6 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                 }
             }
             _ => {}
-        }
-    }
-    for (id, files) in pending {
-        for (file, log) in files {
-            if let Some(incoming) = open.remove(&(id, file)) {
-                incoming.abandon().await;
-            }
-            let entry = left(&run.workers[id as usize], &log);
-            warn!(
-                "gaggle: worker {}'s log {} was not complete within {} seconds; it stays on the worker",
-                entry.worker,
-                entry.path,
-                LOGS_TIMEOUT.as_secs()
-            );
-            run.logs_left.push(entry);
         }
     }
 }

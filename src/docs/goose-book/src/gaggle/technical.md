@@ -21,6 +21,16 @@ The manager and its workers speak gRPC, with [tonic](https://docs.rs/tonic/) and
 - `ResetMetrics` resets every worker's metrics when the run's users have all started. `Stop` ends the run; each worker answers with its final metrics, then `Stopped`. `SendLogs` asks for its logs, which come back in chunks of 1 MiB, and `Shutdown` tells it to exit.
 - `Heartbeat` goes both ways every 2 seconds, on its own task, whatever else either side is doing, `--no-metrics` included.
 
-Messages are limited to 64 MiB each way, which holds the largest custom data a worker may be handed, 16 MiB, and a worker's final metrics; a `Hello` is limited to 64 KiB. Before any worker is admitted, what a client can make the manager hold is bounded: at most `--expect-workers` plus 4 connections, each closed unless a worker is admitted on it within 10 seconds, one stream at a time on each, and 64 KiB HTTP/2 windows. The windows stay 64 KiB for the whole run, so a worker's transfers to the manager move at most 64 KiB each round trip: on a network with a high round trip time, a large final metrics delta or log is slow to arrive. The manager queues at most 64 messages from its workers; past that, a worker is held back by HTTP/2 flow control.
+Messages are limited to 64 MiB each way, which holds the largest custom data a worker may be handed, 16 MiB, and a worker's final metrics; a `Hello` is limited to 64 KiB. Before any worker is admitted, what a client can make the manager hold is bounded: at most `--expect-workers` plus 4 connections, each closed unless a worker is admitted on it within 10 seconds, and one stream at a time on each. The 4 spare connections absorb connections that never become workers, such as a client without the token or a worker turned away, until their deadline.
+
+The manager never holds more than 128 MiB that its workers sent and it has not read yet, across every connection: each connection's HTTP/2 stream and connection windows are an equal share of that budget, `128 MiB / (--expect-workers + 4)`, at least 64 KiB and at most 1 MiB, set when the manager starts and fixed for the run. (With more than 2,044 workers the 64 KiB floor takes the total just past the budget, to 128.25 MiB at 2,048.) A worker's transfers to the manager move at most one window each round trip, so at a round trip of 100 ms:
+
+| Workers | Window | Each worker | All workers |
+|---|---|---|---|
+| 2 | 1 MiB | about 10 MB/s | about 20 MB/s |
+| 100 | 1 MiB | about 10 MB/s | about 1 GB/s |
+| 2,048 | 64 KiB | about 640 KB/s | about 1.3 GB/s |
+
+A worker offers its manager windows of 1 MiB. Neither side sends HTTP/2 keepalive pings: the heartbeats, every 2 seconds each way, find a peer that is gone. The manager queues at most 64 messages from its workers; past that, a worker is held back by HTTP/2 flow control.
 
 The connection is not encrypted: the token, and all Gaggle traffic, cross the network in clear text until TLS arrives. Run a Gaggle on a network you trust, and give it a `--gaggle-token`.

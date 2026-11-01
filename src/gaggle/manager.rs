@@ -5,9 +5,11 @@
 //! What a client without the token can make the manager hold is bounded
 //! before any message is read: at most `expected + 4` connections, each
 //! closed unless a worker is admitted on it within [`HELLO_TIMEOUT`], even
-//! one that stalls the manager's writes; one stream at a time on each; HTTP/2 windows
-//! of [`WINDOW`], so a client can never have more unread data buffered,
-//! and header blocks of at most [`MAX_HEADERS`]; and a token checked on the
+//! one that stalls the manager's writes; one stream at a time on each; HTTP/2
+//! windows that share [`UNREAD_BUDGET`] between the connections (see
+//! [`window`]), so the manager never holds more unread data than that, from
+//! every client together; and header blocks of at most [`MAX_HEADERS`]; and a
+//! token checked on the
 //! request's metadata, before the stream's first message is decoded. Such
 //! a client can still take every connection slot, again each time one is
 //! closed, keeping workers out until their connect timeout: the network
@@ -48,11 +50,31 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest first message, `Hello`, the manager reads.
 pub(crate) const MAX_HELLO: usize = 64 << 10;
 
-/// The HTTP/2 stream and connection windows the manager offers: the most a
-/// client can send that the manager has not read yet. Fixed for the whole
-/// run, not grown with the link's bandwidth, so an admitted worker's
-/// transfers also move at most this much each round trip.
-const WINDOW: u32 = 64 << 10;
+/// The most data the manager holds sent but not yet read, across every
+/// connection it allows: each connection's HTTP/2 stream and connection
+/// windows are a share of it (see [`window`]). The 64 KiB floor takes it
+/// past this only with more than 2,044 workers, to 128.25 MiB at 2,048.
+const UNREAD_BUDGET: u64 = 128 << 20;
+
+/// The smallest window a connection gets, HTTP/2's default.
+const MIN_WINDOW: u64 = 64 << 10;
+
+/// The largest window a connection gets.
+const MAX_WINDOW: u64 = 1 << 20;
+
+/// Each connection's HTTP/2 stream and connection window, when the manager
+/// expects `expected` workers: [`UNREAD_BUDGET`] split between the
+/// connections it allows, `expected + SPARE_CONNECTIONS`, from 64 KiB to 1
+/// MiB. A worker moves at most one window each round trip: at 100 ms, 1 MiB
+/// is about 10 MB/s, for 2 workers or 124, and the 64 KiB that 2,048 get
+/// about 640 KB/s each, 1.3 GB/s for all of them. The windows are fixed for
+/// the run, never grown with the link's bandwidth, so the budget holds
+/// whatever a worker sends.
+fn window(expected: usize) -> u32 {
+    let connections = (expected as u64).saturating_add(SPARE_CONNECTIONS as u64);
+    let share = UNREAD_BUDGET / connections.max(1);
+    share.clamp(MIN_WINDOW, MAX_WINDOW) as u32
+}
 
 /// The largest header block the manager accepts.
 const MAX_HEADERS: u32 = 16 << 10;
@@ -943,13 +965,14 @@ impl Manager {
         ));
         let (stop_server, stopped) = tokio::sync::oneshot::channel::<()>();
         let incoming = Box::pin(counted(listener, expected + SPARE_CONNECTIONS));
+        let window = window(expected);
         let server = tokio::spawn(async move {
+            // No HTTP/2 keepalive: the heartbeats find a dead worker.
             let served = tonic::transport::Server::builder()
-                .http2_keepalive_interval(Some(HEARTBEAT_INTERVAL))
                 .max_concurrent_streams(1)
                 .concurrency_limit_per_connection(1)
-                .initial_stream_window_size(WINDOW)
-                .initial_connection_window_size(WINDOW)
+                .initial_stream_window_size(window)
+                .initial_connection_window_size(window)
                 .http2_max_header_list_size(MAX_HEADERS)
                 .add_service(service)
                 .serve_with_incoming_shutdown(incoming, async {
@@ -1101,6 +1124,20 @@ mod tests {
             .map(|(_, name)| name)
             .collect();
         assert_eq!(names, ["Pod-A", "pod-a-1", "POD-A-2"]);
+    }
+
+    /// The window budget is split between the connections the manager
+    /// allows, 1 MiB at most and 64 KiB at least.
+    #[test]
+    fn windows_share_the_unread_budget() {
+        assert_eq!(window(2), 1 << 20);
+        assert_eq!(window(124), 1 << 20);
+        assert_eq!(window(125), (UNREAD_BUDGET / 129) as u32);
+        assert_eq!(window(2048), 64 << 10);
+        // Every connection's window, together: the budget, but for the
+        // 64 KiB floor at 2,048 workers.
+        assert_eq!(u64::from(window(124)) * 128, UNREAD_BUDGET);
+        assert_eq!(u64::from(window(2048)) * 2052, UNREAD_BUDGET + (256 << 10));
     }
 
     /// A message that finds a worker's queue full is dropped, and the

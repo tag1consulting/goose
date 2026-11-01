@@ -574,31 +574,46 @@ impl Merged {
 /// capped at [`super::delta::MAX_CO_EVENTS_PER_DELTA`] in a delta, the
 /// oldest kept, where applying both keeps up to the cap from each; and a
 /// final `a` followed by a delta of a newer epoch does not mark the worker
-/// finished. Refused, as [`GaggleDelta::add`], past [`Bounds::WORKER`].
-pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> Result<GaggleDelta, DeltaError> {
+/// finished. Refused, as [`GaggleDelta::add`], past [`Bounds::WORKER`]:
+/// then `a` comes back unchanged with the error. `a` is joined in place,
+/// never copied.
+pub(crate) fn coalesce(
+    mut a: GaggleDelta,
+    b: &GaggleDelta,
+) -> Result<GaggleDelta, (GaggleDelta, DeltaError)> {
     if b.epoch < a.epoch {
-        return Ok(a.clone());
+        return Ok(a);
     }
     if b.epoch > a.epoch {
-        let mut users = a.graph.users.clone();
+        let mut users = std::mem::take(&mut a.graph.users);
         let mut joined = b.clone();
         users.append(&mut joined.graph.users);
         joined.graph.users = users;
         joined.first_seq = a.first_seq;
         return Ok(joined);
     }
-    let mut joined = a.clone();
+    // A final `b`'s metrics replace `a`'s: set aside, so a refusal can put
+    // them back.
+    let (kind, metrics) = (
+        a.kind,
+        (b.kind == DeltaKind::Final).then(|| std::mem::take(&mut a.metrics)),
+    );
     if b.kind == DeltaKind::Final {
-        joined.kind = DeltaKind::Final;
-        joined.metrics = MetricsPart::default();
+        a.kind = DeltaKind::Final;
     }
-    joined.add(b)?;
-    if joined.kind == DeltaKind::Delta {
-        if let Some(co) = joined.metrics.co.as_mut() {
+    if let Err(e) = a.add(b) {
+        a.kind = kind;
+        if let Some(metrics) = metrics {
+            a.metrics = metrics;
+        }
+        return Err((a, e));
+    }
+    if a.kind == DeltaKind::Delta {
+        if let Some(co) = a.metrics.co.as_mut() {
             co.cap_events();
         }
     }
-    Ok(joined)
+    Ok(a)
 }
 
 /// `template` with every figure of `part` added, as `GooseMetrics`, and
