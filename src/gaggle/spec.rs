@@ -516,13 +516,14 @@ mod tests {
         assert_eq!(workers_with_users(&[(2, 1_000), (0, 0)], 3), 2);
         assert_eq!(workers_with_users(&[(9, 1_000)], 3), 3);
         // A plan that goes up, down and up again: each worker's share
-        // follows the users it runs at its peak, 4, 4 and 3, never the
-        // users it starts over the run, 7, 6 and 5.
+        // follows the users it runs at its peak, 4, 4 and 3, giving 8, 8
+        // and 6, never the users it starts over the run, 7, 6 and 5,
+        // which would give 9, 7 and 6.
         let configuration = GooseConfiguration::parse_args_default(&[
             "--host",
             "http://h",
             "--throttle-requests",
-            "11",
+            "22",
         ])
         .unwrap();
         let steps = [(10, 1_000), (3, 1_000), (11, 1_000), (0, 0)];
@@ -535,7 +536,7 @@ mod tests {
             true,
         );
         let shares: Vec<usize> = specs.iter().map(|spec| spec.throttle_requests).collect();
-        assert_eq!(shares, [4, 4, 3]);
+        assert_eq!(shares, [8, 8, 6]);
         // A plain ramp: the peak is the users started.
         let ramp = [(9, 1_000), (9, 5_000), (0, 0)];
         for plan in plans(&ramp, 3) {

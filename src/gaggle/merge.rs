@@ -1059,10 +1059,11 @@ mod tests {
         let mut accumulator =
             GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
         // Workers starting at different seconds, with gaps and changes.
+        // The first level is at second 2: none is counted before it.
         for (worker, levels) in vec![
-            vec![(2, 3), (3, 4), (7, 1)],
-            vec![(0, 5), (5, 0), (6, 2)],
-            vec![(4, 9)],
+            vec![(4, 3), (5, 4), (9, 1)],
+            vec![(2, 5), (7, 0), (8, 2)],
+            vec![(6, 9)],
         ]
         .into_iter()
         .enumerate()
@@ -1074,12 +1075,49 @@ mod tests {
         }
         let whole = accumulator.all_users_levels();
         assert_eq!(whole.len(), 8);
+        assert_eq!(whole.keys().next(), Some(&2));
         assert_eq!(accumulator.users_levels(0, None), whole);
         let mut pieces = BTreeMap::new();
-        for (from, to) in [(0, 3), (3, 4), (4, 4), (4, 9), (9, 20)] {
+        for (from, to) in [(0, 3), (3, 6), (6, 6), (6, 11), (11, 20)] {
             pieces.extend(accumulator.users_levels(from, Some(to)));
         }
         assert_eq!(pieces, whole);
+    }
+
+    /// A delta with rows for a second the last build already holds, as no
+    /// honest worker sends but a manager must take: the next build holds
+    /// them, as a build from nothing does.
+    #[test]
+    fn a_late_row_builds_the_graph_again() {
+        let settings = GraphSettings {
+            records: true,
+            latency: true,
+            synthetic: false,
+            columns: false,
+        };
+        let deltas = vec![
+            second(0, 1, 1, 0..4, 2),
+            second(1, 1, 1, 0..4, 2),
+            second(1, 2, 2, 4..6, 2),
+            // Worker 0, at second 6, with rows for second 1.
+            {
+                let mut late = second(0, 2, 2, 1..2, 2);
+                late.now = 6;
+                late
+            },
+        ];
+        let accumulator =
+            || GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+        let (mut built, mut fresh) = (accumulator(), accumulator());
+        for delta in &deltas {
+            built.apply(delta.worker, delta.clone()).unwrap();
+            // Built after every delta, so the late row's second was built.
+            let _ = built.merged_and_excluded();
+            fresh.apply(delta.worker, delta.clone()).unwrap();
+        }
+        let (_, built, _) = built.merged_and_excluded();
+        let (_, fresh, _) = fresh.merged_and_excluded();
+        assert_eq!(built.gaggle_diff(&fresh), Vec::<String>::new());
     }
 
     /// Not a test: how long one refresh of a long run's merge takes, 50
