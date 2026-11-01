@@ -195,7 +195,6 @@ async fn gaggle_ends(
             "127.0.0.1",
             "--manager-port",
             &port,
-            "--no-telnet",
             "--quiet",
             "--output-dir",
             &worker_folder,
@@ -419,7 +418,6 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             "127.0.0.1",
             "--manager-port",
             &port,
-            "--no-telnet",
             "--quiet",
         ]));
         let worker = tokio::spawn(worker.execute());
@@ -707,7 +705,6 @@ async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClie
         "127.0.0.1",
         "--manager-port",
         &port,
-        "--no-telnet",
         "--quiet",
     ]))
     .set_client_builder_without_cookies(builder)
@@ -909,7 +906,6 @@ async fn worker_data_run(
                 "127.0.0.1",
                 "--manager-port",
                 &port,
-                "--no-telnet",
                 "--quiet",
             ]),
             0,

@@ -146,8 +146,31 @@ impl GooseConfiguration {
         if !self.worker {
             return Ok(());
         }
+        if let Some((option, _)) = self.worker_refused().iter().find(|(_, set)| *set) {
+            return Err(refused(
+                option,
+                "set",
+                format!(
+                    "{option} can't be used with --worker: the manager gives every option that shapes the load, the metrics, the reports and the logs, and a worker runs no Controller or dashboard. A worker keeps --output-dir, --goose-log and verbosity."
+                ),
+            ));
+        }
+        #[cfg(feature = "pdf-reports")]
+        if self.pdf_scale.is_some() || self.pdf_timeout.is_some() {
+            return Err(refused(
+                "--pdf-scale",
+                "set",
+                "--pdf-scale and --pdf-timeout can't be used with --worker: the manager writes the reports.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Every option [`Self::worker_refusals`] refuses with its own message,
+    /// and whether the command line set it.
+    fn worker_refused(&self) -> [(&'static str, bool); 61] {
         let set = |value: &Option<String>| value.is_some();
-        let refused_options: [(&str, bool); 53] = [
+        [
             ("--host", set(&self.host)),
             ("--users", self.users.is_some()),
             ("--increase-rate", set(&self.increase_rate)),
@@ -195,31 +218,24 @@ impl GooseConfiguration {
             ("--dashboard-auth-token", set(&self.dashboard_auth_token)),
             ("--dashboard-control", self.dashboard_control),
             ("--dashboard-no-auth", self.dashboard_no_auth),
+            (
+                "--dashboard-max-clients",
+                self.dashboard_max_clients.is_some(),
+            ),
             ("--no-percentiles-over-time", self.no_percentiles_over_time),
             ("--no-autostart", self.no_autostart),
+            ("--no-telnet", self.no_telnet),
+            ("--telnet-host", set(&self.telnet_host)),
+            ("--telnet-port", self.telnet_port.is_some()),
+            ("--websocket", self.websocket),
+            ("--no-websocket", self.no_websocket),
+            ("--websocket-host", set(&self.websocket_host)),
+            ("--websocket-port", self.websocket_port.is_some()),
             ("--timeout", set(&self.timeout)),
             ("--no-gzip", self.no_gzip),
             ("--sticky-follow", self.sticky_follow),
             ("--accept-invalid-certs", self.accept_invalid_certs),
-        ];
-        if let Some((option, _)) = refused_options.iter().find(|(_, set)| *set) {
-            return Err(refused(
-                option,
-                "set",
-                format!(
-                    "{option} can't be used with --worker: the manager gives every option that shapes the load, the metrics, the reports and the logs. A worker keeps --output-dir, --goose-log and verbosity."
-                ),
-            ));
-        }
-        #[cfg(feature = "pdf-reports")]
-        if self.pdf_scale.is_some() || self.pdf_timeout.is_some() {
-            return Err(refused(
-                "--pdf-scale",
-                "set",
-                "--pdf-scale and --pdf-timeout can't be used with --worker: the manager writes the reports.",
-            ));
-        }
-        Ok(())
+        ]
     }
 
     /// Validate the Gaggle options, once the defaults are merged in.
@@ -623,6 +639,14 @@ mod tests {
                 &["--dashboard-control"],
                 &["--dashboard-no-auth"],
                 &["--no-percentiles-over-time"],
+                &["--dashboard-max-clients", "2"],
+                &["--no-telnet"],
+                &["--telnet-host", "h"],
+                &["--telnet-port", "1"],
+                &["--websocket"],
+                &["--no-websocket"],
+                &["--websocket-host", "h"],
+                &["--websocket-port", "1"],
                 &["--no-gzip"],
                 &["--sticky-follow"],
                 &["--accept-invalid-certs"],
@@ -681,6 +705,66 @@ mod tests {
             .worker_refusals()
             .unwrap();
         });
+    }
+
+    /// Every option is classified for a worker: refused by
+    /// `worker_refusals`, one a worker keeps, or a manager's Gaggle option
+    /// `validate_gaggle` refuses on a worker. A new option fails this until
+    /// it is placed in one of them.
+    #[test]
+    fn every_option_is_classified_for_a_worker() {
+        let refused: Vec<&str> = GooseConfiguration::default()
+            .worker_refused()
+            .iter()
+            .map(|(option, _)| *option)
+            .chain(["--pdf-scale", "--pdf-timeout"])
+            .collect();
+        let kept = [
+            "--output-dir",
+            "--goose-log",
+            // Verbosity, and what the worker's own console shows.
+            "--verbose",
+            "--quiet",
+            "--log-level",
+            "--no-print-metrics",
+            "--no-error-summary",
+            // Help and version, and the lists that print and exit.
+            "--help",
+            "--version",
+            "--list",
+            "--scenarios-list",
+            // The worker's own Gaggle options.
+            "--worker",
+            "--manager-host",
+            "--manager-port",
+            "--gaggle-connect-timeout",
+            "--gaggle-token",
+            "--no-hash-check",
+            "--gaggle-heartbeat-timeout",
+        ];
+        // Refused by validate_gaggle on a worker.
+        let manager_only = [
+            "--manager",
+            "--expect-workers",
+            "--manager-bind-host",
+            "--manager-bind-port",
+            "--gaggle-shadow-merge",
+        ];
+        let mut unclassified = Vec::new();
+        for arg in <GooseConfiguration as clap::CommandFactory>::command().get_arguments() {
+            let long = format!(
+                "--{}",
+                arg.get_long().expect("every option has a long flag")
+            );
+            let places = [&refused[..], &kept[..], &manager_only[..]]
+                .iter()
+                .filter(|list| list.contains(&long.as_str()))
+                .count();
+            if places != 1 {
+                unclassified.push(format!("{long} ({places} places)"));
+            }
+        }
+        assert!(unclassified.is_empty(), "{:?}", unclassified);
     }
 
     /// B3: the token never shows in `config` (the `Debug` output) or

@@ -253,8 +253,11 @@ pub(crate) fn worker_specs(
 }
 
 impl WorkerRunSpec {
-    /// Apply the spec to a worker's configuration, whose own load options
-    /// are all unset (a worker refuses them).
+    /// Apply the spec to a worker's configuration. A worker refuses these
+    /// options on its command line, so any it holds were set in the load
+    /// test's code: each is replaced, and every log is off unless the
+    /// manager asked for it, so a log set in code is never written where the
+    /// manager would not collect it.
     pub(crate) fn configure(&self, configuration: &mut GooseConfiguration) {
         configuration.host = self.host.clone();
         configuration.users = Some(self.users);
@@ -303,6 +306,31 @@ impl WorkerRunSpec {
             }
         }
         configuration.gaggle_log_gzip = Some(gzip);
+        for (log, format) in [
+            (
+                &mut configuration.request_log,
+                &mut configuration.request_format,
+            ),
+            (
+                &mut configuration.transaction_log,
+                &mut configuration.transaction_format,
+            ),
+            (
+                &mut configuration.scenario_log,
+                &mut configuration.scenario_format,
+            ),
+            (
+                &mut configuration.error_log,
+                &mut configuration.error_format,
+            ),
+            (
+                &mut configuration.debug_log,
+                &mut configuration.debug_format,
+            ),
+        ] {
+            *log = None;
+            *format = None;
+        }
         for log in &self.logs {
             let run_folder = Some(RUN_FOLDER.to_string());
             match log.kind {
@@ -534,6 +562,9 @@ mod tests {
             // What the load test may have set in code, as configuring a worker
             // with its defaults gives it.
             let mut worker = GooseConfiguration {
+                request_log: Some("in-code.log".to_string()),
+                request_format: Some(GooseLogFormat::Csv),
+                debug_log: Some("debug-in-code.log".to_string()),
                 threshold: vec!["p95<1ms".to_string()],
                 thresholds: vec!["p95<1ms".parse().unwrap()],
                 report_file: vec!["r.html".to_string()],
@@ -556,6 +587,17 @@ mod tests {
             );
             assert_eq!(worker.timeout.as_deref(), Some("2"));
             assert_eq!(worker.scenario_log.as_deref(), Some(RUN_FOLDER));
+            // Logs the load test set in code, which the manager did not ask
+            // for, are off.
+            assert_eq!(
+                (
+                    worker.request_log.as_deref(),
+                    worker.request_format.as_ref()
+                ),
+                (None, None)
+            );
+            assert!(worker.debug_log.is_none());
+            assert!(worker.transaction_log.is_none() && worker.error_log.is_none());
             assert!(worker.no_reset_metrics);
             assert!(worker.gaggle_records_graph);
             assert_eq!(
