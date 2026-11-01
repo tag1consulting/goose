@@ -1162,9 +1162,9 @@ mod tests {
             }
             assert!(sent.elapsed() >= Duration::from_secs(2));
         };
-        let result = tokio::time::timeout(Duration::from_secs(30), test).await;
-        RECORD_EXITS.store(false, Ordering::Relaxed);
-        result.expect("within 30 seconds");
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
     }
 
     /// `Shutdown` after every user finished, as at the end of a run, stops
@@ -1182,7 +1182,6 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(4)).await;
         let forced = switch.forced.load(Ordering::Relaxed);
         switch.done.store(true, Ordering::Relaxed);
-        RECORD_EXITS.store(false, Ordering::Relaxed);
         assert!(!forced);
     }
 

@@ -309,16 +309,7 @@ impl GaggleAccumulator {
         self.workers.values().map(|w| w.total.epoch).max()
     }
 
-    /// The workers [`Self::merged`] leaves out, because their metrics epoch
-    /// is older than the newest any worker reached, or the manager's own
-    /// after a reset. Each worker counts its own metrics resets, so one that
-    /// missed a reset is left out rather than mixed into another epoch's
-    /// figures. Also any whose figures would take a sum past
-    /// [`Bounds::MERGED`], which [`Bounds::WORKER`] and
-    /// [`super::delta::MAX_WORKERS`] rule out. Leaving a worker out
-    /// undercounts the results: the manager records each one, with
-    /// [`Self::merged_and_excluded`], and its run record marks the run
-    /// degraded and names the worker.
+    /// The workers [`Self::merged_and_excluded`] leaves out (tests).
     #[cfg(test)]
     pub(crate) fn excluded(&self) -> Vec<u32> {
         self.merge_parts()
@@ -331,13 +322,24 @@ impl GaggleAccumulator {
     /// The metrics and graph data of every worker merged: the metrics of
     /// the newest epoch any worker reached, and the graphs' complete
     /// seconds only. Every derived figure is worked out again from the
-    /// merged counts. A worker left out is named by [`Self::excluded`].
+    /// merged counts. A worker left out is named by
+    /// [`Self::merged_and_excluded`] (tests).
+    #[cfg(test)]
     pub(crate) fn merged(&self) -> (GooseMetrics, GraphData) {
         let (metrics, graph, _) = self.merged_and_excluded();
         (metrics, graph)
     }
 
-    /// [`Self::merged`], and each worker it left out with why.
+    /// The metrics and graph data of every worker merged, as
+    /// [`Self::merged`] gives them, and each worker left out, with why:
+    /// because its metrics epoch is older than the newest any worker
+    /// reached, or the manager's own after a reset. Each worker counts its
+    /// own metrics resets, so one that missed a reset is left out rather
+    /// than mixed into another epoch's figures. Also any whose figures
+    /// would take a sum past [`Bounds::MERGED`], which [`Bounds::WORKER`]
+    /// and [`super::delta::MAX_WORKERS`] rule out. Leaving a worker out
+    /// undercounts the results: the manager records each one, and its run
+    /// record marks the run degraded and names the worker.
     pub(crate) fn merged_and_excluded(&self) -> (GooseMetrics, GraphData, Vec<(u32, String)>) {
         let (metrics, mut graph, series_origin, excluded) = self.merge_parts();
         let complete = self.complete_before();
