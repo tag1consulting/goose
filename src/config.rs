@@ -936,9 +936,9 @@ pub struct GooseConfiguration {
     ///
     /// Connects to the manager at --manager-host and runs the share of the load test it
     /// hands out. The manager gives every option that shapes the load, the metrics, the
-    /// reports and the logs, so a worker refuses them; it keeps --output-dir, --goose-log
-    /// and verbosity, and runs no Controller and no dashboard. Can't be used with
-    /// --manager.
+    /// reports and the logs, so a worker refuses them, and every Controller and dashboard
+    /// option; it keeps --output-dir, --goose-log and verbosity, and runs no Controller
+    /// and no dashboard. Can't be used with --manager.
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long)]
     pub worker: bool,
