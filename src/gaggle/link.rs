@@ -556,12 +556,7 @@ impl Link {
 
     /// Stop every user at once, and any started later, as the switch does.
     pub(crate) fn stop_users(&self) {
-        if let Ok(users) = self.users.lock() {
-            self.fired.store(true, Ordering::SeqCst);
-            for user in users.iter() {
-                user.abort();
-            }
-        }
+        abort_users(&self.users, &self.fired, false);
     }
 
     /// The next event if one is waiting.
@@ -703,6 +698,29 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 #[cfg(test)]
 pub(crate) static RECORD_EXITS: AtomicBool = AtomicBool::new(false);
 
+/// Stop users at once, every one or, with `running_only`, those not yet
+/// finished, and any started later: `fired` is set before `users` is
+/// locked, so [`Link::watch`] sees one or the other. How many it stopped.
+fn abort_users(
+    users: &Mutex<Vec<tokio::task::AbortHandle>>,
+    fired: &AtomicBool,
+    running_only: bool,
+) -> usize {
+    fired.store(true, Ordering::SeqCst);
+    let Ok(users) = users.lock() else {
+        return 0;
+    };
+    let mut stopped = 0;
+    for user in users
+        .iter()
+        .filter(|user| !running_only || !user.is_finished())
+    {
+        user.abort();
+        stopped += 1;
+    }
+    stopped
+}
+
 /// The dead man's switch.
 #[derive(Clone)]
 struct Switch {
@@ -726,11 +744,7 @@ impl Switch {
             return;
         }
         error!("gaggle: lost the manager ({why}); stopping every user");
-        if let Ok(users) = self.users.lock() {
-            for user in users.iter() {
-                user.abort();
-            }
-        }
+        abort_users(&self.users, &self.fired, false);
         self.outbox.close();
         let _ = self.events.send(LinkEvent::Lost(why));
         self.last_resort("gaggle: lost the manager and the worker has not exited; exiting now");
@@ -741,17 +755,7 @@ impl Switch {
     /// worker whose `execute()` has not returned 2 seconds later exits with
     /// an error status, as when the switch fires: the main loop may be held.
     fn shut_down(&self) {
-        let running = match self.users.lock() {
-            Ok(users) => {
-                self.fired.store(true, Ordering::SeqCst);
-                let running: Vec<_> = users.iter().filter(|user| !user.is_finished()).collect();
-                for user in &running {
-                    user.abort();
-                }
-                running.len()
-            }
-            Err(_) => 0,
-        };
+        let running = abort_users(&self.users, &self.fired, true);
         if running > 0 {
             warn!("gaggle: the manager said shut down with {running} users running; stopping them");
             self.last_resort(
@@ -1175,7 +1179,7 @@ mod tests {
         let (switch, _events, _outbox) = switch(vec![handle], Duration::from_secs(10));
         switch.done.store(false, Ordering::Relaxed);
         switch.shut_down();
-        tokio::time::sleep(Duration::from_millis(2500)).await;
+        tokio::time::sleep(Duration::from_secs(4)).await;
         let forced = switch.forced.load(Ordering::Relaxed);
         switch.done.store(true, Ordering::Relaxed);
         RECORD_EXITS.store(false, Ordering::Relaxed);

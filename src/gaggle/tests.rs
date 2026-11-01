@@ -2380,5 +2380,12 @@ fn gaggle_refused_delta_leaves_last_seq() {
         );
         apply(&mut side, counted(0, 2, 0));
         assert_eq!((held().last_seq, held().refused, held().missing), (2, 1, 0));
+        // A repeat adds no missing delta; a gap of one does, counted once.
+        apply(&mut side, counted(0, 2, 0));
+        assert_eq!(held().missing, 0);
+        apply(&mut side, counted(0, 4, 0));
+        assert_eq!((held().last_seq, held().missing), (4, 1));
+        apply(&mut side, counted(0, 5, 0));
+        assert_eq!(held().missing, 1);
     });
 }

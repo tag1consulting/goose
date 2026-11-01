@@ -142,7 +142,7 @@ pub(crate) struct GaggleWorkerRecord {
     /// The metrics deltas the manager refused from it.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub refused_deltas: u64,
-    /// Why the last delta refused was.
+    /// Why the last refused delta was refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused_reason: Option<String>,
     /// Why the results leave its metrics out.

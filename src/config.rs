@@ -1008,7 +1008,7 @@ pub struct GooseConfiguration {
     #[cfg(feature = "gaggle")]
     #[arg(skip)]
     #[serde(skip)]
-    pub(crate) gaggle_log_gzip: Option<[bool; 5]>,
+    pub(crate) gaggle_log_gzip: Option<[bool; crate::runs::LOG_NAMES.len()]>,
 }
 
 /// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an

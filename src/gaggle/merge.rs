@@ -319,6 +319,7 @@ impl GaggleAccumulator {
     /// undercounts the results: the manager records each one, with
     /// [`Self::merged_and_excluded`], and its run record marks the run
     /// degraded and names the worker.
+    #[cfg(test)]
     pub(crate) fn excluded(&self) -> Vec<u32> {
         self.merge_parts()
             .3

@@ -161,6 +161,23 @@ impl ManagerRun {
     }
 }
 
+/// Send `command` to the metrics processor: whether it went. With `hold`, a
+/// unit test's fault, it is kept unsent instead, as by a processor that
+/// never answers, and handed back to be held while its answer is awaited.
+fn send_or_hold(
+    goose_attack_run_state: &GooseAttackRunState,
+    command: MetricsCommand,
+    hold: bool,
+) -> (bool, Option<MetricsCommand>) {
+    if hold {
+        return (true, Some(command));
+    }
+    (
+        goose_attack_run_state.metrics_cmd_tx.send(command).is_ok(),
+        None,
+    )
+}
+
 /// A worker that cannot finish a phase of its run: it stops every user, tells
 /// the manager it failed (no final metrics follow, so the manager marks it
 /// lost), gives that a moment to leave, and exits with an error.
@@ -879,22 +896,11 @@ impl GooseAttack {
             running_users: goose_attack_run_state.running_users.clone(),
             ack,
         };
-        // A processor that never answers: the command, and its ack, held.
         #[cfg(test)]
-        let _held;
-        #[cfg(test)]
-        let command = if self.gaggle_test_faults.silent_reset {
-            _held = command;
-            None
-        } else {
-            Some(command)
-        };
+        let hold = self.gaggle_test_faults.silent_reset;
         #[cfg(not(test))]
-        let command = Some(command);
-        let sent = match command {
-            Some(command) => goose_attack_run_state.metrics_cmd_tx.send(command).is_ok(),
-            None => true,
-        };
+        let hold = false;
+        let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
         if sent && tokio::time::timeout(RESET_TIMEOUT, acked).await.is_err() {
             return Err(format!(
                 "the metrics processor did not reset within {} seconds",
@@ -988,22 +994,11 @@ impl GooseAttack {
             outbox: run.link.outbox.clone(),
             respond,
         };
-        // A processor that never answers: the command, and its answer, held.
         #[cfg(test)]
-        let _held;
-        #[cfg(test)]
-        let command = if self.gaggle_test_faults.silent_final {
-            _held = command;
-            None
-        } else {
-            Some(command)
-        };
+        let hold = self.gaggle_test_faults.silent_final;
         #[cfg(not(test))]
-        let command = Some(command);
-        let sent = match command {
-            Some(command) => goose_attack_run_state.metrics_cmd_tx.send(command).is_ok(),
-            None => true,
-        };
+        let hold = false;
+        let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
         if sent && tokio::time::timeout(FINAL_TIMEOUT, done).await.is_err() {
             let why = format!(
                 "the metrics processor did not hand over the final metrics within {} seconds",

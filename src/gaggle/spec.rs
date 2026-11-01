@@ -296,7 +296,7 @@ impl WorkerRunSpec {
         configuration.request_body = self.request_body;
         configuration.no_debug_body = self.no_debug_body;
         configuration.compress = self.compress;
-        let mut gzip = [false; 5];
+        let mut gzip = [false; LOG_NAMES.len()];
         for log in &self.logs {
             if let Some(gzipped) = gzip.get_mut(log.kind as usize) {
                 *gzipped = log.gzip;
