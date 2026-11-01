@@ -311,27 +311,9 @@ impl GraphData {
         changed
     }
 
-    /// Graph data built from `part`, merged from every worker, as the
-    /// metrics processor of a run with `settings` builds it: the users
-    /// levels, the rate series from `series_origin` when a metrics reset
-    /// restarted them there, then every second before `complete` (all
-    /// when `None`) in order, names admitted to the heatmap's rings in
-    /// the order of the first second they have response times in and by
-    /// name within it.
-    pub(crate) fn gaggle_build(
-        part: &GraphPart,
-        settings: GraphSettings,
-        series_origin: Option<Second>,
-        complete: Option<Second>,
-    ) -> GraphData {
-        let mut graph_data = GraphData::gaggle_start(settings, series_origin);
-        graph_data.gaggle_extend(part, &part.users, settings, 0, complete);
-        graph_data.finish_latency_columns();
-        graph_data
-    }
-
-    /// Graph data with nothing in it yet, for [`Self::gaggle_extend`]: what
-    /// [`Self::gaggle_build`] starts from.
+    /// Graph data with nothing in it yet, for [`Self::gaggle_extend`], as the
+    /// metrics processor of a run with `settings` starts it: its rate series
+    /// from `series_origin` when a metrics reset restarted them there.
     pub(crate) fn gaggle_start(
         settings: GraphSettings,
         series_origin: Option<Second>,
@@ -349,12 +331,14 @@ impl GraphData {
         graph_data
     }
 
-    /// Add every second of `part` from `from` and before `to` (every one
-    /// from `from` when `None`), with `users` as the users levels: what
-    /// [`Self::gaggle_build`] adds, one range of seconds at a time. Built
-    /// over consecutive ranges, in order, it is the build over all of them,
-    /// unfinished ([`Self::finish_latency_columns`]), but for the
-    /// heatmap's change counters.
+    /// Add every second of `part`, merged from every worker, from `from` and
+    /// before `to` (every one from `from` when `None`), with `users` as the
+    /// users levels, as the metrics processor of a run would: in order of
+    /// second, names admitted to the heatmap's rings in the order of the
+    /// first second they have response times in and by name within it.
+    /// Built over consecutive ranges, in order, it is the build over all of
+    /// them at once, but for the heatmap's change counters; finish it with
+    /// [`Self::finish_latency_columns`].
     pub(crate) fn gaggle_extend(
         &mut self,
         part: &GraphPart,

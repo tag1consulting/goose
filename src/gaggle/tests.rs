@@ -863,7 +863,7 @@ fn gaggle_merge_built_as_it_goes_equals_one_built_at_the_end() {
         let _ = accumulator.merged();
         builds += 1;
     }
-    assert!(builds > 10, "{builds} builds");
+    assert!(builds > 10, "{} builds", builds);
     assert_none(
         "built as it goes",
         &merge_diff(&accumulator, &merge(&deltas, true, 3)),
