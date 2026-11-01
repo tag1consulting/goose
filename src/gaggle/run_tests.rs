@@ -952,3 +952,222 @@ async fn gaggle_lost_worker_record_keeps_the_last_merged_seq() {
     )
     .await;
 }
+
+/// A load test of one scenario, GET /a, whose users wait for nothing.
+fn quick(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack {
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(Scenario::new("A").register_transaction(get("/a")))
+}
+
+/// A worker whose load test differs from its manager's, or whose token is
+/// wrong, is refused, and fails naming why, never panicking; the manager,
+/// its worker never joining, gives up at its connect timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_handshake_refusals() {
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("refusals");
+        for (case, manager_extra, worker_extra, named) in [
+            ("plan", vec![], vec![], "refused this worker: plan_hash:"),
+            (
+                "token",
+                vec!["--gaggle-token", "tok-right-5e1b"],
+                vec!["--gaggle-token", "tok-wrong-9c2d"],
+                "refused this worker: token:",
+            ),
+        ] {
+            // The plan case's worker runs another load test.
+            let build = |configuration, place: Option<usize>| match (case, place) {
+                ("plan", Some(_)) => quick(configuration, place),
+                _ => standard(configuration, place),
+            };
+            let mut manager_args = vec!["--users", "2", "--gaggle-connect-timeout", "2s"];
+            manager_args.extend(manager_extra);
+            let (manager, workers) = gaggle(
+                build,
+                1,
+                &server.base_url(),
+                &folder,
+                &manager_args,
+                &worker_extra,
+                &[],
+            )
+            .await;
+            match &workers[0] {
+                Err(crate::GooseError::Gaggle { detail }) => {
+                    assert!(detail.contains(named), "{}: {}", case, detail);
+                    assert!(
+                        !detail.contains("tok-right") && !detail.contains("tok-wrong"),
+                        "{}: {}",
+                        case,
+                        detail
+                    );
+                }
+                other => panic!("{}: {:?}", case, other.as_ref().map(|_| ())),
+            }
+            match manager {
+                Err(crate::GooseError::Gaggle { detail }) => {
+                    assert!(
+                        detail.contains("0 of 1 workers joined"),
+                        "{}: {}",
+                        case,
+                        detail
+                    )
+                }
+                other => panic!("{}: {:?}", case, other.map(|_| ())),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&folder);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}
+
+/// A worker with no manager to reach keeps trying, waiting 1 and then 2
+/// seconds between attempts, and then fails, without a panic, within its
+/// connect timeout plus 5 seconds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_without_a_manager() {
+    let test = async {
+        no_token_from_the_environment();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+            .to_string();
+        let started = std::time::Instant::now();
+        let worker = quick(
+            configuration(&[
+                "--worker",
+                "--manager-host",
+                "127.0.0.1",
+                "--manager-port",
+                &port,
+                "--quiet",
+                "--gaggle-connect-timeout",
+                "4s",
+            ]),
+            Some(0),
+        );
+        let result = worker.execute().await;
+        let took = started.elapsed();
+        match result {
+            Err(crate::GooseError::Gaggle { detail }) => {
+                assert!(detail.contains("could not reach the manager"), "{}", detail)
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        // Its first two waits, 1 and 2 seconds, passed; the next, 4, would
+        // pass the timeout.
+        assert!(took >= Duration::from_secs(1 + 2), "{:?}", took);
+        assert!(took <= Duration::from_secs(4 + 5), "{:?}", took);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}
+
+/// `--no-metrics` on the manager: the run starts, stops on time, and every
+/// process ends cleanly (#156).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_without_metrics_exits_cleanly() {
+    let server = MockServer::start_async().await;
+    let a = server
+        .mock_async(|when, then| {
+            when.method(GET).path("/a");
+            then.status(200).body("ok");
+        })
+        .await;
+    let folder = scratch("no-metrics");
+    let started = std::time::Instant::now();
+    let run = gaggle(
+        quick,
+        2,
+        &server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "4",
+            "--increase-rate",
+            "4",
+            "--run-time",
+            "3",
+            "--no-metrics",
+        ],
+        &[],
+        &[],
+    );
+    clean(
+        tokio::time::timeout(Duration::from_secs(60), run)
+            .await
+            .expect("the Gaggle ends within 60 seconds"),
+    );
+    // Joining, a 2 second start, a 1 second ramp and 3 seconds of run.
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(a.calls_async().await > 0);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A threshold that fails on the merged metrics stops every worker early,
+/// each ending cleanly, and the manager fails with the thresholds error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_threshold_stops_every_worker() {
+    let server = MockServer::start_async().await;
+    let a = server
+        .mock_async(|when, then| {
+            when.method(GET).path("/a");
+            then.status(200).body("ok").delay(Duration::from_millis(30));
+        })
+        .await;
+    let folder = scratch("threshold");
+    let started = std::time::Instant::now();
+    let run = gaggle(
+        quick,
+        2,
+        &server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "20",
+            "--increase-rate",
+            "20",
+            "--run-time",
+            "60",
+            "--threshold",
+            "p95<5ms",
+        ],
+        &[],
+        &[],
+    );
+    let (manager, workers) = tokio::time::timeout(Duration::from_secs(60), run)
+        .await
+        .expect("the Gaggle ends within 60 seconds");
+    assert!(
+        matches!(manager, Err(crate::GooseError::ThresholdsFailed { .. })),
+        "{:?}",
+        manager.map(|_| ())
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "the threshold ends a 60 s run early: {:?}",
+        started.elapsed()
+    );
+    for worker in workers {
+        worker.expect("the worker exits cleanly");
+    }
+    let after = a.calls_async().await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(a.calls_async().await, after, "every worker stopped");
+    let _ = std::fs::remove_dir_all(&folder);
+}

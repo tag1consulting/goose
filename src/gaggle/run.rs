@@ -6,6 +6,12 @@
 //! `GooseAttack` that waits idle, as with `--no-autostart`, until its manager
 //! says when to start the share it was handed, and is then driven by what the
 //! manager sends.
+//!
+//! One fault can be injected from outside, for runs on a cluster: a worker
+//! started with `GOOSE_GAGGLE_TEST_SKIP_RESET` set ignores its manager's
+//! metrics reset, so its metrics stay on an older epoch, the manager leaves
+//! them out of the results, and the run is degraded, naming that worker.
+//! `tests/gaggle.rs` checks it from the command line.
 
 use super::delta::DeltaLimits;
 use super::link::{Link, LinkEvent, LinkSettings};
@@ -55,10 +61,11 @@ const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// stamped up to a second late.
 pub(crate) const CLOCK_SLACK: u64 = 10;
 
-/// For Goose's own tests of a run across processes: a worker with this
-/// environment variable set ignores its manager's metrics reset, so its
-/// metrics stay on an older epoch than the run's, which the manager then
-/// leaves out of the results and reports.
+/// The fault injection switch for runs across processes, on a cluster or in
+/// Goose's own tests: a worker with this environment variable set ignores
+/// its manager's metrics reset, so its metrics stay on an older epoch than
+/// the run's, which the manager then leaves out of the results, degrading
+/// the run.
 const TEST_SKIP_RESET_ENV: &str = "GOOSE_GAGGLE_TEST_SKIP_RESET";
 
 /// What a worker does wrong on purpose, in unit tests.
