@@ -301,8 +301,13 @@ fn authorize(
     }
 }
 
-/// A worker name safe as a folder name: letters, digits, `-`, `_` and `.`,
-/// never `.` or `..` alone, at most 64 characters.
+/// The longest folder name a worker gets, any suffix included.
+const MAX_FOLDER_NAME: usize = 64;
+
+/// A worker name safe as a folder name on any system: letters, digits, `-`,
+/// `_` and `.`, never `.` or `..` alone, never a Windows device name (see
+/// [`is_device_name`]), which gets `worker-` before it, and at most
+/// [`MAX_FOLDER_NAME`] characters.
 fn folder_name(name: &str) -> String {
     let mut safe: String = name
         .chars()
@@ -313,12 +318,40 @@ fn folder_name(name: &str) -> String {
                 '-'
             }
         })
-        .take(64)
+        .take(MAX_FOLDER_NAME)
         .collect();
     if safe.trim_matches('.').is_empty() {
         safe = "worker".to_string();
     }
+    if is_device_name(&safe) {
+        safe = format!("worker-{safe}");
+        safe.truncate(MAX_FOLDER_NAME);
+    }
     safe
+}
+
+/// Whether Windows reserves `name` for a device, with or without an
+/// extension, ignoring case: `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and
+/// `LPT1` to `LPT9`.
+fn is_device_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+}
+
+/// `base`, a [`folder_name`], with `-n` after it, cut so the whole is at
+/// most [`MAX_FOLDER_NAME`] characters.
+fn suffixed(base: &str, n: u32) -> String {
+    let suffix = format!("-{n}");
+    // A folder name is ASCII, so any byte is a character boundary.
+    let keep = base.len().min(MAX_FOLDER_NAME - suffix.len());
+    format!("{}{suffix}", &base[..keep])
 }
 
 impl Shared {
@@ -373,7 +406,7 @@ impl Shared {
             .iter()
             .any(|worker| worker.name.eq_ignore_ascii_case(&unique))
         {
-            unique = format!("{base}-{n}");
+            unique = suffixed(&base, n);
             n += 1;
         }
         let worker = Joined {
@@ -1152,6 +1185,17 @@ mod tests {
             assert_eq!(folder_name(""), "worker");
             assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
             assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
+            // With a suffix, still 64 at most.
+            let long = folder_name(&"x".repeat(100));
+            assert_eq!(suffixed(&long, 12), format!("{}-12", "x".repeat(61)));
+            assert_eq!(suffixed("pod", 2), "pod-2");
+            // Windows device names, with an extension or in any case.
+            for device in ["CON", "con", "Nul.txt", "aux", "PRN", "COM1", "lpt9.log"] {
+                assert_eq!(folder_name(device), format!("worker-{device}"));
+            }
+            for name in ["COM10", "COM0", "console", "nullify", "LPT", "auxiliary.x"] {
+                assert_eq!(folder_name(name), name);
+            }
         });
     }
 
