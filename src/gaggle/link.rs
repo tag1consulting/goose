@@ -498,7 +498,8 @@ impl Link {
                 match tokio::time::timeout(left, Self::try_connect(&endpoint, &settings)).await {
                     Ok(tried) => tried,
                     Err(_) => Err(Refusal::Unreachable(
-                        "it accepted the connection but did not answer".to_string(),
+                        "no answer in time: the connection, its handshake or the Welcome was still pending"
+                            .to_string(),
                     )),
                 };
             let why = match tried {
@@ -989,8 +990,8 @@ async fn heartbeat_manager(
             .unwrap_or_default();
         if silent > switch.heartbeat_timeout {
             switch.fire(format!(
-                "nothing from it for {} seconds",
-                switch.heartbeat_timeout.as_secs()
+                "nothing from it for {:?}",
+                switch.heartbeat_timeout
             ));
             return;
         }

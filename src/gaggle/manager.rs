@@ -80,8 +80,10 @@ fn window(expected: usize) -> u32 {
 /// The largest header block the manager accepts.
 const MAX_HEADERS: u32 = 16 << 10;
 
-/// The connections the manager holds beyond one for each expected worker,
-/// for a worker that reconnects before its old connection is closed.
+/// The connections the manager holds beyond one for each expected worker:
+/// they absorb connections that never become workers, a client without the
+/// token or a worker turned away, until their deadline. No worker rejoins:
+/// once the Gaggle is full, `admit` refuses every other.
 const SPARE_CONNECTIONS: usize = 4;
 
 /// The events queued for the manager's main loop: past them, a worker's
@@ -233,6 +235,8 @@ fn message_kind(message: &ManagerMessage) -> &'static str {
 /// What the service shares with the manager.
 struct Shared {
     expected: usize,
+    /// Each worker admitted, at its id: `joined` never shrinks while the
+    /// manager runs, so an id is its worker's index.
     joined: Mutex<Vec<Joined>>,
     events: flume::Sender<Queued>,
     /// What is left of [`EVENT_BYTES`].
@@ -940,10 +944,7 @@ async fn heartbeat_worker(
                 &shared,
                 id,
                 &lost,
-                format!(
-                    "nothing from it for {} seconds",
-                    shared.heartbeat_timeout.as_secs()
-                ),
+                format!("nothing from it for {:?}", shared.heartbeat_timeout),
             )
             .await;
             worker.shut_down();
@@ -1063,7 +1064,7 @@ impl Manager {
             .unwrap_or_default()
     }
 
-    /// Send worker `id` `message`.
+    /// Send worker `id`, its index in `joined`, `message`.
     pub(crate) fn send(&self, id: u32, message: ToWorker) {
         if let Ok(joined) = self.shared.joined.lock() {
             if let Some(worker) = joined.get(id as usize) {
@@ -1081,7 +1082,8 @@ impl Manager {
         }
     }
 
-    /// Send worker `id` `Shutdown` and close its stream: a lost worker. One
+    /// Send worker `id`, its index in `joined`, `Shutdown` and close its
+    /// stream: a lost worker. One
     /// that gets it stops any user still running at once and exits within 2
     /// seconds, even with its main loop held; one it never reaches fires
     /// its own dead man's switch when its stream closes or goes silent.
