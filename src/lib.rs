@@ -1128,9 +1128,11 @@ impl GooseAttack {
     /// for each worker; more is refused with an error. The data is not part of
     /// the load test's hash, so it may differ from run to run.
     ///
-    /// A run of one process calls the hook once, as worker 0 of 1 holding every
-    /// user, after `test_start`, so a load test behaves the same with or
-    /// without a Gaggle. Without a hook, `worker_data` is empty.
+    /// A run of one process calls the hook as worker 0 of 1 holding every user,
+    /// once for each run, after that run's `test_start`, so a load test
+    /// behaves the same with or without a Gaggle; a Controller that stops and
+    /// starts the load test calls it again. When the hook fails, `test_stop`
+    /// still runs. Without a hook, `worker_data` is empty.
     ///
     /// # Example
     /// ```rust
@@ -3810,8 +3812,16 @@ impl GooseAttack {
                 users: self.test_plan.total_users(),
                 user_offset: 0,
             };
-            if let Some(data) = self.call_worker_data_hook(&share)? {
-                self.worker_data = Some(Arc::from(data));
+            match self.call_worker_data_hook(&share) {
+                Ok(Some(data)) => self.worker_data = Some(Arc::from(data)),
+                Ok(None) => {}
+                Err(e) => {
+                    // test_start ran: test_stop runs too, as after any run.
+                    if let Err(stop) = self.run_test_stop().await {
+                        warn!("test_stop after the worker data hook failed: {stop}");
+                    }
+                    return Err(e);
+                }
             }
         }
 

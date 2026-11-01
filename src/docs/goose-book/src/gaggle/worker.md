@@ -28,7 +28,7 @@ Ctrl-C on a worker stops its users, sends the manager its final metrics, and exi
 
 ## Custom data for each worker
 
-A load test can give each worker data of its own, such as its share of a pool of accounts, with [`GooseAttack::set_worker_data`](https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_worker_data). The manager calls the hook once for each worker, after `test_start`, with the worker's index, the number of workers, the worker's users and the ordinal of its first user, and sends what it returns, at most 16 MiB, to that worker. Every user on the worker reads it with [`GooseUser::worker_data`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.worker_data). A run of one process calls the hook once, as worker 0 of 1, so a load test behaves the same with or without a Gaggle.
+A load test can give each worker data of its own, such as its share of a pool of accounts, with [`GooseAttack::set_worker_data`](https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_worker_data). The manager calls the hook once for each worker, after `test_start`, with the worker's index, the number of workers, the worker's users and the ordinal of its first user, and sends what it returns, at most 16 MiB, to that worker. Every user on the worker reads it with [`GooseUser::worker_data`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.worker_data). A run of one process calls the hook as worker 0 of 1, once for each run, after that run's `test_start`, so a load test behaves the same with or without a Gaggle; a Controller that stops and starts the load test calls it again. When the hook fails, as when it returns more than 16 MiB, `test_stop` still runs.
 
 ```rust,ignore
 GooseAttack::initialize()?

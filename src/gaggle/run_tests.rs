@@ -954,6 +954,52 @@ async fn gaggle_worker_data_is_capped() {
         .expect("within 60 seconds");
 }
 
+/// A run of one process whose worker data hook returns too much fails, and
+/// its test_stop still runs, after test_start did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn worker_data_past_the_cap_still_runs_test_stop() {
+    let server = MockServer::start_async().await;
+    let mock = |path: &'static str| {
+        let server = &server;
+        async move {
+            server
+                .mock_async(|when, then| {
+                    when.method(GET).path(path);
+                    then.status(200).body("ok");
+                })
+                .await
+        }
+    };
+    let (start, stop) = (mock("/start").await, mock("/stop").await);
+    let host = server.base_url();
+    let run = with_worker_data(
+        configuration(&[
+            "--host",
+            &host,
+            "--users",
+            "1",
+            "--run-time",
+            "1",
+            "--quiet",
+            "--no-telnet",
+        ]),
+        crate::MAX_WORKER_DATA + 1,
+    )
+    .test_start(get("/start"))
+    .test_stop(get("/stop"))
+    .execute();
+    let result = tokio::time::timeout(Duration::from_secs(30), run)
+        .await
+        .expect("within 30 seconds");
+    assert!(
+        matches!(&result, Err(crate::GooseError::InvalidOption { detail, .. }) if detail.contains("more than the")),
+        "{:?}",
+        result.map(|_| ())
+    );
+    assert_eq!(start.calls_async().await, 1);
+    assert_eq!(stop.calls_async().await, 1);
+}
+
 /// A lost worker's record keeps the last delta the merge took, not the last
 /// one it sent: every delta from 2 on is refused, and its final never comes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
