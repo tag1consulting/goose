@@ -5,7 +5,8 @@
 //!
 //! The dead man's switch lives here: when nothing comes from the manager for
 //! the heartbeat timeout, or its stream closes without `Shutdown`, every
-//! user task is aborted at once, without waiting for the main loop.
+//! user task is aborted at once, without waiting for the main loop. A
+//! `Shutdown` that finds users still running stops them the same way.
 
 use super::delta::GaggleDelta;
 use super::manager::{AUTHORIZATION, HEARTBEAT_INTERVAL, MAX_MESSAGE};
@@ -239,9 +240,11 @@ pub(crate) struct Link {
     /// Set when the worker's `execute()` returns, so the switch's last resort
     /// never ends a process that went on to do something else.
     pub(crate) done: Arc<AtomicBool>,
-    /// Set once the dead man's switch fired: a user started after it is
-    /// stopped at once.
+    /// Set once the dead man's switch fired, or `Shutdown` came: a user
+    /// started after it is stopped at once.
     fired: Arc<AtomicBool>,
+    /// Set when the switch's last resort ends the process.
+    forced: Arc<AtomicBool>,
 }
 
 /// What [`Link::connect`] needs. No `Debug`: it holds the token.
@@ -399,6 +402,7 @@ impl Link {
             shutdown: Arc::new(AtomicBool::new(false)),
             done: Arc::new(AtomicBool::new(false)),
             fired: Arc::new(AtomicBool::new(false)),
+            forced: Arc::new(AtomicBool::new(false)),
         };
         let heard = Arc::new(Mutex::new(Instant::now()));
         let switch = Switch {
@@ -408,6 +412,7 @@ impl Link {
             outbox: link.outbox.clone(),
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
+            forced: link.forced.clone(),
         };
         tokio::spawn(read_manager(
             inbound,
@@ -574,6 +579,11 @@ fn error_chain(error: &dyn std::error::Error) -> String {
     text
 }
 
+/// In a unit test the switch's last resort records that it would have
+/// ended the process, instead of ending the test binary.
+#[cfg(test)]
+static RECORD_EXITS: AtomicBool = AtomicBool::new(false);
+
 /// The dead man's switch.
 #[derive(Clone)]
 struct Switch {
@@ -583,6 +593,8 @@ struct Switch {
     outbox: Arc<Outbox>,
     heartbeat_timeout: Duration,
     done: Arc<AtomicBool>,
+    /// Set when the last resort ends the process.
+    forced: Arc<AtomicBool>,
 }
 
 impl Switch {
@@ -602,11 +614,47 @@ impl Switch {
         }
         self.outbox.close();
         let _ = self.events.send(LinkEvent::Lost(why));
+        self.last_resort("gaggle: lost the manager and the worker has not exited; exiting now");
+    }
+
+    /// The manager said `Shutdown`. Any user still running, as when the
+    /// manager gave this worker up for lost, is stopped at once, and a
+    /// worker whose `execute()` has not returned 2 seconds later exits with
+    /// an error status, as when the switch fires: the main loop may be held.
+    fn shut_down(&self) {
+        let running = match self.users.lock() {
+            Ok(users) => {
+                self.fired.store(true, Ordering::SeqCst);
+                let running: Vec<_> = users.iter().filter(|user| !user.is_finished()).collect();
+                for user in &running {
+                    user.abort();
+                }
+                running.len()
+            }
+            Err(_) => 0,
+        };
+        if running > 0 {
+            warn!("gaggle: the manager said shut down with {running} users running; stopping them");
+            self.last_resort(
+                "gaggle: the manager said shut down and the worker has not exited; exiting now",
+            );
+        }
+    }
+
+    /// End the process with an error status 2 seconds from now, unless the
+    /// worker's `execute()` has returned by then.
+    fn last_resort(&self, message: &'static str) {
         let done = self.done.clone();
+        let forced = self.forced.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(2));
             if !done.load(Ordering::Relaxed) {
-                eprintln!("gaggle: lost the manager and the worker has not exited; exiting now");
+                eprintln!("{message}");
+                forced.store(true, Ordering::Relaxed);
+                #[cfg(test)]
+                if RECORD_EXITS.load(Ordering::Relaxed) {
+                    return;
+                }
                 std::process::exit(1);
             }
         });
@@ -645,6 +693,7 @@ async fn read_manager(
             Some(FromManager::SendLogs(_)) => LinkEvent::SendLogs,
             Some(FromManager::Shutdown(_)) => {
                 shutdown.store(true, Ordering::Relaxed);
+                switch.shut_down();
                 let _ = events.send(LinkEvent::Shutdown);
                 return;
             }
@@ -767,6 +816,7 @@ mod tests {
             outbox: outbox.clone(),
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(true)),
+            forced: Arc::new(AtomicBool::new(false)),
         };
         (switch, received, outbox)
     }
@@ -822,6 +872,7 @@ mod tests {
             shutdown: Arc::new(AtomicBool::new(false)),
             done: switch.done.clone(),
             fired: switch.fired.clone(),
+            forced: switch.forced.clone(),
         };
         switch.fire("test".to_string());
         let late = tokio::spawn(std::future::pending::<()>());
@@ -830,6 +881,65 @@ mod tests {
             .await
             .expect("within 30 seconds");
         assert!(ended.unwrap_err().is_cancelled());
+    }
+
+    /// `Shutdown` that comes while users still run, the worker's main loop
+    /// held: every user is stopped at once, and the last resort ends the
+    /// worker 2 seconds later, as when the switch fires.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn shutdown_stops_users_while_the_main_loop_is_held() {
+        use super::super::manager::Manager;
+        let test = async {
+            RECORD_EXITS.store(true, Ordering::Relaxed);
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
+                .await
+                .unwrap();
+            let link = Link::connect(LinkSettings {
+                address: manager.local_addr.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(10),
+                hello: LinkSettings::hello(7, "held".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            let user = tokio::spawn(std::future::pending::<()>());
+            link.watch(user.abort_handle());
+            // The worker's main loop never reads its events.
+            let sent = Instant::now();
+            manager.shut_down(link.id);
+            let ended = tokio::time::timeout(Duration::from_secs(5), user)
+                .await
+                .expect("the user stops");
+            assert!(ended.unwrap_err().is_cancelled());
+            while !link.forced.load(Ordering::Relaxed) {
+                assert!(
+                    sent.elapsed() < Duration::from_secs(5),
+                    "the last resort never fired"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            assert!(sent.elapsed() >= Duration::from_secs(2));
+        };
+        let result = tokio::time::timeout(Duration::from_secs(30), test).await;
+        RECORD_EXITS.store(false, Ordering::Relaxed);
+        result.expect("within 30 seconds");
+    }
+
+    /// `Shutdown` after every user finished, as at the end of a run, stops
+    /// nothing and arms no last resort.
+    #[tokio::test]
+    async fn shutdown_after_the_run_arms_nothing() {
+        let finished = tokio::spawn(async {});
+        let handle = finished.abort_handle();
+        finished.await.unwrap();
+        let (switch, _events, _outbox) = switch(vec![handle], Duration::from_secs(10));
+        switch.done.store(false, Ordering::Relaxed);
+        switch.shut_down();
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        assert!(!switch.forced.load(Ordering::Relaxed));
+        switch.done.store(true, Ordering::Relaxed);
     }
 
     #[test]

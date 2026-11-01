@@ -824,8 +824,10 @@ impl Manager {
         }
     }
 
-    /// Send worker `id` `Shutdown` and close its stream: a lost worker, so its
-    /// own switch stops any load it still runs.
+    /// Send worker `id` `Shutdown` and close its stream: a lost worker. One
+    /// that gets it stops any user still running at once and exits within 2
+    /// seconds, even with its main loop held; one it never reaches fires
+    /// its own dead man's switch when its stream closes or goes silent.
     pub(crate) fn shut_down(&self, id: u32) {
         if let Ok(joined) = self.shared.joined.lock() {
             if let Some(worker) = joined.get(id as usize) {
