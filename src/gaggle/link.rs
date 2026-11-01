@@ -25,13 +25,13 @@ use tokio::sync::Notify;
 
 /// The most deltas a worker queues; past it the newest is coalesced into the
 /// last queued, or dropped when it cannot be.
-pub(crate) const MAX_QUEUED_DELTAS: usize = 8;
+const MAX_QUEUED_DELTAS: usize = 8;
 
 /// The most other messages queued before a log chunk waits for room.
 const MAX_QUEUED_CHUNKS: usize = 4;
 
 /// The longest a manager may ask a worker to wait before it starts.
-pub(crate) const MAX_START_DELAY: Duration = Duration::from_secs(60);
+const MAX_START_DELAY: Duration = Duration::from_secs(60);
 
 /// The instant `StartAt` asks for, `delay_ms` from now: refused past
 /// [`MAX_START_DELAY`].
@@ -49,7 +49,7 @@ fn start_instant(delay_ms: u64) -> Result<tokio::time::Instant, String> {
 }
 
 /// A log chunk's size.
-pub(crate) const LOG_CHUNK: usize = 1 << 20;
+const LOG_CHUNK: usize = 1 << 20;
 
 /// The HTTP/2 stream and connection windows a worker offers its manager.
 const WORKER_WINDOW: u32 = 1 << 20;
