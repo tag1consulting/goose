@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
 /// The most deltas a worker queues; past it the newest is coalesced into the
-/// last queued.
+/// last queued, or dropped when it cannot be.
 pub(crate) const MAX_QUEUED_DELTAS: usize = 8;
 
 /// The most other messages queued before a log chunk waits for room.
@@ -74,12 +74,54 @@ struct OutboxState {
     queue: VecDeque<Outgoing>,
     deltas: usize,
     closed: bool,
+    /// The newest delta was dropped: the last queued delta must not take
+    /// the next, or the gap the manager sees in the sequence would close.
+    hole: bool,
+}
+
+impl OutboxState {
+    /// The last delta queued.
+    fn last_delta(&mut self) -> Option<&mut Box<GaggleDelta>> {
+        self.queue.iter_mut().rev().find_map(|item| match item {
+            Outgoing::Delta(last) => Some(last),
+            Outgoing::Message(_) => None,
+        })
+    }
+
+    /// Free a place for a delta by joining the two newest queued deltas,
+    /// which follow each other: whether it could.
+    fn join_newest(&mut self) -> bool {
+        let mut deltas = self
+            .queue
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, item)| matches!(item, Outgoing::Delta(_)))
+            .map(|(at, _)| at);
+        let (Some(newest), Some(before)) = (deltas.next(), deltas.next()) else {
+            return false;
+        };
+        let joined = match (&self.queue[before], &self.queue[newest]) {
+            (Outgoing::Delta(a), Outgoing::Delta(b)) => coalesce(a, b),
+            _ => return false,
+        };
+        match joined {
+            Ok(joined) => {
+                self.queue[before] = Outgoing::Delta(Box::new(joined));
+                let _ = self.queue.remove(newest);
+                self.deltas -= 1;
+                true
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 /// What the worker sends its manager, in order, with at most
-/// [`MAX_QUEUED_DELTAS`] deltas queued: past that, the newest is coalesced
-/// into the last queued delta instead of growing the queue. Heartbeats go
-/// to the front.
+/// [`MAX_QUEUED_DELTAS`] deltas queued, never more: past that, the newest is
+/// coalesced into the last queued delta instead of growing the queue, or
+/// dropped, leaving a gap in the sequence the manager records. Heartbeats
+/// go to the front.
 #[derive(Default)]
 pub(crate) struct Outbox {
     state: Mutex<OutboxState>,
@@ -109,7 +151,12 @@ impl Outbox {
     }
 
     /// Queue a delta, coalescing it into the last queued delta when
-    /// [`MAX_QUEUED_DELTAS`] are queued already.
+    /// [`MAX_QUEUED_DELTAS`] are queued already. Coalescing fails only when
+    /// a checked sum overflows, which the manager's own checked merge would
+    /// refuse too: then the new delta, which carries nothing the manager
+    /// could use, is dropped, and never a queued one. The deltas after it
+    /// start a new place in the queue, made by joining the two newest
+    /// before the drop, so the manager sees the dropped range as a gap.
     pub(crate) fn push_delta(&self, delta: GaggleDelta) {
         #[cfg(test)]
         let delta = {
@@ -124,20 +171,34 @@ impl Outbox {
                 return;
             }
             if state.deltas >= MAX_QUEUED_DELTAS {
-                let last = state.queue.iter_mut().rev().find_map(|item| match item {
-                    Outgoing::Delta(last) => Some(last),
-                    Outgoing::Message(_) => None,
-                });
-                if let Some(last) = last {
-                    match coalesce(last, &delta) {
-                        Ok(joined) => {
-                            **last = joined;
-                            return;
-                        }
-                        Err(e) => warn!("gaggle: could not coalesce a delta ({e}); queued it"),
+                let coalesced = if state.hole {
+                    // After a drop: never across it.
+                    if state.join_newest() {
+                        None
+                    } else {
+                        Some(Err("no queued delta could make room".to_string()))
                     }
+                } else {
+                    state
+                        .last_delta()
+                        .map(|last| coalesce(last, &delta).map(|joined| **last = joined))
+                        .map(|done| done.map_err(|e| e.to_string()))
+                };
+                match coalesced {
+                    Some(Ok(())) => return,
+                    Some(Err(why)) => {
+                        error!(
+                            "gaggle: dropped metrics deltas {} to {}: {MAX_QUEUED_DELTAS} are queued and it could not be joined to them ({why}); the manager records the gap",
+                            delta.first_seq, delta.seq
+                        );
+                        state.hole = true;
+                        return;
+                    }
+                    // Room was made, or no delta is queued to join.
+                    None => {}
                 }
             }
+            state.hole = false;
             state.deltas += 1;
             state.queue.push_back(Outgoing::Delta(Box::new(delta)));
         }
@@ -820,6 +881,66 @@ mod tests {
         };
         assert_eq!((last.first_seq, last.seq), (8, 12));
         assert_eq!(last.graph.requests["GET /"].len(), 5);
+    }
+
+    /// The queued deltas, encoded (unit tests).
+    fn queued(outbox: &Outbox) -> Vec<Vec<u8>> {
+        let state = outbox.state.lock().unwrap();
+        state
+            .queue
+            .iter()
+            .filter_map(|item| match item {
+                Outgoing::Delta(delta) => Some(delta.encode().unwrap()),
+                Outgoing::Message(_) => None,
+            })
+            .collect()
+    }
+
+    /// A stalled link, and a delta that cannot be coalesced into the last
+    /// queued, its sum overflowing: the queue stays at its cap, the queued
+    /// deltas as they were, and the dropped delta shows as a gap the
+    /// manager records. Nor does a later delta close the gap.
+    #[tokio::test]
+    async fn outbox_drops_a_delta_it_cannot_coalesce() {
+        use crate::gaggle::merge::SeqGap;
+        let outbox = Outbox::default();
+        for seq in 1..=MAX_QUEUED_DELTAS as u64 {
+            outbox.push_delta(delta(seq));
+        }
+        let before = queued(&outbox);
+        let mut overflowing = delta(MAX_QUEUED_DELTAS as u64 + 1);
+        overflowing.graph.requests.insert(
+            "GET /".to_string(),
+            [(MAX_QUEUED_DELTAS as u64, u64::MAX)].into(),
+        );
+        outbox.push_delta(overflowing);
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        assert_eq!(queued(&outbox), before, "a queued delta changed");
+        // The next delta takes a place of its own, made by joining the two
+        // newest before the gap.
+        outbox.push_delta(delta(MAX_QUEUED_DELTAS as u64 + 2));
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        outbox.push_delta(delta(MAX_QUEUED_DELTAS as u64 + 3));
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        outbox.close();
+        let mut accumulator = crate::gaggle::tests::accumulator_for_test();
+        while let Some(message) = next(&outbox).await {
+            if let Some(ToManager::Metrics(metrics)) = message.message {
+                accumulator
+                    .apply(0, GaggleDelta::decode(&metrics.delta).unwrap())
+                    .unwrap();
+            }
+        }
+        let dropped = MAX_QUEUED_DELTAS as u64 + 1;
+        assert_eq!(
+            accumulator.gaps(),
+            &[SeqGap {
+                worker: 0,
+                expected: dropped,
+                received: dropped + 1,
+            }]
+        );
+        assert_eq!(accumulator.missing(0), 1);
     }
 
     /// A heartbeat goes ahead of what is queued.
