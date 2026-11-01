@@ -23,8 +23,8 @@ fn get(path: &'static str) -> Transaction {
 
 /// Each user, first: GET /pre, and GET /data/ with its worker data; then a
 /// wait until its worker's metrics reset, at most 10 seconds, so every later
-/// request is measured. With the ramp at 10 users a second, a worker's users
-/// start 200 ms apart, so a worker's start may slip that much before more
+/// request is measured. With the ramp at 4 users a second, a worker's users
+/// start 500 ms apart, so a worker's start may slip that much before more
 /// than its last user's /pre races the reset.
 fn on_start() -> Transaction {
     Transaction::new(Arc::new(|user| {
@@ -242,7 +242,7 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
             "--users",
             "6",
             "--increase-rate",
-            "10",
+            "4",
             "--run-time",
             "3",
             "--report-file",
@@ -585,7 +585,8 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str, expected_last_seq
         .expect("the Gaggle ends within 90 seconds");
     manager.expect("the manager exits cleanly");
     // Joining, a 2 second start, a ramp, 3 seconds of run, and the
-    // deadline: 30 seconds for the final metrics, 10 for a reset.
+    // deadline, under cfg(test): 3 seconds for the final metrics, 2 for a
+    // reset.
     assert!(
         started.elapsed() < Duration::from_secs(60),
         "{:?}",
@@ -906,6 +907,7 @@ async fn gaggle_worker_data_is_capped() {
 /// A run of one process whose worker data hook returns too much fails, and
 /// its test_stop still runs, after test_start did.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
 async fn worker_data_past_the_cap_still_runs_test_stop() {
     let server = MockServer::start_async().await;
     let mock = |path: &'static str| {
@@ -1128,60 +1130,6 @@ async fn gaggle_without_metrics_exits_cleanly() {
         started.elapsed()
     );
     assert!(a.calls_async().await > 0);
-    let _ = std::fs::remove_dir_all(&folder);
-}
-
-/// A threshold that fails on the merged metrics stops every worker early,
-/// each ending cleanly, and the manager fails with the thresholds error.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[serial_test::serial]
-async fn gaggle_threshold_stops_every_worker() {
-    let server = MockServer::start_async().await;
-    let a = server
-        .mock_async(|when, then| {
-            when.method(GET).path("/a");
-            then.status(200).body("ok").delay(Duration::from_millis(30));
-        })
-        .await;
-    let folder = scratch("threshold");
-    let started = std::time::Instant::now();
-    let run = gaggle(
-        quick,
-        2,
-        server.base_url(),
-        &folder,
-        &[
-            "--users",
-            "20",
-            "--increase-rate",
-            "20",
-            "--run-time",
-            "60",
-            "--threshold",
-            "p95<5ms",
-        ],
-        &[],
-        &[],
-    );
-    let (manager, workers) = tokio::time::timeout(Duration::from_secs(60), run)
-        .await
-        .expect("the Gaggle ends within 60 seconds");
-    assert!(
-        matches!(manager, Err(crate::GooseError::ThresholdsFailed { .. })),
-        "{:?}",
-        manager.map(|_| ())
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(30),
-        "the threshold ends a 60 s run early: {:?}",
-        started.elapsed()
-    );
-    for worker in workers {
-        worker.expect("the worker exits cleanly");
-    }
-    let after = a.calls_async().await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(a.calls_async().await, after, "every worker stopped");
     let _ = std::fs::remove_dir_all(&folder);
 }
 

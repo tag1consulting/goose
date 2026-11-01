@@ -265,8 +265,7 @@ fn until_load(count: impl Fn() -> usize, within: Duration) {
 
 /// A worker killed mid run is marked lost within the heartbeat timeout,
 /// with slack; the run finishes on the other, and its reports say it is
-/// degraded. A client with a wrong token is refused meanwhile, and no
-/// report, and no log line at -vv on either side, holds either token.
+/// degraded. No report, and no log line, holds the token.
 #[test]
 #[serial_test::serial]
 fn gaggle_worker_killed_mid_run() {
@@ -319,33 +318,13 @@ fn worker_lost_mid_run(frozen: bool) {
                     &manager_folder,
                     "--gaggle-token",
                     "tok-b21-secret",
-                    "-vv",
                 ],
             ),
         );
-        let token = ["--gaggle-token", "tok-b21-secret", "-vv"];
+        let token = ["--gaggle-token", "tok-b21-secret"];
         let port = manager.port();
         let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
         let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
-        // A client with the wrong token, refused before it is admitted, so
-        // the run is unchanged; its refusal is logged at -vv on both sides.
-        let mut intruder = Process::start(
-            &simple,
-            "intruder",
-            &folder,
-            &worker_args(&port, &["--gaggle-token", "tok-b21-wrong", "-vv"]),
-        );
-        let (status, _) = intruder
-            .wait(Duration::from_secs(20))
-            .expect("the refused client exits");
-        assert!(!status.success());
-        let refused = intruder.output();
-        assert!(
-            refused.contains("refused this worker: token:"),
-            "{}",
-            refused
-        );
-        assert!(!refused.contains("panicked"), "{}", refused);
         until_load(|| index.calls(), Duration::from_secs(30));
         std::thread::sleep(Duration::from_secs(2));
         let killed = chrono::Utc::now();
@@ -402,16 +381,15 @@ fn worker_lost_mid_run(frozen: bool) {
         );
         let html = std::fs::read_to_string(folder.join("manager/report.html")).unwrap();
         assert!(html.contains("Degraded"), "the HTML report says degraded");
-        // The token is in no report, nor in any log line, at -vv.
+        // The token is in no report, nor in any log line.
         for text in [
             report.to_string(),
             html,
             manager.output(),
             first.output(),
             second.output(),
-            refused,
         ] {
-            assert!(!text.contains("tok-b21-secret") && !text.contains("tok-b21-wrong"));
+            assert!(!text.contains("tok-b21-secret"));
         }
         let _ = std::fs::remove_dir_all(&folder);
     }
@@ -500,6 +478,122 @@ fn manager_lost_mid_run(frozen: bool) {
         let _ = manager.kill();
         let _ = std::fs::remove_dir_all(&folder);
     }
+}
+
+/// A threshold that fails on the merged metrics stops every worker,
+/// and the manager fails with the thresholds error. A process test: the
+/// threshold trips the process wide killswitch, which in one process would
+/// stop every worker itself, and other tests besides.
+#[test]
+#[serial_test::serial]
+fn gaggle_threshold_stops_every_worker() {
+    within(|| {
+        let server = MockServer::start();
+        let index = mock_simple(&server, Duration::from_millis(30));
+        let folder = scratch("threshold");
+        let host = server.base_url();
+        let simple = example("simple");
+        let started = Instant::now();
+        let mut manager = Process::start(
+            &simple,
+            "manager",
+            &folder,
+            &manager_args(
+                &host,
+                "2",
+                &[
+                    "--users",
+                    "20",
+                    "--increase-rate",
+                    "20",
+                    "--run-time",
+                    "60s",
+                    "--threshold",
+                    "p95<5ms",
+                ],
+            ),
+        );
+        let port = manager.port();
+        let mut workers = [
+            Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
+            Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
+        ];
+        let (status, ended) = manager
+            .wait(Duration::from_secs(60))
+            .expect("the manager ends");
+        assert!(!status.success());
+        let output = manager.output();
+        assert!(output.contains("ThresholdsFailed"), "{}", output);
+        assert!(
+            ended.duration_since(started) < Duration::from_secs(30),
+            "the threshold ends a 60 s run early: {:?}",
+            ended.duration_since(started)
+        );
+        for worker in workers.iter_mut() {
+            let (status, _) = worker
+                .wait(Duration::from_secs(10))
+                .expect("the worker exits");
+            assert!(status.success(), "{}: {}", worker.name, worker.output());
+        }
+        let after = index.calls();
+        std::thread::sleep(Duration::from_secs(2));
+        assert_eq!(index.calls(), after, "every worker stopped");
+        let _ = std::fs::remove_dir_all(&folder);
+    });
+}
+
+/// A worker with the wrong token is refused, and no log line of either
+/// process, at -vv, holds either token. A process test, to read the logs;
+/// the refusals themselves are tested in the library.
+#[test]
+#[serial_test::serial]
+fn gaggle_refused_token_is_never_logged() {
+    within(|| {
+        let server = MockServer::start();
+        mock_simple(&server, Duration::ZERO);
+        let folder = scratch("token-logs");
+        let host = server.base_url();
+        let mut manager = Process::start(
+            &example("simple"),
+            "manager",
+            &folder,
+            &manager_args(
+                &host,
+                "1",
+                &[
+                    "--users",
+                    "2",
+                    "--run-time",
+                    "2s",
+                    "--gaggle-token",
+                    "tok-right-5e1b",
+                    "-vv",
+                ],
+            ),
+        );
+        let port = manager.port();
+        let mut worker = Process::start(
+            &example("simple"),
+            "worker",
+            &folder,
+            &worker_args(&port, &["--gaggle-token", "tok-wrong-9c2d", "-vv"]),
+        );
+        let (status, _) = worker
+            .wait(Duration::from_secs(20))
+            .expect("the refused worker exits");
+        assert!(!status.success());
+        let output = worker.output();
+        assert!(output.contains("refused this worker: token:"), "{}", output);
+        assert!(!output.contains("panicked"), "{}", output);
+        let _ = manager.kill();
+        for output in [manager.output(), output] {
+            assert!(
+                !output.contains("tok-right") && !output.contains("tok-wrong"),
+                "{}",
+                output
+            );
+        }
+    });
 }
 
 /// Send process `pid` SIGINT, as Ctrl-C does.
