@@ -104,7 +104,8 @@ pub(crate) const EVENT_QUEUE: usize = 64;
 const EVENT_BYTES: u64 = 256 << 20;
 
 /// An event as queued, holding its share of [`EVENT_BYTES`] until the main
-/// loop takes it.
+/// loop takes it, or, for a delta, until the merge has applied it (see
+/// [`taken`]).
 type Queued = (Event, Option<tokio::sync::OwnedSemaphorePermit>);
 
 /// The metadata key a worker's token travels under, as `Bearer <token>`.
@@ -346,6 +347,8 @@ fn folder_name(name: &str) -> String {
     if is_device_name(&safe) {
         safe = format!("worker-{safe}");
         safe.truncate(MAX_FOLDER_NAME);
+        // Cut short, it may end in a dot again.
+        safe.truncate(safe.trim_end_matches('.').len());
     }
     safe
 }
@@ -851,6 +854,7 @@ async fn read_worker(
             break;
         };
         let event = match message.message {
+            // Skipped before the budget was taken.
             Some(FromWorker::Heartbeat(_)) | None => continue,
             Some(FromWorker::Hello(_)) => {
                 lose(&shared, id, &lost, "it said Hello twice".to_string()).await;
@@ -1246,6 +1250,9 @@ mod tests {
         assert_eq!(folder_name(""), "worker");
         // Windows would drop the trailing dots, making it `pod`.
         assert_eq!(folder_name("pod.."), "pod");
+        // A device name made longer and cut short ends in no dot either.
+        let device = folder_name(&format!("CON.{}.{}", "a".repeat(52), "b".repeat(7)));
+        assert!(!device.ends_with('.') && device.len() <= 63, "{}", device);
         assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
         assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
         // With a suffix, still 64 at most.

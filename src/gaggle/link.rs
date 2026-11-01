@@ -116,11 +116,12 @@ impl OutboxState {
             if !follows {
                 continue;
             }
+            // Both are deltas, as `follows` found.
             let Some(Outgoing::Delta(b)) = self.queue.remove(newest) else {
-                continue;
+                unreachable!("a delta was found at {newest}");
             };
             let Outgoing::Delta(a) = &mut self.queue[before] else {
-                continue;
+                unreachable!("a delta was found at {before}");
             };
             match coalesce(take(a), &b) {
                 Ok(joined) => {
