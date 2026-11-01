@@ -32,10 +32,11 @@ fn on_start() -> Transaction {
             let _ = user.get("/pre").await;
             let data = String::from_utf8_lossy(user.worker_data()).into_owned();
             let _ = user.get(&format!("/data/{data}")).await;
+            // The run's start makes the epoch 1, and the reset 2.
             let reset = || {
                 user.metrics_epoch
                     .as_ref()
-                    .is_some_and(|epoch| epoch.load(std::sync::atomic::Ordering::Relaxed) > 0)
+                    .is_some_and(|epoch| epoch.load(std::sync::atomic::Ordering::Relaxed) >= 2)
             };
             let deadline = std::time::Instant::now() + Duration::from_secs(10);
             while !reset() && std::time::Instant::now() < deadline {
