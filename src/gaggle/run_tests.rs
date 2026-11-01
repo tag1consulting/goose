@@ -117,7 +117,7 @@ fn no_token_from_the_environment() {
 async fn gaggle(
     build: impl Fn(GooseConfiguration, Option<usize>) -> GooseAttack,
     count: usize,
-    host: &str,
+    host: String,
     folder: &Path,
     manager_args: &[&str],
     worker_args: &[&str],
@@ -138,7 +138,7 @@ async fn gaggle(
         "--no-telnet",
         "--quiet",
         "--host",
-        host,
+        &host,
         "--output-dir",
         &manager_folder,
     ];
@@ -230,7 +230,7 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     let run = gaggle(
         standard,
         2,
-        &host,
+        host.clone(),
         &folder,
         &[
             "--users",
@@ -345,7 +345,7 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
     let run = gaggle(
         quick,
         3,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &[
             "--users",
@@ -493,7 +493,7 @@ async fn gaggle_stale_and_refused_workers_degrade_the_run() {
     let run = gaggle(
         standard,
         3,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &[
             "--users",
@@ -556,7 +556,7 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str, expected_last_seq
     let run = gaggle(
         standard,
         2,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &[
             "--users",
@@ -646,7 +646,7 @@ async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClie
     };
     let mut args = vec!["--users", "1", "--run-time", "1"];
     args.extend_from_slice(manager_args);
-    clean(gaggle(build, 1, &server.base_url(), &folder, &args, &[], &[]).await);
+    clean(gaggle(build, 1, server.base_url(), &folder, &args, &[], &[]).await);
     let _ = std::fs::remove_dir_all(&folder);
     reported.await.expect("the worker builds its clients")
 }
@@ -711,7 +711,7 @@ async fn gaggle_collected_logs_match_their_names() {
         if compress {
             args.push("--compress");
         }
-        let run = gaggle(standard, 2, &server.base_url(), &folder, &args, &[], &[]);
+        let run = gaggle(standard, 2, server.base_url(), &folder, &args, &[], &[]);
         clean(
             tokio::time::timeout(Duration::from_secs(30), run)
                 .await
@@ -755,15 +755,18 @@ async fn gaggle_worker_writes_no_log_set_in_code() {
         let attack = load_test(configuration);
         match place {
             None => attack,
-            Some(_) => attack
-                .set_default(crate::config::GooseDefault::RequestLog, in_code.as_str())
-                .unwrap(),
+            Some(_) => *crate::config::GooseDefaultType::set_default(
+                attack,
+                crate::config::GooseDefault::RequestLog,
+                in_code.as_str(),
+            )
+            .unwrap(),
         }
     };
     let run = gaggle(
         build,
         2,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &["--users", "2", "--increase-rate", "10", "--run-time", "2"],
         &[],
@@ -788,7 +791,7 @@ async fn gaggle_non_loopback_manager_with_a_token_admits_its_workers() {
     let run = gaggle(
         standard,
         2,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &[
             "--manager-bind-host",
@@ -840,7 +843,7 @@ async fn worker_data_run(
     let (manager, mut workers) = gaggle(
         build,
         1,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &["--users", "1", "--run-time", "1"],
         &[],
@@ -988,7 +991,7 @@ async fn gaggle_handshake_refusals() {
             let (manager, workers) = gaggle(
                 build,
                 1,
-                &server.base_url(),
+                server.base_url(),
                 &folder,
                 &manager_args,
                 &worker_extra,
@@ -1089,7 +1092,7 @@ async fn gaggle_without_metrics_exits_cleanly() {
     let run = gaggle(
         quick,
         2,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &[
             "--users",
@@ -1135,7 +1138,7 @@ async fn gaggle_threshold_stops_every_worker() {
     let run = gaggle(
         quick,
         2,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &[
             "--users",
@@ -1192,7 +1195,7 @@ async fn gaggle_test_plan_and_throttle_across_workers() {
     let run = gaggle(
         quick,
         2,
-        &server.base_url(),
+        server.base_url(),
         &folder,
         &[
             "--test-plan",
