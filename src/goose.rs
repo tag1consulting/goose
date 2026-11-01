@@ -6556,7 +6556,6 @@ mod tests {
             );
             for (worker, (processor, _, _, _)) in sides.iter_mut().enumerate() {
                 let delta = processor.gaggle_take_delta(1).unwrap();
-                manager.set_min_epoch(delta.epoch);
                 manager.apply(worker as u32, delta).unwrap();
                 manager.done(worker as u32);
             }
