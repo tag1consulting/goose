@@ -181,7 +181,7 @@ impl GooseAttack {
         let workers = self.configuration.expect_workers.unwrap_or(1);
         let limits = DeltaLimits {
             max_users: self.test_plan.total_users() as u64,
-            max_workers: u32::try_from(workers).unwrap_or(u32::MAX),
+            max_workers: workers.min(u32::MAX as usize) as u32,
             ..DeltaLimits::default()
         };
         (limits, health)
@@ -648,13 +648,13 @@ impl GooseAttack {
         why: String,
     ) {
         let stop_sent = run.stop_sent;
+        let merged = last_merged(&run.health, id);
         let Some(worker) = run.worker(id) else {
             return;
         };
         let message = format!(
-            "gaggle: worker {id} ({}) lost: {why}; last delta merged {}",
-            worker.name,
-            last_merged(&run.health, id)
+            "gaggle: worker {id} ({}) lost: {why}; last delta merged {merged}",
+            worker.name
         );
         if !worker.lose(stop_sent, why) {
             return;
