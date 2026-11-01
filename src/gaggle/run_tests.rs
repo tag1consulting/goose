@@ -371,6 +371,9 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
             .expect("the Gaggle ends within 30 seconds"),
     );
     assert_eq!(metrics.total_users, 2);
+    // No reset under --iterations: every delta of the start's epoch merged.
+    let (gaggle, _) = record(&folder);
+    assert_eq!(gaggle["degraded"], false, "{gaggle}");
     let _ = std::fs::remove_dir_all(&folder);
 }
 

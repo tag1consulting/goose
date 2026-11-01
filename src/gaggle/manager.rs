@@ -1221,19 +1221,25 @@ mod tests {
     /// Worker names that differ only in case get folders of their own.
     #[tokio::test]
     async fn worker_names_are_unique_ignoring_case() {
-        let manager = Manager::start("127.0.0.1", 0, 3, None, 7, true, Duration::from_secs(10))
+        let manager = Manager::start("127.0.0.1", 0, 5, None, 7, true, Duration::from_secs(10))
             .await
             .unwrap();
         let (tx, _) = mpsc::channel(1);
         for name in ["Pod-A", "pod-a", "POD-A"] {
             assert!(manager.shared.admit(name, tx.clone()).is_ok());
         }
+        // Two of the longest names: the second's suffix keeps it at 64.
+        let long = "x".repeat(100);
+        assert!(manager.shared.admit(&long, tx.clone()).is_ok());
+        let suffixed = manager.shared.admit(&long, tx.clone()).ok().unwrap();
+        assert_eq!(suffixed.name, format!("{}-4", "x".repeat(62)));
+        assert_eq!(suffixed.name.len(), 64);
         let names: Vec<String> = manager
             .workers()
             .into_iter()
             .map(|(_, name)| name)
             .collect();
-        assert_eq!(names, ["Pod-A", "pod-a-1", "POD-A-2"]);
+        assert_eq!(names[..3], ["Pod-A", "pod-a-1", "POD-A-2"]);
     }
 
     /// The window budget is split between the connections the manager

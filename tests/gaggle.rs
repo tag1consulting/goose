@@ -143,6 +143,7 @@ impl Process {
         let deadline = Instant::now() + within;
         while Instant::now() < deadline {
             if let Some(status) = self.child.try_wait().unwrap() {
+                forget(self.child.id());
                 return Some((status, Instant::now()));
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -181,6 +182,7 @@ impl Process {
     fn kill(&mut self) -> Instant {
         self.child.kill().unwrap();
         let _ = self.child.wait();
+        forget(self.child.id());
         Instant::now()
     }
 }
@@ -189,6 +191,15 @@ impl Drop for Process {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        forget(self.child.id());
+    }
+}
+
+/// A process reaped: [`Cleanup`] must never signal its pid, which another
+/// process may now hold.
+fn forget(pid: u32) {
+    if let Ok(mut started) = STARTED.lock() {
+        started.0.retain(|&started| started != pid);
     }
 }
 
@@ -254,7 +265,8 @@ fn until_load(count: impl Fn() -> usize, within: Duration) {
 
 /// A worker killed mid run is marked lost within the heartbeat timeout,
 /// with slack; the run finishes on the other, and its reports say it is
-/// degraded. No report, and no log line at -vv, holds the token.
+/// degraded. A client with a wrong token is refused meanwhile, and no
+/// report, and no log line at -vv on either side, holds either token.
 #[test]
 #[serial_test::serial]
 fn gaggle_worker_killed_mid_run() {
@@ -315,6 +327,25 @@ fn worker_lost_mid_run(frozen: bool) {
         let port = manager.port();
         let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
         let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
+        // A client with the wrong token, refused before it is admitted, so
+        // the run is unchanged; its refusal is logged at -vv on both sides.
+        let mut intruder = Process::start(
+            &simple,
+            "intruder",
+            &folder,
+            &worker_args(&port, &["--gaggle-token", "tok-b21-wrong", "-vv"]),
+        );
+        let (status, _) = intruder
+            .wait(Duration::from_secs(20))
+            .expect("the refused client exits");
+        assert!(!status.success());
+        let refused = intruder.output();
+        assert!(
+            refused.contains("refused this worker: token:"),
+            "{}",
+            refused
+        );
+        assert!(!refused.contains("panicked"), "{}", refused);
         until_load(|| index.calls(), Duration::from_secs(30));
         std::thread::sleep(Duration::from_secs(2));
         let killed = chrono::Utc::now();
@@ -378,8 +409,9 @@ fn worker_lost_mid_run(frozen: bool) {
             manager.output(),
             first.output(),
             second.output(),
+            refused,
         ] {
-            assert!(!text.contains("tok-b21-secret"));
+            assert!(!text.contains("tok-b21-secret") && !text.contains("tok-b21-wrong"));
         }
         let _ = std::fs::remove_dir_all(&folder);
     }

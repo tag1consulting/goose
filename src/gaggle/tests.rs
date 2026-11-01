@@ -2494,6 +2494,25 @@ fn gaggle_epoch_ahead_of_the_manager_is_refused() {
         .all(|w| w.excluded.is_none()));
 }
 
+/// The manager's merge starts on its processor's epoch, which the run's
+/// start began, as it began every worker's: a worker's first delta of it is
+/// taken, before any metrics reset.
+#[test]
+fn gaggle_merge_starts_on_the_managers_epoch() {
+    let mut side = Side::new(0..0, Some(0));
+    side.epoch.store(1, std::sync::atomic::Ordering::Relaxed);
+    let health = crate::gaggle::merge::MergeHealth::default();
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), health.clone());
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: Box::new(counted(0, 1, 1)),
+        });
+    let held = health.lock().unwrap().get(&0).cloned().unwrap_or_default();
+    assert_eq!((held.last_seq, held.refused), (1, 0), "{:?}", held);
+}
+
 /// Before the series starts, and so before the manager's first clock, a
 /// delta stamped past the clock's slack is refused: no worker can grow the
 /// manager's graph data far ahead. Once the clock moves, it is taken.
