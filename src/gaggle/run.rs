@@ -172,13 +172,20 @@ impl GooseAttack {
     }
 
     /// What a manager's merge refuses a delta past, and where it records
-    /// what it did with each worker's deltas.
+    /// what it did with each worker's deltas: user ordinals below the
+    /// users this run starts, worker ids below the workers it expects.
     pub(crate) fn gaggle_merge_settings(&self) -> (DeltaLimits, MergeHealth) {
         let health = match self.gaggle.as_ref() {
             Some(GaggleRole::Manager(run)) => run.health.clone(),
             _ => MergeHealth::default(),
         };
-        (DeltaLimits::default(), health)
+        let workers = self.configuration.expect_workers.unwrap_or(1);
+        let limits = DeltaLimits {
+            max_users: self.test_plan.total_users() as u64,
+            max_workers: u32::try_from(workers).unwrap_or(u32::MAX),
+            ..DeltaLimits::default()
+        };
+        (limits, health)
     }
 
     /// The link to a worker's manager.
@@ -1112,6 +1119,49 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>, compress: b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gaggle::delta::{DeltaError, DeltaKind, GaggleDelta, ScenarioPart};
+
+    /// A manager's merge takes the run's users and workers as its limits:
+    /// a user ordinal equal to the run's user count, or a worker id equal to
+    /// the workers it expects, is refused.
+    #[test]
+    fn gaggle_delta_limits_are_the_runs() {
+        crate::gaggle::within(30, || {
+            let configuration = crate::config::GooseConfiguration::parse_args_default(&[
+                "--manager",
+                "--expect-workers",
+                "3",
+                "--users",
+                "6",
+                "--host",
+                "http://h",
+            ])
+            .unwrap();
+            let mut attack = GooseAttack::initialize_with_config(configuration).unwrap();
+            attack.test_plan = crate::test_plan::TestPlan::build(&attack.configuration).unwrap();
+            let (limits, _) = attack.gaggle_merge_settings();
+            assert_eq!((limits.max_users, limits.max_workers), (6, 3));
+            let with_user = |worker: u32, user: u64| {
+                let mut delta = GaggleDelta::new(worker, 1, 0, DeltaKind::Delta);
+                let mut scenario = ScenarioPart::default();
+                scenario.users.insert(user);
+                delta.metrics.scenarios.insert(0, scenario);
+                delta
+            };
+            assert_eq!(with_user(0, 5).validate(&limits), Ok(()));
+            assert_eq!(
+                with_user(0, 6).validate(&limits),
+                Err(DeltaError::UserOutOfRange { user: 6, limit: 6 })
+            );
+            assert_eq!(
+                with_user(3, 0).validate(&limits),
+                Err(DeltaError::WorkerOutOfRange {
+                    worker: 3,
+                    limit: 3
+                })
+            );
+        });
+    }
 
     fn entry() -> WorkerEntry {
         WorkerEntry {
