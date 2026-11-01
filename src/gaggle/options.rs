@@ -345,14 +345,19 @@ impl GooseConfiguration {
                     ),
                 ));
             }
+            // A worker with no users, when there are more workers than
+            // users, takes no share of the throttle.
             let workers = self.expect_workers.unwrap_or(1);
             let throttle = self.throttle_requests();
-            if throttle > 0 && throttle < workers {
+            let busy = crate::test_plan::TestPlan::build(self).map_or(workers, |plan| {
+                crate::gaggle::spec::workers_with_users(&plan.steps, workers)
+            });
+            if throttle > 0 && throttle < busy {
                 return Err(refused(
                     "--throttle-requests",
                     throttle,
                     format!(
-                        "--throttle-requests {throttle} is fewer than the {workers} workers: each worker needs at least 1 request per second."
+                        "--throttle-requests {throttle} is fewer than the {busy} workers that run users: each needs at least 1 request per second."
                     ),
                 ));
             }
@@ -430,8 +435,8 @@ mod tests {
                     "is not a loopback address: set --gaggle-token",
                 ),
                 (
-                    with(&manager, &["--throttle-requests", "1"]),
-                    "is fewer than the 2 workers",
+                    with(&manager, &["--throttle-requests", "1", "--users", "4"]),
+                    "is fewer than the 2 workers that run users",
                 ),
                 (
                     with(&manager, &["--gaggle-shadow-merge"]),
@@ -589,6 +594,21 @@ mod tests {
                 assert!(refusal(&args)
                     .contains("--pdf-scale and --pdf-timeout can't be used with --worker"));
             }
+            // A throttle as large as the workers that run users is enough,
+            // when more workers than users are expected.
+            let mut fewer = parse(&[
+                "--manager",
+                "--expect-workers",
+                "4",
+                "--host",
+                "http://h",
+                "--users",
+                "2",
+                "--throttle-requests",
+                "2",
+            ]);
+            fewer.configure(&GooseDefaults::default()).unwrap();
+            fewer.validate().unwrap();
             // What a worker keeps.
             let mut kept = parse(
                 &with(&worker, &["--output-dir", "o", "-v"])

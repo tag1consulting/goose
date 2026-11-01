@@ -94,33 +94,34 @@ pub(crate) fn users_started(steps: &[(usize, usize)]) -> usize {
     })
 }
 
-/// `throttle` split in proportion to `users`, the remainder spread, and no
-/// worker below 1: the shares add up to `throttle`, which must be at least
-/// the number of workers.
+/// `throttle` split in proportion to `users`, the remainder spread: every
+/// worker with users gets at least 1, and a worker with none gets 0, so the
+/// shares add up to `throttle` whenever any worker has users and `throttle`
+/// is at least the number that do ([`workers_with_users`]).
 pub(crate) fn throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
     let workers = users.len();
-    if throttle == 0 || workers == 0 {
+    let total: u128 = users.iter().map(|&u| u as u128).sum();
+    if throttle == 0 || total == 0 {
         return vec![0; workers];
     }
-    let total: u128 = users.iter().map(|&u| u as u128).sum();
     let mut shares: Vec<usize> = Vec::with_capacity(workers);
     let mut remainders: Vec<(u128, usize)> = Vec::with_capacity(workers);
     for (worker, &u) in users.iter().enumerate() {
+        if u == 0 {
+            shares.push(0);
+            continue;
+        }
         let exact = throttle as u128 * u as u128;
-        let (share, remainder) = match exact.checked_div(total) {
-            Some(share) => (share as usize, exact % total),
-            // No users anywhere: an even split.
-            None => (throttle / workers, 0),
-        };
-        shares.push(share.max(1));
-        remainders.push((remainder, worker));
+        shares.push(((exact / total) as usize).max(1));
+        remainders.push((exact % total, worker));
     }
-    // Largest remainder first, then the first workers.
+    // Largest remainder first, then the first workers; only workers with
+    // users take any.
     remainders.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     let mut sum: usize = shares.iter().sum();
     let mut at = 0;
     while sum < throttle {
-        shares[remainders[at % workers].1] += 1;
+        shares[remainders[at % remainders.len()].1] += 1;
         sum += 1;
         at += 1;
     }
@@ -136,6 +137,14 @@ pub(crate) fn throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
         sum -= 1;
     }
     shares
+}
+
+/// How many of `workers` workers a load test of `steps` hands users to.
+pub(crate) fn workers_with_users(steps: &[(usize, usize)], workers: usize) -> usize {
+    plans(steps, workers)
+        .iter()
+        .filter(|plan| users_started(plan) > 0)
+        .count()
 }
 
 /// The logs the manager's flags ask for, as each worker writes them.
@@ -380,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn throttle_shares_add_up_and_never_reach_zero() {
+    fn throttle_shares_add_up_and_skip_workers_without_users() {
         crate::gaggle::within(30, || {
             assert_eq!(
                 throttle_shares(3_000, &[300, 300, 300]),
@@ -388,19 +397,43 @@ mod tests {
             );
             assert_eq!(throttle_shares(10, &[2, 1, 1]), [5, 3, 2]);
             assert_eq!(throttle_shares(0, &[5, 5]), [0, 0]);
-            // A worker with no users still gets 1.
-            assert_eq!(throttle_shares(4, &[10, 0]), [3, 1]);
-            for throttle in 3..50 {
-                for users in [[1, 1, 1], [7, 0, 2], [0, 0, 0], [100, 1, 1]] {
-                    let shares = throttle_shares(throttle, &users);
-                    assert_eq!(
-                        shares.iter().sum::<usize>(),
-                        throttle,
-                        "{throttle} {users:?}"
-                    );
-                    assert!(shares.iter().all(|&share| share >= 1));
+            // A worker with no users gets none: its share goes to the others.
+            assert_eq!(throttle_shares(4, &[10, 0]), [4, 0]);
+            assert_eq!(throttle_shares(4, &[0, 0]), [0, 0]);
+            // Every small input: the shares add up whenever any worker has
+            // users, and no worker with users gets 0, nor one without any.
+            fn each(workers: usize, f: &mut dyn FnMut(&[usize])) {
+                let mut users = vec![0; workers];
+                loop {
+                    f(&users);
+                    let Some(at) = users.iter().position(|&u| u < 4) else {
+                        return;
+                    };
+                    users[at] += 1;
+                    for earlier in &mut users[..at] {
+                        *earlier = 0;
+                    }
                 }
             }
+            for workers in 1..=4 {
+                each(workers, &mut |users| {
+                    let busy = users.iter().filter(|&&u| u > 0).count();
+                    for throttle in busy.max(1)..=24 {
+                        let shares = throttle_shares(throttle, users);
+                        let sum: usize = shares.iter().sum();
+                        if busy > 0 {
+                            assert_eq!(sum, throttle, "{throttle} {users:?}: {shares:?}");
+                        } else {
+                            assert_eq!(sum, 0, "{throttle} {users:?}: {shares:?}");
+                        }
+                        for (share, &u) in shares.iter().zip(users) {
+                            assert_eq!(*share == 0, u == 0, "{throttle} {users:?}: {shares:?}");
+                        }
+                    }
+                });
+            }
+            assert_eq!(workers_with_users(&[(2, 1_000), (0, 0)], 3), 2);
+            assert_eq!(workers_with_users(&[(9, 1_000)], 3), 3);
         });
     }
 
