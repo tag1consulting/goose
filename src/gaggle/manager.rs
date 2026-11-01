@@ -49,7 +49,9 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_HELLO: usize = 64 << 10;
 
 /// The HTTP/2 stream and connection windows the manager offers: the most a
-/// client can send that the manager has not read yet.
+/// client can send that the manager has not read yet. Fixed for the whole
+/// run, not grown with the link's bandwidth, so an admitted worker's
+/// transfers also move at most this much each round trip.
 const WINDOW: u32 = 64 << 10;
 
 /// The largest header block the manager accepts.
