@@ -263,6 +263,7 @@ struct Shared {
     events: flume::Sender<Queued>,
     /// What is left of [`EVENT_BYTES`].
     event_bytes: Arc<tokio::sync::Semaphore>,
+    refusals: Arc<Refusals>,
     plan_hash: u64,
     hash_check: bool,
     heartbeat_timeout: Duration,
@@ -490,9 +491,9 @@ impl Gaggle for GaggleService {
                 message: Some(FromWorker::Hello(hello)),
             }))) => hello,
             _ => {
-                warn!("gaggle: a connection from {peer} did not say Hello; closed");
-                #[cfg(test)]
-                tests::refused_warned();
+                self.0
+                    .refusals
+                    .note(&peer, "it did not say Hello, so it was closed");
                 return Err(tonic::Status::invalid_argument("expected Hello"));
             }
         };
@@ -546,6 +547,48 @@ impl Gaggle for GaggleService {
         ));
         tokio::spawn(heartbeat_worker(worker, self.0.clone(), heard, lost));
         Ok(tonic::Response::new(responses))
+    }
+}
+
+/// How often the connections refused before a worker was admitted on them
+/// are summed up in a warning.
+const REFUSED_WARN_EVERY: Duration = Duration::from_secs(60);
+
+/// The connections refused before a worker was admitted on them: each is
+/// logged at debug level, and a warning sums them up at most every
+/// [`REFUSED_WARN_EVERY`], so no client, nor many, floods the log.
+#[derive(Default)]
+struct Refusals(Mutex<RefusalCount>);
+
+#[derive(Default)]
+struct RefusalCount {
+    /// Refused since the last warning.
+    since: u64,
+    warned: Option<Instant>,
+}
+
+impl Refusals {
+    /// Note a connection from `peer` refused for `why`.
+    fn note(&self, peer: &str, why: &str) {
+        debug!("gaggle: a connection from {peer} was refused: {why}");
+        let Ok(mut count) = self.0.lock() else {
+            return;
+        };
+        count.since += 1;
+        if count
+            .warned
+            .is_some_and(|warned| warned.elapsed() < REFUSED_WARN_EVERY)
+        {
+            return;
+        }
+        warn!(
+            "gaggle: {} connections refused since the last such warning, the last from {peer}: {why}",
+            count.since
+        );
+        #[cfg(test)]
+        tests::refused_warned();
+        count.since = 0;
+        count.warned = Some(Instant::now());
     }
 }
 
@@ -663,11 +706,13 @@ impl tokio::io::AsyncWrite for Counted {
 fn counted(
     listener: tokio::net::TcpListener,
     permits: usize,
+    refusals: Arc<Refusals>,
 ) -> impl tokio_stream::Stream<Item = std::io::Result<Counted>> + Send + 'static {
     use futures::StreamExt;
     let permits = Arc::new(tokio::sync::Semaphore::new(permits));
     tokio_stream::wrappers::TcpListenerStream::new(listener).filter_map(move |accepted| {
         let permits = permits.clone();
+        let refusals = refusals.clone();
         async move {
             let stream = match accepted {
                 Ok(stream) => stream,
@@ -685,12 +730,10 @@ fn counted(
                     _permit: permit,
                 })),
                 Err(_) => {
-                    warn!(
-                        "gaggle: a connection from {} closed: the manager holds all the connections it allows",
-                        peer_name(addr)
+                    refusals.note(
+                        &peer_name(addr),
+                        "the manager holds all the connections it allows, so it was closed",
                     );
-                    #[cfg(test)]
-                    tests::refused_warned();
                     None
                 }
             }
@@ -1079,6 +1122,7 @@ impl Manager {
             joined: Mutex::new(Vec::new()),
             events: events_tx,
             event_bytes: Arc::new(tokio::sync::Semaphore::new(EVENT_BYTES as usize)),
+            refusals: Arc::default(),
             plan_hash,
             hash_check,
             heartbeat_timeout,
@@ -1095,7 +1139,11 @@ impl Manager {
             move |request| authorize(&expected_token, request),
         ));
         let (stop_server, stopped) = tokio::sync::oneshot::channel::<()>();
-        let incoming = Box::pin(counted(listener, expected + SPARE_CONNECTIONS));
+        let incoming = Box::pin(counted(
+            listener,
+            expected + SPARE_CONNECTIONS,
+            shared.refusals.clone(),
+        ));
         let window = window(expected);
         let server = tokio::spawn(async move {
             // No HTTP/2 keepalive: the heartbeats find a dead worker.
