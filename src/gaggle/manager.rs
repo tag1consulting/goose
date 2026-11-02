@@ -1774,6 +1774,170 @@ pub(crate) mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// The first event past `Joined` within 10 seconds.
+    async fn after_joined(manager: &Manager) -> Option<Event> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match manager.next_event(deadline).await {
+                Some(Event::Joined) => continue,
+                other => return other,
+            }
+        }
+    }
+
+    /// A worker that says Hello a second time is lost for it.
+    #[tokio::test]
+    async fn a_second_hello_loses_the_worker() {
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let _inbound = inbound.unwrap();
+            tx.send(WorkerMessage {
+                message: Some(FromWorker::Hello(hello())),
+            })
+            .await
+            .unwrap();
+            let lost = after_joined(&manager).await;
+            assert!(
+                matches!(&lost, Some(Event::Lost { id: 0, why }) if why == "it said Hello twice"),
+                "{:?}",
+                lost
+            );
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A worker that sends a delta that does not decode is lost for it.
+    #[tokio::test]
+    async fn an_undecodable_delta_loses_the_worker() {
+        use super::super::proto::Metrics;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let _inbound = inbound.unwrap();
+            tx.send(WorkerMessage {
+                message: Some(FromWorker::Metrics(Metrics {
+                    delta: vec![0xff; 16],
+                })),
+            })
+            .await
+            .unwrap();
+            let lost = after_joined(&manager).await;
+            assert!(
+                matches!(&lost, Some(Event::Lost { id: 0, why }) if why.starts_with("it sent a delta that does not decode")),
+                "{:?}",
+                lost
+            );
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A stream that presents the token and then never says Hello is ended
+    /// at the Hello deadline, refused, and no worker joins.
+    #[tokio::test]
+    async fn an_authenticated_stream_without_hello_is_refused() {
+        let test = async {
+            let manager = Manager::start(
+                "127.0.0.1",
+                0,
+                1,
+                Some("secret".to_string()),
+                7,
+                true,
+                Duration::from_secs(30),
+            )
+            .await
+            .unwrap();
+            let (tx, rx) = mpsc::channel::<WorkerMessage>(4);
+            let mut request = tonic::Request::new(ReceiverStream::new(rx));
+            request
+                .metadata_mut()
+                .insert(AUTHORIZATION, "Bearer secret".parse().unwrap());
+            let opened = Instant::now();
+            let answer = GaggleClient::new(channel(&manager).await)
+                .connect(request)
+                .await;
+            let status = answer.err().expect("refused");
+            assert_eq!(status.code(), tonic::Code::InvalidArgument, "{}", status);
+            assert!(opened.elapsed() >= HELLO_TIMEOUT - Duration::from_millis(100));
+            assert_eq!(handled(&manager), 1, "past the token check");
+            assert!(manager.try_event().is_none(), "a worker joined");
+            drop(tx);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// The messages a worker's stream brings until it ends, within 5
+    /// seconds.
+    async fn until_it_ends(inbound: &mut tonic::Streaming<ManagerMessage>) -> Vec<&'static str> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut kinds = Vec::new();
+            while let Ok(Some(message)) = inbound.message().await {
+                kinds.push(message_kind(&message));
+            }
+            kinds
+        })
+        .await
+        .expect("the stream ends")
+    }
+
+    /// A manager dropped without shutting its workers down, as when its
+    /// run fails: every worker's stream ends, with no `Shutdown`, so each
+    /// worker's dead man's switch stops its load.
+    #[tokio::test]
+    async fn a_dropped_manager_ends_every_stream_without_shutdown() {
+        let test = async {
+            let manager = test_manager(2, Duration::from_secs(30)).await;
+            let mut streams = Vec::new();
+            for _ in 0..2 {
+                let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+                streams.push((tx, inbound.unwrap()));
+            }
+            drop(manager);
+            for (_tx, inbound) in streams.iter_mut() {
+                let kinds = until_it_ends(inbound).await;
+                assert!(kinds.contains(&"Welcome"), "{:?}", kinds);
+                assert!(!kinds.contains(&"Shutdown"), "{:?}", kinds);
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// `shut_down_all` sends every worker `Shutdown` and waits for it to
+    /// leave, each stream ending after it, and then stops listening.
+    #[tokio::test]
+    async fn shut_down_all_drains_then_stops_listening() {
+        let test = async {
+            let mut manager = test_manager(2, Duration::from_secs(30)).await;
+            let address = manager.local_addr;
+            let mut streams = Vec::new();
+            for _ in 0..2 {
+                let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+                streams.push((tx, inbound.unwrap()));
+            }
+            manager.shut_down_all().await;
+            for (_tx, inbound) in streams.iter_mut() {
+                let kinds = until_it_ends(inbound).await;
+                assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
+            }
+            assert!(
+                tokio::net::TcpStream::connect(address).await.is_err(),
+                "still listening"
+            );
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     pub(crate) fn hello() -> Hello {
         Hello {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),

@@ -2330,3 +2330,54 @@ async fn gaggle_environment_turns_on_no_fault() {
     let (gaggle, _) = record(&folder);
     assert_eq!(gaggle["degraded"], false, "{gaggle}");
 }
+
+/// A worker that never says its users stopped is lost once the users
+/// deadline passes, the request timeout and the final wait after Stop,
+/// naming it; the other worker's final metrics merge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_whose_users_never_stop_is_lost_at_the_deadline() {
+    let server = answering().await;
+    let folder = scratch("users-never-stop");
+    let faults = [
+        TestFaults::default(),
+        TestFaults {
+            withhold_final: true,
+            ..Default::default()
+        },
+    ];
+    let run = gaggle(
+        quick,
+        2,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "2",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "2",
+            "--timeout",
+            "1",
+            "--report-file",
+        ],
+        &[],
+        &faults,
+    );
+    let (manager, _) = tokio::time::timeout(Duration::from_secs(60), run)
+        .await
+        .expect("the Gaggle ends within 60 seconds");
+    manager.expect("the manager exits cleanly");
+    let (gaggle, _) = record(&folder);
+    let (lost, kept) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+    assert_eq!((lost.len(), kept.len()), (1, 1), "{gaggle}");
+    let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.starts_with("its users had not stopped within 4 seconds of Stop"),
+        "{}",
+        gaggle
+    );
+    assert_eq!(kept[0]["state"], "finished", "{gaggle}");
+    assert!(kept[0].get("final_missing").is_none(), "{gaggle}");
+}

@@ -2716,6 +2716,53 @@ pub(crate) mod tests {
         });
     }
 
+    /// A Gaggle manager refuses a command that changes the run with the
+    /// documented code and message, changing nothing, and answers metrics.
+    #[cfg(feature = "gaggle")]
+    #[test]
+    #[serial_test::serial]
+    fn test_control_gaggle_manager_refuses_changes_and_answers_metrics() {
+        use crate::controller::{ControlReply, ControllerCommand};
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            goose_attack.attack_mode = crate::AttackMode::Manager;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+            run_state.metrics_cmd_tx = metrics_cmd_tx;
+            tokio::spawn(async move {
+                while let Ok(command) = metrics_cmd_rx.recv_async().await {
+                    if let MetricsCommand::GetMetrics { respond, .. } = command {
+                        let _ = respond.send(GooseMetrics::default());
+                    }
+                }
+            });
+            let (users, users_reply) = oneshot::channel();
+            controller_tx
+                .send((ControllerCommand::Users(5).into(), users))
+                .unwrap();
+            let (metrics, metrics_reply) = oneshot::channel();
+            controller_tx
+                .send((ControllerCommand::Metrics.into(), metrics))
+                .unwrap();
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            match users_reply.await {
+                Ok(ControlReply::Outcome(outcome)) => {
+                    assert!(!outcome.ok);
+                    assert_eq!(outcome.error, Some("gaggle_unsupported"));
+                    assert_eq!(outcome.message, "not supported in Gaggle mode yet");
+                }
+                other => panic!("users 5 was answered with {}", other.is_ok()),
+            }
+            assert_eq!(goose_attack.configuration.users, None);
+            assert!(matches!(metrics_reply.await, Ok(ControlReply::Metrics(_))));
+        });
+    }
+
     /// The parent answers every queued controller request in one tick, up
     /// to a batch, and skips a request whose client has gone.
     #[test]
