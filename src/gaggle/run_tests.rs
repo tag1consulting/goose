@@ -1278,10 +1278,11 @@ async fn gaggle_manager_failures_run_test_stop_once() {
                 &[TestFaults::default(), fault],
             )
             .await;
-            assert!(manager.is_err(), "{case}: the manager fails");
+            assert!(manager.is_err(), "{}: the manager fails", case);
             assert!(
                 workers.iter().all(Result::is_err),
-                "{case}: every worker fails"
+                "{}: every worker fails",
+                case
             );
             let runs = usize::from(test_start_runs);
             assert_eq!(start.calls_async().await, runs, "{case}: test_start");
@@ -1301,11 +1302,11 @@ fn canceled_within(manager: &Result<GooseMetrics, crate::GooseError>, took: Dura
     crate::reset_killswitch();
     match manager {
         Err(crate::GooseError::Gaggle { detail }) => {
-            assert!(detail.contains("canceled"), "{stage}: {detail}")
+            assert!(detail.contains("canceled"), "{}: {}", stage, detail)
         }
         other => panic!("{stage}: {:?}", other.as_ref().map(|_| ())),
     }
-    assert!(took <= Duration::from_secs(2), "{stage}: {took:?}");
+    assert!(took <= Duration::from_secs(2), "{}: {:?}", stage, took);
 }
 
 /// The killswitch, as Ctrl-C, while the manager waits for its workers to
@@ -1386,7 +1387,8 @@ async fn gaggle_killswitch_while_joining_and_preparing() {
             canceled_within(&result, ended - canceled, stage);
             assert!(
                 worker.await.expect("the worker task ends").is_err(),
-                "{stage}"
+                "{}",
+                stage
             );
             let ran = usize::from(stage == "preparing");
             assert_eq!(start.calls_async().await, ran, "{stage}: test_start");
@@ -1473,7 +1475,7 @@ async fn gaggle_killswitch_while_collecting_logs() {
         let (manager, took, gaggle, folder) = faulty_logs_run(LogsFault::Slow).await;
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
         let took = took.expect("the worker triggered the killswitch");
-        assert!(took <= Duration::from_secs(2), "{took:?}");
+        assert!(took <= Duration::from_secs(2), "{:?}", took);
         assert_eq!(
             gaggle["logs_left"].as_array().map(Vec::len),
             Some(1),
@@ -1497,7 +1499,7 @@ async fn gaggle_trickled_log_is_given_up() {
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
         let took = took.expect("the worker sent a chunk");
         // The 2 second idle timeout from the first chunk, and the reports.
-        assert!(took <= Duration::from_secs(5), "{took:?}");
+        assert!(took <= Duration::from_secs(5), "{:?}", took);
         assert_eq!(
             gaggle["logs_left"].as_array().map(Vec::len),
             Some(1),
@@ -1556,7 +1558,7 @@ async fn gaggle_slow_stop_keeps_every_final() {
     assert_eq!(gaggle["degraded"], false, "{gaggle}");
     for worker in gaggle["workers"].as_array().unwrap() {
         assert_eq!(worker["state"], "finished", "{gaggle}");
-        assert!(worker.get("final_missing").is_none(), "{gaggle}");
+        assert!(worker.get("final_missing").is_none(), "{}", gaggle);
     }
     let _ = std::fs::remove_dir_all(&folder);
 }
