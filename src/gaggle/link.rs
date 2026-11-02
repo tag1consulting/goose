@@ -51,6 +51,63 @@ fn start_instant(delay_ms: u64) -> Result<tokio::time::Instant, String> {
 /// A log chunk's size.
 pub(crate) const LOG_CHUNK: usize = 1 << 20;
 
+/// The most of the manager's messages the worker's reader queues for its
+/// main loop: past it, or past [`EVENT_BYTES`], the reader waits, reading
+/// nothing more, so HTTP/2 flow control holds the manager back.
+const EVENT_QUEUE: usize = 16;
+
+/// The most bytes of the manager's messages queued for the main loop,
+/// counted as the size of what each carries: a `Prepare`'s run spec.
+const EVENT_BYTES: usize = 64 << 20;
+
+/// What a queued event holds of [`Room`], in bytes: `None` for the switch's
+/// `Lost` and the reader's last event, `Shutdown`, which never wait.
+fn cost(event: &LinkEvent) -> Option<u32> {
+    match event {
+        LinkEvent::Lost(_) | LinkEvent::Shutdown => None,
+        LinkEvent::Prepare(spec) => Some(spec.len().min(EVENT_BYTES) as u32),
+        _ => Some(0),
+    }
+}
+
+/// The room left in the worker's event queue: an event takes one slot and
+/// its bytes as the reader queues it, and gives them back as the main loop
+/// takes it.
+struct Room {
+    slots: tokio::sync::Semaphore,
+    bytes: tokio::sync::Semaphore,
+}
+
+impl Room {
+    fn new() -> Self {
+        Room {
+            slots: tokio::sync::Semaphore::new(EVENT_QUEUE),
+            bytes: tokio::sync::Semaphore::new(EVENT_BYTES),
+        }
+    }
+
+    /// Wait for room for `event`, and take it.
+    async fn take(&self, event: &LinkEvent) {
+        let Some(bytes) = cost(event) else {
+            return;
+        };
+        if let Ok(slot) = self.slots.acquire().await {
+            slot.forget();
+        }
+        if let Ok(bytes) = self.bytes.acquire_many(bytes).await {
+            bytes.forget();
+        }
+    }
+
+    /// Give back the room `event` took.
+    fn give(&self, event: &LinkEvent) {
+        if let Some(bytes) = cost(event) {
+            self.slots.add_permits(1);
+            self.bytes.add_permits(bytes as usize);
+        }
+    }
+}
+
 /// The HTTP/2 stream and connection windows a worker offers its manager.
 const WORKER_WINDOW: u32 = 1 << 20;
 
@@ -394,6 +451,8 @@ pub(crate) struct Link {
     pub(crate) id: u32,
     pub(crate) outbox: Arc<Outbox>,
     events: flume::Receiver<LinkEvent>,
+    /// The room left in `events`.
+    room: Arc<Room>,
     /// Every user task the worker started, aborted at once by the dead man's
     /// switch.
     users: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
@@ -600,6 +659,7 @@ impl Link {
             id,
             outbox,
             events,
+            room: Arc::new(Room::new()),
             users: Arc::new(Mutex::new(Vec::new())),
             shutdown: Arc::new(AtomicBool::new(false)),
             done: Arc::new(AtomicBool::new(false)),
@@ -627,6 +687,7 @@ impl Link {
             inbound,
             open,
             events_tx,
+            link.room.clone(),
             heard.clone(),
             link.shutdown.clone(),
             switch.clone(),
@@ -663,21 +724,29 @@ impl Link {
 
     /// The next event if one is waiting.
     pub(crate) fn try_event(&self) -> Option<LinkEvent> {
-        self.events.try_recv().ok()
+        let event = self.events.try_recv().ok()?;
+        self.room.give(&event);
+        Some(event)
     }
 
     /// Every event queued now, taken (unit tests).
     #[cfg(test)]
     fn drain_events(&self) -> Vec<LinkEvent> {
-        self.events.drain().collect()
+        let events: Vec<LinkEvent> = self.events.drain().collect();
+        for event in &events {
+            self.room.give(event);
+        }
+        events
     }
 
     /// The next event, waiting at most `wait`.
     pub(crate) async fn next_event(&self, wait: Duration) -> Option<LinkEvent> {
-        tokio::time::timeout(wait, self.events.recv_async())
+        let event = tokio::time::timeout(wait, self.events.recv_async())
             .await
             .ok()?
-            .ok()
+            .ok()?;
+        self.room.give(&event);
+        Some(event)
     }
 
     /// Answer `Prepare`.
@@ -943,12 +1012,36 @@ impl Switch {
     }
 }
 
-/// Read the manager's stream until it ends, as events.
+/// Wait for `future`, which the main loop holds back, as when the event
+/// queue is full: `heard` is kept fresh meanwhile, as the manager has not
+/// gone silent, so a held main loop never fires the switch.
+async fn held<T>(
+    future: impl std::future::Future<Output = T>,
+    heard: &Mutex<Instant>,
+    heartbeat_timeout: Duration,
+) -> T {
+    let mut future = std::pin::pin!(future);
+    let mut holding = tokio::time::interval(HEARTBEAT_INTERVAL.min(heartbeat_timeout / 2));
+    loop {
+        tokio::select! {
+            out = &mut future => return out,
+            _ = holding.tick() => {
+                if let Ok(mut heard) = heard.lock() {
+                    *heard = Instant::now();
+                }
+            }
+        }
+    }
+}
+
+/// Read the manager's stream until it ends, as events. Past [`Room`], this
+/// waits, reading nothing more; heartbeats never take any.
 async fn read_manager(
     mut inbound: tonic::Streaming<super::proto::ManagerMessage>,
     // Dropped as this returns: the manager's stream has ended.
     _open: tokio::sync::watch::Sender<()>,
     events: flume::Sender<LinkEvent>,
+    room: Arc<Room>,
     heard: Arc<Mutex<Instant>>,
     shutdown: Arc<AtomicBool>,
     switch: Switch,
@@ -983,6 +1076,7 @@ async fn read_manager(
                 return;
             }
         };
+        held(room.take(&event), &heard, switch.heartbeat_timeout).await;
         if events.send(event).is_err() {
             return;
         }
@@ -1256,6 +1350,7 @@ mod tests {
             id: 0,
             outbox,
             events,
+            room: Arc::new(Room::new()),
             users: switch.users.clone(),
             shutdown: Arc::new(AtomicBool::new(false)),
             done: switch.done.clone(),
