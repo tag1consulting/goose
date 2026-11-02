@@ -1136,16 +1136,13 @@ mod tests {
         assert_eq!(built.gaggle_diff(&fresh), Vec::<String>::new());
     }
 
-    /// Not a test: how long one refresh of a long run's merge takes, 50
-    /// workers of 30 request names each an hour in, one more second from
-    /// each worker merged and the merge built. Run it with
-    /// `cargo test --release --features gaggle --lib merge_refresh_cost -- --ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn merge_refresh_cost() {
+    /// The median of 9 refreshes of the merge of 50 workers of 30 request
+    /// names each, `seconds` into a run: each refresh merges one more second
+    /// from every worker, with a row for a request of 2 to 5 seconds that
+    /// started before it, and builds the merge.
+    fn refresh_cost(seconds: u64) -> std::time::Duration {
         const WORKERS: u32 = 50;
         const NAMES: usize = 30;
-        const SECONDS: u64 = 3_600;
         let settings = GraphSettings {
             records: true,
             latency: true,
@@ -1157,22 +1154,49 @@ mod tests {
         let started = Instant::now();
         for worker in 0..WORKERS {
             accumulator
-                .apply(worker, second(worker, 1, SECONDS, 0..SECONDS, NAMES))
+                .apply(worker, second(worker, 1, seconds, 0..seconds, NAMES))
                 .unwrap();
         }
         let _ = accumulator.merged_and_excluded();
         eprintln!(
-            "filled {WORKERS} workers x {NAMES} names x {SECONDS} s in {:?}",
+            "filled {WORKERS} workers x {NAMES} names x {seconds} s in {:?}",
             started.elapsed()
         );
         let mut refreshes = Vec::new();
-        for next in 0..5 {
-            let at = SECONDS + next;
+        for next in 0..9 {
+            let at = seconds + next;
             let started = Instant::now();
             for worker in 0..WORKERS {
-                accumulator
-                    .apply(worker, second(worker, at + 1, at + 1, at..at + 1, NAMES))
-                    .unwrap();
+                let mut delta = second(worker, at + 1, at + 1, at..at + 1, NAMES);
+                // A request of 2 to 5 seconds, stamped with the second it
+                // started.
+                let late = at - 2 - u64::from(worker % 4);
+                let key = "GET /0".to_string();
+                *delta
+                    .graph
+                    .requests
+                    .entry(key.clone())
+                    .or_default()
+                    .entry(late)
+                    .or_default() += 1;
+                delta.graph.averages.entry(key.clone()).or_default().insert(
+                    late,
+                    Average {
+                        count: 1,
+                        sum_ms: 3_000.0,
+                    },
+                );
+                delta.graph.latency.entry(key).or_default().insert(
+                    late,
+                    Histogram {
+                        rows: vec![(40, 1)],
+                        minimum_us: 3_000_000,
+                        maximum_us: 3_000_000,
+                        total_us: 3_000_000,
+                        count: 1,
+                    },
+                );
+                accumulator.apply(worker, delta).unwrap();
             }
             let applied = started.elapsed();
             let (metrics, _, excluded) = accumulator.merged_and_excluded();
@@ -1180,9 +1204,25 @@ mod tests {
             assert!(excluded.is_empty());
             assert_eq!(metrics.requests.len(), NAMES);
             refreshes.push(total);
-            eprintln!("refresh {next}: {total:?} ({applied:?} applying {WORKERS} deltas)");
+            eprintln!(
+                "{seconds} s, refresh {next}: {total:?} ({applied:?} applying {WORKERS} deltas)"
+            );
         }
         refreshes.sort();
-        eprintln!("median refresh {:?}", refreshes[refreshes.len() / 2]);
+        refreshes[refreshes.len() / 2]
+    }
+
+    /// Not a test: how long one refresh of a long run's merge takes, an
+    /// hour and four hours in, late rows among each second's. Run it with
+    /// `cargo test --release --features gaggle --lib merge_refresh_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn merge_refresh_cost() {
+        let hour = refresh_cost(3_600);
+        let four = refresh_cost(4 * 3_600);
+        eprintln!(
+            "median refresh: 1 h {hour:?}, 4 h {four:?}, {:.2} times",
+            four.as_secs_f64() / hour.as_secs_f64()
+        );
     }
 }
