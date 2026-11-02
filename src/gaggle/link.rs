@@ -1,0 +1,2165 @@
+//! The worker's side of the wire: it connects to its manager, says `Hello`,
+//! and then keeps one stream open both ways. What the manager sends becomes
+//! events for the worker's main loop; deltas, heartbeats, `Stopped` and log
+//! chunks leave through an [`Outbox`].
+//!
+//! The dead man's switch lives here: when nothing comes from the manager for
+//! the heartbeat timeout, or its stream closes without `Shutdown`, every
+//! user task is aborted at once, without waiting for the main loop. A
+//! `Shutdown` that finds users still running stops them the same way.
+
+use super::delta::{DeltaKind, GaggleDelta};
+use super::manager::{AUTHORIZATION, HEARTBEAT_INTERVAL, MAX_MESSAGE};
+use super::merge::coalesce;
+use super::proto::{
+    gaggle_client::GaggleClient, manager_message::Message as FromManager, stopped::Reason,
+    worker_message::Message as ToManager, Heartbeat, Hello, LogChunk, Metrics, PrepareAck, Stopped,
+    UsersStopped, WorkerMessage, PROTOCOL_VERSION,
+};
+use crate::GooseError;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tokio::sync::Notify;
+
+/// The most deltas a worker queues; past it the newest is coalesced into the
+/// last queued, or dropped when it cannot be.
+const MAX_QUEUED_DELTAS: usize = 8;
+
+/// The most other messages queued before a log chunk waits for room.
+const MAX_QUEUED_CHUNKS: usize = 4;
+
+/// The longest a manager may ask a worker to wait before it starts.
+const MAX_START_DELAY: Duration = Duration::from_secs(60);
+
+/// The instant `StartAt` asks for, `delay_ms` from now: refused past
+/// [`MAX_START_DELAY`].
+fn start_instant(delay_ms: u64) -> Result<tokio::time::Instant, String> {
+    let delay = Duration::from_millis(delay_ms);
+    if delay > MAX_START_DELAY {
+        return Err(format!(
+            "the manager asked this worker to start in {delay_ms} ms, more than the {} seconds a worker waits",
+            MAX_START_DELAY.as_secs()
+        ));
+    }
+    tokio::time::Instant::now()
+        .checked_add(delay)
+        .ok_or_else(|| format!("the manager asked this worker to start in {delay_ms} ms, past what its clock holds"))
+}
+
+/// A log chunk's size.
+pub(crate) const LOG_CHUNK: usize = 1 << 20;
+
+/// The largest encoded delta a worker sends: [`MAX_MESSAGE`] less room for
+/// the message around it, so tonic never refuses to encode one, which
+/// would reset the stream.
+const MAX_DELTA: usize = MAX_MESSAGE - (1 << 10);
+
+/// The most of the manager's messages the worker's reader queues for its
+/// main loop: past it, or past [`EVENT_BYTES`], the reader waits, reading
+/// nothing more, so HTTP/2 flow control holds the manager back.
+const EVENT_QUEUE: usize = 16;
+
+/// The most bytes of the manager's messages queued for the main loop,
+/// counted as the size of what each carries: a `Prepare`'s run spec.
+const EVENT_BYTES: usize = 64 << 20;
+
+/// An event as queued, holding its share of [`EVENT_BYTES`] until the main
+/// loop takes it.
+type Queued = (LinkEvent, Option<tokio::sync::OwnedSemaphorePermit>);
+
+/// The event that ends the reader or comes from the switch, `Shutdown` or
+/// `Lost`, kept outside the queue so neither ever waits for room: the main
+/// loop takes it once the queue is empty.
+#[derive(Default)]
+struct Last {
+    event: Mutex<Option<LinkEvent>>,
+    /// Woken when it is set.
+    ready: Notify,
+}
+
+impl Last {
+    /// Leave `event`, unless one waits already.
+    fn set(&self, event: LinkEvent) {
+        if let Ok(mut last) = self.event.lock() {
+            last.get_or_insert(event);
+        }
+        self.ready.notify_waiters();
+    }
+
+    fn take(&self) -> Option<LinkEvent> {
+        self.event.lock().ok()?.take()
+    }
+}
+
+/// The HTTP/2 stream and connection windows a worker offers its manager.
+const WORKER_WINDOW: u32 = 1 << 20;
+
+/// The backoff between connection attempts: 1, 2, 4 and 8 seconds, then
+/// every 10 seconds.
+fn backoff(attempt: u32) -> Duration {
+    Duration::from_secs(match attempt {
+        0 => 1,
+        1 => 2,
+        2 => 4,
+        3 => 8,
+        _ => 10,
+    })
+}
+
+/// Give `delta` a request name past what a message may carry (unit tests).
+#[cfg(test)]
+pub(crate) fn oversized(delta: &mut GaggleDelta) {
+    delta
+        .graph
+        .requests
+        .insert("x".repeat(MAX_MESSAGE), [(delta.now, 1)].into());
+}
+
+/// The delta in `slot`, an empty one left in its place.
+fn take(slot: &mut GaggleDelta) -> GaggleDelta {
+    std::mem::replace(slot, GaggleDelta::new(0, 0, 0, DeltaKind::Delta))
+}
+
+/// What leaves the worker.
+enum Outgoing {
+    Delta(Box<GaggleDelta>),
+    Message(ToManager),
+}
+
+#[derive(Default)]
+struct OutboxState {
+    queue: VecDeque<Outgoing>,
+    deltas: usize,
+    closed: bool,
+    /// The newest delta was dropped: the last queued delta must not take
+    /// the next, or the gap the manager sees in the sequence would close.
+    hole: bool,
+}
+
+impl OutboxState {
+    /// The last delta queued.
+    fn last_delta(&mut self) -> Option<&mut Box<GaggleDelta>> {
+        self.queue.iter_mut().rev().find_map(|item| match item {
+            Outgoing::Delta(last) => Some(last),
+            Outgoing::Message(_) => None,
+        })
+    }
+
+    /// Free a place for a delta by joining two neighbouring queued deltas
+    /// that follow each other, the newest such pair first: whether it
+    /// could. Never two across an earlier drop, which would hide its gap.
+    fn join_newest(&mut self) -> bool {
+        let deltas: Vec<usize> = self
+            .queue
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| matches!(item, Outgoing::Delta(_)))
+            .map(|(at, _)| at)
+            .collect();
+        for pair in deltas.windows(2).rev() {
+            let (before, newest) = (pair[0], pair[1]);
+            let follows = match (&self.queue[before], &self.queue[newest]) {
+                (Outgoing::Delta(a), Outgoing::Delta(b)) => b.first_seq == a.seq.saturating_add(1),
+                _ => false,
+            };
+            if !follows {
+                continue;
+            }
+            // Both are deltas, as `follows` found.
+            let Some(Outgoing::Delta(b)) = self.queue.remove(newest) else {
+                unreachable!("a delta was found at {}", newest);
+            };
+            let Outgoing::Delta(a) = &mut self.queue[before] else {
+                unreachable!("a delta was found at {}", before);
+            };
+            match coalesce(take(a), &b) {
+                Ok(joined) => {
+                    **a = joined;
+                    self.deltas -= 1;
+                    return true;
+                }
+                Err((unchanged, _)) => {
+                    **a = unchanged;
+                    self.queue.insert(newest, Outgoing::Delta(b));
+                }
+            }
+        }
+        false
+    }
+}
+
+/// What the worker sends its manager, in order, with at most
+/// [`MAX_QUEUED_DELTAS`] deltas queued: past that, the newest is coalesced
+/// into the last queued delta instead of growing the queue, or dropped,
+/// leaving a gap in the sequence the manager records. The one exception is
+/// a final delta that cannot be joined, which is never dropped and goes
+/// past the cap. Heartbeats go to the front.
+#[derive(Default)]
+pub(crate) struct Outbox {
+    state: Mutex<OutboxState>,
+    /// Something was queued, or the outbox closed.
+    queued: Notify,
+    /// Something left.
+    sent: Notify,
+    /// Name another worker in the next delta, so the manager refuses it
+    /// (unit tests).
+    #[cfg(test)]
+    pub(crate) corrupt_next: AtomicBool,
+    /// Name another worker in every delta from this sequence number on, 0
+    /// for none (unit tests).
+    #[cfg(test)]
+    pub(crate) corrupt_from: std::sync::atomic::AtomicU64,
+    /// Name another worker in the final delta (unit tests).
+    #[cfg(test)]
+    pub(crate) corrupt_final: AtomicBool,
+    /// Fail to encode every delta (unit tests).
+    #[cfg(test)]
+    unencodable: AtomicBool,
+    /// Make the delta of this sequence number larger than a message may
+    /// be, 0 for none (unit tests).
+    #[cfg(test)]
+    pub(crate) oversize_seq: std::sync::atomic::AtomicU64,
+    /// Make the final delta larger than a message may be (unit tests).
+    #[cfg(test)]
+    pub(crate) oversize_final: AtomicBool,
+}
+
+impl Outbox {
+    fn push(&self, item: Outgoing, front: bool) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.closed {
+                return;
+            }
+            if front {
+                state.queue.push_front(item);
+            } else {
+                state.queue.push_back(item);
+            }
+        }
+        self.queued.notify_one();
+    }
+
+    /// Queue a delta, coalescing it into the last queued delta when
+    /// [`MAX_QUEUED_DELTAS`] are queued already. Coalescing fails only when
+    /// a checked sum overflows, which the manager's own checked merge would
+    /// refuse too: then the new delta, which carries nothing the manager
+    /// could use, is dropped, and never a queued one. The deltas after it
+    /// start a new place in the queue, made by joining the two newest
+    /// before the drop, so the manager sees the dropped range as a gap.
+    pub(crate) fn push_delta(&self, delta: GaggleDelta) {
+        #[cfg(test)]
+        let delta = {
+            let mut delta = delta;
+            let from = self.corrupt_from.load(Ordering::Relaxed);
+            if self.corrupt_next.swap(false, Ordering::Relaxed)
+                || (from != 0 && delta.seq >= from)
+                || (delta.kind == DeltaKind::Final && self.corrupt_final.load(Ordering::Relaxed))
+            {
+                delta.worker = u32::MAX;
+            }
+            let oversize = self.oversize_seq.load(Ordering::Relaxed);
+            if (oversize != 0 && delta.seq == oversize)
+                || (delta.kind == DeltaKind::Final && self.oversize_final.load(Ordering::Relaxed))
+            {
+                oversized(&mut delta);
+            }
+            delta
+        };
+        if let Ok(mut state) = self.state.lock() {
+            if state.closed {
+                return;
+            }
+            if state.deltas >= MAX_QUEUED_DELTAS {
+                let coalesced = if state.hole {
+                    // After a drop: never across it.
+                    if state.join_newest() {
+                        None
+                    } else {
+                        Some(Err("no queued delta could make room".to_string()))
+                    }
+                } else {
+                    // Joined in place: the queued delta is taken out, joined
+                    // and put back, never copied.
+                    state
+                        .last_delta()
+                        .map(|last| match coalesce(take(last), &delta) {
+                            Ok(joined) => {
+                                **last = joined;
+                                Ok(())
+                            }
+                            Err((unchanged, e)) => {
+                                **last = unchanged;
+                                Err(e.to_string())
+                            }
+                        })
+                };
+                match coalesced {
+                    Some(Ok(())) => return,
+                    // A final delta is never dropped: no delta follows it
+                    // to show a gap. It goes past the cap, the one delta
+                    // that can.
+                    Some(Err(why)) if delta.kind == DeltaKind::Final => {
+                        error!(
+                            "gaggle: the final metrics delta could not be joined to the {MAX_QUEUED_DELTAS} queued ({why}); queued past them"
+                        );
+                    }
+                    Some(Err(why)) => {
+                        error!(
+                            "gaggle: dropped metrics deltas {} to {}: {MAX_QUEUED_DELTAS} are queued and it could not be joined to them ({why}); the manager records the gap",
+                            delta.first_seq, delta.seq
+                        );
+                        state.hole = true;
+                        return;
+                    }
+                    // Room was made, or no delta is queued to join.
+                    None => {}
+                }
+            }
+            state.hole = false;
+            state.deltas += 1;
+            state.queue.push_back(Outgoing::Delta(Box::new(delta)));
+        }
+        self.queued.notify_one();
+    }
+
+    /// Queue a heartbeat ahead of everything queued, unless one waits there
+    /// already: a stalled link never gathers heartbeats to send in a burst.
+    fn push_heartbeat(&self) {
+        if let Ok(state) = self.state.lock() {
+            if let Some(Outgoing::Message(ToManager::Heartbeat(_))) = state.queue.front() {
+                return;
+            }
+        }
+        self.push(Outgoing::Message(ToManager::Heartbeat(Heartbeat {})), true);
+    }
+
+    /// Queue a message after everything queued.
+    pub(crate) fn push_message(&self, message: ToManager) {
+        self.push(Outgoing::Message(message), false);
+    }
+
+    /// Queue a log chunk, once fewer than [`MAX_QUEUED_CHUNKS`] messages
+    /// wait, so a large log is never read into memory whole.
+    pub(crate) async fn push_chunk(&self, chunk: LogChunk) {
+        loop {
+            let sent = self.sent.notified();
+            let room = self.state.lock().map_or(true, |state| {
+                state.closed || state.queue.len() < MAX_QUEUED_CHUNKS
+            });
+            if room {
+                break;
+            }
+            sent.await;
+        }
+        self.push_message(ToManager::LogChunk(chunk));
+    }
+
+    /// The next message to send, waiting for one; `None` once closed.
+    async fn next(&self) -> Option<WorkerMessage> {
+        loop {
+            let queued = self.queued.notified();
+            let item = {
+                let mut state = self.state.lock().ok()?;
+                match state.queue.pop_front() {
+                    Some(item) => {
+                        if matches!(item, Outgoing::Delta(_)) {
+                            state.deltas -= 1;
+                        }
+                        Some(item)
+                    }
+                    None if state.closed => return None,
+                    None => None,
+                }
+            };
+            if let Some(item) = item {
+                self.sent.notify_waiters();
+                let message = match item {
+                    Outgoing::Message(message) => message,
+                    Outgoing::Delta(delta) => {
+                        let encoded = delta.encode();
+                        #[cfg(test)]
+                        let encoded = match self.unencodable.load(Ordering::Relaxed) {
+                            true => Err(postcard::Error::SerializeBufferFull),
+                            false => encoded,
+                        };
+                        // Past the message limit is as unencodable.
+                        let encoded = match encoded {
+                            Ok(bytes) if bytes.len() > MAX_DELTA => Err(format!(
+                                "it is {} bytes, more than the {MAX_DELTA} bytes a message carries",
+                                bytes.len()
+                            )),
+                            Ok(bytes) => Ok(bytes),
+                            Err(e) => Err(e.to_string()),
+                        };
+                        match encoded {
+                            Ok(bytes) => ToManager::Metrics(Metrics { delta: bytes }),
+                            // No final metrics will reach the manager: say
+                            // so, so it records them missing, rather than
+                            // wait for them.
+                            Err(e) if delta.kind == DeltaKind::Final => {
+                                error!(
+                                    "gaggle: could not encode the final metrics delta {}: {e}",
+                                    delta.seq
+                                );
+                                ToManager::Stopped(Stopped {
+                                    reason: Reason::Failed as i32,
+                                    canceled: format!("it could not encode its final metrics: {e}"),
+                                    run_folder: String::new(),
+                                })
+                            }
+                            Err(e) => {
+                                warn!("gaggle: could not encode delta {}: {e}", delta.seq);
+                                continue;
+                            }
+                        }
+                    }
+                };
+                return Some(WorkerMessage {
+                    message: Some(message),
+                });
+            }
+            queued.await;
+        }
+    }
+
+    /// Send nothing more, once what is queued has left.
+    fn close(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+        }
+        self.queued.notify_waiters();
+        self.queued.notify_one();
+        self.sent.notify_waiters();
+    }
+
+    /// Whether it is closed: nothing more is queued.
+    fn is_closed(&self) -> bool {
+        self.state.lock().map_or(true, |state| state.closed)
+    }
+
+    /// The deltas queued (unit tests).
+    #[cfg(test)]
+    pub(crate) fn queued_deltas(&self) -> usize {
+        self.state.lock().map_or(0, |state| state.deltas)
+    }
+}
+
+/// What the manager tells the worker's main loop.
+#[derive(Debug)]
+pub(crate) enum LinkEvent {
+    /// Its share of the load test, postcard encoded.
+    Prepare(Vec<u8>),
+    /// Start at this instant.
+    StartAt(tokio::time::Instant),
+    /// Reset the metrics, starting this epoch.
+    ResetMetrics(u64),
+    /// Stop every user.
+    Stop(String),
+    /// Send the logs.
+    SendLogs,
+    /// Exit.
+    Shutdown,
+    /// The manager is gone: every user was stopped already.
+    Lost(String),
+    /// The manager sent something this worker refuses: it exits.
+    Refused(String),
+}
+
+/// A worker's connection to its manager.
+pub(crate) struct Link {
+    pub(crate) id: u32,
+    pub(crate) outbox: Arc<Outbox>,
+    events: flume::Receiver<Queued>,
+    /// `Shutdown` or `Lost`, once either came.
+    last: Arc<Last>,
+    /// Woken once the link is dropped, so a reader the main loop holds back
+    /// stops waiting.
+    closing: Arc<Notify>,
+    /// Every user task the worker started, aborted at once by the dead man's
+    /// switch.
+    users: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
+    /// Set once the manager said `Shutdown`.
+    shutdown: Arc<AtomicBool>,
+    /// Set when the worker's `execute()` returns, so the switch's last resort
+    /// never ends a process that went on to do something else.
+    pub(crate) done: Arc<AtomicBool>,
+    /// Set once every user was stopped, by the dead man's switch, `Shutdown`
+    /// or [`Link::stop_users`]: a user started after it is stopped at once.
+    users_stopped: Arc<AtomicBool>,
+    /// Set only when the dead man's switch fires: the heartbeats stop and
+    /// it fires no more.
+    fired: Arc<AtomicBool>,
+    /// Set when the switch's last resort ends the process.
+    forced: Arc<AtomicBool>,
+    /// Set once the request stream ended, everything queued taken.
+    sent_all: tokio::sync::watch::Receiver<bool>,
+    /// Closed once the manager's stream ended.
+    manager_open: tokio::sync::watch::Receiver<()>,
+    /// The reader of the manager's stream and the heartbeat task, aborted
+    /// once the link is dropped.
+    tasks: Vec<tokio::task::AbortHandle>,
+    /// Held by the reader and heartbeat tasks too, through their switch:
+    /// its count says which still run (unit tests).
+    #[cfg(test)]
+    alive: Arc<()>,
+}
+
+/// What [`Link::connect`] needs. No `Debug`: it holds the token.
+pub(crate) struct LinkSettings {
+    /// `host:port`.
+    pub(crate) address: String,
+    pub(crate) connect_timeout: Duration,
+    pub(crate) heartbeat_timeout: Duration,
+    pub(crate) hello: Hello,
+    /// The token, sent in the request's metadata.
+    pub(crate) token: Option<String>,
+}
+
+impl LinkSettings {
+    /// The `Hello` a worker of `plan_hash` named `name` says.
+    pub(crate) fn hello(plan_hash: u64, name: String) -> Hello {
+        Hello {
+            goose_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            plan_hash,
+            worker_name: name,
+        }
+    }
+}
+
+/// The name a worker gives itself: the `HOSTNAME` environment variable, as a
+/// pod's name in Kubernetes, or `worker-` and its process id.
+pub(crate) fn worker_name() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| format!("worker-{}", std::process::id()))
+}
+
+/// The request stream: everything the outbox gives, in order.
+/// `ended` is set once the outbox is closed and everything queued was
+/// taken: the request stream then ends.
+fn outbound(
+    outbox: Arc<Outbox>,
+    ended: tokio::sync::watch::Sender<bool>,
+) -> impl tokio_stream::Stream<Item = WorkerMessage> + Send + 'static {
+    futures::stream::unfold((outbox, ended), |(outbox, ended)| async move {
+        match outbox.next().await {
+            Some(message) => Some((message, (outbox, ended))),
+            None => {
+                let _ = ended.send(true);
+                None
+            }
+        }
+    })
+}
+
+impl Link {
+    /// Connect to the manager, retrying with backoff until
+    /// [`LinkSettings::connect_timeout`] runs out, and say `Hello`. A refusal
+    /// is an error at once, never retried. The deadline covers each attempt
+    /// whole, the TCP connect, the HTTP/2 handshake, the stream's response
+    /// and the `Welcome`, so a manager that accepts and then says nothing
+    /// cannot hold a worker past it.
+    pub(crate) async fn connect(settings: LinkSettings) -> Result<Link, GooseError> {
+        let deadline = Instant::now() + settings.connect_timeout;
+        let uri = format!("http://{}", settings.address);
+        let endpoint = tonic::transport::Endpoint::from_shared(uri.clone())
+            .map_err(|e| GooseError::Gaggle {
+                detail: format!("--manager-host {}: {e}", settings.address),
+            })?
+            .connect_timeout(Duration::from_secs(5))
+            // One connection, to its own manager: a window of 1 MiB lets the
+            // manager's messages, custom data among them, move 1 MiB each
+            // round trip. No HTTP/2 keepalive: the heartbeats find a dead
+            // manager.
+            .initial_stream_window_size(WORKER_WINDOW)
+            .initial_connection_window_size(WORKER_WINDOW)
+            .tcp_nodelay(true);
+        let mut attempt = 0;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let tried =
+                match tokio::time::timeout(left, Self::try_connect(&endpoint, &settings)).await {
+                    Ok(tried) => tried,
+                    Err(_) => Err(Refusal::Unreachable(
+                        "no answer in time: the connection, its handshake or the Welcome was still pending"
+                            .to_string(),
+                    )),
+                };
+            let why = match tried {
+                Ok(link) => return Ok(link),
+                Err(Refusal::Refused(reason)) => {
+                    return Err(GooseError::Gaggle {
+                        detail: format!(
+                            "the manager at {} refused this worker: {reason}",
+                            settings.address
+                        ),
+                    })
+                }
+                Err(Refusal::Unreachable(why)) => why,
+            };
+            let wait = backoff(attempt);
+            attempt += 1;
+            if Instant::now() + wait >= deadline {
+                return Err(GooseError::Gaggle {
+                    detail: format!(
+                        "could not reach the manager at {} within {} seconds: {why}",
+                        settings.address,
+                        settings.connect_timeout.as_secs()
+                    ),
+                });
+            }
+            info!(
+                "gaggle: manager at {} not reached ({why}); trying again in {} s",
+                settings.address,
+                wait.as_secs()
+            );
+            tokio::time::sleep(wait).await;
+        }
+    }
+
+    async fn try_connect(
+        endpoint: &tonic::transport::Endpoint,
+        settings: &LinkSettings,
+    ) -> Result<Link, Refusal> {
+        let channel = endpoint
+            .connect()
+            .await
+            .map_err(|e| Refusal::Unreachable(error_chain(&e)))?;
+        let mut client = GaggleClient::new(channel)
+            .max_decoding_message_size(MAX_MESSAGE)
+            .max_encoding_message_size(MAX_MESSAGE);
+        let outbox = Arc::new(Outbox::default());
+        outbox.push_message(ToManager::Hello(settings.hello.clone()));
+        let (ended, sent_all) = tokio::sync::watch::channel(false);
+        let mut request = tonic::Request::new(outbound(outbox.clone(), ended));
+        if let Some(token) = settings.token.as_deref() {
+            // The options refuse a token that is not printable ASCII.
+            let mut value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> =
+                format!("Bearer {token}").parse().map_err(|_| {
+                    Refusal::Refused("the --gaggle-token is not printable ASCII".to_string())
+                })?;
+            // Kept out of any debug output of the request.
+            value.set_sensitive(true);
+            request.metadata_mut().insert(AUTHORIZATION, value);
+        }
+        let response = client.connect(request).await.map_err(|status| {
+            // The manager checks the token before anything else.
+            if status.code() == tonic::Code::Unauthenticated {
+                Refusal::Refused(status.message().to_string())
+            } else {
+                Refusal::Unreachable(status.message().to_string())
+            }
+        })?;
+        let mut inbound = response.into_inner();
+        let first = tokio::time::timeout(settings.heartbeat_timeout, inbound.message())
+            .await
+            .map_err(|_| Refusal::Unreachable("no Welcome from the manager".to_string()))?;
+        let id = match first {
+            Ok(Some(message)) => match &message.message {
+                Some(FromManager::Welcome(welcome)) => welcome.worker_id,
+                Some(FromManager::Reject(reject)) => {
+                    return Err(Refusal::Refused(reject.reason.clone()))
+                }
+                // Named, never shown: a Prepare holds up to 64 MiB.
+                _ => {
+                    return Err(Refusal::Unreachable(format!(
+                        "the manager answered {}, not Welcome",
+                        super::manager::message_kind(&message)
+                    )))
+                }
+            },
+            Ok(None) => {
+                return Err(Refusal::Unreachable(
+                    "the manager closed the stream".to_string(),
+                ))
+            }
+            Err(status) => return Err(Refusal::Unreachable(status.message().to_string())),
+        };
+        info!(
+            "gaggle: joined the manager at {} as worker {id}",
+            settings.address
+        );
+        let (events_tx, events) = flume::bounded(EVENT_QUEUE);
+        // Held by the reader of the manager's stream until that stream ends.
+        let (open, manager_open) = tokio::sync::watch::channel(());
+        let mut link = Link {
+            id,
+            outbox,
+            events,
+            last: Arc::new(Last::default()),
+            closing: Arc::new(Notify::new()),
+            users: Arc::new(Mutex::new(Vec::new())),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            done: Arc::new(AtomicBool::new(false)),
+            users_stopped: Arc::new(AtomicBool::new(false)),
+            fired: Arc::new(AtomicBool::new(false)),
+            forced: Arc::new(AtomicBool::new(false)),
+            sent_all,
+            manager_open,
+            tasks: Vec::new(),
+            #[cfg(test)]
+            alive: Arc::new(()),
+        };
+        let heard = Arc::new(Mutex::new(Instant::now()));
+        let switch = Switch {
+            fired: link.fired.clone(),
+            users_stopped: link.users_stopped.clone(),
+            users: link.users.clone(),
+            last: link.last.clone(),
+            outbox: link.outbox.clone(),
+            heartbeat_timeout: settings.heartbeat_timeout,
+            done: link.done.clone(),
+            forced: link.forced.clone(),
+            prepared: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            alive: link.alive.clone(),
+        };
+        let exits = Exits {
+            done: link.done.clone(),
+            closing: link.closing.clone(),
+            sent_all: link.sent_all.clone(),
+        };
+        let reader = tokio::spawn(read_manager(
+            inbound,
+            open,
+            Events {
+                queue: events_tx,
+                bytes: Arc::new(tokio::sync::Semaphore::new(EVENT_BYTES)),
+                last: link.last.clone(),
+            },
+            exits,
+            heard.clone(),
+            link.shutdown.clone(),
+            switch.clone(),
+        ));
+        let heartbeats = tokio::spawn(heartbeat_manager(
+            link.outbox.clone(),
+            heard,
+            link.shutdown.clone(),
+            switch,
+        ));
+        link.tasks = vec![reader.abort_handle(), heartbeats.abort_handle()];
+        Ok(link)
+    }
+
+    /// Watch a user task, so the dead man's switch can stop it.
+    pub(crate) fn watch(&self, user: tokio::task::AbortHandle) {
+        if let Ok(mut users) = self.users.lock() {
+            // Every user is stopped by setting `users_stopped` before taking
+            // this lock, so either that sees this user or this sees the flag.
+            if self.users_stopped.load(Ordering::SeqCst) {
+                user.abort();
+                return;
+            }
+            // Kept to the end of the run, as the run state keeps every
+            // user's JoinHandle: one per user started.
+            users.push(user);
+        }
+    }
+
+    /// Stop every user at once, and any started later, as the switch does.
+    /// The switch stays armed, and the heartbeats go on.
+    pub(crate) fn stop_users(&self) {
+        abort_users(&self.users, &self.users_stopped, false);
+    }
+
+    /// The next event if one is waiting: what is queued, in order, then
+    /// `Shutdown` or `Lost`. Its share of the byte budget is given back.
+    pub(crate) fn try_event(&self) -> Option<LinkEvent> {
+        match self.events.try_recv() {
+            Ok((event, _bytes)) => Some(event),
+            Err(_) => self.last.take(),
+        }
+    }
+
+    /// Every event, taken until none is left (unit tests).
+    #[cfg(test)]
+    fn drain_events(&self) -> Vec<LinkEvent> {
+        std::iter::from_fn(|| self.try_event()).collect()
+    }
+
+    /// The next event, waiting at most `wait`.
+    pub(crate) async fn next_event(&self, wait: Duration) -> Option<LinkEvent> {
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            // Created before the check, so an event left between them still
+            // wakes it.
+            let ready = self.last.ready.notified();
+            if let Some(event) = self.try_event() {
+                return Some(event);
+            }
+            // Once the reader has ended, only the last event can come.
+            let queued = tokio::select! {
+                queued = self.events.recv_async(), if !self.events.is_disconnected() => queued.ok(),
+                () = ready => None,
+                () = tokio::time::sleep_until(deadline) => return self.try_event(),
+            };
+            if let Some((event, _bytes)) = queued {
+                return Some(event);
+            }
+        }
+    }
+
+    /// Answer `Prepare`.
+    pub(crate) fn prepared(&self, error: Option<String>) {
+        self.outbox
+            .push_message(ToManager::PrepareAck(PrepareAck { error }));
+    }
+
+    /// Tell the manager every user stopped, before the final delta.
+    pub(crate) fn users_stopped(&self) {
+        self.outbox
+            .push_message(ToManager::UsersStopped(UsersStopped {}));
+    }
+
+    /// Tell the manager the users stopped, after the final delta.
+    pub(crate) fn stopped(&self, stopped: Stopped) {
+        self.outbox.push_message(ToManager::Stopped(stopped));
+    }
+
+    /// Stream each of `logs`, `(name, path)`, in chunks of [`LOG_CHUNK`],
+    /// in the background.
+    pub(crate) fn send_logs(&self, logs: Vec<(String, std::path::PathBuf)>) {
+        let outbox = self.outbox.clone();
+        tokio::spawn(async move {
+            for (file, path) in logs {
+                if let Err(e) = send_log(&outbox, &file, &path).await {
+                    warn!("gaggle: could not send log {}: {e}", path.display());
+                    // End the file with why, so the manager stops waiting
+                    // for it and records it left here.
+                    outbox
+                        .push_chunk(LogChunk {
+                            file,
+                            offset: 0,
+                            data: Vec::new(),
+                            last: true,
+                            error: Some(e.to_string()),
+                            size: None,
+                        })
+                        .await;
+                }
+            }
+        });
+    }
+
+    /// Close the stream, once what is queued has left.
+    pub(crate) fn close(&self) {
+        self.outbox.close();
+    }
+
+    /// Close the stream, and give what is queued up to 2 seconds to reach
+    /// the manager: until the request stream has ended, everything queued
+    /// sent, and then the manager's stream has closed, as it does once the
+    /// manager has read the worker's last message and shut it down. An
+    /// empty queue alone is not enough: its last message may still wait
+    /// behind flow control.
+    pub(crate) async fn flush(&self) {
+        self.close();
+        let (mut sent_all, mut manager_open) = (self.sent_all.clone(), self.manager_open.clone());
+        let _ = tokio::time::timeout(Duration::from_secs(2), async move {
+            let _ = sent_all.wait_for(|&sent| sent).await;
+            while manager_open.changed().await.is_ok() {}
+        })
+        .await;
+    }
+}
+
+impl Drop for Link {
+    /// The worker is done with its manager: its `execute()` is returning, so
+    /// the switch must neither fire nor end the process, and the reader and
+    /// heartbeat tasks end.
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::SeqCst);
+        self.closing.notify_waiters();
+        self.outbox.close();
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
+}
+
+/// Stream one log file.
+async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::io::Result<()> {
+    use tokio::io::AsyncReadExt;
+    let mut reader = match tokio::fs::File::open(path).await {
+        Ok(reader) => reader,
+        // A log never written: the manager gets an empty file.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            outbox
+                .push_chunk(LogChunk {
+                    file: file.to_string(),
+                    offset: 0,
+                    data: Vec::new(),
+                    last: true,
+                    error: None,
+                    size: Some(0),
+                })
+                .await;
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    // The log is closed: its size now is what the manager may take.
+    let mut size = Some(reader.metadata().await?.len());
+    let mut offset = 0u64;
+    let mut data = vec![0u8; LOG_CHUNK];
+    let mut filled = 0;
+    loop {
+        // Nothing more leaves once the outbox is closed: stop reading.
+        if outbox.is_closed() {
+            return Ok(());
+        }
+        let read = reader.read(&mut data[filled..]).await?;
+        filled += read;
+        let end = read == 0;
+        if filled == LOG_CHUNK || end {
+            // The buffer moves into the chunk, and a fresh one takes its
+            // place: no chunk is copied.
+            let mut chunk = std::mem::replace(&mut data, vec![0u8; LOG_CHUNK]);
+            chunk.truncate(filled);
+            outbox
+                .push_chunk(LogChunk {
+                    file: file.to_string(),
+                    offset,
+                    data: chunk,
+                    last: end,
+                    error: None,
+                    size: size.take(),
+                })
+                .await;
+            offset += filled as u64;
+            filled = 0;
+        }
+        if end {
+            return Ok(());
+        }
+    }
+}
+
+/// A failed attempt to join.
+enum Refusal {
+    /// The manager answered `Reject`.
+    Refused(String),
+    /// It could not be reached, or did not answer as a manager does.
+    Unreachable(String),
+}
+
+/// An error and every source of it, as one line.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+/// How long after the switch fires, or `Shutdown` finds users running, a
+/// worker whose `execute()` has not returned ends its process: 2 seconds,
+/// and 200 ms in unit tests, which wait it out and where it only records
+/// that it would have.
+const LAST_RESORT_AFTER: Duration = if cfg!(test) {
+    Duration::from_millis(200)
+} else {
+    Duration::from_secs(2)
+};
+
+/// The longest the switch lets the manager go silent before its `Prepare`
+/// arrived, when that is longer than the heartbeat timeout: a `Prepare` of
+/// 16 MiB of custom data takes about 13 seconds at 1.25 MB/s, as 100
+/// workers sharing a 1 Gb/s link get.
+const BEFORE_PREPARE_SILENCE: Duration = Duration::from_secs(120);
+
+/// Stop users at once, every one or, with `running_only`, those not yet
+/// finished, and any started later: `stopped` is set before `users` is
+/// locked, so [`Link::watch`] sees one or the other. How many it stopped.
+fn abort_users(
+    users: &Mutex<Vec<tokio::task::AbortHandle>>,
+    stopped: &AtomicBool,
+    running_only: bool,
+) -> usize {
+    stopped.store(true, Ordering::SeqCst);
+    let Ok(users) = users.lock() else {
+        return 0;
+    };
+    let mut stopped = 0;
+    for user in users
+        .iter()
+        .filter(|user| !running_only || !user.is_finished())
+    {
+        user.abort();
+        stopped += 1;
+    }
+    stopped
+}
+
+/// The dead man's switch.
+#[derive(Clone)]
+struct Switch {
+    /// Set when it fires, and only then.
+    fired: Arc<AtomicBool>,
+    users_stopped: Arc<AtomicBool>,
+    users: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
+    /// Where it leaves `Lost`.
+    last: Arc<Last>,
+    outbox: Arc<Outbox>,
+    heartbeat_timeout: Duration,
+    done: Arc<AtomicBool>,
+    /// Set when the last resort ends the process, or in unit tests would
+    /// have.
+    forced: Arc<AtomicBool>,
+    /// Set once the manager's `Prepare` arrived: before it, the switch
+    /// waits [`BEFORE_PREPARE_SILENCE`], as a large one on a slow link
+    /// holds back the heartbeats behind it, and no user runs yet.
+    prepared: Arc<AtomicBool>,
+    /// The link's [`Link::alive`] (unit tests).
+    #[cfg(test)]
+    alive: Arc<()>,
+}
+
+impl Switch {
+    /// Stop every user at once, tell the main loop why, and close the
+    /// stream. A worker whose `execute()` has not returned 2 seconds later
+    /// exits the process with an error status: load never outlives its
+    /// manager.
+    fn fire(&self, why: String) {
+        // Once the worker's `execute()` returned, nothing it started runs.
+        if self.done.load(Ordering::SeqCst) || self.fired.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        error!("gaggle: lost the manager ({why}); stopping every user");
+        abort_users(&self.users, &self.users_stopped, false);
+        self.outbox.close();
+        self.last.set(LinkEvent::Lost(why));
+        self.last_resort("gaggle: lost the manager and the worker has not exited; exiting now");
+    }
+
+    /// The manager said `Shutdown`. Any user still running, as when the
+    /// manager gave this worker up for lost, is stopped at once, and a
+    /// worker whose `execute()` has not returned 2 seconds later exits with
+    /// an error status, as when the switch fires: the main loop may be held.
+    fn shut_down(&self) {
+        let running = abort_users(&self.users, &self.users_stopped, true);
+        if running > 0 {
+            warn!("gaggle: the manager said shut down with {running} users running; stopping them");
+            self.last_resort(
+                "gaggle: the manager said shut down and the worker has not exited; exiting now",
+            );
+        }
+    }
+
+    /// End the process with an error status [`LAST_RESORT_AFTER`] from now,
+    /// unless the worker's `execute()` has returned by then.
+    fn last_resort(&self, message: &'static str) {
+        let done = self.done.clone();
+        let forced = self.forced.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(LAST_RESORT_AFTER);
+            if !done.load(Ordering::Relaxed) {
+                eprintln!("{message}");
+                forced.store(true, Ordering::Relaxed);
+                // A unit test's worker never ends the test binary.
+                if cfg!(test) {
+                    return;
+                }
+                std::process::exit(1);
+            }
+        });
+    }
+}
+
+/// Where the reader queues the manager's messages for the main loop.
+struct Events {
+    queue: flume::Sender<Queued>,
+    /// What is left of [`EVENT_BYTES`].
+    bytes: Arc<tokio::sync::Semaphore>,
+    last: Arc<Last>,
+}
+
+/// What ends a wait the main loop holds back: the link dropped, or the
+/// connection to the manager gone.
+struct Exits {
+    done: Arc<AtomicBool>,
+    closing: Arc<Notify>,
+    sent_all: tokio::sync::watch::Receiver<bool>,
+}
+
+impl Exits {
+    /// Wait until the link is dropped, or the request stream was dropped
+    /// before it ended, as hyper drops it once the connection is gone.
+    async fn any(&self) {
+        // Created before the check, so a drop between them still wakes it.
+        let closing = self.closing.notified();
+        if self.done.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut sent_all = self.sent_all.clone();
+        let gone = async move {
+            while sent_all.changed().await.is_ok() {}
+            if !*sent_all.borrow() {
+                return;
+            }
+            // It ended as the outbox closed: nothing is gone.
+            std::future::pending::<()>().await
+        };
+        tokio::select! {
+            () = closing => {}
+            () = gone => {}
+        }
+    }
+}
+
+/// Wait for `future`, which the main loop holds back, as when the event
+/// queue is full: `heard` is kept fresh meanwhile, as the manager has not
+/// gone silent, so a held main loop never fires the switch. `None`, the
+/// wait given up, once `exits` says the link was dropped or the connection
+/// to the manager is gone.
+async fn held<T>(
+    future: impl std::future::Future<Output = T>,
+    heard: &Mutex<Instant>,
+    heartbeat_timeout: Duration,
+    exits: &Exits,
+) -> Option<T> {
+    let (mut future, mut exit) = (std::pin::pin!(future), std::pin::pin!(exits.any()));
+    let mut holding = tokio::time::interval(HEARTBEAT_INTERVAL.min(heartbeat_timeout / 2));
+    loop {
+        tokio::select! {
+            out = &mut future => return Some(out),
+            () = &mut exit => return None,
+            _ = holding.tick() => {
+                if let Ok(mut heard) = heard.lock() {
+                    *heard = Instant::now();
+                }
+            }
+        }
+    }
+}
+
+/// Read the manager's stream until it ends, as events. Past
+/// [`EVENT_QUEUE`] events or [`EVENT_BYTES`], this waits, reading nothing
+/// more; heartbeats never take any room, and `Shutdown` goes outside the
+/// queue.
+async fn read_manager(
+    mut inbound: tonic::Streaming<super::proto::ManagerMessage>,
+    // Dropped as this returns: the manager's stream has ended.
+    _open: tokio::sync::watch::Sender<()>,
+    events: Events,
+    exits: Exits,
+    heard: Arc<Mutex<Instant>>,
+    shutdown: Arc<AtomicBool>,
+    switch: Switch,
+) {
+    loop {
+        let message = match inbound.message().await {
+            Ok(Some(message)) => message,
+            Ok(None) => break,
+            Err(status) => {
+                debug!("gaggle: manager stream error: {status}");
+                break;
+            }
+        };
+        if let Ok(mut heard) = heard.lock() {
+            *heard = Instant::now();
+        }
+        let event = match message.message {
+            Some(FromManager::Heartbeat(_)) | None => continue,
+            Some(FromManager::Welcome(_)) | Some(FromManager::Reject(_)) => continue,
+            Some(FromManager::Prepare(prepare)) => {
+                switch.prepared.store(true, Ordering::Relaxed);
+                LinkEvent::Prepare(prepare.spec)
+            }
+            Some(FromManager::StartAt(start)) => match start_instant(start.delay_ms) {
+                Ok(at) => LinkEvent::StartAt(at),
+                Err(why) => LinkEvent::Refused(why),
+            },
+            Some(FromManager::ResetMetrics(reset)) => LinkEvent::ResetMetrics(reset.epoch),
+            Some(FromManager::Stop(stop)) => LinkEvent::Stop(stop.reason),
+            Some(FromManager::SendLogs(_)) => LinkEvent::SendLogs,
+            Some(FromManager::Shutdown(_)) => {
+                shutdown.store(true, Ordering::Relaxed);
+                switch.shut_down();
+                events.last.set(LinkEvent::Shutdown);
+                return;
+            }
+        };
+        let bytes = match &event {
+            LinkEvent::Prepare(spec) => spec.len().min(EVENT_BYTES) as u32,
+            _ => 0,
+        };
+        let permit = held(
+            events.bytes.clone().acquire_many_owned(bytes),
+            &heard,
+            switch.heartbeat_timeout,
+            &exits,
+        )
+        .await;
+        let Some(Ok(permit)) = permit else {
+            break;
+        };
+        let queued = held(
+            events.queue.send_async((event, Some(permit))),
+            &heard,
+            switch.heartbeat_timeout,
+            &exits,
+        )
+        .await;
+        if !matches!(queued, Some(Ok(()))) {
+            break;
+        }
+    }
+    // Never once the link is dropped: the switch checks.
+    if !shutdown.load(Ordering::Relaxed) {
+        switch.fire("its stream closed without Shutdown".to_string());
+    }
+}
+
+/// Send the manager a heartbeat every [`HEARTBEAT_INTERVAL`], on its own
+/// task, whatever else the worker is doing; fire the switch when nothing has
+/// come from the manager for the heartbeat timeout, or before its `Prepare`
+/// arrived, [`BEFORE_PREPARE_SILENCE`] if that is longer.
+async fn heartbeat_manager(
+    outbox: Arc<Outbox>,
+    heard: Arc<Mutex<Instant>>,
+    shutdown: Arc<AtomicBool>,
+    switch: Switch,
+) {
+    let tick = HEARTBEAT_INTERVAL
+        .min(switch.heartbeat_timeout / 4)
+        .max(Duration::from_millis(100));
+    let mut interval = tokio::time::interval(tick);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_sent = Instant::now();
+    loop {
+        interval.tick().await;
+        if shutdown.load(Ordering::Relaxed)
+            || switch.fired.load(Ordering::Relaxed)
+            || switch.done.load(Ordering::SeqCst)
+        {
+            return;
+        }
+        let silent = heard
+            .lock()
+            .map(|heard| heard.elapsed())
+            .unwrap_or_default();
+        let limit = if switch.prepared.load(Ordering::Relaxed) {
+            switch.heartbeat_timeout
+        } else {
+            switch.heartbeat_timeout.max(BEFORE_PREPARE_SILENCE)
+        };
+        if silent > limit {
+            switch.fire(format!("nothing from it for {limit:?}"));
+            return;
+        }
+        if last_sent.elapsed() >= HEARTBEAT_INTERVAL {
+            last_sent = Instant::now();
+            outbox.push_heartbeat();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gaggle::delta::DeltaKind;
+    use crate::gaggle::manager::handshake_tests::test_manager;
+
+    fn delta(seq: u64) -> GaggleDelta {
+        let mut delta = GaggleDelta::new(0, seq, 1, DeltaKind::Delta);
+        delta.now = seq;
+        delta
+            .graph
+            .requests
+            .insert("GET /".to_string(), [(seq, 1)].into());
+        delta
+    }
+
+    /// The outbox's next message, within 30 seconds.
+    async fn next(outbox: &Outbox) -> Option<WorkerMessage> {
+        tokio::time::timeout(Duration::from_secs(30), outbox.next())
+            .await
+            .expect("within 30 seconds")
+    }
+
+    /// Past eight queued deltas the newest is coalesced into the last queued,
+    /// which then covers both: nothing is lost and the queue does not grow.
+    #[tokio::test]
+    async fn outbox_coalesces_past_eight_deltas() {
+        let outbox = Outbox::default();
+        for seq in 1..=12 {
+            outbox.push_delta(delta(seq));
+        }
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        outbox.push_message(ToManager::Heartbeat(Heartbeat {}));
+        let mut sent = Vec::new();
+        outbox.close();
+        while let Some(message) = next(&outbox).await {
+            sent.push(message);
+        }
+        assert_eq!(sent.len(), MAX_QUEUED_DELTAS + 1);
+        let last = match &sent[MAX_QUEUED_DELTAS - 1].message {
+            Some(ToManager::Metrics(metrics)) => GaggleDelta::decode(&metrics.delta).unwrap(),
+            other => panic!("{:?}", other),
+        };
+        assert_eq!((last.first_seq, last.seq), (8, 12));
+        assert_eq!(last.graph.requests["GET /"].len(), 5);
+    }
+
+    /// The queued deltas, encoded (unit tests).
+    fn queued(outbox: &Outbox) -> Vec<Vec<u8>> {
+        let state = outbox.state.lock().unwrap();
+        state
+            .queue
+            .iter()
+            .filter_map(|item| match item {
+                Outgoing::Delta(delta) => Some(delta.encode().unwrap()),
+                Outgoing::Message(_) => None,
+            })
+            .collect()
+    }
+
+    /// A stalled link, and a delta that cannot be coalesced into the last
+    /// queued, its sum overflowing: the queue stays at its cap, the queued
+    /// deltas as they were, and the dropped delta shows as a gap the
+    /// manager records. Nor does a later delta close the gap.
+    #[tokio::test]
+    async fn outbox_drops_a_delta_it_cannot_coalesce() {
+        use crate::gaggle::merge::SeqGap;
+        let outbox = Outbox::default();
+        for seq in 1..=MAX_QUEUED_DELTAS as u64 {
+            outbox.push_delta(delta(seq));
+        }
+        let before = queued(&outbox);
+        let mut overflowing = delta(MAX_QUEUED_DELTAS as u64 + 1);
+        overflowing.graph.requests.insert(
+            "GET /".to_string(),
+            [(MAX_QUEUED_DELTAS as u64, u64::MAX)].into(),
+        );
+        outbox.push_delta(overflowing);
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        assert_eq!(queued(&outbox), before, "a queued delta changed");
+        // The next delta takes a place of its own, made by joining the two
+        // newest before the gap.
+        outbox.push_delta(delta(MAX_QUEUED_DELTAS as u64 + 2));
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        outbox.push_delta(delta(MAX_QUEUED_DELTAS as u64 + 3));
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        // A second drop, and the deltas after it: no join crosses either.
+        let second = MAX_QUEUED_DELTAS as u64 + 4;
+        let mut overflowing = delta(second);
+        overflowing
+            .graph
+            .requests
+            .insert("GET /".to_string(), [(second - 1, u64::MAX)].into());
+        outbox.push_delta(overflowing);
+        outbox.push_delta(delta(second + 1));
+        outbox.push_delta(delta(second + 2));
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        outbox.close();
+        let mut accumulator = crate::gaggle::tests::accumulator();
+        // The deltas here are of epoch 1, the manager's own.
+        accumulator.set_epoch(1);
+        while let Some(message) = next(&outbox).await {
+            if let Some(ToManager::Metrics(metrics)) = message.message {
+                accumulator
+                    .apply(0, GaggleDelta::decode(&metrics.delta).unwrap())
+                    .unwrap();
+            }
+        }
+        let dropped = MAX_QUEUED_DELTAS as u64 + 1;
+        assert_eq!(
+            accumulator.gaps(),
+            &[
+                SeqGap {
+                    worker: 0,
+                    expected: dropped,
+                    received: dropped + 1,
+                },
+                SeqGap {
+                    worker: 0,
+                    expected: second,
+                    received: second + 1,
+                }
+            ]
+        );
+        assert_eq!(accumulator.missing(0), 2);
+    }
+
+    /// A final delta that cannot be joined to the last queued is never
+    /// dropped: no delta follows it to show a gap. It goes past the cap.
+    #[tokio::test]
+    async fn outbox_never_drops_a_final_delta() {
+        let outbox = Outbox::default();
+        for seq in 1..=MAX_QUEUED_DELTAS as u64 {
+            outbox.push_delta(delta(seq));
+        }
+        let last = MAX_QUEUED_DELTAS as u64 + 1;
+        let mut last_final = delta(last);
+        last_final.kind = DeltaKind::Final;
+        last_final
+            .graph
+            .requests
+            .insert("GET /".to_string(), [(last - 1, u64::MAX)].into());
+        outbox.push_delta(last_final);
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS + 1);
+        outbox.close();
+        let mut kinds = Vec::new();
+        while let Some(message) = next(&outbox).await {
+            if let Some(ToManager::Metrics(metrics)) = message.message {
+                kinds.push(GaggleDelta::decode(&metrics.delta).unwrap().kind);
+            }
+        }
+        assert_eq!(kinds.last(), Some(&DeltaKind::Final));
+    }
+
+    /// A final delta that cannot be encoded is never dropped unsaid: the
+    /// manager is told the worker failed, so it records the final metrics
+    /// missing. Any other delta that cannot be encoded is dropped, leaving
+    /// a gap.
+    #[tokio::test]
+    async fn an_unencodable_final_delta_says_the_worker_failed() {
+        let outbox = Outbox::default();
+        outbox.unencodable.store(true, Ordering::Relaxed);
+        outbox.push_delta(delta(1));
+        let mut last_final = delta(2);
+        last_final.kind = DeltaKind::Final;
+        outbox.push_delta(last_final);
+        outbox.close();
+        let sent = next(&outbox).await.expect("a message for the final delta");
+        match sent.message {
+            Some(ToManager::Stopped(stopped)) => {
+                assert_eq!(stopped.reason(), Reason::Failed);
+                assert!(
+                    stopped.canceled.contains("final metrics"),
+                    "{}",
+                    stopped.canceled
+                );
+            }
+            other => panic!("{:?}", other),
+        }
+        assert!(next(&outbox).await.is_none());
+    }
+
+    /// A heartbeat goes ahead of what is queued, and only one waits: on a
+    /// stalled link they never pile up to leave in a burst.
+    #[tokio::test]
+    async fn heartbeats_go_first() {
+        let outbox = Outbox::default();
+        outbox.push_delta(delta(1));
+        for _ in 0..3 {
+            outbox.push_heartbeat();
+        }
+        outbox.close();
+        let first = next(&outbox).await.unwrap();
+        assert!(matches!(first.message, Some(ToManager::Heartbeat(_))));
+        let second = next(&outbox).await.unwrap();
+        assert!(matches!(second.message, Some(ToManager::Metrics(_))));
+        assert!(next(&outbox).await.is_none());
+    }
+
+    /// A switch over `users`, its events and outbox, its worker's
+    /// `execute()` not yet returned; its last resort only records, as in
+    /// every unit test, so it never ends the test binary.
+    fn switch(
+        users: Vec<tokio::task::AbortHandle>,
+        heartbeat_timeout: Duration,
+    ) -> (Switch, Arc<Last>, Arc<Outbox>) {
+        let last = Arc::new(Last::default());
+        let outbox = Arc::new(Outbox::default());
+        let switch = Switch {
+            fired: Arc::new(AtomicBool::new(false)),
+            users_stopped: Arc::new(AtomicBool::new(false)),
+            users: Arc::new(Mutex::new(users)),
+            last: last.clone(),
+            outbox: outbox.clone(),
+            heartbeat_timeout,
+            done: Arc::new(AtomicBool::new(false)),
+            forced: Arc::new(AtomicBool::new(false)),
+            // Past its Prepare: silence fires it at the heartbeat timeout.
+            prepared: Arc::new(AtomicBool::new(true)),
+            alive: Arc::new(()),
+        };
+        (switch, last, outbox)
+    }
+
+    /// A link over `switch`'s users, events and flags.
+    fn link_of(switch: &Switch, outbox: Arc<Outbox>, last: Arc<Last>) -> Link {
+        Link {
+            id: 0,
+            outbox,
+            events: flume::bounded(EVENT_QUEUE).1,
+            last,
+            closing: Arc::new(Notify::new()),
+            users: switch.users.clone(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            done: switch.done.clone(),
+            users_stopped: switch.users_stopped.clone(),
+            fired: switch.fired.clone(),
+            forced: switch.forced.clone(),
+            sent_all: tokio::sync::watch::channel(true).1,
+            manager_open: tokio::sync::watch::channel(()).1,
+            tasks: Vec::new(),
+            alive: switch.alive.clone(),
+        }
+    }
+
+    /// Stopping the users, as a worker that fails a phase does, leaves the
+    /// switch armed: heartbeats still go, and a manager that then goes
+    /// silent fires it.
+    #[tokio::test]
+    async fn stopping_users_leaves_the_switch_armed() {
+        let user = tokio::spawn(std::future::pending::<()>());
+        let (switch, events, outbox) = switch(
+            vec![user.abort_handle()],
+            HEARTBEAT_INTERVAL + Duration::from_secs(1),
+        );
+        let link = link_of(&switch, outbox.clone(), events);
+        let heard = Arc::new(Mutex::new(Instant::now()));
+        let task = tokio::spawn(heartbeat_manager(
+            outbox.clone(),
+            heard,
+            link.shutdown.clone(),
+            switch.clone(),
+        ));
+        link.stop_users();
+        let ended = tokio::time::timeout(Duration::from_secs(30), user)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
+        assert!(!switch.fired.load(Ordering::SeqCst));
+        // A heartbeat still leaves, after the users stopped.
+        let first = next(&outbox).await.expect("a heartbeat");
+        assert!(matches!(first.message, Some(ToManager::Heartbeat(_))));
+        // Nothing heard from the manager: the switch fires.
+        tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .expect("the heartbeat task ends")
+            .unwrap();
+        assert!(switch.fired.load(Ordering::SeqCst));
+        assert!(
+            matches!(link.try_event(), Some(LinkEvent::Lost(why)) if why.starts_with("nothing from it"))
+        );
+    }
+
+    /// The dead man's switch aborts every user at once, tells the main loop,
+    /// and closes the stream.
+    #[tokio::test]
+    async fn the_switch_aborts_every_user() {
+        let user = tokio::spawn(std::future::pending::<()>());
+        let (switch, events, outbox) = switch(vec![user.abort_handle()], Duration::from_secs(10));
+        switch.fire("test".to_string());
+        let ended = tokio::time::timeout(Duration::from_secs(30), user)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
+        assert!(matches!(events.take(), Some(LinkEvent::Lost(why)) if why == "test"));
+        assert!(next(&outbox).await.is_none());
+    }
+
+    /// With nothing heard from the manager for the heartbeat timeout, the
+    /// heartbeat task fires the switch, which stops the users.
+    #[tokio::test]
+    async fn silence_fires_the_switch() {
+        let user = tokio::spawn(std::future::pending::<()>());
+        let (switch, events, outbox) =
+            switch(vec![user.abort_handle()], Duration::from_millis(300));
+        let heard = Arc::new(Mutex::new(Instant::now()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let task = tokio::spawn(heartbeat_manager(outbox, heard, shutdown, switch));
+        let ended = tokio::time::timeout(Duration::from_secs(30), user)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
+        assert!(
+            matches!(events.take(), Some(LinkEvent::Lost(why)) if why.starts_with("nothing from it"))
+        );
+        tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .expect("the heartbeat task ends")
+            .unwrap();
+    }
+
+    /// A user the worker starts after the switch fired, in the same pass of
+    /// its main loop, is stopped at once.
+    #[tokio::test]
+    async fn a_user_started_after_the_switch_is_stopped() {
+        let (switch, events, outbox) = switch(Vec::new(), Duration::from_secs(10));
+        let link = link_of(&switch, outbox, events);
+        switch.fire("test".to_string());
+        let late = tokio::spawn(std::future::pending::<()>());
+        link.watch(late.abort_handle());
+        let ended = tokio::time::timeout(Duration::from_secs(30), late)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
+    }
+
+    /// `Shutdown` that comes while users still run, the worker's main loop
+    /// held: every user is stopped at once, and the last resort ends the
+    /// worker its delay later (2 seconds; 200 ms here), as when the switch
+    /// fires.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_stops_users_while_the_main_loop_is_held() {
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(10)).await;
+            let link = Link::connect(LinkSettings {
+                address: manager.local_addr.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(10),
+                hello: LinkSettings::hello(7, "held".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            let user = tokio::spawn(std::future::pending::<()>());
+            link.watch(user.abort_handle());
+            // The worker's main loop never reads its events.
+            let sent = Instant::now();
+            manager.shut_down(link.id);
+            let ended = tokio::time::timeout(Duration::from_secs(5), user)
+                .await
+                .expect("the user stops");
+            assert!(ended.unwrap_err().is_cancelled());
+            while !link.forced.load(Ordering::Relaxed) {
+                assert!(
+                    sent.elapsed() < Duration::from_secs(5),
+                    "the last resort never fired"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            assert!(sent.elapsed() >= LAST_RESORT_AFTER);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// `Shutdown` after every user finished, as at the end of a run, stops
+    /// nothing and arms no last resort.
+    #[tokio::test]
+    async fn shutdown_after_the_run_arms_nothing() {
+        let finished = tokio::spawn(async {});
+        let handle = finished.abort_handle();
+        finished.await.unwrap();
+        let (switch, _events, _outbox) = switch(vec![handle], Duration::from_secs(10));
+        switch.done.store(false, Ordering::Relaxed);
+        switch.shut_down();
+        tokio::time::sleep(LAST_RESORT_AFTER * 2).await;
+        let forced = switch.forced.load(Ordering::Relaxed);
+        switch.done.store(true, Ordering::Relaxed);
+        assert!(!forced);
+    }
+
+    /// Relay every connection to `to`, each byte held `delay` each way:
+    /// the address it listens on.
+    async fn delaying_proxy(to: std::net::SocketAddr, delay: Duration) -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn relay(
+            mut from: tokio::net::tcp::OwnedReadHalf,
+            mut to: tokio::net::tcp::OwnedWriteHalf,
+            delay: Duration,
+        ) {
+            let (tx, mut rx) =
+                tokio::sync::mpsc::unbounded_channel::<(tokio::time::Instant, Vec<u8>)>();
+            let writer = tokio::spawn(async move {
+                while let Some((due, bytes)) = rx.recv().await {
+                    tokio::time::sleep_until(due).await;
+                    if to.write_all(&bytes).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            let mut buffer = vec![0u8; 64 << 10];
+            while let Ok(read) = from.read(&mut buffer).await {
+                if read == 0
+                    || tx
+                        .send((tokio::time::Instant::now() + delay, buffer[..read].to_vec()))
+                        .is_err()
+                {
+                    break;
+                }
+            }
+            drop(tx);
+            let _ = writer.await;
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let Ok(server) = tokio::net::TcpStream::connect(to).await else {
+                    continue;
+                };
+                let (client_read, client_write) = client.into_split();
+                let (server_read, server_write) = server.into_split();
+                tokio::spawn(relay(client_read, server_write, delay));
+                tokio::spawn(relay(server_read, client_write, delay));
+            }
+        });
+        address
+    }
+
+    /// Across a link of 100 ms round trips, a manager of 2 workers takes a
+    /// worker's 8 MiB log in about a second, under 8 on a loaded machine: its
+    /// 1 MiB window moves about 10 MB/s, where a 64 KiB one moved about 650
+    /// KB/s, 13 seconds for the log.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_log_crosses_a_slow_link_at_the_window_rate() {
+        use super::super::manager::Event;
+        let test = async {
+            let manager = test_manager(2, Duration::from_secs(30)).await;
+            let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(50)).await;
+            let link = Link::connect(LinkSettings {
+                address: proxy.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(30),
+                hello: LinkSettings::hello(7, "far".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            let path =
+                std::env::temp_dir().join(format!("goose-gaggle-far-log-{}", std::process::id()));
+            const SIZE: usize = 8 << 20;
+            std::fs::write(&path, vec![b'x'; SIZE]).unwrap();
+            let sent = Instant::now();
+            link.send_logs(vec![("requests.json".to_string(), path.clone())]);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut received = 0;
+            loop {
+                match manager.next_event(deadline).await {
+                    Some(Event::Log { chunk, .. }) => {
+                        assert_eq!(chunk.offset, received as u64);
+                        received += chunk.data.len();
+                        if chunk.last {
+                            break;
+                        }
+                    }
+                    Some(Event::Joined) => {}
+                    other => panic!("{:?}", other),
+                }
+            }
+            let took = sent.elapsed();
+            let _ = std::fs::remove_file(&path);
+            assert_eq!(received, SIZE);
+            println!("8 MiB across 100 ms round trips in {took:?}");
+            // About 1 second; a slow, loaded machine has room up to 8.
+            assert!(took < Duration::from_secs(8), "8 MiB took {:?}", took);
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// A Prepare that takes longer than the heartbeat timeout to cross a
+    /// slow link, the manager's heartbeats queued behind it, does not take
+    /// the manager for silent: 16 MiB at 400 ms round trips takes about 7
+    /// seconds, past a 3 second timeout.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_slow_prepare_does_not_fire_the_switch() {
+        use super::super::proto::{manager_message::Message as ToWorker, Prepare};
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(200)).await;
+            let link = Link::connect(LinkSettings {
+                address: proxy.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(3),
+                hello: LinkSettings::hello(7, "far".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            let sent = Instant::now();
+            manager.send(
+                link.id,
+                ToWorker::Prepare(Prepare {
+                    spec: vec![b'x'; 16 << 20],
+                }),
+            );
+            let event = link.next_event(Duration::from_secs(40)).await;
+            println!(
+                "16 MiB Prepare across 400 ms round trips in {:?}",
+                sent.elapsed()
+            );
+            assert!(
+                matches!(event, Some(LinkEvent::Prepare(ref spec)) if spec.len() == 16 << 20),
+                "{:?}",
+                event.map(|_| ())
+            );
+            assert!(!link.fired.load(Ordering::SeqCst), "the switch fired");
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// A worker that fails, its last message behind a slow link, gives it
+    /// time to arrive: `flush` returns only once the manager has read it and
+    /// shut the worker down, never as soon as the queue is empty.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn flush_waits_for_the_last_message_to_arrive() {
+        use super::super::manager::Event;
+        let test = async {
+            let manager = Arc::new(test_manager(1, Duration::from_secs(30)).await);
+            let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(200)).await;
+            let link = Link::connect(LinkSettings {
+                address: proxy.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(30),
+                hello: LinkSettings::hello(7, "failing".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            // The manager, as its run does: a worker that failed is shut down.
+            let stopped = Arc::new(AtomicBool::new(false));
+            let watching = {
+                let (manager, stopped) = (manager.clone(), stopped.clone());
+                tokio::spawn(async move {
+                    let deadline = Instant::now() + Duration::from_secs(20);
+                    while let Some(event) = manager.next_event(deadline).await {
+                        if let Event::Stopped { id, .. } = event {
+                            stopped.store(true, Ordering::SeqCst);
+                            manager.shut_down(id);
+                            return;
+                        }
+                    }
+                })
+            };
+            link.stopped(Stopped {
+                reason: Reason::Failed as i32,
+                canceled: "test".to_string(),
+                run_folder: String::new(),
+            });
+            link.flush().await;
+            assert!(
+                stopped.load(Ordering::SeqCst),
+                "flush returned before the manager had the last message"
+            );
+            watching.await.unwrap();
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A start delay past a minute is refused, never a panic, up to the
+    /// largest a message can carry.
+    #[tokio::test]
+    async fn start_at_past_a_minute_is_refused() {
+        assert!(start_instant(2_000).is_ok());
+        assert!(start_instant(60_000).is_ok());
+        for delay_ms in [60_001, u64::MAX / 2, u64::MAX] {
+            let why = start_instant(delay_ms).unwrap_err();
+            assert!(why.contains(&delay_ms.to_string()), "{}", why);
+        }
+    }
+
+    /// A listener that accepts the connection and never speaks HTTP/2: the
+    /// worker gives up within the connect timeout, plus 2 seconds.
+    #[tokio::test]
+    async fn connect_timeout_covers_the_handshake() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let held = tokio::spawn(async move {
+            let mut connections = Vec::new();
+            while let Ok((connection, _)) = listener.accept().await {
+                connections.push(connection);
+            }
+        });
+        let timeout = Duration::from_secs(1);
+        let started = Instant::now();
+        let joined = tokio::time::timeout(
+            Duration::from_secs(30),
+            Link::connect(LinkSettings {
+                address: address.to_string(),
+                connect_timeout: timeout,
+                heartbeat_timeout: Duration::from_secs(10),
+                hello: LinkSettings::hello(7, "stalled".to_string()),
+                token: None,
+            }),
+        )
+        .await
+        .expect("the worker gives up within 30 seconds");
+        let elapsed = started.elapsed();
+        match joined {
+            Err(GooseError::Gaggle { detail }) => {
+                assert!(detail.contains("could not reach"), "{}", detail)
+            }
+            Err(other) => panic!("{}", other),
+            Ok(_) => panic!("joined a listener that never answers"),
+        }
+        assert!(elapsed <= timeout + Duration::from_secs(2), "{:?}", elapsed);
+        held.abort();
+    }
+
+    /// A worker's link to a manager that sends it a Prepare of `spec_bytes`
+    /// every 50 ms until `full` are queued, and 4 more, its main loop taking
+    /// none of them, at most 10 seconds; and the manager. Each side's
+    /// heartbeat timeout is `heartbeat_timeout`.
+    async fn flooded(
+        heartbeat_timeout: Duration,
+        full: usize,
+        spec_bytes: usize,
+    ) -> (Link, super::super::manager::Manager) {
+        use super::super::proto::{manager_message::Message as ToWorker, Prepare};
+        let manager = test_manager(1, heartbeat_timeout).await;
+        let link = Link::connect(LinkSettings {
+            address: manager.local_addr.to_string(),
+            connect_timeout: Duration::from_secs(10),
+            heartbeat_timeout,
+            hello: LinkSettings::hello(7, "flooded".to_string()),
+            token: None,
+        })
+        .await
+        .unwrap();
+        let spec = vec![b'x'; spec_bytes];
+        let until = Instant::now() + Duration::from_secs(10);
+        let mut past_full = 0;
+        while past_full < 4 && Instant::now() < until {
+            manager.send(link.id, ToWorker::Prepare(Prepare { spec: spec.clone() }));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            if link.events.len() >= full {
+                past_full += 1;
+            }
+        }
+        // What was sent past the queue settles where the bounds hold it.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        (link, manager)
+    }
+
+    /// A manager that floods its worker, whose main loop takes nothing,
+    /// fills the worker's event queue to 16 messages, or 64 MiB, at most:
+    /// small Prepares stop at the 16, and large ones at the 64 MiB.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_flooding_manager_is_held_to_the_event_bounds() {
+        let test = async {
+            // What is queued now: taking more as the reader refills the
+            // queue would count past it.
+            let queued = |link: &Link| {
+                let queued: Vec<LinkEvent> = (0..link.events.len())
+                    .filter_map(|_| link.events.try_recv().ok().map(|(event, _)| event))
+                    .collect();
+                let bytes: usize = queued
+                    .iter()
+                    .map(|event| match event {
+                        LinkEvent::Prepare(spec) => spec.len(),
+                        _ => 0,
+                    })
+                    .sum();
+                (queued.len(), bytes)
+            };
+            let (link, _manager) = flooded(Duration::from_secs(30), EVENT_QUEUE, 1 << 10).await;
+            let (events, _) = queued(&link);
+            assert_eq!(events, 16, "{} events queued", events);
+            let (link, _manager) = flooded(Duration::from_secs(30), 7, 8 << 20).await;
+            let (events, bytes) = queued(&link);
+            assert!(bytes <= 64 << 20, "{} bytes queued", bytes);
+            // Held by the bytes, not short of messages: 8 of 8 MiB fit.
+            assert!((7..=8).contains(&events), "{} events queued", events);
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// A worker whose main loop is held past its heartbeat timeout, its
+    /// event queue full, is not taken for one whose manager went silent,
+    /// and its manager does not lose it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_held_main_loop_with_a_full_queue_is_not_lost() {
+        use super::super::manager::Event;
+        let test = async {
+            // A 6 second timeout, three heartbeats, as the process tests use:
+            // the flood fills the queue within a second, and the main loop
+            // is held 7 more.
+            let (link, manager) = flooded(Duration::from_secs(6), EVENT_QUEUE, 4 << 20).await;
+            tokio::time::sleep(Duration::from_secs(7)).await;
+            assert!(!link.fired.load(Ordering::SeqCst), "the switch fired");
+            let events = link.drain_events();
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, LinkEvent::Lost(_))),
+                "the worker lost its manager"
+            );
+            while let Some(event) = manager.try_event() {
+                assert!(
+                    !matches!(event, Event::Lost { .. }),
+                    "the manager lost its worker: {:?}",
+                    event
+                );
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// A delta whose encoding is past the message limit never reaches
+    /// tonic, which would reset the stream: a running one is dropped,
+    /// leaving a gap, and a final one says the worker failed, naming its
+    /// size.
+    #[tokio::test]
+    async fn a_delta_past_the_message_limit_is_never_sent() {
+        let outbox = Outbox::default();
+        let mut big = delta(1);
+        oversized(&mut big);
+        outbox.push_delta(big);
+        outbox.push_delta(delta(2));
+        let mut big_final = delta(3);
+        big_final.kind = DeltaKind::Final;
+        oversized(&mut big_final);
+        outbox.push_delta(big_final);
+        outbox.close();
+        match next(&outbox).await.expect("delta 2").message {
+            Some(ToManager::Metrics(metrics)) => {
+                assert_eq!(GaggleDelta::decode(&metrics.delta).unwrap().seq, 2)
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        match next(&outbox).await.expect("the failed final").message {
+            Some(ToManager::Stopped(stopped)) => {
+                assert_eq!(stopped.reason(), Reason::Failed);
+                assert!(
+                    stopped.canceled.contains("bytes, more than the"),
+                    "{}",
+                    stopped.canceled
+                );
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert!(next(&outbox).await.is_none());
+    }
+
+    /// Once its link is dropped, as when the worker's `execute()` returned,
+    /// a manager that closes its stream without `Shutdown` fires nothing:
+    /// no user is aborted, and the switch reports no loss.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_dropped_link_ignores_its_manager_closing() {
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(10)).await;
+            let link = Link::connect(LinkSettings {
+                address: manager.local_addr.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(10),
+                hello: LinkSettings::hello(7, "dropped".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            let user = tokio::spawn(std::future::pending::<()>());
+            link.watch(user.abort_handle());
+            let fired = link.fired.clone();
+            drop(link);
+            // Every worker's stream closes without Shutdown.
+            drop(manager);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(!fired.load(Ordering::SeqCst), "the switch fired");
+            assert!(!user.is_finished(), "a user was aborted");
+            user.abort();
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A link dropped while its reader waits on a full event queue ends
+    /// both of its background tasks within a few seconds, where they would
+    /// otherwise wait forever.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_dropped_link_ends_its_tasks_with_a_full_queue() {
+        let test = async {
+            let (link, _manager) = flooded(Duration::from_secs(30), EVENT_QUEUE, 1 << 10).await;
+            let alive = link.alive.clone();
+            drop(link);
+            let dropped = Instant::now();
+            while Arc::strong_count(&alive) > 1 {
+                assert!(
+                    dropped.elapsed() < Duration::from_secs(5),
+                    "{} tasks still run",
+                    Arc::strong_count(&alive) - 1
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// Relay every connection to `to` until the notify is woken, when every
+    /// relayed connection is closed at once, as when the manager's process
+    /// dies: the address it listens on, and the notify.
+    async fn cut_proxy(to: std::net::SocketAddr) -> (std::net::SocketAddr, Arc<Notify>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let cut = Arc::new(Notify::new());
+        let cut_all = cut.clone();
+        tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                let Ok(mut server) = tokio::net::TcpStream::connect(to).await else {
+                    continue;
+                };
+                let cut = cut_all.clone();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                        () = cut.notified() => {}
+                    }
+                });
+            }
+        });
+        (address, cut)
+    }
+
+    /// A manager that dies while the worker's event queue is full and its
+    /// main loop held: the switch fires within the heartbeat timeout, as
+    /// for any manager gone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_dead_manager_fires_the_switch_with_a_full_queue() {
+        use super::super::proto::{manager_message::Message as ToWorker, Prepare};
+        let test = async {
+            let timeout = Duration::from_secs(4);
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (address, cut) = cut_proxy(manager.local_addr).await;
+            let link = Link::connect(LinkSettings {
+                address: address.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: timeout,
+                hello: LinkSettings::hello(7, "cut".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            // More than the queue holds; the main loop takes none.
+            for _ in 0..EVENT_QUEUE + 4 {
+                manager.send(link.id, ToWorker::Prepare(Prepare { spec: vec![1] }));
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cut.notify_waiters();
+            let cut_at = Instant::now();
+            while !link.fired.load(Ordering::SeqCst) {
+                assert!(
+                    cut_at.elapsed() < timeout + Duration::from_secs(4),
+                    "the switch never fired"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    #[test]
+    fn backoff_is_one_two_four_eight_then_ten() {
+        let waits: Vec<u64> = (0..7).map(|attempt| backoff(attempt).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 10, 10, 10]);
+    }
+}

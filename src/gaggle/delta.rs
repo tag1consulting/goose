@@ -83,6 +83,9 @@ pub(crate) enum DeltaError {
     BadSequence { first_seq: u64, seq: u64 },
     /// It follows the worker's final delta.
     AfterFinal { seq: u64 },
+    /// Its metrics epoch is past the manager's own: only a manager's
+    /// metrics reset starts an epoch.
+    EpochAhead { epoch: u64, run: u64 },
     /// It covers some sequence numbers already applied and some not.
     Overlap { first_seq: u64, seq: u64, held: u64 },
     /// A series second after the delta's own clock, or a clock past
@@ -436,7 +439,125 @@ impl GaggleDelta {
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self, postcard::Error> {
         postcard::from_bytes(bytes)
     }
+
+    /// About how many bytes this delta holds decoded: its fixed parts, and
+    /// what its maps, vectors and strings hold, each map entry counted with
+    /// [`ENTRY_BYTES`] of tree around it. A varint of 1 byte on the wire is
+    /// 8 here, and a bucket of 2 is 16, so the encoded size understates a
+    /// delta's memory, up to [`DECODED_PER_ENCODED`] times.
+    pub(crate) fn decoded_bytes(&self) -> usize {
+        use std::mem::size_of;
+        let entry = |value: usize| ENTRY_BYTES + value;
+        let timing = |timing: &Timing| timing.buckets.len() * size_of::<(u64, u64)>();
+        let metrics = &self.metrics;
+        let requests: usize = metrics
+            .requests
+            .iter()
+            .map(|(name, part)| {
+                entry(name.len() + size_of::<(String, RequestPart)>())
+                    + part.path.len()
+                    + part.custom_method.len()
+                    + timing(&part.raw)
+                    + part.adjusted.as_ref().map_or(0, timing)
+                    + part.status_codes.len() * entry(size_of::<(u16, u64)>())
+                    + part.status_timings.len() * entry(size_of::<(u16, StatusCodeTimingSummary)>())
+            })
+            .sum();
+        let transactions: usize = metrics
+            .transactions
+            .values()
+            .map(|part| entry(size_of::<((u64, u64), TransactionPart)>()) + timing(&part.run_times))
+            .sum();
+        let scenarios: usize = metrics
+            .scenarios
+            .values()
+            .map(|part| {
+                entry(size_of::<(u64, ScenarioPart)>())
+                    + part.users.len() * entry(size_of::<u64>())
+                    + timing(&part.run_times)
+            })
+            .sum();
+        let errors: usize = metrics
+            .errors
+            .keys()
+            .map(|key| {
+                entry(size_of::<(ErrorKey, u64)>())
+                    + key.key.len()
+                    + key.name.len()
+                    + key.error.len()
+                    + key.custom_method.len()
+            })
+            .sum();
+        let transaction_errors: usize = metrics
+            .transaction_errors
+            .keys()
+            .map(|key| {
+                entry(size_of::<(TransactionErrorKey, u64)>())
+                    + key.key.len()
+                    + key.scenario_name.len()
+                    + key.transaction_name.len()
+                    + key.error.len()
+            })
+            .sum();
+        let hosts: usize = metrics
+            .hosts
+            .iter()
+            .map(|host| entry(size_of::<String>() + host.len()))
+            .sum();
+        let co = metrics.co.as_ref().map_or(0, |co| {
+            co.events.len() * size_of::<CoEvent>()
+                + co.severity.len() * entry(size_of::<(u8, u64)>())
+        });
+        // A name's rows, each second a map entry of `row` bytes.
+        fn rows<T>(
+            rows: &BTreeMap<String, BTreeMap<Second, T>>,
+            extra: impl Fn(&T) -> usize,
+        ) -> usize {
+            rows.iter()
+                .map(|(name, seconds)| {
+                    ENTRY_BYTES
+                        + std::mem::size_of::<String>()
+                        + name.len()
+                        + seconds
+                            .values()
+                            .map(|value| {
+                                ENTRY_BYTES + std::mem::size_of::<(Second, T)>() + extra(value)
+                            })
+                            .sum::<usize>()
+                })
+                .sum()
+        }
+        let graph = &self.graph;
+        let histogram = |histogram: &Histogram| histogram.rows.len() * size_of::<(u32, u64)>();
+        let levels = (graph.transactions.len() + graph.scenarios.len() + graph.users.len())
+            * entry(size_of::<(Second, u64)>());
+        size_of::<GaggleDelta>()
+            + requests
+            + transactions
+            + scenarios
+            + errors
+            + transaction_errors
+            + hosts
+            + co
+            + rows(&graph.requests, |_| 0)
+            + rows(&graph.errors, |_| 0)
+            + rows(&graph.averages, |_| 0)
+            + rows(&graph.latency, histogram)
+            + rows(&graph.synthetic, histogram)
+            + levels
+    }
 }
+
+/// The bytes [`GaggleDelta::decoded_bytes`] counts for the tree around
+/// each map entry.
+const ENTRY_BYTES: usize = 8;
+
+/// How many times its encoded bytes a delta may hold decoded, as
+/// [`GaggleDelta::decoded_bytes`] counts it: a map entry of two 1 byte
+/// varints is 24 bytes there, 12 times, and a string of a few bytes in a
+/// map more. A reader holds this much of the manager's event budget while
+/// a delta decodes, and then only what it counts.
+pub(crate) const DECODED_PER_ENCODED: usize = 16;
 
 /// Response times in microseconds, as [`GooseRequestMetricTimingData`] holds
 /// them: each bucket's fastest time and count, sorted, and the unrounded

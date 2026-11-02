@@ -410,6 +410,40 @@ pub(crate) enum MetricsCommand {
     /// through the shadow merge. `now` is the series second.
     #[cfg(feature = "gaggle")]
     GaggleShadowTick { now: usize },
+    /// A Gaggle worker: queue this second's delta for the manager. `now` is
+    /// the series second.
+    #[cfg(feature = "gaggle")]
+    GaggleTick {
+        now: usize,
+        outbox: Arc<crate::gaggle::link::Outbox>,
+    },
+    /// A Gaggle worker whose users have all stopped: queue its final delta
+    /// for the manager, then answer.
+    #[cfg(feature = "gaggle")]
+    GaggleFinal {
+        now: usize,
+        outbox: Arc<crate::gaggle::link::Outbox>,
+        respond: tokio::sync::oneshot::Sender<()>,
+    },
+    /// A Gaggle manager: add worker `worker`'s delta to the merge.
+    #[cfg(feature = "gaggle")]
+    GaggleApply {
+        worker: u32,
+        delta: Box<crate::gaggle::delta::GaggleDelta>,
+        /// The delta's share of the manager's event byte budget, held
+        /// until the merge has taken it.
+        bytes: Option<tokio::sync::OwnedSemaphorePermit>,
+    },
+    /// A Gaggle manager: worker `worker` is gone without its final delta.
+    #[cfg(feature = "gaggle")]
+    GaggleLost { worker: u32 },
+    /// A Gaggle manager: worker `worker` stopped as told and sends no more
+    /// deltas, its final among them or not.
+    #[cfg(feature = "gaggle")]
+    GaggleDone { worker: u32 },
+    /// A Gaggle manager: refuse a delta carrying a second past `second`.
+    #[cfg(feature = "gaggle")]
+    GaggleClock { second: u64 },
     /// Flush all pending metrics and return the final state for reporting.
     Shutdown {
         duration: usize,
@@ -509,6 +543,10 @@ pub(crate) struct MetricsProcessor {
     /// Read it through [`Self::side_effects`].
     #[cfg(feature = "gaggle")]
     shadow_pass: bool,
+    /// Every worker's metrics, merged into `metrics` and `graph_data` before
+    /// anything reads them, while the processor runs as a Gaggle manager.
+    #[cfg(feature = "gaggle")]
+    gaggle_merge: Option<Box<gaggle::ManagerMerge>>,
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -2191,7 +2229,23 @@ impl GooseMetrics {
             );
 
             // Include a blank line after printing running metrics.
-            println!("{self}");
+            self.print(true);
+        }
+    }
+
+    /// Print the metrics to stdout, and a blank line after them with
+    /// `blank_line`. They are formatted first, stdout unlocked: formatting
+    /// them logs, and the logger takes its own lock and then stdout's, so a
+    /// print that held stdout while they were formatted waited for the
+    /// logger's lock as any other thread logging then held it and waited
+    /// for stdout, deadlocking both, as a Gaggle connection's tracing at
+    /// -vv made likely.
+    pub(crate) fn print(&self, blank_line: bool) {
+        let text = self.to_string();
+        if blank_line {
+            println!("{text}");
+        } else {
+            print!("{text}");
         }
     }
 
@@ -3398,6 +3452,8 @@ impl MetricsProcessor {
             gaggle: None,
             #[cfg(feature = "gaggle")]
             shadow_pass: false,
+            #[cfg(feature = "gaggle")]
+            gaggle_merge: None,
         }
     }
 
@@ -3515,6 +3571,15 @@ impl MetricsProcessor {
 
     /// Handle a command from the main loop. Returns `true` if shutdown was processed.
     fn handle_command(&mut self, cmd: MetricsCommand) -> bool {
+        #[cfg(feature = "gaggle")]
+        if self.gaggle_merge.is_some() {
+            return self.gaggle_manager_command(cmd);
+        }
+        self.dispatch_command(cmd)
+    }
+
+    /// [`Self::handle_command`], on the processor's own state.
+    fn dispatch_command(&mut self, cmd: MetricsCommand) -> bool {
         match cmd {
             MetricsCommand::DisplayRunning {
                 duration,
@@ -3530,6 +3595,8 @@ impl MetricsProcessor {
                 false
             }
             MetricsCommand::CheckThresholds { duration, seconds } => {
+                #[cfg(all(test, feature = "gaggle"))]
+                crate::gaggle::faults::hold_threshold_check(!self.metrics.requests.is_empty());
                 // Once the killswitch is triggered, by a threshold or anything
                 // else, the run is stopping and there is nothing more to judge.
                 if self.metrics.threshold_abort.is_none() && !crate::is_killswitch_triggered() {
@@ -3717,6 +3784,33 @@ impl MetricsProcessor {
                 self.gaggle_shadow_tick(now);
                 false
             }
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleTick { now, outbox } => {
+                self.drain_up_to(METRICS_DRAIN_LIMIT);
+                if let Some(delta) = self.gaggle_take_delta(now) {
+                    outbox.push_delta(delta);
+                }
+                false
+            }
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleFinal {
+                now,
+                outbox,
+                respond,
+            } => {
+                self.drain_pending();
+                if let Some(delta) = self.gaggle_take_final(now) {
+                    outbox.push_delta(delta);
+                }
+                let _ = respond.send(());
+                false
+            }
+            // Only a manager's processor merges; see `gaggle_manager_command`.
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleApply { .. }
+            | MetricsCommand::GaggleLost { .. }
+            | MetricsCommand::GaggleDone { .. }
+            | MetricsCommand::GaggleClock { .. } => false,
             MetricsCommand::Shutdown {
                 duration,
                 total_users,
@@ -3918,6 +4012,23 @@ impl MetricsProcessor {
     /// counters, which hold every request made even before its first metric is
     /// drained. The capped drain first keeps the aggregates close to them.
     fn threshold_mark(&mut self, seconds: f64) -> threshold::ThresholdMark {
+        // A Gaggle manager counts its workers' requests, merged.
+        #[cfg(feature = "gaggle")]
+        if self.gaggle_merge.is_some() {
+            self.gaggle_refresh(false);
+            let requests = self
+                .metrics
+                .requests
+                .iter()
+                .map(|(key, request)| {
+                    (
+                        key.clone(),
+                        request.success_count.saturating_add(request.fail_count),
+                    )
+                })
+                .collect();
+            return threshold::ThresholdMark::new(seconds, requests);
+        }
         self.drain_up_to(METRICS_DRAIN_LIMIT);
         self.sync_atomic_counters();
         let registry = self
@@ -4529,6 +4640,25 @@ impl GooseAttack {
         }
     }
 
+    /// The command that resets the metrics processor now: this run's
+    /// figures so far, and every user still running, which the scenarios
+    /// count again. The processor answers on `ack` once it has reset.
+    pub(crate) fn reset_command(
+        &self,
+        goose_attack_run_state: &GooseAttackRunState,
+        ack: tokio::sync::oneshot::Sender<()>,
+    ) -> MetricsCommand {
+        MetricsCommand::Reset {
+            duration: self.metrics.duration,
+            total_users: self.metrics.total_users,
+            maximum_users: self.metrics.maximum_users,
+            active_users: goose_attack_run_state.active_users,
+            series_elapsed_secs: self.series_elapsed_secs(),
+            running_users: goose_attack_run_state.running_users.clone(),
+            ack,
+        }
+    }
+
     /// When going from the Increasing phase to the Maintaining phase, optionally
     /// flush and reset metrics via the dedicated processor task.
     pub(crate) async fn reset_metrics(
@@ -4560,17 +4690,17 @@ impl GooseAttack {
                     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
                     goose_attack_run_state
                         .metrics_cmd_tx
-                        .send(MetricsCommand::Reset {
-                            duration: self.metrics.duration,
-                            total_users: self.metrics.total_users,
-                            maximum_users: self.metrics.maximum_users,
-                            active_users: goose_attack_run_state.active_users,
-                            series_elapsed_secs: self.series_elapsed_secs(),
-                            running_users: goose_attack_run_state.running_users.clone(),
-                            ack: ack_tx,
-                        })
+                        .send(self.reset_command(goose_attack_run_state, ack_tx))
                         .expect("metrics processor channel closed unexpectedly");
                     ack_rx.await.expect("metrics processor dropped ack sender");
+
+                    // A Gaggle manager's workers reset theirs.
+                    #[cfg(feature = "gaggle")]
+                    self.gaggle_manager_reset(
+                        goose_attack_run_state
+                            .metrics_epoch
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                    );
 
                     // Reset running_metrics_timer.
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
@@ -4701,26 +4831,64 @@ impl GooseAttack {
             }
         };
         let path = PathBuf::from(report);
-        let file = File::create(&path)
+        // A Gaggle manager writes its reports again once its workers' logs
+        // are in, perhaps as they fill the disk: each goes to a part file
+        // renamed over the report once whole, so a failed write keeps the
+        // report the first wrote.
+        let target = if self.is_gaggle_manager() {
+            path.with_file_name(format!(
+                "{}.part",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ))
+        } else {
+            path.clone()
+        };
+        let file = File::create(&target)
             .await
             .map_err(|err| report_io_error(report, err))?;
         let Some(source) = source else {
+            // The access check: a manager's part file, then the report.
+            if target != path {
+                drop(file);
+                let _ = tokio::fs::remove_file(&target).await;
+                File::create(&path)
+                    .await
+                    .map_err(|err| report_io_error(report, err))?;
+            }
             return Ok(());
         };
+        // A manager's only: every run of one is serial with this test fault.
+        #[cfg(all(test, feature = "gaggle"))]
+        if self.is_gaggle_manager()
+            && crate::gaggle::run::DISK_FULL.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            drop(file);
+            if target != path {
+                let _ = tokio::fs::remove_file(&target).await;
+            }
+            return Err(report_io_error(
+                report,
+                std::io::Error::other("no space left on device"),
+            ));
+        }
         let mut out = ReportOut::new(
             file.into_std().await,
             gzip,
             self.configuration.compression_level(),
         );
         let written = match kind {
-            "html" => {
-                let content = match html {
-                    Some(content) => content,
-                    None => html.insert(source.html(baseline)?),
-                };
-                out.write_all(content.as_bytes())
-                    .map_err(|err| report_io_error(report, err))
-            }
+            // A report that cannot be rendered fails as one that cannot be
+            // written does, so a part file never outlives it.
+            "html" => match html.take().map_or_else(|| source.html(baseline), Ok) {
+                Ok(content) => {
+                    let wrote = out
+                        .write_all(content.as_bytes())
+                        .map_err(|err| report_io_error(report, err));
+                    *html = Some(content);
+                    wrote
+                }
+                Err(e) => Err(e),
+            },
             "json" => source.write_json(&mut out, baseline),
             "markdown" => source.write_markdown(&mut out, baseline),
             _ => {
@@ -4732,7 +4900,7 @@ impl GooseAttack {
                             // Dropping a gzip writer writes an empty member,
                             // so the file goes by name: Goose created it above.
                             drop(out);
-                            let _ = tokio::fs::remove_file(&path).await;
+                            let _ = tokio::fs::remove_file(&target).await;
                             return Err(e);
                         }
                     },
@@ -4743,7 +4911,19 @@ impl GooseAttack {
         };
         // Finish the file, gzip trailer and all, here: an error on drop would be
         // lost.
-        written.and_then(|()| out.finish().map_err(|err| report_io_error(report, err)))?;
+        let finished =
+            written.and_then(|()| out.finish().map_err(|err| report_io_error(report, err)));
+        if target != path {
+            if let Err(e) = finished {
+                let _ = tokio::fs::remove_file(&target).await;
+                return Err(e);
+            }
+            tokio::fs::rename(&target, &path)
+                .await
+                .map_err(|err| report_io_error(report, err))?;
+        } else {
+            finished?;
+        }
         info!("{kind} report file written to: {report}");
         Ok(())
     }

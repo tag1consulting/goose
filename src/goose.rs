@@ -1076,6 +1076,9 @@ pub struct GooseUser {
     counter_key_buf: String,
     /// The request counter key [`write_counter_key`](Self::write_counter_key) wrote.
     request_counter_key: String,
+    /// The bytes [`GooseAttack::set_worker_data`](../struct.GooseAttack.html#method.set_worker_data)'s
+    /// hook returned for this process, shared by every user.
+    pub(crate) worker_data: Option<Arc<[u8]>>,
 }
 
 impl Clone for GooseUser {
@@ -1118,6 +1121,7 @@ impl Clone for GooseUser {
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
             request_counter_key: String::new(),
+            worker_data: self.worker_data.clone(),
         }
     }
 }
@@ -1185,6 +1189,7 @@ impl GooseUser {
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
             request_counter_key: String::new(),
+            worker_data: None,
         })
     }
 
@@ -1215,6 +1220,15 @@ impl GooseUser {
     /// assigned [`Scenario`].
     pub fn get_iterations(&self) -> usize {
         self.iterations
+    }
+
+    /// The bytes the load test's worker data hook returned for this process,
+    /// shared by every user on it; empty when no hook is set.
+    ///
+    /// See [`GooseAttack::set_worker_data`](../struct.GooseAttack.html#method.set_worker_data),
+    /// which also shows how to read them.
+    pub fn worker_data(&self) -> &[u8] {
+        self.worker_data.as_deref().unwrap_or_default()
     }
 
     /// Returns an optional reference to per-[`GooseUser`] session data.

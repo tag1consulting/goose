@@ -3878,7 +3878,7 @@ impl Eq for MovingAverage {}
 #[cfg(feature = "gaggle")]
 mod gaggle;
 #[cfg(feature = "gaggle")]
-pub(crate) use gaggle::{gaggle_max_row, GraphSettings};
+pub(crate) use gaggle::{gaggle_max_row, GraphSettings, MergedUsers};
 
 #[cfg(test)]
 mod test {

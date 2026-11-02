@@ -52,6 +52,8 @@ fn apply(
     decoded: GaggleDelta,
     errors: &mut Vec<String>,
 ) {
+    // This process's own metrics resets are the manager's here.
+    accumulator.set_epoch(decoded.epoch);
     if let Err(e) = accumulator.apply(sent.worker, decoded) {
         errors.push(format!("delta {} refused: {e}", sent.seq));
     }
@@ -88,8 +90,8 @@ impl ShadowMerge {
         outcome: Arc<Mutex<Option<ShadowOutcome>>>,
     ) -> Self {
         ShadowMerge {
-            deltas: GaggleAccumulator::new(template.clone(), settings, LIMITS),
-            finals: GaggleAccumulator::new(template, settings, LIMITS),
+            deltas: GaggleAccumulator::new(template.clone(), settings, LIMITS).keeping_gaps(),
+            finals: GaggleAccumulator::new(template, settings, LIMITS).keeping_gaps(),
             sizes: Vec::new(),
             errors: Vec::new(),
             dropped: 0,
@@ -161,17 +163,19 @@ impl ShadowMerge {
         for gap in self.deltas.gaps() {
             differences.push(format!("sequence gap: {gap:?}"));
         }
-        for (name, accumulator) in [("deltas", &self.deltas), ("final", &self.finals)] {
-            for worker in accumulator.excluded() {
-                differences.push(format!(
-                    "{name}: worker {worker} left out of the merge: its metrics epoch is older"
-                ));
-            }
+        if self.deltas.gaps_dropped() > 0 {
+            differences.push(format!("{} more sequence gaps", self.deltas.gaps_dropped()));
         }
         let mut run_graph = run.1.clone();
         let run_snapshot = snapshot.map(|build| build(run.0, &mut run_graph));
         for (name, accumulator) in [("deltas", &self.deltas), ("final", &self.finals)] {
-            let (mut metrics, mut graph) = accumulator.merged();
+            let (mut metrics, mut graph, excluded) =
+                accumulator.merged_and_excluded(GraphData::new());
+            for (worker, why) in excluded {
+                differences.push(format!(
+                    "{name}: worker {worker} left out of the merge: {why}"
+                ));
+            }
             super::compare::adopt_unmerged(&mut metrics, run.0);
             // Events the deltas left out at the cap are missing from them,
             // and only from them; the count left out must account for it.

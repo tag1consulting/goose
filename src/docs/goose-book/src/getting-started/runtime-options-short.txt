@@ -95,6 +95,19 @@ HTTP client:
       --sticky-follow         Keep following the host's redirect
       --accept-invalid-certs  Accept invalid TLS certificates
 
+Gaggle:
+      --manager                          Run as a Gaggle manager
+      --expect-workers <N>               Workers to wait for
+      --manager-bind-host <HOST>         Manager bind host [default: 127.0.0.1]
+      --manager-bind-port <PORT>         Manager bind port [default: 5115]
+      --worker                           Run as a Gaggle worker
+      --manager-host <HOST>              Manager host
+      --manager-port <PORT>              Manager port [default: 5115]
+      --gaggle-connect-timeout <TIME>    Connect timeout [default: 60s]
+      --gaggle-token <TOKEN>             Shared Gaggle token
+      --no-hash-check                    Don't check the load test matches
+      --gaggle-heartbeat-timeout <TIME>  Heartbeat timeout [default: 10s]
+
 Examples:
   loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m
   loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html

@@ -3058,6 +3058,7 @@ async fn test_test_stop_runs_once_when_exiting_from_idle() {
     std::fs::remove_dir_all(&parent).ok();
 }
 
+#[cfg(unix)]
 /// Delete needs the control token in the Authorization header, removes a
 /// folder's reports and Goose's logs and nothing else, and refuses a name the
 /// listing would not list.
@@ -3340,6 +3341,7 @@ async fn test_save_report_turned_on_during_a_run() {
     std::fs::remove_dir_all(&parent).ok();
 }
 
+#[cfg(unix)]
 /// Make `folder` read only; false, after printing why, when it can still be
 /// written to, as it can by root.
 fn make_read_only(folder: &std::path::Path) -> bool {
@@ -3358,11 +3360,13 @@ fn make_read_only(folder: &std::path::Path) -> bool {
     true
 }
 
+#[cfg(unix)]
 fn make_writable(folder: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+#[cfg(unix)]
 /// Save report now answers a folder it can't write to with a refusal that
 /// gives the reason, and the run goes on; with `--no-metrics`, Save report
 /// can't be turned on.
@@ -3607,6 +3611,7 @@ async fn test_save_report_now_counts_its_writes() {
     std::fs::remove_dir_all(&parent).ok();
 }
 
+#[cfg(unix)]
 /// A folder report that fails at the end of a run in a session that goes on
 /// leaves the session at Idle, with the reason on the dashboard.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -145,7 +145,26 @@ fn series_count(count: u64) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
+/// The users series a Gaggle manager's merge built, kept so the next build
+/// starts from it: the manager records its own users levels into its graph
+/// data between builds, and the merge's are the ones the results hold.
+#[derive(Clone)]
+pub(crate) struct MergedUsers(TimeSeries<usize, usize>);
+
 impl GraphData {
+    /// The users series, as the merge just built it.
+    pub(crate) fn merged_users(&self) -> MergedUsers {
+        MergedUsers(self.users_per_second.clone())
+    }
+
+    /// Put back the users series the merge built last, dropping any level
+    /// recorded since, and any second the dashboard's window pruned since.
+    pub(crate) fn restore_merged_users(&mut self, users: MergedUsers) {
+        let origin = self.users_per_second.origin;
+        self.users_per_second = users.0;
+        self.users_per_second.align_origin_to(origin);
+    }
+
     /// How a manager builds graph data like this, which `records` per
     /// second graphs or not.
     pub(crate) fn gaggle_settings(&self, records: bool) -> GraphSettings {
@@ -311,59 +330,84 @@ impl GraphData {
         changed
     }
 
-    /// Graph data built from `part`, merged from every worker, as the
-    /// metrics processor of a run with `settings` builds it: the users
-    /// levels, the rate series from `series_origin` when a metrics reset
-    /// restarted them there, then every second before `complete` (all
-    /// when `None`) in order, names admitted to the heatmap's rings in
-    /// the order of the first second they have response times in and by
-    /// name within it.
-    pub(crate) fn gaggle_build(
-        part: &GraphPart,
+    /// Graph data with nothing in it yet, for [`Self::gaggle_extend`], as the
+    /// metrics processor of a run with `settings` starts it: its rate series
+    /// from `series_origin` when a metrics reset restarted them there.
+    pub(crate) fn gaggle_start(
         settings: GraphSettings,
         series_origin: Option<Second>,
-        complete: Option<Second>,
     ) -> GraphData {
         let mut graph_data = GraphData::for_metrics_processor(
             settings.latency,
             settings.synthetic,
             settings.columns,
         );
-        let done = |second: Second| complete.is_none_or(|complete| second < complete);
+        if settings.records {
+            if let Some(origin) = series_origin {
+                graph_data.reset_rate_series(origin as usize);
+            }
+        }
+        graph_data
+    }
+
+    /// Add every second of `part`, merged from every worker, from `from` and
+    /// before `to` (every one from `from` when `None`), with `users` as the
+    /// users levels, as the metrics processor of a run would: in order of
+    /// second, names admitted to the heatmap's rings in the order of the
+    /// first second they have response times in and by name within it.
+    /// Built over consecutive ranges, in order, it is the build over all of
+    /// them at once, but for the heatmap's change counters; finish it with
+    /// [`Self::finish_latency_columns`].
+    pub(crate) fn gaggle_extend(
+        &mut self,
+        part: &GraphPart,
+        users: &BTreeMap<Second, u64>,
+        settings: GraphSettings,
+        from: Second,
+        to: Option<Second>,
+    ) {
+        // The seconds of `rows` in the range, found without walking the
+        // seconds before it.
+        fn range<V>(
+            rows: &BTreeMap<Second, V>,
+            from: Second,
+            to: Option<Second>,
+        ) -> std::collections::btree_map::Range<'_, Second, V> {
+            match to {
+                Some(to) if to <= from => rows.range(from..from),
+                Some(to) => rows.range(from..to),
+                None => rows.range(from..),
+            }
+        }
         // The users series is kept whether or not per second graphs are.
-        for (&second, &users) in part.users.iter().filter(|(&second, _)| done(second)) {
-            graph_data.record_users_per_second(users as usize, second as usize);
+        for (&second, &users) in range(users, from, to) {
+            self.record_users_per_second(users as usize, second as usize);
         }
         if !settings.records {
-            graph_data.finish_latency_columns();
-            return graph_data;
-        }
-        if let Some(origin) = series_origin {
-            graph_data.reset_rate_series(origin as usize);
+            return;
         }
         for (key, rows) in &part.requests {
-            for (&second, &count) in rows.iter().filter(|(&second, _)| done(second)) {
-                graph_data
-                    .requests_per_second
+            for (&second, &count) in range(rows, from, to) {
+                self.requests_per_second
                     .increment(key, second as usize, series_count(count));
             }
         }
         for (key, rows) in &part.errors {
-            for (&second, &count) in rows.iter().filter(|(&second, _)| done(second)) {
-                graph_data.errors_per_second.increment(
+            for (&second, &count) in range(rows, from, to) {
+                self.errors_per_second.increment(
                     key,
                     second as usize,
                     series_count(count.max(0) as u64),
                 );
             }
         }
-        let origin = graph_data.users_per_second.origin;
+        let origin = self.users_per_second.origin;
         for (key, rows) in &part.averages {
-            for (&second, average) in rows.iter().filter(|(&second, _)| done(second)) {
+            for (&second, average) in range(rows, from, to) {
                 if average.count == 0 {
                     continue;
                 }
-                let series = graph_data
+                let series = self
                     .average_response_time_per_second
                     .entry(key.clone())
                     .or_insert_with(|| TimeSeries::with_origin(origin));
@@ -376,23 +420,26 @@ impl GraphData {
                 );
             }
         }
-        for (&second, &count) in part.transactions.iter().filter(|(&second, _)| done(second)) {
-            graph_data.record_transactions_per_second_batch(second as usize, count as usize);
+        for (&second, &count) in range(&part.transactions, from, to) {
+            self.record_transactions_per_second_batch(second as usize, count as usize);
         }
-        for (&second, &count) in part.scenarios.iter().filter(|(&second, _)| done(second)) {
-            graph_data.record_scenarios_per_second_batch(second as usize, count as usize);
+        for (&second, &count) in range(&part.scenarios, from, to) {
+            self.record_scenarios_per_second_batch(second as usize, count as usize);
         }
-        if let Some(latency) = graph_data.latency.as_mut() {
+        if let Some(latency) = self.latency.as_mut() {
             // Measured times first, each second in order and by name
             // within it, so names are admitted to rings as a single
             // process admits names first seen in that order. Synthetic
             // times after: a single process records them, back dated to
             // when a stall began, only while it handles a later request
-            // of the same name, so the name was admitted first.
+            // of the same name, so the name was admitted first. The
+            // measured and synthetic rings are apart, so taking the two
+            // a range of seconds at a time fills each as taking them
+            // over the whole run does.
             for (synthetic, by_key) in [(false, &part.latency), (true, &part.synthetic)] {
                 let mut seconds: BTreeMap<Second, Vec<(&str, &Histogram)>> = BTreeMap::new();
                 for (key, rows) in by_key {
-                    for (&second, histogram) in rows.iter().filter(|(&second, _)| done(second)) {
+                    for (&second, histogram) in range(rows, from, to) {
                         seconds
                             .entry(second)
                             .or_default()
@@ -411,8 +458,6 @@ impl GraphData {
                 }
             }
         }
-        graph_data.finish_latency_columns();
-        graph_data
     }
 
     /// Every difference between this graph data and `other`, as

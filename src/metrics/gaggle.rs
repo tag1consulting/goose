@@ -1,13 +1,241 @@
 use super::*;
 
+/// What a Gaggle manager's processor merges its workers' deltas into.
+pub(crate) struct ManagerMerge {
+    accumulator: crate::gaggle::merge::GaggleAccumulator,
+    /// A delta, a loss or a reset since `metrics` and `graph_data` were last
+    /// built from the merge.
+    dirty: bool,
+    /// The manager's series second, from its last clock.
+    clock: u64,
+    /// The clock second the merge was last built in: a live read builds it
+    /// at most once a second, as the workers' deltas arrive once a second.
+    built_at: Option<u64>,
+    /// What the merge did with each worker's deltas, for the run record.
+    health: crate::gaggle::merge::MergeHealth,
+}
+
+impl ManagerMerge {
+    /// Record what the merge holds of `worker`: its last delta merged, and
+    /// the deltas that never arrived.
+    fn note(&self, worker: u32) {
+        if let Ok(mut health) = self.health.lock() {
+            let entry = health.entry(worker).or_default();
+            entry.last_seq = self.accumulator.last_seq(worker).unwrap_or(0);
+            entry.missing = self.accumulator.missing(worker);
+            entry.final_merged = self.accumulator.got_final(worker);
+        }
+    }
+
+    /// Record a delta refused from `worker`.
+    fn refused(&self, worker: u32, refusal: String) {
+        if let Ok(mut health) = self.health.lock() {
+            let entry = health.entry(worker).or_default();
+            entry.refused += 1;
+            entry.refusal = Some(refusal);
+        }
+        self.note(worker);
+    }
+
+    /// Record the workers the merge just built left out, and no others.
+    fn excluded(&self, excluded: Vec<(u32, String)>) {
+        if let Ok(mut health) = self.health.lock() {
+            for entry in health.values_mut() {
+                entry.excluded = None;
+            }
+            for (worker, why) in excluded {
+                health.entry(worker).or_default().excluded = Some(why);
+            }
+        }
+    }
+}
+
+/// The metrics processor as a Gaggle manager.
+impl MetricsProcessor {
+    /// Run as a Gaggle manager: from now on `metrics` and `graph_data` are
+    /// every worker's merged, built again before anything reads them. The
+    /// processor's own metrics are left out, as the manager runs no users.
+    /// A delta past `limits` is refused; what the merge does with each
+    /// worker's deltas is written to `health`.
+    pub(crate) fn gaggle_enable_manager(
+        &mut self,
+        limits: crate::gaggle::delta::DeltaLimits,
+        health: crate::gaggle::merge::MergeHealth,
+    ) {
+        let mut accumulator = crate::gaggle::merge::GaggleAccumulator::new(
+            self.gaggle_template(),
+            self.gaggle_graph_settings(),
+            limits,
+        );
+        // Until the series starts and the first clock arrives, a worker's
+        // second may be at most the slack past the start: no worker can grow
+        // the graph data far ahead before then.
+        accumulator.set_max_second(crate::gaggle::run::CLOCK_SLACK);
+        // A worker's rows reach back its own lag.
+        accumulator.set_lag(self.gaggle_lag());
+        // The run's epoch is this processor's: the run's start began it on
+        // the manager, as on every worker.
+        accumulator.set_epoch(self.metrics_epoch.load(AtomicOrdering::Relaxed));
+        self.gaggle_merge = Some(Box::new(ManagerMerge {
+            accumulator,
+            dirty: true,
+            clock: 0,
+            built_at: None,
+            health,
+        }));
+    }
+
+    /// A command, as a manager's processor handles it: the merge's own
+    /// commands here, and every other on the merged state, built again
+    /// first when the command reads it.
+    pub(super) fn gaggle_manager_command(&mut self, cmd: MetricsCommand) -> bool {
+        let Some(merge) = self.gaggle_merge.as_mut() else {
+            return self.dispatch_command(cmd);
+        };
+        match cmd {
+            MetricsCommand::GaggleApply {
+                worker,
+                delta,
+                bytes,
+            } => {
+                let seq = delta.seq;
+                let applied = merge.accumulator.apply(worker, *delta);
+                // The delta is merged or refused: its share of the budget
+                // is free again.
+                drop(bytes);
+                match applied {
+                    Ok(()) => {
+                        merge.dirty = true;
+                        merge.note(worker);
+                    }
+                    Err(e) => {
+                        warn!("gaggle: refused delta {seq} from worker {worker}: {e}");
+                        merge.refused(worker, format!("delta {seq}: {e}"));
+                    }
+                }
+                false
+            }
+            MetricsCommand::GaggleLost { worker } => {
+                merge.accumulator.lose(worker);
+                merge.dirty = true;
+                false
+            }
+            MetricsCommand::GaggleDone { worker } => {
+                merge.accumulator.done(worker);
+                merge.dirty = true;
+                false
+            }
+            MetricsCommand::GaggleClock { second } => {
+                merge.accumulator.set_max_second(second);
+                merge.clock = second;
+                false
+            }
+            // Save report: the merge builds the report heatmap's columns, or
+            // stops, from now on.
+            MetricsCommand::KeepGraph { keep, now } => {
+                merge.accumulator.set_columns(keep);
+                merge.dirty = true;
+                merge.built_at = None;
+                self.dispatch_command(MetricsCommand::KeepGraph { keep, now })
+            }
+            // Recorded on the manager's own state, read until the next
+            // build, which puts back the users the merge built.
+            cmd @ (MetricsCommand::UserStarted { .. } | MetricsCommand::RecordUsers { .. }) => {
+                self.dispatch_command(cmd)
+            }
+            cmd => {
+                let reset = matches!(cmd, MetricsCommand::Reset { .. });
+                // What a report, a Controller or the end of a run reads is
+                // built now; a live view, once a second.
+                let force = matches!(
+                    cmd,
+                    MetricsCommand::Reset { .. }
+                        | MetricsCommand::Shutdown { .. }
+                        | MetricsCommand::GetMetrics { .. }
+                        | MetricsCommand::GetReportData { .. }
+                        | MetricsCommand::EnterMaintain { .. }
+                        | MetricsCommand::LeaveMaintain { .. }
+                );
+                self.gaggle_refresh(force);
+                let done = self.dispatch_command(cmd);
+                if reset {
+                    // The reset started a new epoch on the manager, which the
+                    // workers start too: until a worker reports it, its old
+                    // figures are left out, so what Maintain opens with, the
+                    // hold `rps` rules count from, holds none of the ramp.
+                    let epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
+                    if let Some(merge) = self.gaggle_merge.as_mut() {
+                        merge.accumulator.set_epoch(epoch);
+                        merge.dirty = true;
+                        merge.built_at = None;
+                    }
+                }
+                done
+            }
+        }
+    }
+
+    /// Build `metrics` and `graph_data` from the merge again, when it
+    /// changed. What the manager keeps of its own, its threshold state and
+    /// display flags among them, stays.
+    pub(super) fn gaggle_refresh(&mut self, force: bool) {
+        let Some(merge) = self.gaggle_merge.as_mut() else {
+            return;
+        };
+        // A forced read holds every row: a late row's build put off is made
+        // now.
+        let settled = force && merge.accumulator.settle();
+        if !(merge.dirty || settled) || (!force && merge.built_at == Some(merge.clock)) {
+            return;
+        }
+        merge.dirty = false;
+        merge.built_at = Some(merge.clock);
+        // The merge extends the graph data it built last, handed back, and
+        // adds to the coordinated omission events it gave.
+        let graph = std::mem::replace(&mut self.graph_data, GraphData::new());
+        if let Some(co) = self.metrics.coordinated_omission_metrics.as_mut() {
+            merge
+                .accumulator
+                .hand_back_events(std::mem::take(&mut co.co_events));
+        }
+        let (merged, graph, excluded) = merge.accumulator.merged_and_excluded(graph);
+        merge.excluded(excluded);
+        let GooseMetrics {
+            requests,
+            transactions,
+            scenarios,
+            errors,
+            transaction_errors,
+            hosts,
+            coordinated_omission_metrics,
+            ..
+        } = merged;
+        self.metrics.requests = requests;
+        self.metrics.transactions = transactions;
+        self.metrics.scenarios = scenarios;
+        self.metrics.errors = errors;
+        self.metrics.transaction_errors = transaction_errors;
+        self.metrics.hosts = hosts;
+        self.metrics.coordinated_omission_metrics = coordinated_omission_metrics;
+        self.graph_data = graph;
+    }
+}
+
 /// The metrics processor as a Gaggle worker.
 impl MetricsProcessor {
+    /// How far back a worker's graph rows may still reach: its request
+    /// timeout and a minute. The manager counts a second complete only once
+    /// it is this much older than every worker's latest.
+    fn gaggle_lag(&self) -> u64 {
+        self.configuration.request_timeout().as_secs() + 60
+    }
+
     /// Run as Gaggle worker `worker`: from now on every metric is also kept
     /// in what the next delta sends.
     pub(crate) fn gaggle_enable(&mut self, worker: u32) {
         let template = self.gaggle_template();
         let synthetic = template.coordinated_omission_metrics.is_some();
-        let lag = self.configuration.request_timeout().as_secs() as usize + 60;
+        let lag = self.gaggle_lag() as usize;
         self.gaggle = Some(Box::new(crate::gaggle::worker::WorkerState::new(
             worker, template, synthetic, lag,
         )));

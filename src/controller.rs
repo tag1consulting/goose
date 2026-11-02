@@ -639,6 +639,32 @@ pub(crate) enum ControlCommand {
     SaveReportNow,
 }
 
+/// The error code a Gaggle manager answers a command that changes the run
+/// with.
+#[cfg(feature = "gaggle")]
+pub(crate) const GAGGLE_UNSUPPORTED: &str = "gaggle_unsupported";
+
+impl ControlCommand {
+    /// Whether the command changes the run, rather than reading it or the
+    /// dashboard's report switches.
+    #[cfg(feature = "gaggle")]
+    fn changes_the_run(&self) -> bool {
+        match self {
+            Self::Command(command) => !matches!(
+                command,
+                ControllerCommand::Config
+                    | ControllerCommand::ConfigJson
+                    | ControllerCommand::Metrics
+                    | ControllerCommand::MetricsJson
+            ),
+            #[cfg(feature = "dashboard")]
+            Self::Settings { .. } => true,
+            #[cfg(feature = "dashboard")]
+            Self::Report { .. } | Self::SaveReportNow => false,
+        }
+    }
+}
+
 impl From<ControllerCommand> for ControlCommand {
     fn from(command: ControllerCommand) -> Self {
         Self::Command(command)
@@ -809,6 +835,20 @@ impl GooseAttack {
             }
             ControlStartBegin::Rejected(outcome) => outcome,
         };
+        // A Gaggle manager answers what it can read; a command that changes
+        // the run is refused until runtime control reaches the workers.
+        #[cfg(feature = "gaggle")]
+        if self.is_gaggle_manager() && command.changes_the_run() {
+            let refused = self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some(GAGGLE_UNSUPPORTED),
+                "not supported in Gaggle mode yet",
+                None,
+            );
+            let _ = respond.send(ControlReply::Outcome(refused));
+            return Ok(());
+        }
         // The dashboard's settings commands answer with the settings.
         #[cfg(feature = "dashboard")]
         let with_settings = matches!(command, ControlCommand::Settings { .. });
@@ -2673,6 +2713,53 @@ pub(crate) mod tests {
                     line
                 );
             }
+        });
+    }
+
+    /// A Gaggle manager refuses a command that changes the run with the
+    /// documented code and message, changing nothing, and answers metrics.
+    #[cfg(feature = "gaggle")]
+    #[test]
+    #[serial_test::serial]
+    fn test_control_gaggle_manager_refuses_changes_and_answers_metrics() {
+        use crate::controller::{ControlReply, ControllerCommand};
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            goose_attack.attack_mode = crate::AttackMode::Manager;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+            run_state.metrics_cmd_tx = metrics_cmd_tx;
+            tokio::spawn(async move {
+                while let Ok(command) = metrics_cmd_rx.recv_async().await {
+                    if let MetricsCommand::GetMetrics { respond, .. } = command {
+                        let _ = respond.send(GooseMetrics::default());
+                    }
+                }
+            });
+            let (users, users_reply) = oneshot::channel();
+            controller_tx
+                .send((ControllerCommand::Users(5).into(), users))
+                .unwrap();
+            let (metrics, metrics_reply) = oneshot::channel();
+            controller_tx
+                .send((ControllerCommand::Metrics.into(), metrics))
+                .unwrap();
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            match users_reply.await {
+                Ok(ControlReply::Outcome(outcome)) => {
+                    assert!(!outcome.ok);
+                    assert_eq!(outcome.error, Some("gaggle_unsupported"));
+                    assert_eq!(outcome.message, "not supported in Gaggle mode yet");
+                }
+                other => panic!("users 5 was answered with {}", other.is_ok()),
+            }
+            assert_eq!(goose_attack.configuration.users, None);
+            assert!(matches!(metrics_reply.await, Ok(ControlReply::Metrics(_))));
         });
     }
 

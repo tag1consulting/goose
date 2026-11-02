@@ -1,22 +1,61 @@
-//! Groundwork for Gaggle, distributed load tests: a manager coordinating
-//! workers that each run a share of the users.
+//! Gaggle, distributed load tests: a manager coordinating workers that each
+//! run a share of the users.
 //!
 //! A worker's metrics processor keeps what changed since its last delta
 //! beside its own state ([`worker`]) and sends it once a second as a
 //! [`delta::GaggleDelta`], postcard encoded; the manager adds every worker's
 //! deltas up ([`merge`]) into the metrics, graph data, dashboard snapshot
-//! and reports one process running the whole load test would produce. No
-//! network code: the transport comes later. `--gaggle-shadow-merge` runs
-//! both sides in one process and checks the result ([`shadow`]).
+//! and reports one process running the whole load test would produce. The
+//! wire is gRPC ([`proto`]): the manager's side in [`manager`], the worker's
+//! in [`link`], and each side's part in a run in [`run`], with the share a
+//! worker is handed in [`spec`]. `--gaggle-shadow-merge` runs both sides of
+//! the merge in one process and checks the result ([`shadow`]).
+//!
+//! Where each test lives: a module's unit tests, those that reach its
+//! private items, in that module; tests of the merge and the deltas through
+//! the crate's own API, one process against many, in `tests.rs`; runs of a
+//! manager and its workers in one process in `run_tests.rs`; and anything
+//! that needs processes of its own, a signal, a kill or a freeze, or the
+//! real binary's command line or exit status, in `tests/gaggle.rs`.
 
 pub(crate) mod compare;
 pub(crate) mod delta;
+pub(crate) mod link;
+pub(crate) mod manager;
 pub(crate) mod merge;
+pub(crate) mod options;
+pub(crate) mod proto;
+pub(crate) mod run;
 pub(crate) mod shadow;
+pub(crate) mod spec;
 pub(crate) mod worker;
 
 #[cfg(test)]
+pub(crate) mod faults;
+#[cfg(test)]
+mod run_tests;
+#[cfg(test)]
 mod tests;
+
+/// Something kept for each worker at the index of its id.
+pub(crate) trait WorkerId {
+    fn worker_id(&self) -> u32;
+}
+
+/// Worker `id` of `workers`: the one at its index, which ids follow, whose
+/// own id it is.
+pub(crate) fn worker<T: WorkerId>(workers: &[T], id: u32) -> Option<&T> {
+    workers
+        .get(id as usize)
+        .filter(|worker| worker.worker_id() == id)
+}
+
+/// [`worker`], to change.
+pub(crate) fn worker_mut<T: WorkerId>(workers: &mut [T], id: u32) -> Option<&mut T> {
+    workers
+        .get_mut(id as usize)
+        .filter(|worker| worker.worker_id() == id)
+}
 
 /// Whether two f32 averages agree to f32 rounding. A per second average
 /// response time is an f32 moving average whose last digits depend on the

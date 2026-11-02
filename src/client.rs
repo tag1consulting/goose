@@ -224,8 +224,9 @@ impl GooseClientConfig {
 
 /// Which client options were given on the command line, read before
 /// [`GooseConfiguration`]'s defaults are merged in, as these win over a client
-/// builder's settings while the defaults do not.
-#[derive(Clone, Copy, Debug, Default)]
+/// builder's settings while the defaults do not. A Gaggle worker takes its
+/// manager's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CommandLineClientOptions {
     /// `--timeout`.
     timeout: bool,

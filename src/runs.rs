@@ -63,6 +63,8 @@ pub(crate) enum EndedBy {
     Canceled,
     /// Every user exited on its own, for example after `--iterations`.
     UsersExited,
+    /// A Gaggle manager lost every one of its workers.
+    WorkersLost,
 }
 
 /// The record of a run that its JSON report holds beside its metrics. Every
@@ -96,6 +98,168 @@ pub(crate) struct RunRecord {
     /// When the graphs do not cover the whole run: where they start, and why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graphs_start: Option<GraphsStart>,
+    /// A Gaggle manager's workers; absent on a run of one process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gaggle: Option<GaggleRecord>,
+}
+
+/// A Gaggle run's workers, as the manager's run record keeps them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GaggleRecord {
+    #[serde(default)]
+    pub workers: Vec<GaggleWorkerRecord>,
+    /// Logs a worker still held when the manager stopped waiting for them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs_left: Vec<GaggleLogLeft>,
+    /// A worker was lost, or some of a worker's metrics are not in the
+    /// results: each such worker's entry says why.
+    #[serde(default)]
+    pub degraded: bool,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// Where a Gaggle worker stood when the manager wrote its run record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GaggleWorkerState {
+    /// It had not stopped.
+    #[default]
+    Running,
+    /// It stopped and sent its final metrics.
+    Finished,
+    /// Every one of its users exited (`--iterations`).
+    UsersExited,
+    /// It was lost: what it sent before stays in the results.
+    Lost,
+}
+
+/// One worker of a Gaggle run.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GaggleWorkerRecord {
+    pub id: u32,
+    pub name: String,
+    /// The users it started over the run.
+    pub users: usize,
+    /// Where it stood when the record was written.
+    pub state: GaggleWorkerState,
+    /// When it was lost, RFC 3339, UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost_at: Option<String>,
+    /// Why it was lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost_reason: Option<String>,
+    /// The sequence number of the last delta merged from it, when lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seq: Option<u64>,
+    /// The metrics deltas the manager refused from it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub refused_deltas: u64,
+    /// Why the last refused delta was refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_reason: Option<String>,
+    /// Why the results leave its metrics out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excluded_reason: Option<String>,
+    /// The metrics deltas from it that never arrived.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub missing_deltas: u64,
+    /// It finished, after sending metrics, but its final metrics never
+    /// arrived: the results hold its last running totals.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub final_missing: bool,
+}
+
+impl GaggleWorkerRecord {
+    /// Why the results undercount this worker, other than its loss.
+    fn shortfall(&self) -> Vec<String> {
+        let mut why = Vec::new();
+        if let Some(reason) = &self.excluded_reason {
+            why.push(format!("its metrics are left out: {reason}"));
+        }
+        if self.refused_deltas > 0 {
+            why.push(format!(
+                "{} of its metrics deltas were refused, the last for {}",
+                self.refused_deltas,
+                self.refused_reason.as_deref().unwrap_or("no reason given")
+            ));
+        }
+        if self.missing_deltas > 0 {
+            why.push(format!(
+                "{} of its metrics deltas never arrived",
+                self.missing_deltas
+            ));
+        }
+        if self.final_missing {
+            why.push("its final metrics never arrived".to_string());
+        }
+        why
+    }
+
+    /// Whether the results undercount this worker.
+    #[cfg(feature = "gaggle")]
+    pub(crate) fn degraded(&self) -> bool {
+        self.state == GaggleWorkerState::Lost || !self.shortfall().is_empty()
+    }
+}
+
+/// A log left on a worker.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GaggleLogLeft {
+    pub worker: String,
+    /// Where the worker wrote it, when the worker said.
+    pub path: String,
+}
+
+impl GaggleRecord {
+    /// The sentences a degraded run's reports open with.
+    pub(crate) fn intro(&self) -> Vec<String> {
+        let mut intro = Vec::new();
+        let lost: Vec<String> = self
+            .workers
+            .iter()
+            .filter(|worker| worker.state == GaggleWorkerState::Lost)
+            .map(|worker| match &worker.lost_reason {
+                Some(reason) => format!("{} ({reason})", worker.name),
+                None => worker.name.clone(),
+            })
+            .collect();
+        let short: Vec<String> = self
+            .workers
+            .iter()
+            .filter_map(|worker| {
+                let why = worker.shortfall();
+                (!why.is_empty()).then(|| format!("{} ({})", worker.name, why.join("; ")))
+            })
+            .collect();
+        if self.degraded && !lost.is_empty() {
+            intro.push(format!(
+                "Degraded: {} of the {} Gaggle workers were lost during the run: {}. The results hold what each sent before it was lost.",
+                lost.len(),
+                self.workers.len(),
+                lost.join(", ")
+            ));
+        }
+        if self.degraded && !short.is_empty() {
+            intro.push(format!(
+                "Degraded: the results leave out metrics from {} of the {} Gaggle workers: {}.",
+                short.len(),
+                self.workers.len(),
+                short.join(", ")
+            ));
+        }
+        if !self.logs_left.is_empty() {
+            let left: Vec<String> = self
+                .logs_left
+                .iter()
+                .map(|left| format!("{} on {}", left.path, left.worker))
+                .collect();
+            intro.push(format!("Logs left on their workers: {}.", left.join("; ")));
+        }
+        intro
+    }
 }
 
 /// Where a report's graphs start when they do not cover the whole run.
@@ -133,6 +297,9 @@ impl RunRecord {
         }
         if self.in_progress {
             intro.push(IN_PROGRESS.to_string());
+        }
+        if let Some(gaggle) = &self.gaggle {
+            intro.extend(gaggle.intro());
         }
         intro
     }
@@ -550,7 +717,18 @@ impl GooseAttack {
             canceled_reason,
             in_progress,
             graphs_start: self.graphs_start(graphs_from),
+            gaggle: self.gaggle_record(),
         }
+    }
+
+    /// The Gaggle section of the run record: a manager's workers.
+    fn gaggle_record(&self) -> Option<GaggleRecord> {
+        #[cfg(feature = "gaggle")]
+        {
+            self.gaggle_run_record()
+        }
+        #[cfg(not(feature = "gaggle"))]
+        None
     }
 
     /// Where the graphs start when they do not cover the whole run, as the
@@ -1334,6 +1512,7 @@ mod tests {
     /// the whole run's graphs only when no `--report-file` path needs them.
     #[cfg(feature = "dashboard")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn save_report_off_keeps_the_graphs_a_path_needs() {
         for (path, sent) in [(true, None), (false, Some(false))] {
             let report_file = if path {
@@ -1559,6 +1738,25 @@ mod tests {
         assert!(!listed[0].record.in_progress && !listed[0].running);
         assert_eq!(listed[0].requests, 12345);
         std::fs::remove_dir_all(&parent).ok();
+    }
+
+    /// A manager's run record written while a worker's state was a string
+    /// loads, each state read as its variant, and writes the same JSON.
+    #[test]
+    fn gaggle_worker_states_read_and_write_as_before() {
+        let written = r#"{"workers":[{"id":0,"name":"a","users":2,"state":"finished"},{"id":1,"name":"b","users":2,"state":"users_exited"},{"id":2,"name":"c","users":1,"state":"lost","lost_at":"2026-10-30T10:00:00Z","lost_reason":"nothing from it for 10 seconds","last_seq":4},{"id":3,"name":"d","users":0,"state":"running"}],"degraded":true}"#;
+        let record: GaggleRecord = serde_json::from_str(written).unwrap();
+        let states: Vec<GaggleWorkerState> = record.workers.iter().map(|w| w.state).collect();
+        assert_eq!(
+            states,
+            [
+                GaggleWorkerState::Finished,
+                GaggleWorkerState::UsersExited,
+                GaggleWorkerState::Lost,
+                GaggleWorkerState::Running
+            ]
+        );
+        assert_eq!(serde_json::to_string(&record).unwrap(), written);
     }
 
     #[test]

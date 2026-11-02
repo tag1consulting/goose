@@ -49,7 +49,7 @@ serde_json = "1.0"
 simplelog = "0.12"
 # The version clap resolves for `wrap_help`, to find the width of stdout.
 terminal_size = "0.4"
-tokio = { version = "1", features = [
+tokio = { version = "1.38", features = [
     "fs",
     "io-util",
     "macros",
@@ -67,6 +67,17 @@ hyper-util = { version = "0.1", optional = true, features = ["service", "tokio"]
 tower-http = { version = "0.6", optional = true, features = ["set-header"] }
 # Encodes Gaggle metrics deltas, with the `gaggle` feature.
 postcard = { version = "1", optional = true, default-features = false, features = ["use-std"] }
+# The Gaggle manager and workers talk gRPC, with the `gaggle` feature. The
+# generated code is checked in under src/gaggle/proto, so no build needs protoc.
+prost = { version = "0.14", optional = true }
+tokio-stream = { version = "0.1", optional = true, features = ["net"] }
+tonic = { version = "0.14", optional = true, default-features = false, features = ["codegen", "router", "transport"] }
+tonic-prost = { version = "0.14", optional = true }
+# Both already in the tree, through tonic and tokio-tungstenite: the manager
+# checks the size of a worker's first message as it arrives (http-body), and
+# compares tokens as fixed length digests (sha1).
+http-body = { version = "1", optional = true }
+sha1 = { version = "0.10", optional = true }
 
 [features]
 # Include cookies by default for backward compatibility and expected behavior in web load testing
@@ -79,13 +90,11 @@ pdf-reports = ["headless_chrome"]
 # Live web dashboard HTTP server (axum). DTO/builder always compiled; only HTTP is gated.
 # Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
-# Groundwork for distributed load tests (Gaggle): worker metrics as mergeable
-# deltas. Not yet usable on its own; no network code.
-gaggle = ["dep:postcard"]
+# Distributed load tests (Gaggle): a manager and workers, over gRPC.
+gaggle = ["dep:http-body", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 
 [dev-dependencies]
 httpmock = "0.8"
-nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"
 serial_test = "3.2"
 # A strict CSV reader, to check every error log row has the header's columns.
@@ -100,6 +109,17 @@ tokio = { version = "1", features = ["test-util"] }
 # the pin, run `GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib
 # dashboard_types_match_rust`, review the diff, and run `npm run check`.
 ts-rs = { version = "=12.0.1", features = ["chrono-impl"] }
+
+# Signals, for the tests that interrupt, freeze or kill a process: Unix only,
+# as are those tests.
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.30", features = ["signal"] }
+
+# Without the test harness, which captures stdout: the test checks no
+# thread holds stdout while the metrics are formatted.
+[[test]]
+name = "metrics_print_unlocked"
+harness = false
 
 # `cargo test` builds examples but runs no tests inside them by default; this runs
 # examples/umami's tests of its asset parsing against saved Drupal pages.

@@ -1,0 +1,13 @@
+# Regenerates src/gaggle/proto/goose.gaggle.v1.rs from proto/gaggle.proto,
+# without protoc. A package of its own, outside Goose's dependency graph, so no
+# Goose build compiles the generator; its Cargo.lock is committed so the
+# generator's versions, and so its output, change only when the lock does.
+[package]
+name = "goose-gaggle-proto-gen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+protox = "0.10"
+tonic-prost-build = { version = "0.14", default-features = false, features = ["transport"] }

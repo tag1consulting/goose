@@ -1000,8 +1000,8 @@ fn format_bind_address(host: &str, port: u16) -> String {
 /// not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
 /// `control_tx`, given only with dashboard control, registers the control routes.
 ///
-/// When/if multi-mode (Gaggle) returns, the dashboard should only run on the
-/// standalone/manager process — currently AttackMode is StandAlone only.
+/// A Gaggle worker never serves the dashboard: it refuses `--dashboard`, and
+/// the manager serves its workers' merged metrics.
 pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
     control_tx: Option<flume::Sender<ControlRequest>>,
