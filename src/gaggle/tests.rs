@@ -2373,6 +2373,78 @@ fn gaggle_late_rows_build_the_graph_once() {
     assert_eq!(super::merge::FRESH_BUILDS.with(std::cell::Cell::get), 1);
 }
 
+/// The users levels a manager records itself between builds, as its main
+/// loop and dashboard do, never reach the merged graph: each build owns
+/// every users second it built, as one that copied its cache did.
+#[test]
+fn gaggle_manager_users_samples_stay_out_of_the_merge() {
+    let mut side = Side::new(0..0, Some(0));
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), Default::default());
+    let mut expected = GaggleAccumulator::new(
+        side.processor.gaggle_template(),
+        side.processor.gaggle_graph_settings(),
+        DeltaLimits::default(),
+    );
+    expected.set_lag(60 + 60);
+    let delta = |at: u64| {
+        let mut delta = GaggleDelta::new(0, at + 1, 0, DeltaKind::Delta);
+        delta.now = at + 1;
+        delta.graph.transactions.insert(at, 3);
+        delta.graph.users.insert(at, 3);
+        delta
+    };
+    for at in 0..200u64 {
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleClock {
+                second: at + crate::gaggle::run::CLOCK_SLACK,
+            });
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(delta(at)),
+                bytes: None,
+            });
+        expected.apply(0, delta(at)).unwrap();
+        let (respond, metrics) = tokio::sync::oneshot::channel();
+        side.processor
+            .handle_command_for_test(MetricsCommand::GetMetrics {
+                duration: 0,
+                total_users: 0,
+                maximum_users: 0,
+                history: Vec::new(),
+                respond,
+            });
+        let _ = metrics.blocking_recv();
+        // The manager's own count, as its main loop records it each pass.
+        side.processor
+            .handle_command_for_test(MetricsCommand::RecordUsers {
+                active_users: 99,
+                elapsed_secs: at as usize,
+            });
+    }
+    // One more second, so the last build extends the graph once more.
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: Box::new(delta(200)),
+            bytes: None,
+        });
+    expected.apply(0, delta(200)).unwrap();
+    let (respond, report) = tokio::sync::oneshot::channel();
+    side.processor
+        .handle_command_for_test(MetricsCommand::GetReportData {
+            duration: 0,
+            total_users: 0,
+            maximum_users: 0,
+            history: Vec::new(),
+            respond,
+        });
+    let (_, graph) = report.blocking_recv().unwrap();
+    let (_, expected) = expected.merged();
+    assert_none("the manager's own users", &graph.gaggle_diff(&expected));
+}
+
 /// Save report on a manager's dashboard changes what its merge builds: with
 /// it off the merged graph keeps no whole run heatmap columns, with it on
 /// it does, though the merge was set up with them.
