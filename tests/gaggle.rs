@@ -274,54 +274,87 @@ fn gaggle_worker_frozen_mid_run() {
     within(|| worker_lost_mid_run(true));
 }
 
-/// Stop process `pid` where it stands, its sockets left open.
-fn freeze(pid: u32) {
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(pid as i32),
-        nix::sys::signal::Signal::SIGSTOP,
-    )
-    .unwrap();
+/// Send process `pid` `signal`: SIGSTOP stops it where it stands, its
+/// sockets left open, and SIGINT is Ctrl-C.
+fn signal(pid: u32, signal: nix::sys::signal::Signal) {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), signal).unwrap();
 }
 
-/// A worker killed, or frozen, mid run.
-fn worker_lost_mid_run(frozen: bool) {
+/// A Gaggle of the `simple` example under load: a manager given `users`
+/// users at that rate for `run_time`, its reports in its folder, and
+/// `manager_extra`; and two workers, `first` and `second`, given
+/// `worker_extra`, once their requests reach the server.
+struct UnderLoad {
+    _server: MockServer,
+    folder: PathBuf,
+    manager: Process,
+    first: Process,
+    second: Process,
+}
+
+fn under_load(
+    name: &str,
+    users: &str,
+    run_time: &str,
+    manager_extra: &[&str],
+    worker_extra: &[&str],
+) -> UnderLoad {
     let server = MockServer::start();
     let index = mock_simple(&server, Duration::ZERO);
-    let folder = scratch("worker-killed");
+    let folder = scratch(name);
     let host = server.base_url();
     let manager_folder = folder.join("manager").display().to_string();
     let simple = example("simple");
+    let mut extra = vec![
+        "--users",
+        users,
+        "--increase-rate",
+        users,
+        "--run-time",
+        run_time,
+        "--report-file",
+        "--output-dir",
+        &manager_folder,
+    ];
+    extra.extend_from_slice(manager_extra);
     let mut manager = Process::start(
         &simple,
         "manager",
         &folder,
-        &manager_args(
-            &host,
-            "2",
-            &[
-                "--users",
-                "40",
-                "--increase-rate",
-                "40",
-                "--run-time",
-                "8s",
-                "--report-file",
-                "--output-dir",
-                &manager_folder,
-                "--gaggle-token",
-                "tok-worker-lost-3c8e",
-            ],
-        ),
+        &manager_args(&host, "2", &extra),
     );
-    let token = ["--gaggle-token", "tok-worker-lost-3c8e"];
     let port = manager.port();
-    let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
-    let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
+    let first = Process::start(&simple, "first", &folder, &worker_args(&port, worker_extra));
+    let second = Process::start(
+        &simple,
+        "second",
+        &folder,
+        &worker_args(&port, worker_extra),
+    );
     until_load(|| index.calls(), Duration::from_secs(30));
+    UnderLoad {
+        _server: server,
+        folder,
+        manager,
+        first,
+        second,
+    }
+}
+
+/// A worker killed, or frozen, mid run.
+fn worker_lost_mid_run(frozen: bool) {
+    let token = ["--gaggle-token", "tok-worker-lost-3c8e"];
+    let UnderLoad {
+        _server,
+        folder,
+        mut manager,
+        mut first,
+        mut second,
+    } = under_load("worker-killed", "40", "8s", &token, &token);
     std::thread::sleep(Duration::from_secs(1));
     let killed = chrono::Utc::now();
     if frozen {
-        freeze(second.child.id());
+        signal(second.child.id(), nix::sys::signal::Signal::SIGSTOP);
     } else {
         second.kill();
     }
@@ -433,7 +466,7 @@ fn manager_lost_mid_run(frozen: bool) {
     until_load(|| index.calls(), Duration::from_secs(30));
     std::thread::sleep(Duration::from_secs(1));
     let killed = if frozen {
-        freeze(manager.child.id());
+        signal(manager.child.id(), nix::sys::signal::Signal::SIGSTOP);
         Instant::now()
     } else {
         manager.kill()
@@ -522,7 +555,10 @@ fn gaggle_threshold_stops_every_worker() {
 
 /// A manager and two workers at -vv, every crate tracing, run a few
 /// seconds of load and all exit: printing metrics while other threads log
-/// once deadlocked a worker. No log line of any of them holds the token.
+/// once deadlocked a worker. A third worker, with the wrong token, is
+/// refused, without a panic. No log line of any of them holds either token:
+/// a process test, to read the logs; the refusals themselves are tested in
+/// the library.
 #[test]
 #[serial_test::serial]
 fn gaggle_at_trace_level_completes() {
@@ -558,6 +594,19 @@ fn gaggle_at_trace_level_completes() {
             Process::start(&simple, "first", &folder, &worker_args(&port, &token)),
             Process::start(&simple, "second", &folder, &worker_args(&port, &token)),
         ];
+        let mut refused = Process::start(
+            &simple,
+            "refused",
+            &folder,
+            &worker_args(&port, &["--gaggle-token", "tok-wrong-9c2d", "-vv"]),
+        );
+        let (status, _) = refused
+            .wait(Duration::from_secs(20))
+            .expect("the refused worker exits");
+        assert!(!status.success());
+        let output = refused.output();
+        assert!(output.contains("refused this worker: token:"), "{}", output);
+        assert!(!output.contains("panicked"), "{}", output);
         let (status, _) = manager
             .wait(Duration::from_secs(60))
             .expect("the manager finishes");
@@ -568,76 +617,18 @@ fn gaggle_at_trace_level_completes() {
                 .unwrap_or_else(|| panic!("{} hung at -vv", worker.name));
             assert!(status.success(), "{}", worker.name);
         }
-        for output in [manager.output(), workers[0].output(), workers[1].output()] {
+        for output in [
+            manager.output(),
+            workers[0].output(),
+            workers[1].output(),
+            refused.output(),
+        ] {
             assert!(
-                !output.contains("tok-trace-7f3a"),
-                "a log line holds the token"
+                !output.contains("tok-trace") && !output.contains("tok-wrong"),
+                "a log line holds a token"
             );
         }
     });
-}
-
-/// A worker with the wrong token is refused, and no log line of either
-/// process, at -vv, holds either token. A process test, to read the logs;
-/// the refusals themselves are tested in the library.
-#[test]
-#[serial_test::serial]
-fn gaggle_refused_token_is_never_logged() {
-    within(|| {
-        let server = MockServer::start();
-        mock_simple(&server, Duration::ZERO);
-        let folder = scratch("token-logs");
-        let host = server.base_url();
-        let mut manager = Process::start(
-            &example("simple"),
-            "manager",
-            &folder,
-            &manager_args(
-                &host,
-                "1",
-                &[
-                    "--users",
-                    "2",
-                    "--run-time",
-                    "2s",
-                    "--gaggle-token",
-                    "tok-right-5e1b",
-                    "-vv",
-                ],
-            ),
-        );
-        let port = manager.port();
-        let mut worker = Process::start(
-            &example("simple"),
-            "worker",
-            &folder,
-            &worker_args(&port, &["--gaggle-token", "tok-wrong-9c2d", "-vv"]),
-        );
-        let (status, _) = worker
-            .wait(Duration::from_secs(20))
-            .expect("the refused worker exits");
-        assert!(!status.success());
-        let output = worker.output();
-        assert!(output.contains("refused this worker: token:"), "{}", output);
-        assert!(!output.contains("panicked"), "{}", output);
-        let _ = manager.kill();
-        for output in [manager.output(), output] {
-            assert!(
-                !output.contains("tok-right") && !output.contains("tok-wrong"),
-                "{}",
-                output
-            );
-        }
-    });
-}
-
-/// Send process `pid` SIGINT, as Ctrl-C does.
-fn interrupt(pid: u32) {
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(pid as i32),
-        nix::sys::signal::Signal::SIGINT,
-    )
-    .unwrap();
 }
 
 /// The run record in `folder`'s manager folder.
@@ -685,7 +676,7 @@ fn gaggle_manager_interrupted() {
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
         ];
         until_load(|| index.calls(), Duration::from_secs(30));
-        interrupt(manager.child.id());
+        signal(manager.child.id(), nix::sys::signal::Signal::SIGINT);
         manager
             .wait(Duration::from_secs(60))
             .unwrap_or_else(|| panic!("the manager ends: {}", manager.output()));
@@ -714,37 +705,14 @@ fn gaggle_manager_interrupted() {
 #[serial_test::serial]
 fn gaggle_worker_interrupted() {
     within(|| {
-        let server = MockServer::start();
-        let index = mock_simple(&server, Duration::ZERO);
-        let folder = scratch("worker-interrupted");
-        let host = server.base_url();
-        let manager_folder = folder.join("manager").display().to_string();
-        let simple = example("simple");
-        let mut manager = Process::start(
-            &simple,
-            "manager",
-            &folder,
-            &manager_args(
-                &host,
-                "2",
-                &[
-                    "--users",
-                    "20",
-                    "--increase-rate",
-                    "20",
-                    "--run-time",
-                    "8s",
-                    "--report-file",
-                    "--output-dir",
-                    &manager_folder,
-                ],
-            ),
-        );
-        let port = manager.port();
-        let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &[]));
-        let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &[]));
-        until_load(|| index.calls(), Duration::from_secs(30));
-        interrupt(second.child.id());
+        let UnderLoad {
+            _server,
+            folder,
+            mut manager,
+            mut first,
+            mut second,
+        } = under_load("worker-interrupted", "20", "8s", &[], &[]);
+        signal(second.child.id(), nix::sys::signal::Signal::SIGINT);
         second
             .wait(Duration::from_secs(30))
             .unwrap_or_else(|| panic!("the interrupted worker exits: {}", second.output()));
