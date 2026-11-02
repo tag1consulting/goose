@@ -1303,17 +1303,15 @@ async fn gaggle_prepare_timeout_runs_test_stop() {
 }
 
 /// A manager given `more` past what a worker runs, worker 0's users or the
-/// test plan's steps, is refused with `message` before it listens: two
-/// workers would join one that listened, and neither test_start nor any
-/// worker's user runs.
+/// test plan's steps, is refused with `message` before it listens, so no
+/// worker can join it and test_start never runs. One that listens is past
+/// the check: it would wait for its workers, run test_start, and then have
+/// every worker refuse its share.
 async fn manager_past_a_worker_bound(more: &[&str], message: &str) {
     let test = async {
         no_token_from_the_environment();
         let server = MockServer::start_async().await;
-        let (start, a) = (
-            mock_ok(&server, "/start").await,
-            mock_ok(&server, "/a").await,
-        );
+        let start = mock_ok(&server, "/start").await;
         let host = server.base_url();
         let mut args = vec![
             "--manager",
@@ -1333,38 +1331,21 @@ async fn manager_past_a_worker_bound(more: &[&str], message: &str) {
                 .report_manager_address(bound)
                 .execute(),
         );
-        // A manager that listens is past the check: its workers join.
-        let mut workers = Vec::new();
         if let Ok(address) = address.await {
-            let port = address.port().to_string();
-            for _ in 0..2 {
-                let args = [
-                    "--worker",
-                    "--manager-host",
-                    "127.0.0.1",
-                    "--manager-port",
-                    &port,
-                    "--quiet",
-                ];
-                workers.push(tokio::spawn(load_test(configuration(&args)).execute()));
-            }
+            manager.abort();
+            panic!("the manager listened on {address}, past the check");
         }
-        let refused = manager.await.expect("the manager task ends");
-        for worker in workers {
-            let _ = worker.await;
-        }
-        match refused {
+        match manager.await.expect("the manager task ends") {
             Err(crate::GooseError::InvalidOption { detail, .. }) => {
                 assert!(detail.contains(message), "{}", detail)
             }
             other => panic!("{:?}", other.map(|_| ())),
         }
         assert_eq!(start.calls_async().await, 0, "test_start");
-        assert_eq!(a.calls_async().await, 0, "no user ran");
     };
-    tokio::time::timeout(Duration::from_secs(120), test)
+    tokio::time::timeout(Duration::from_secs(60), test)
         .await
-        .expect("within 120 seconds");
+        .expect("within 60 seconds");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
