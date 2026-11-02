@@ -1359,7 +1359,11 @@ async fn gaggle_killswitch_while_joining_and_preparing() {
                 let result = manager.execute().await;
                 (result, std::time::Instant::now())
             });
-            let port = address.await.expect("the manager listens").port().to_string();
+            let port = address
+                .await
+                .expect("the manager listens")
+                .port()
+                .to_string();
             let worker = load_test(configuration(&[
                 "--worker",
                 "--manager-host",
@@ -1380,7 +1384,10 @@ async fn gaggle_killswitch_while_joining_and_preparing() {
             let canceled = std::time::Instant::now();
             let (result, ended) = manager.await.expect("the manager task ends");
             canceled_within(&result, ended - canceled, stage);
-            assert!(worker.await.expect("the worker task ends").is_err(), "{stage}");
+            assert!(
+                worker.await.expect("the worker task ends").is_err(),
+                "{stage}"
+            );
             let ran = usize::from(stage == "preparing");
             assert_eq!(start.calls_async().await, ran, "{stage}: test_start");
             assert_eq!(stop.calls_async().await, ran, "{stage}: test_stop");
@@ -1428,7 +1435,10 @@ async fn faulty_logs_run(
     .await;
     crate::reset_killswitch();
     drop(workers);
-    let at = LOG_FAULT_AT.lock().unwrap().expect("the worker sent a chunk");
+    let at = LOG_FAULT_AT
+        .lock()
+        .unwrap()
+        .expect("the worker sent a chunk");
     let (gaggle, _) = record(&folder);
     let parts = walk(&folder.join("manager"))
         .into_iter()
@@ -1462,7 +1472,11 @@ async fn gaggle_killswitch_while_collecting_logs() {
         let (manager, took, gaggle, parts) = faulty_logs_run(LogsFault::Slow).await;
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
         assert!(took <= Duration::from_secs(2), "{took:?}");
-        assert_eq!(gaggle["logs_left"].as_array().map(Vec::len), Some(1), "{gaggle}");
+        assert_eq!(
+            gaggle["logs_left"].as_array().map(Vec::len),
+            Some(1),
+            "{gaggle}"
+        );
         assert!(parts.is_empty(), "{parts:?}");
     };
     tokio::time::timeout(Duration::from_secs(90), test)
@@ -1480,7 +1494,11 @@ async fn gaggle_trickled_log_is_given_up() {
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
         // The 2 second idle timeout from the first chunk, and the reports.
         assert!(took <= Duration::from_secs(5), "{took:?}");
-        assert_eq!(gaggle["logs_left"].as_array().map(Vec::len), Some(1), "{gaggle}");
+        assert_eq!(
+            gaggle["logs_left"].as_array().map(Vec::len),
+            Some(1),
+            "{gaggle}"
+        );
         assert!(parts.is_empty(), "{parts:?}");
     };
     tokio::time::timeout(Duration::from_secs(90), test)
