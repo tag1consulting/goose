@@ -633,6 +633,12 @@ impl GooseAttack {
         };
         let mut shares = vec![WorkerSettings::default(); workers];
         let mut moved = false;
+        // Whether a worker builds users: one gets more, or a test plan.
+        let before: Vec<usize> = ids
+            .iter()
+            .map(|&id| run.book.users(id as usize).len())
+            .collect();
+        run.builds_users = matches!(settings.test_plan, Some(Some(_)));
         if let Some(users) = settings.users {
             run.book.set_users(users, &mask, order.clone());
             for &id in &ids {
@@ -672,6 +678,10 @@ impl GooseAttack {
             .iter()
             .map(|&id| run.book.users(id as usize).len())
             .collect();
+        run.builds_users |= counts
+            .iter()
+            .zip(&before)
+            .any(|(after, before)| after > before);
         let rates = |rate: Option<Option<f32>>| -> Vec<Option<Option<f32>>> {
             match rate {
                 Some(Some(rate)) => rate_shares(rate, &counts)
@@ -743,10 +753,16 @@ impl GooseAttack {
             let _ = respond.send(ControlReply::Outcome(outcome));
             return;
         }
+        // Building users takes as long as a Prepare may, on one process as
+        // here: one process's own large users change also answers late.
+        let wait = match std::mem::take(&mut run.builds_users) {
+            true => super::run::PREPARE_TIMEOUT.max(ACK_TIMEOUT),
+            false => ACK_TIMEOUT,
+        };
         run.pending = Some(PendingControl {
             id: id.0,
             awaiting,
-            deadline: Instant::now() + ACK_TIMEOUT,
+            deadline: Instant::now() + wait,
             respond,
             outcome,
             lost: Vec::new(),

@@ -919,7 +919,9 @@ fn gaggle_worker_missing_the_answer_deadline_is_lost() {
         until_load(|| index.calls(), Duration::from_secs(30));
         signal(second.child.id(), nix::sys::signal::Signal::SIGSTOP);
         let sent = Instant::now();
-        let reply = telnet(5246, "users 30");
+        // A change that starts no user, so the 10 second deadline applies:
+        // one that starts users waits as long as a Prepare.
+        let reply = telnet(5246, "users 6");
         let took = sent.elapsed();
         assert!(reply.starts_with("users configured"), "{}", reply);
         assert!(
@@ -941,12 +943,12 @@ fn gaggle_worker_missing_the_answer_deadline_is_lost() {
         first
             .wait(Duration::from_secs(20))
             .expect("the other worker exits");
-        // The change stood on the other worker: its share of 30 users.
+        // The change stood on the other worker: its 10 users down to 6.
         assert!(
             first
                 .output()
                 .lines()
-                .any(|line| line.contains("changing users from") && line.ends_with(" to 15")),
+                .any(|line| line.contains("changing users from") && line.ends_with(" to 6")),
             "{}",
             first.output()
         );

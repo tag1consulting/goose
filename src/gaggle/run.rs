@@ -17,6 +17,7 @@ use super::proto::{
     StartAt, Stop, Stopped,
 };
 use super::spec::{self, LogSpec, WorkerRunSpec};
+use crate::controller::RunSettings;
 use crate::metrics::MetricsCommand;
 use crate::runs::{EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, GaggleWorkerState};
 use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError, WorkerShare};
@@ -46,7 +47,7 @@ const START_DELAY: Duration = if cfg!(test) {
 
 /// How long the manager waits for every worker's answer to `Prepare`: 120
 /// seconds.
-const PREPARE_TIMEOUT: Duration = if cfg!(test) {
+pub(super) const PREPARE_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(3)
 } else {
     Duration::from_secs(120)
@@ -189,6 +190,9 @@ pub(crate) struct ManagerRun {
     pub(super) next_control: u64,
     /// The change a front end waits on, until every worker answered it.
     pub(super) pending: Option<super::control::PendingControl>,
+    /// The change being sent makes workers build users, which takes as long
+    /// as a `Prepare` may: its answers get [`PREPARE_TIMEOUT`].
+    pub(super) builds_users: bool,
     /// Every worker was told to shut down.
     shut_down: bool,
     /// The logs every worker writes.
@@ -633,6 +637,7 @@ impl GooseAttack {
             throttle_started: vec![0; expected],
             next_control: 1,
             pending: None,
+            builds_users: false,
             shut_down: false,
             logs: spec::log_specs(&self.configuration),
             logs_left: Vec::new(),
@@ -1059,6 +1064,17 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         settings: WorkerSettings,
     ) -> Result<Option<String>, GooseError> {
+        // The throttle first: it never waits behind building users.
+        if let Some(throttle) = settings.throttle {
+            let throttle = RunSettings {
+                throttle: Some(throttle),
+                ..RunSettings::default()
+            };
+            let outcome = self.control_settings(goose_attack_run_state, throttle)?;
+            if !outcome.ok {
+                return Ok(Some(outcome.message));
+            }
+        }
         if let Some(users) = &settings.users {
             let active = goose_attack_run_state.active_users;
             if let Some(next) = users.users.get(active..) {
@@ -1077,6 +1093,7 @@ impl GooseAttack {
         // clears among them, are checked and applied together, as on the
         // manager.
         let mut rest = settings.run_settings();
+        rest.throttle = None;
         if let Some(plan) = settings.test_plan {
             if let Some(plan) = plan.as_ref() {
                 self.set_next_users(&plan.users);
@@ -2269,6 +2286,7 @@ mod tests {
             throttle_started: vec![0],
             next_control: 1,
             pending: None,
+            builds_users: false,
             shut_down: false,
             logs,
             logs_left: Vec::new(),
@@ -2816,6 +2834,7 @@ mod tests {
                 throttle_started: vec![0],
                 next_control: 1,
                 pending: None,
+                builds_users: false,
                 shut_down: false,
                 logs: Vec::new(),
                 logs_left: Vec::new(),
@@ -2927,6 +2946,7 @@ mod tests {
                     outcome,
                     lost: Vec::new(),
                 }),
+                builds_users: false,
                 shut_down: false,
                 logs: Vec::new(),
                 logs_left: Vec::new(),

@@ -56,7 +56,7 @@ Error: InvalidOption { option: "`configuration.no_autostart`", value: "true", de
 
 ## Controlling a Gaggle
 
-On a [Gaggle](../gaggle/overview.md) manager, the telnet and WebSocket Controllers and dashboard control take the same commands, and each change reaches every worker as its share, so the workers together run what one process running the whole load test would. The manager checks a change against the rules one process applies before it sends anything, applies it to its own run, the run's clock, and answers once every worker has applied its share: within 10 seconds, inside the 15 a client waits. Later commands wait their turn meanwhile; the load test runs on.
+On a [Gaggle](../gaggle/overview.md) manager, the telnet and WebSocket Controllers and dashboard control take the same commands, and each change reaches every worker as its share, so the workers together run what one process running the whole load test would. The manager checks a change against the rules one process applies before it sends anything, applies it to its own run, the run's clock, and answers once every worker has applied its share: within 10 seconds, inside the 15 a client waits, or 120 when the change has workers build users. Later commands wait their turn meanwhile; the load test runs on.
 
 | Command | What each worker gets |
 |---------|-----------------------|
