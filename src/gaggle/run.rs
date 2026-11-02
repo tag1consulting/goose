@@ -1585,12 +1585,16 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     continue;
                 };
                 if !files.contains_key(&chunk.file) {
-                    warn!(
-                        "gaggle: worker {id} sent a log the manager did not ask for: {:?}",
-                        chunk.file
-                    );
-                    #[cfg(test)]
-                    UNASKED.lock().unwrap().push(chunk.file.clone());
+                    // The rest of a log given up is dropped: it was warned
+                    // of once, as it was given up.
+                    if !run.logs.iter().any(|log| log.manager_file == chunk.file) {
+                        warn!(
+                            "gaggle: worker {id} sent a log the manager did not ask for: {:?}",
+                            chunk.file
+                        );
+                        #[cfg(test)]
+                        UNASKED.lock().unwrap().push(chunk.file.clone());
+                    }
                     continue;
                 }
                 let key = (id, chunk.file.clone());
