@@ -2804,7 +2804,32 @@ async fn runtime_control_in_one_process() {
             assert_eq!(first.0 + second.0, 50);
             assert_eq!(first.1, second.1);
         }
-        assert_eq!(steps[0].len(), 2);
+        assert_eq!(
+            steps.iter().map(Vec::len).collect::<Vec<_>>(),
+            [2, 2],
+            "{:?}",
+            plans
+        );
+        // A plan sent with the ramp settings it clears loses no worker.
+        let body = dashboard_post(
+            DASHBOARD,
+            "settings",
+            r#"{"test_plan": "50,1s;50,1h", "decrease_rate": null, "run_time_secs": null}"#,
+        )
+        .await;
+        assert_eq!(body["ok"], true, "{}", body);
+        assert!(
+            !body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("lost"),
+            "{}",
+            body
+        );
+        let replaced = applied(&mut reports, 2).await;
+        assert!(replaced
+            .iter()
+            .all(|r| r.test_plan.as_ref().map(Vec::len) == Some(2)));
 
         // Stopped by telnet once the plan holds, as a ramp down can not be
         // stopped: the manager waits for the next Start.
@@ -3012,6 +3037,12 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
         let plans = applied(&mut reports, 2).await;
         let steps: Vec<Vec<(usize, usize)>> =
             plans.iter().map(|r| r.test_plan.clone().unwrap()).collect();
+        assert_eq!(
+            steps.iter().map(Vec::len).collect::<Vec<_>>(),
+            [2, 2],
+            "{:?}",
+            plans
+        );
         for (first, second) in steps[0].iter().zip(&steps[1]) {
             assert_eq!(first.0 + second.0, 4, "{:?}", plans);
         }

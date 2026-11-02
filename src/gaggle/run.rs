@@ -17,7 +17,6 @@ use super::proto::{
     StartAt, Stop, Stopped,
 };
 use super::spec::{self, LogSpec, WorkerRunSpec};
-use crate::controller::RunSettings;
 use crate::metrics::MetricsCommand;
 use crate::runs::{EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, GaggleWorkerState};
 use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError, WorkerShare};
@@ -1069,23 +1068,19 @@ impl GooseAttack {
                 return Ok(Some(outcome.message));
             }
         }
-        if let Some(plan) = settings.test_plan.clone() {
+        // A test plan and the settings sent with it, the ramp settings it
+        // clears among them, are checked and applied together, as on the
+        // manager.
+        let mut rest = settings.run_settings();
+        if let Some(plan) = settings.test_plan {
             if let Some(plan) = plan.as_ref() {
                 self.set_next_users(&plan.users);
             }
-            let plan = RunSettings {
-                test_plan: Some(plan.map(|plan| crate::test_plan::TestPlan {
-                    steps: plan.steps,
-                    current: 0,
-                })),
-                ..RunSettings::default()
-            };
-            let outcome = self.control_settings(goose_attack_run_state, plan)?;
-            if !outcome.ok {
-                return Ok(Some(outcome.message));
-            }
+            rest.test_plan = Some(plan.map(|plan| crate::test_plan::TestPlan {
+                steps: plan.steps,
+                current: 0,
+            }));
         }
-        let rest = settings.run_settings();
         if !rest.fields().is_empty() {
             let outcome = self.control_settings(goose_attack_run_state, rest)?;
             if !outcome.ok {
