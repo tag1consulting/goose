@@ -1183,6 +1183,7 @@ impl GooseAttack {
         // is done first: a rule that fails now triggers the killswitch before
         // the cancel is set aside, never during the wait, where it would read
         // as Ctrl-C. The main loop, held here, sends no other check.
+        // GetMetrics is only a barrier here: its reply is dropped on purpose.
         let (respond, drained) = tokio::sync::oneshot::channel();
         if goose_attack_run_state
             .metrics_cmd_tx
