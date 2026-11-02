@@ -318,9 +318,17 @@ impl WorkerEntry {
     }
 }
 
+/// Worker `id` of `workers`: the one at its index whose own id it is.
+fn find(workers: &[WorkerEntry], id: u32) -> Option<&WorkerEntry> {
+    workers.get(id as usize).filter(|worker| worker.id == id)
+}
+
 impl ManagerRun {
+    /// Worker `id`, as [`find`] finds it.
     fn worker(&mut self, id: u32) -> Option<&mut WorkerEntry> {
-        self.workers.get_mut(id as usize)
+        self.workers
+            .get_mut(id as usize)
+            .filter(|worker| worker.id == id)
     }
 
     /// Workers neither lost nor stopped.
@@ -1483,12 +1491,16 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     // canceled the run is cleared, so the next is caught here rather than
     // ending the process at once.
     crate::reset_killswitch();
-    let left = |worker: &WorkerEntry, log: &LogSpec| GaggleLogLeft {
-        worker: worker.name.clone(),
-        path: match &worker.run_folder {
-            Some(folder) => format!("{folder}/{}", log.worker_file()),
-            None => log.worker_file(),
-        },
+    // Where worker `id` of `workers` keeps `log`, which stays on it.
+    let left = |workers: &[WorkerEntry], id: u32, log: &LogSpec| {
+        let worker = find(workers, id);
+        GaggleLogLeft {
+            worker: worker.map_or_else(|| id.to_string(), |worker| worker.name.clone()),
+            path: match worker.and_then(|worker| worker.run_folder.as_ref()) {
+                Some(folder) => format!("{folder}/{}", log.worker_file()),
+                None => log.worker_file(),
+            },
+        }
     };
     // Each worker's logs still to come, by the name the manager keeps them
     // under.
@@ -1499,7 +1511,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
         if !worker.sends_logs() || folder.is_none() {
             if !never_ran {
                 for log in &run.logs {
-                    run.logs_left.push(left(worker, log));
+                    run.logs_left.push(left(&run.workers, worker.id, log));
                 }
             }
             continue;
@@ -1531,7 +1543,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     if let Some(incoming) = open.remove(&(id, file)) {
                         incoming.abandon().await;
                     }
-                    run.logs_left.push(left(&run.workers[id as usize], &log));
+                    run.logs_left.push(left(&run.workers, id, &log));
                 }
             }
             return;
@@ -1567,7 +1579,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     if let Some(incoming) = open.remove(&(id, file)) {
                         incoming.abandon().await;
                     }
-                    let entry = left(&run.workers[id as usize], &log);
+                    let entry = left(&run.workers, id, &log);
                     warn!(
                         "gaggle: no part of worker {}'s log {} came for {} seconds; it stays on the worker",
                         entry.worker,
@@ -1607,13 +1619,16 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         incoming.abandon().await;
                     }
                     if let Some(log) = files.remove(&chunk.file) {
-                        run.logs_left.push(left(&run.workers[id as usize], &log));
+                        run.logs_left.push(left(&run.workers, id, &log));
                     }
                     continue;
                 }
                 if !open.contains_key(&key) {
-                    let name = &run.workers[id as usize].name;
-                    let dir = folder.join("workers").join(name);
+                    let Some(name) = find(&run.workers, id).map(|worker| worker.name.clone())
+                    else {
+                        continue;
+                    };
+                    let dir = folder.join("workers").join(&name);
                     let path = dir.join(&chunk.file);
                     let part = dir.join(format!("{}.part", chunk.file));
                     let created = async {
@@ -1646,7 +1661,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                                 chunk.file
                             );
                             if let Some(log) = files.remove(&chunk.file) {
-                                run.logs_left.push(left(&run.workers[id as usize], &log));
+                                run.logs_left.push(left(&run.workers, id, &log));
                             }
                             continue;
                         }
@@ -1665,7 +1680,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         incoming.abandon().await;
                     }
                     if let Some(log) = files.remove(&chunk.file) {
-                        run.logs_left.push(left(&run.workers[id as usize], &log));
+                        run.logs_left.push(left(&run.workers, id, &log));
                     }
                     continue;
                 }
@@ -1705,7 +1720,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         incoming.abandon().await;
                     }
                     if let Some(log) = files.remove(&chunk.file) {
-                        run.logs_left.push(left(&run.workers[id as usize], &log));
+                        run.logs_left.push(left(&run.workers, id, &log));
                     }
                 }
             }
@@ -1716,7 +1731,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         if let Some(incoming) = open.remove(&(id, file)) {
                             incoming.abandon().await;
                         }
-                        run.logs_left.push(left(&run.workers[id as usize], &log));
+                        run.logs_left.push(left(&run.workers, id, &log));
                     }
                 }
             }
@@ -1852,6 +1867,15 @@ mod tests {
                 other => panic!("{:?}", other),
             }
         }
+    }
+
+    /// A worker is found by its own id, never by a position alone.
+    #[test]
+    fn workers_are_found_by_their_id() {
+        let workers = vec![entry(), WorkerEntry { id: 5, ..entry() }];
+        assert_eq!(find(&workers, 0).map(|worker| worker.id), Some(0));
+        assert!(find(&workers, 1).is_none());
+        assert!(find(&workers, 5).is_none());
     }
 
     /// Chunks of a log already given up are dropped without a warning each:

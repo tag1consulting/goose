@@ -1008,6 +1008,12 @@ fn taken((mut event, permit): Queued) -> Event {
     event
 }
 
+/// Worker `id` of `joined`: the one at its index, which ids follow, whose
+/// own id it is.
+fn find(joined: &[Joined], id: u32) -> Option<&Joined> {
+    joined.get(id as usize).filter(|worker| worker.id == id)
+}
+
 /// A running manager: its listening service and its workers.
 pub(crate) struct Manager {
     shared: Arc<Shared>,
@@ -1117,10 +1123,10 @@ impl Manager {
             .unwrap_or_default()
     }
 
-    /// Send worker `id`, its index in `joined`, `message`.
+    /// Send worker `id` `message`.
     pub(crate) fn send(&self, id: u32, message: ToWorker) {
         if let Ok(joined) = self.shared.joined.lock() {
-            if let Some(worker) = joined.get(id as usize) {
+            if let Some(worker) = find(&joined, id) {
                 let _ = worker.send(message);
             }
         }
@@ -1135,14 +1141,13 @@ impl Manager {
         }
     }
 
-    /// Send worker `id`, its index in `joined`, `Shutdown` and close its
-    /// stream: a lost worker. One
+    /// Send worker `id` `Shutdown` and close its stream: a lost worker. One
     /// that gets it stops any user still running at once and exits within 2
     /// seconds, even with its main loop held; one it never reaches fires
     /// its own dead man's switch when its stream closes or goes silent.
     pub(crate) fn shut_down(&self, id: u32) {
         if let Ok(joined) = self.shared.joined.lock() {
-            if let Some(worker) = joined.get(id as usize) {
+            if let Some(worker) = find(&joined, id) {
                 worker.shut_down();
             }
         }
