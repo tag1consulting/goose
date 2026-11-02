@@ -153,7 +153,7 @@ The console output of the run under [Stopping the run](#stopping-the-run) ends w
 
 ```text
 19:44:40 [ERROR] threshold error-rate<1% failed: observed 2.54% at abort, 6.45% at end
-Error: ThresholdsFailed { failed: [ThresholdResult { rule: "error-rate<1%", observed: "2.54% at abort, 6.45% at end", value: Some(6.451612903225806), passed: false, aborted: true }], metrics: ThresholdMetrics { .. } }
+Error: one or more thresholds failed (error-rate<1%, observed 2.54% at abort, 6.45% at end)
 ```
 
 ## Reports
