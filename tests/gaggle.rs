@@ -317,7 +317,7 @@ fn under_load(
         &manager_folder,
     ];
     extra.extend_from_slice(manager_extra);
-    let mut manager = Process::start(
+    let manager = Process::start(
         &simple,
         "manager",
         &folder,

@@ -1914,7 +1914,9 @@ pub(crate) mod handshake_tests {
                 .connect(request)
                 .await;
             // Refused, or the connection closed at the same deadline.
-            let status = answer.err().expect("refused");
+            let Err(status) = answer else {
+                panic!("a stream without Hello was admitted");
+            };
             assert!(
                 matches!(
                     status.code(),
