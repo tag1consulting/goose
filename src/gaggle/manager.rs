@@ -1300,18 +1300,27 @@ mod tests {
         assert_eq!(names[..3], ["Pod-A", "pod-a-1", "POD-A-2"]);
     }
 
-    /// The window budget is split between the connections the manager
-    /// allows, 1 MiB at most and 64 KiB at least.
+    /// The window budget, less each connection's header allowance, is split
+    /// between the connections the manager allows, 1 MiB at most and 64 KiB
+    /// at least: windows and headers together hold the budget, but for the
+    /// floor with more than 1,634 workers.
     #[test]
     fn windows_share_the_unread_budget() {
+        let headers = u64::from(MAX_HEADERS);
         assert_eq!(window(2), 1 << 20);
-        assert_eq!(window(124), 1 << 20);
-        assert_eq!(window(125), (UNREAD_BUDGET / 129) as u32);
+        assert_eq!(u64::from(window(124)), (1 << 20) - headers);
+        assert_eq!(u64::from(window(125)), UNREAD_BUDGET / 129 - headers);
+        assert_eq!(window(1634), (UNREAD_BUDGET / 1638 - headers) as u32);
+        assert_eq!(window(1635), 64 << 10);
         assert_eq!(window(2048), 64 << 10);
-        // Every connection's window, together: the budget, but for the
-        // 64 KiB floor at 2,048 workers.
-        assert_eq!(u64::from(window(124)) * 128, UNREAD_BUDGET);
-        assert_eq!(u64::from(window(2048)) * 2052, UNREAD_BUDGET + (256 << 10));
+        // Every connection's window and headers, together: 6 MiB and 96 KiB
+        // for 2 workers, the budget for 124, and 160.3 MiB for 2,048.
+        assert_eq!((u64::from(window(2)) + headers) * 6, (6 << 20) + (96 << 10));
+        assert_eq!((u64::from(window(124)) + headers) * 128, UNREAD_BUDGET);
+        assert_eq!(
+            (u64::from(window(2048)) + headers) * 2052,
+            2052 * (80 << 10)
+        );
     }
 
     /// A Gaggle that is full and one whose worker list is unusable refuse a
