@@ -1091,13 +1091,25 @@ impl GooseAttack {
             }
             Event::Stopped { id, stopped } => {
                 let stop_sent = run.stop_sent;
-                let reason = stopped.reason();
                 // No final metrics came, nor will: lost, whenever it says so.
-                if reason == Reason::Failed {
-                    let why = format!("it could not finish its run: {}", stopped.canceled);
-                    self.lose_worker(goose_attack_run_state, run, id, why);
-                    return;
-                }
+                // A reason this manager does not know, or none, is taken as
+                // the same, never as a stop.
+                let reason = match Reason::try_from(stopped.reason) {
+                    Ok(Reason::Failed) => {
+                        let why = format!("it could not finish its run: {}", stopped.canceled);
+                        self.lose_worker(goose_attack_run_state, run, id, why);
+                        return;
+                    }
+                    Ok(Reason::Unspecified) | Err(_) => {
+                        let why = format!(
+                            "it stopped for an unknown reason, {}: {}",
+                            stopped.reason, stopped.canceled
+                        );
+                        self.lose_worker(goose_attack_run_state, run, id, why);
+                        return;
+                    }
+                    Ok(reason) => reason,
+                };
                 let Some(worker) = run.worker(id) else {
                     return;
                 };
