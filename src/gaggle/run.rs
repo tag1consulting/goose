@@ -1901,6 +1901,7 @@ mod tests {
             logs_left: Vec::new(),
             clock_second: None,
             stop_sent: true,
+            canceled_at_stop: false,
             ending: false,
             health: MergeHealth::default(),
         };
