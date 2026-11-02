@@ -115,14 +115,14 @@ ts-rs = { version = "=12.0.1", features = ["chrono-impl"] }
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.30", features = ["signal"] }
 
-# `cargo test` builds examples but runs no tests inside them by default; this runs
-# examples/umami's tests of its asset parsing against saved Drupal pages.
 # Without the test harness, which captures stdout: the test checks no
 # thread holds stdout while the metrics are formatted.
 [[test]]
 name = "metrics_print_unlocked"
 harness = false
 
+# `cargo test` builds examples but runs no tests inside them by default; this runs
+# examples/umami's tests of its asset parsing against saved Drupal pages.
 [[example]]
 name = "umami"
 path = "examples/umami/main.rs"

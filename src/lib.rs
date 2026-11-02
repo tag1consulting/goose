@@ -2752,8 +2752,11 @@ impl GooseAttack {
             metrics_epoch,
         };
 
-        // Catch ctrl-c to allow clean shutdown to display metrics.
-        util::setup_ctrlc_handler();
+        // Catch ctrl-c to allow clean shutdown to display metrics: a Gaggle
+        // manager caught it before its workers joined.
+        if !self.is_gaggle_manager() {
+            util::setup_ctrlc_handler();
+        }
 
         Ok(goose_attack_run_state)
     }
