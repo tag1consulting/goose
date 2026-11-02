@@ -2944,11 +2944,7 @@ impl GooseAttack {
                 }
 
                 goose_attack_run_state.users.push(user);
-                goose_attack_run_state.active_users += 1;
-                self.metrics.total_users += 1;
-                if goose_attack_run_state.active_users > self.metrics.maximum_users {
-                    self.metrics.maximum_users = goose_attack_run_state.active_users;
-                }
+                self.count_started_user(goose_attack_run_state);
 
                 if let Some(running_metrics) = self.configuration.running_metrics {
                     if util::ms_timer_expired(
@@ -3738,6 +3734,16 @@ impl GooseAttack {
     /// but never a Gaggle worker, which waits for its manager to say so.
     fn shuts_down_after_stop(&self) -> bool {
         !self.is_gaggle_worker() && !self.configuration.no_autostart
+    }
+
+    /// Count one more user running: in the users started over the run, and
+    /// in the most running at once.
+    pub(crate) fn count_started_user(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        goose_attack_run_state.active_users += 1;
+        self.metrics.total_users += 1;
+        if goose_attack_run_state.active_users > self.metrics.maximum_users {
+            self.metrics.maximum_users = goose_attack_run_state.active_users;
+        }
     }
 
     /// Whether this process is a Gaggle manager: never without the `gaggle`

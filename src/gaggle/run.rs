@@ -489,11 +489,7 @@ impl GooseAttack {
         if goose_attack_run_state.adjust_due() {
             goose_attack_run_state
                 .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(increase_rate)));
-            goose_attack_run_state.active_users += 1;
-            self.metrics.total_users += 1;
-            if goose_attack_run_state.active_users > self.metrics.maximum_users {
-                self.metrics.maximum_users = goose_attack_run_state.active_users;
-            }
+            self.count_started_user(goose_attack_run_state);
         } else {
             goose_attack_run_state.sleep_until_adjust().await;
         }
