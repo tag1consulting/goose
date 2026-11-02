@@ -549,7 +549,7 @@ impl GaggleAccumulator {
             series_origin,
             columns: self.settings.columns,
         });
-        let users = self.users_levels(built.before, complete);
+        let users = self.users_levels(built.before, complete, &merged.excluded);
         built
             .data
             .gaggle_extend(&merged.graph, &users, self.settings, built.before, complete);
@@ -613,19 +613,24 @@ impl GaggleAccumulator {
 
     /// The users running at each second from `from` and before `to` (every
     /// one from `from` when `None`), between the first and last second any
-    /// worker sent a level for: every worker's level at that second added
-    /// up, a worker counting 0 before its first level and holding its last.
-    fn users_levels(&self, from: Second, to: Option<Second>) -> BTreeMap<Second, u64> {
-        let first = self
-            .workers
-            .values()
-            .filter_map(|worker| worker.total.graph.users.keys().next())
-            .min();
-        let last = self
-            .workers
-            .values()
-            .filter_map(|worker| worker.total.graph.users.keys().next_back())
-            .max();
+    /// merged worker sent a level for: every merged worker's level at that
+    /// second added up, a worker counting 0 before its first level and
+    /// holding its last. A worker in `excluded` is left out, as its metrics
+    /// are.
+    fn users_levels(
+        &self,
+        from: Second,
+        to: Option<Second>,
+        excluded: &[(u32, String)],
+    ) -> BTreeMap<Second, u64> {
+        let merged = || {
+            self.workers
+                .iter()
+                .filter(|(id, _)| !excluded.iter().any(|(left_out, _)| left_out == *id))
+                .map(|(_, worker)| &worker.total.graph.users)
+        };
+        let first = merged().filter_map(|users| users.keys().next()).min();
+        let last = merged().filter_map(|users| users.keys().next_back()).max();
         let (Some(&first), Some(&last)) = (first, last) else {
             return BTreeMap::new();
         };
@@ -638,10 +643,8 @@ impl GaggleAccumulator {
         // every sum fits a u64.
         (start..=end)
             .map(|second| {
-                let users = self
-                    .workers
-                    .values()
-                    .filter_map(|worker| worker.total.graph.users.range(..=second).next_back())
+                let users = merged()
+                    .filter_map(|users| users.range(..=second).next_back())
                     .map(|(_, &users)| users)
                     .sum();
                 (second, users)
@@ -1079,10 +1082,10 @@ mod tests {
         let whole = accumulator.all_users_levels();
         assert_eq!(whole.len(), 8);
         assert_eq!(whole.keys().next(), Some(&2));
-        assert_eq!(accumulator.users_levels(0, None), whole);
+        assert_eq!(accumulator.users_levels(0, None, &[]), whole);
         let mut pieces = BTreeMap::new();
         for (from, to) in [(0, 3), (3, 6), (6, 6), (6, 11), (11, 20)] {
-            pieces.extend(accumulator.users_levels(from, Some(to)));
+            pieces.extend(accumulator.users_levels(from, Some(to), &[]));
         }
         assert_eq!(pieces, whole);
     }
