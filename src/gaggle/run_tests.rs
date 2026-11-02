@@ -1488,3 +1488,52 @@ async fn gaggle_trickled_log_is_given_up() {
         .expect("within 90 seconds");
 }
 
+/// Two workers whose users wait on a target slower than the manager's wait
+/// for final metrics once they stop: every user's last request outlasts
+/// that wait, and still no worker is lost, every final merges, and the run
+/// is not degraded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_slow_stop_keeps_every_final() {
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(GET).path("/a");
+            then.status(200)
+                .body("ok")
+                .delay(super::run::FINAL_TIMEOUT + Duration::from_secs(5));
+        })
+        .await;
+    let folder = scratch("slow-stop");
+    let run = gaggle(
+        quick,
+        2,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "4",
+            "--increase-rate",
+            "100",
+            "--run-time",
+            "2",
+            "--timeout",
+            "10",
+            "--report-file",
+        ],
+        &[],
+        &[],
+    );
+    clean(
+        tokio::time::timeout(Duration::from_secs(60), run)
+            .await
+            .expect("the Gaggle ends within 60 seconds"),
+    );
+    let (gaggle, _) = record(&folder);
+    assert_eq!(gaggle["degraded"], false, "{gaggle}");
+    for worker in gaggle["workers"].as_array().unwrap() {
+        assert_eq!(worker["state"], "finished", "{gaggle}");
+        assert!(worker.get("final_missing").is_none(), "{gaggle}");
+    }
+    let _ = std::fs::remove_dir_all(&folder);
+}

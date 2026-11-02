@@ -46,7 +46,7 @@ const FINAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Shorter in unit tests, which wait it out; the process tests run the
 /// examples, built without `cfg(test)`, so with the real deadlines.
 #[cfg(test)]
-const FINAL_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const FINAL_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long a worker waits for its metrics processor to reset.
 #[cfg(not(test))]
