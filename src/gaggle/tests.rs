@@ -1284,6 +1284,41 @@ fn gaggle_users_levels_hold() {
     assert_none("users levels", &graph.gaggle_diff(&expected));
 }
 
+/// A worker the merge leaves out, on an older epoch, adds none of its users
+/// to the users graph, built as it goes or at the end: the graph's peak is
+/// the merged workers' users alone.
+#[test]
+fn gaggle_excluded_worker_adds_no_users() {
+    let delta = |worker: u32, seq: u64, epoch: u64, now: u64, users: &[(u64, u64)]| {
+        let mut delta = GaggleDelta::new(worker, seq, epoch, DeltaKind::Delta);
+        delta.first_seq = seq;
+        delta.now = now;
+        delta.graph.users = users.iter().copied().collect();
+        delta
+    };
+    let mut accumulator = accumulator();
+    // Worker 1 missed the reset to epoch 2, and runs 5 users throughout.
+    apply(
+        &mut accumulator,
+        &delta(1, 1, 1, 3, &[(0, 5), (1, 5), (2, 5)]),
+    );
+    apply(&mut accumulator, &delta(0, 1, 2, 3, &[(0, 2), (1, 3)]));
+    assert_eq!(accumulator.excluded(), vec![1]);
+    // Built as it goes: the seconds complete so far, then the rest.
+    let _ = accumulator.merged();
+    apply(&mut accumulator, &delta(0, 2, 2, 5, &[(3, 4)]));
+    apply(&mut accumulator, &delta(1, 2, 1, 5, &[(3, 5), (4, 5)]));
+    accumulator.done(0);
+    accumulator.done(1);
+    let (_, graph) = accumulator.merged();
+    let mut expected = GraphData::for_metrics_processor(true, true, true);
+    for (second, users) in [(0, 2), (1, 3), (2, 3), (3, 4)] {
+        expected.record_users_per_second(users, second);
+    }
+    expected.finish_latency_columns();
+    assert_none("users of a worker left out", &graph.gaggle_diff(&expected));
+}
+
 /// A delta received twice is reported and counted once.
 #[test]
 fn gaggle_repeated_delta_is_ignored() {
