@@ -21,6 +21,7 @@ message WorkerMessage {
     Metrics metrics = 4;
     Stopped stopped = 5;
     LogChunk log_chunk = 6;
+    UsersStopped users_stopped = 7;
   }
 }
 
@@ -68,6 +69,10 @@ message Stopped {
   // The worker's run folder, where its logs are.
   string run_folder = 3;
 }
+
+// Every user stopped, after `Stop` or on its own: the final metrics and
+// `Stopped` follow.
+message UsersStopped {}
 
 message LogChunk {
   // The log's file name, with no folder.

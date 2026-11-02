@@ -130,6 +130,8 @@ pub(crate) enum Event {
         delta: Box<GaggleDelta>,
         bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
+    /// Its users stopped: its final delta and `Stopped` follow.
+    UsersStopped { id: u32 },
     /// Its users stopped, and its final delta was sent first.
     Stopped { id: u32, stopped: Stopped },
     /// A piece of one of its logs.
@@ -884,6 +886,7 @@ async fn read_worker(
                     break;
                 }
             },
+            Some(FromWorker::UsersStopped(_)) => Event::UsersStopped { id },
             Some(FromWorker::Stopped(stopped)) => Event::Stopped { id, stopped },
             Some(FromWorker::LogChunk(chunk)) => Event::Log { id, chunk },
         };

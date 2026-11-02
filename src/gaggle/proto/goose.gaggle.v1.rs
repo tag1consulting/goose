@@ -2,7 +2,7 @@
 /// What a worker sends.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WorkerMessage {
-    #[prost(oneof = "worker_message::Message", tags = "1, 2, 3, 4, 5, 6")]
+    #[prost(oneof = "worker_message::Message", tags = "1, 2, 3, 4, 5, 6, 7")]
     pub message: ::core::option::Option<worker_message::Message>,
 }
 /// Nested message and enum types in `WorkerMessage`.
@@ -21,6 +21,8 @@ pub mod worker_message {
         Stopped(super::Stopped),
         #[prost(message, tag = "6")]
         LogChunk(super::LogChunk),
+        #[prost(message, tag = "7")]
+        UsersStopped(super::UsersStopped),
     }
 }
 /// The first message on a stream. The shared token is not in it: it travels
@@ -118,6 +120,10 @@ pub mod stopped {
         }
     }
 }
+/// Every user stopped, after `Stop` or on its own: the final metrics and
+/// `Stopped` follow.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UsersStopped {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogChunk {
     /// The log's file name, with no folder.

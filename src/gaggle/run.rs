@@ -40,7 +40,8 @@ const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
 #[cfg(test)]
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// How long the manager waits for every worker's final metrics after `Stop`.
+/// How long the manager waits for a worker's final metrics once its users
+/// stopped, and a worker for its metrics processor to hand them over.
 #[cfg(not(test))]
 const FINAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Shorter in unit tests, which wait it out; the process tests run the
@@ -212,6 +213,8 @@ struct WorkerEntry {
     id: u32,
     name: String,
     users: usize,
+    /// When it said its users stopped: its final metrics follow.
+    users_stopped: Option<Instant>,
     stopped: Option<Reason>,
     lost: Option<(chrono::DateTime<chrono::Utc>, String)>,
     /// It stopped as told and then went away: not lost, but nothing more,
@@ -350,7 +353,10 @@ async fn next_event_or_canceled(
         if now >= deadline {
             return Ok(None);
         }
-        if let Some(event) = manager.next_event(deadline.min(now + KILLSWITCH_POLL)).await {
+        if let Some(event) = manager
+            .next_event(deadline.min(now + KILLSWITCH_POLL))
+            .await
+        {
             return Ok(Some(event));
         }
     }
@@ -601,6 +607,7 @@ impl GooseAttack {
                 id,
                 name,
                 users,
+                users_stopped: None,
                 stopped: None,
                 lost: None,
                 gone: false,
@@ -963,6 +970,11 @@ impl GooseAttack {
                     self.lose_worker(goose_attack_run_state, run, id, why);
                 }
             }
+            Event::UsersStopped { id } => {
+                if let Some(worker) = run.worker(id) {
+                    worker.users_stopped.get_or_insert_with(Instant::now);
+                }
+            }
             Event::Lost { id, why } => self.lose_worker(goose_attack_run_state, run, id, why),
             Event::Joined | Event::PrepareAck { .. } | Event::Log { .. } => {}
         }
@@ -1181,24 +1193,41 @@ impl GooseAttack {
             _ => "the run ended".to_string(),
         };
         run.manager.broadcast(ToWorker::Stop(Stop { reason }));
-        let deadline = Instant::now() + FINAL_TIMEOUT;
-        while run.running().next().is_some() {
-            match run.manager.next_event(deadline).await {
-                Some(event) => self.manager_event(goose_attack_run_state, run, event),
-                None => break,
+        // A user stops once the transaction it is in ends: each worker has
+        // the request timeout and FINAL_TIMEOUT from Stop to say its users
+        // stopped, and FINAL_TIMEOUT from then for its final metrics.
+        let users_bound = self.configuration.request_timeout() + FINAL_TIMEOUT;
+        let stop = Instant::now();
+        let deadline = |worker: &WorkerEntry| match worker.users_stopped {
+            Some(at) => at.max(stop) + FINAL_TIMEOUT,
+            None => stop + users_bound,
+        };
+        while let Some(next) = run.running().map(deadline).min() {
+            if let Some(event) = run.manager.next_event(next).await {
+                self.manager_event(goose_attack_run_state, run, event);
+                continue;
             }
-        }
-        let late: Vec<u32> = run.running().map(|worker| worker.id).collect();
-        for id in late {
-            self.lose_worker(
-                goose_attack_run_state,
-                run,
-                id,
-                format!(
-                    "no final metrics within {} seconds of Stop",
-                    FINAL_TIMEOUT.as_secs()
-                ),
-            );
+            let now = Instant::now();
+            let late: Vec<(u32, bool)> = run
+                .running()
+                .filter(|worker| deadline(worker) <= now)
+                .map(|worker| (worker.id, worker.users_stopped.is_some()))
+                .collect();
+            for (id, users_stopped) in late {
+                let why = if users_stopped {
+                    format!(
+                        "no final metrics within {} seconds of its users stopping",
+                        FINAL_TIMEOUT.as_secs()
+                    )
+                } else {
+                    format!(
+                        "its users had not stopped within {} seconds of Stop (the request timeout and {} seconds)",
+                        users_bound.as_secs(),
+                        FINAL_TIMEOUT.as_secs()
+                    )
+                };
+                self.lose_worker(goose_attack_run_state, run, id, why);
+            }
         }
     }
 
@@ -1211,6 +1240,9 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut WorkerRun,
     ) -> Result<(), GooseError> {
+        // Its final metrics follow at once: the manager waits for them from
+        // now.
+        run.link.users_stopped();
         let now = self.series_elapsed_secs();
         let (respond, done) = tokio::sync::oneshot::channel();
         let command = MetricsCommand::GaggleFinal {

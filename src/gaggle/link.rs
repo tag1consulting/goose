@@ -14,7 +14,7 @@ use super::merge::coalesce;
 use super::proto::{
     gaggle_client::GaggleClient, manager_message::Message as FromManager, stopped::Reason,
     worker_message::Message as ToManager, Heartbeat, Hello, LogChunk, Metrics, PrepareAck, Stopped,
-    WorkerMessage, PROTOCOL_VERSION,
+    UsersStopped, WorkerMessage, PROTOCOL_VERSION,
 };
 use crate::GooseError;
 use std::collections::VecDeque;
@@ -678,6 +678,12 @@ impl Link {
     pub(crate) fn prepared(&self, error: Option<String>) {
         self.outbox
             .push_message(ToManager::PrepareAck(PrepareAck { error }));
+    }
+
+    /// Tell the manager every user stopped, before the final delta.
+    pub(crate) fn users_stopped(&self) {
+        self.outbox
+            .push_message(ToManager::UsersStopped(UsersStopped {}));
     }
 
     /// Tell the manager the users stopped, after the final delta.
