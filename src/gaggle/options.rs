@@ -61,6 +61,43 @@ fn timespan(option: &str, value: &Option<String>, default: u64) -> Result<u64, G
     }
 }
 
+/// The options a worker keeps from its own command line; it refuses every
+/// other it is given, but the manager's own (see
+/// [`GooseConfiguration::worker_refusals`]).
+const WORKER_KEEPS: &[&str] = &[
+    "--output-dir",
+    "--goose-log",
+    // Verbosity, and what the worker's own console shows.
+    "--verbose",
+    "--quiet",
+    "--log-level",
+    "--no-print-metrics",
+    "--no-error-summary",
+    // Help and version, and the lists that print and exit.
+    "--help",
+    "--version",
+    "--list",
+    "--scenarios-list",
+    // The worker's own Gaggle options.
+    "--worker",
+    "--manager-host",
+    "--manager-port",
+    "--gaggle-connect-timeout",
+    "--gaggle-token",
+    "--no-hash-check",
+    "--gaggle-heartbeat-timeout",
+];
+
+/// The manager's Gaggle options, which `validate_gaggle` refuses on a worker
+/// with its own message.
+const MANAGER_ONLY: &[&str] = &[
+    "--manager",
+    "--expect-workers",
+    "--manager-bind-host",
+    "--manager-bind-port",
+    "--gaggle-shadow-merge",
+];
+
 impl GooseConfiguration {
     /// Whether this process is a Gaggle manager.
     pub(crate) fn is_manager(&self) -> bool {
@@ -146,15 +183,6 @@ impl GooseConfiguration {
         if !self.worker {
             return Ok(());
         }
-        if let Some((option, _)) = self.worker_refused().iter().find(|(_, set)| *set) {
-            return Err(refused(
-                option,
-                "set",
-                format!(
-                    "{option} can't be used with --worker: the manager gives every option that shapes the load, the metrics, the reports and the logs, and a worker runs no Controller or dashboard. A worker keeps --output-dir, --goose-log and verbosity."
-                ),
-            ));
-        }
         #[cfg(feature = "pdf-reports")]
         if self.pdf_scale.is_some() || self.pdf_timeout.is_some() {
             return Err(refused(
@@ -163,79 +191,38 @@ impl GooseConfiguration {
                 "--pdf-scale and --pdf-timeout can't be used with --worker: the manager writes the reports.",
             ));
         }
+        if let Some(option) = self.worker_refused().first() {
+            return Err(refused(
+                option,
+                "set",
+                format!(
+                    "{option} can't be used with --worker: the manager gives every option that shapes the load, the metrics, the reports and the logs, and a worker runs no Controller or dashboard. A worker keeps --output-dir, --goose-log and verbosity."
+                ),
+            ));
+        }
         Ok(())
     }
 
-    /// Every option [`Self::worker_refusals`] refuses with its own message,
-    /// and whether the command line set it.
-    fn worker_refused(&self) -> [(&'static str, bool); 61] {
-        let set = |value: &Option<String>| value.is_some();
-        [
-            ("--host", set(&self.host)),
-            ("--users", self.users.is_some()),
-            ("--increase-rate", set(&self.increase_rate)),
-            ("--increase-time", set(&self.increase_time)),
-            ("--run-time", set(&self.run_time)),
-            ("--decrease-rate", set(&self.decrease_rate)),
-            ("--decrease-time", set(&self.decrease_time)),
-            ("--iterations", self.iterations.is_some()),
-            ("--test-plan", self.test_plan.is_some()),
-            ("--scenarios", self.scenarios.is_some()),
-            ("--throttle-requests", self.throttle_requests.is_some()),
-            ("--running-metrics", self.running_metrics.is_some()),
-            ("--report-file", !self.report_file.is_empty()),
-            ("--compress", self.compress.is_some()),
-            ("--notes", set(&self.notes)),
-            ("--report-graph-data", self.report_graph_data),
-            ("--render-report", set(&self.render_report)),
-            ("--baseline-file", set(&self.baseline_file)),
-            ("--no-granular-report", self.no_granular_report),
-            ("--pdf-print-html", set(&self.pdf_print_html)),
-            ("--no-reset-metrics", self.no_reset_metrics),
-            ("--no-metrics", self.no_metrics),
-            ("--no-transaction-metrics", self.no_transaction_metrics),
-            ("--no-scenario-metrics", self.no_scenario_metrics),
-            ("--no-status-codes", self.no_status_codes),
-            ("--co-mitigation", self.co_mitigation.is_some()),
-            ("--threshold", !self.threshold.is_empty()),
-            ("--no-threshold-abort", self.no_threshold_abort),
-            ("--threshold-abort-delay", set(&self.threshold_abort_delay)),
-            ("--request-log", set(&self.request_log)),
-            ("--request-format", self.request_format.is_some()),
-            ("--request-body", self.request_body),
-            ("--transaction-log", set(&self.transaction_log)),
-            ("--transaction-format", self.transaction_format.is_some()),
-            ("--scenario-log", set(&self.scenario_log)),
-            ("--scenario-format", self.scenario_format.is_some()),
-            ("--error-log", set(&self.error_log)),
-            ("--error-format", self.error_format.is_some()),
-            ("--debug-log", set(&self.debug_log)),
-            ("--debug-format", self.debug_format.is_some()),
-            ("--no-debug-body", self.no_debug_body),
-            ("--dashboard", self.dashboard),
-            ("--dashboard-host", set(&self.dashboard_host)),
-            ("--dashboard-port", self.dashboard_port.is_some()),
-            ("--dashboard-auth-token", set(&self.dashboard_auth_token)),
-            ("--dashboard-control", self.dashboard_control),
-            ("--dashboard-no-auth", self.dashboard_no_auth),
-            (
-                "--dashboard-max-clients",
-                self.dashboard_max_clients.is_some(),
-            ),
-            ("--no-percentiles-over-time", self.no_percentiles_over_time),
-            ("--no-autostart", self.no_autostart),
-            ("--no-telnet", self.no_telnet),
-            ("--telnet-host", set(&self.telnet_host)),
-            ("--telnet-port", self.telnet_port.is_some()),
-            ("--websocket", self.websocket),
-            ("--no-websocket", self.no_websocket),
-            ("--websocket-host", set(&self.websocket_host)),
-            ("--websocket-port", self.websocket_port.is_some()),
-            ("--timeout", set(&self.timeout)),
-            ("--no-gzip", self.no_gzip),
-            ("--sticky-follow", self.sticky_follow),
-            ("--accept-invalid-certs", self.accept_invalid_certs),
-        ]
+    /// Every option the command line set that [`Self::worker_refusals`]
+    /// refuses, in the order the configuration holds them: each whose value
+    /// is not its default, but those in [`WORKER_KEEPS`] and
+    /// [`MANAGER_ONLY`]. An option is a field whose name, in kebab case, is
+    /// its long flag, and which is unset by default: `None`, empty, `false`
+    /// or `0`.
+    fn worker_refused(&self) -> Vec<String> {
+        let (Ok(serde_json::Value::Object(set)), Ok(serde_json::Value::Object(default))) = (
+            serde_json::to_value(self),
+            serde_json::to_value(GooseConfiguration::default()),
+        ) else {
+            return Vec::new();
+        };
+        set.iter()
+            .filter(|&(field, value)| default.get(field) != Some(value))
+            .map(|(field, _)| format!("--{}", field.replace('_', "-")))
+            .filter(|option| {
+                !WORKER_KEEPS.contains(&option.as_str()) && !MANAGER_ONLY.contains(&option.as_str())
+            })
+            .collect()
     }
 
     /// Validate the Gaggle options, once the defaults are merged in.
@@ -720,64 +707,54 @@ mod tests {
         .unwrap();
     }
 
-    /// Every option is classified for a worker: refused by
-    /// `worker_refusals`, one a worker keeps, or a manager's Gaggle option
-    /// `validate_gaggle` refuses on a worker. A new option fails this until
-    /// it is placed in one of them.
+    /// Every option is classified for a worker: one a worker keeps, a
+    /// manager's Gaggle option `validate_gaggle` refuses on a worker, or
+    /// refused by `worker_refusals`, which sees an option as a configuration
+    /// field named as its long flag. Every flag is such a field, and every
+    /// field such a flag, so a new option is refused on a worker until it
+    /// is listed as kept.
     #[test]
     fn every_option_is_classified_for_a_worker() {
-        let refused: Vec<&str> = GooseConfiguration::default()
-            .worker_refused()
-            .iter()
-            .map(|(option, _)| *option)
-            .chain(["--pdf-scale", "--pdf-timeout"])
+        let fields = match serde_json::to_value(GooseConfiguration::default()) {
+            Ok(serde_json::Value::Object(fields)) => fields,
+            other => panic!("{:?}", other),
+        };
+        let flags: Vec<String> = <GooseConfiguration as clap::CommandFactory>::command()
+            .get_arguments()
+            .map(|arg| {
+                format!(
+                    "--{}",
+                    arg.get_long().expect("every option has a long flag")
+                )
+            })
             .collect();
-        let kept = [
-            "--output-dir",
-            "--goose-log",
-            // Verbosity, and what the worker's own console shows.
-            "--verbose",
-            "--quiet",
-            "--log-level",
-            "--no-print-metrics",
-            "--no-error-summary",
-            // Help and version, and the lists that print and exit.
-            "--help",
-            "--version",
-            "--list",
-            "--scenarios-list",
-            // The worker's own Gaggle options.
-            "--worker",
-            "--manager-host",
-            "--manager-port",
-            "--gaggle-connect-timeout",
-            "--gaggle-token",
-            "--no-hash-check",
-            "--gaggle-heartbeat-timeout",
-        ];
-        // Refused by validate_gaggle on a worker.
-        let manager_only = [
-            "--manager",
-            "--expect-workers",
-            "--manager-bind-host",
-            "--manager-bind-port",
-            "--gaggle-shadow-merge",
-        ];
-        let mut unclassified = Vec::new();
-        for arg in <GooseConfiguration as clap::CommandFactory>::command().get_arguments() {
-            let long = format!(
-                "--{}",
-                arg.get_long().expect("every option has a long flag")
-            );
-            let places = [&refused[..], &kept[..], &manager_only[..]]
-                .iter()
-                .filter(|list| list.contains(&long.as_str()))
-                .count();
-            if places != 1 {
-                unclassified.push(format!("{long} ({places} places)"));
+        let mut wrong = Vec::new();
+        for flag in &flags {
+            let field = flag[2..].replace('-', "_");
+            // Help and version are clap's own, never fields.
+            if !fields.contains_key(&field) && !["--help", "--version"].contains(&flag.as_str()) {
+                wrong.push(format!("{flag} is no field"));
+            }
+            if WORKER_KEEPS.contains(&flag.as_str()) && MANAGER_ONLY.contains(&flag.as_str()) {
+                wrong.push(format!("{flag} is both kept and the manager's"));
             }
         }
-        assert!(unclassified.is_empty(), "{:?}", unclassified);
+        for field in fields.keys() {
+            if !flags.contains(&format!("--{}", field.replace('_', "-"))) {
+                wrong.push(format!("{field} is no flag"));
+            }
+        }
+        for listed in WORKER_KEEPS.iter().chain(MANAGER_ONLY) {
+            if !flags.iter().any(|flag| flag == listed) {
+                wrong.push(format!("{listed} is listed but no flag"));
+            }
+        }
+        assert!(wrong.is_empty(), "{:?}", wrong);
+        // Nothing set, nothing refused.
+        assert_eq!(
+            GooseConfiguration::default().worker_refused(),
+            Vec::<String>::new()
+        );
     }
 
     /// The token never shows in `config` (the `Debug` output) or
