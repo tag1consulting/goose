@@ -659,12 +659,16 @@ impl Link {
             .await
             .map_err(|_| Refusal::Unreachable("no Welcome from the manager".to_string()))?;
         let id = match first {
-            Ok(Some(message)) => match message.message {
+            Ok(Some(message)) => match &message.message {
                 Some(FromManager::Welcome(welcome)) => welcome.worker_id,
-                Some(FromManager::Reject(reject)) => return Err(Refusal::Refused(reject.reason)),
-                other => {
+                Some(FromManager::Reject(reject)) => {
+                    return Err(Refusal::Refused(reject.reason.clone()))
+                }
+                // Named, never shown: a Prepare holds up to 64 MiB.
+                _ => {
                     return Err(Refusal::Unreachable(format!(
-                        "the manager answered {other:?}, not Welcome"
+                        "the manager answered {}, not Welcome",
+                        super::manager::message_kind(&message)
                     )))
                 }
             },

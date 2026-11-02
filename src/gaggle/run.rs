@@ -1587,10 +1587,6 @@ async fn collect_logs_into(run: &mut ManagerRun, folder: Option<PathBuf>) {
         }
         let wake = deadline.min(now + KILLSWITCH_POLL);
         let Some(event) = run.manager.next_event(wake).await else {
-            if Instant::now() < wake {
-                // No event, and no wake yet: the event queue closed.
-                tokio::time::sleep_until(tokio::time::Instant::from_std(wake)).await;
-            }
             continue;
         };
         match event {

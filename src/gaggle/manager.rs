@@ -239,7 +239,7 @@ fn dropped(id: u32, name: &str, kind: &str) -> String {
 }
 
 /// The name of a message to a worker, for a log line.
-fn message_kind(message: &ManagerMessage) -> &'static str {
+pub(crate) fn message_kind(message: &ManagerMessage) -> &'static str {
     match &message.message {
         Some(ToWorker::Welcome(_)) => "Welcome",
         Some(ToWorker::Reject(_)) => "Reject",

@@ -125,7 +125,11 @@ impl GooseConfiguration {
     /// The manager a worker connects to, as `host:port`, with brackets around
     /// an IPv6 address.
     pub(crate) fn manager_address(&self) -> String {
-        let host = self.manager_host.clone().unwrap_or_default();
+        let host = self
+            .manager_host
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
         let port = self.manager_port.unwrap_or(DEFAULT_MANAGER_PORT);
         if host.contains(':') && !host.starts_with('[') {
             format!("[{host}]:{port}")
@@ -465,6 +469,17 @@ mod tests {
             Err(GooseError::InvalidOption { detail, .. }) => detail,
             other => panic!("{:?} was not refused: {:?}", args, other),
         }
+    }
+
+    /// A worker's manager host is trimmed, as a manager's bind host is, and
+    /// an IPv6 address bracketed.
+    #[test]
+    fn manager_address_trims_the_host() {
+        let address = |host: &str| {
+            parse(&["--worker", "--manager-host", host, "--manager-port", "7"]).manager_address()
+        };
+        assert_eq!(address(" m.example "), "m.example:7");
+        assert_eq!(address(" ::1 "), "[::1]:7");
     }
 
     /// A `--test-plan` of `steps` steps of 1 user for 1 second.

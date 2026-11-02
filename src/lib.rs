@@ -154,6 +154,7 @@ type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum GooseError {
     /// Wraps a [`std::io::Error`](https://doc.rust-lang.org/std/io/struct.Error.html).
     Io(io::Error),
@@ -350,6 +351,7 @@ impl From<serde_json::Error> for GooseError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// A [`GooseAttack`](./struct.GooseAttack.html) load test operates in one (and only one)
 /// of the following modes.
+#[non_exhaustive]
 pub enum AttackMode {
     /// During early startup before one of the following modes gets assigned.
     Undefined,
