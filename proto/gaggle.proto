@@ -3,6 +3,12 @@
 // The generated Rust is checked in at src/gaggle/proto/goose.gaggle.v1.rs,
 // so building Goose never needs protoc. Regenerate it after any change here
 // with `cargo run --manifest-path proto/gen/Cargo.toml`.
+//
+// The handshake never changes, so a worker and a manager of any two
+// versions can tell they differ: `WorkerMessage.hello` stays field 1, and
+// `Hello.goose_version` and `Hello.protocol_version` stay fields 1 and 2. A
+// field removed from any message is marked `reserved`, its number and name,
+// so neither is ever used again for something else.
 syntax = "proto3";
 
 package goose.gaggle.v1;
@@ -15,6 +21,7 @@ service Gaggle {
 // What a worker sends.
 message WorkerMessage {
   oneof message {
+    // Field 1 for good: the handshake.
     Hello hello = 1;
     PrepareAck prepare_ack = 2;
     Heartbeat heartbeat = 3;
@@ -29,9 +36,10 @@ message WorkerMessage {
 // in the request's `authorization` metadata, as `Bearer <token>`, checked
 // before any message is read.
 message Hello {
-  // The worker's Goose version, which must equal the manager's.
+  // The worker's Goose version, which must equal the manager's. Field 1 for
+  // good: the handshake.
   string goose_version = 1;
-  // The protocol version, 1.
+  // The protocol version, 1. Field 2 for good: the handshake.
   uint32 protocol_version = 2;
   // The hash of the load test's scenarios and transactions.
   uint64 plan_hash = 3;
