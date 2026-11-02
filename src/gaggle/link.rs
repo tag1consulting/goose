@@ -701,6 +701,13 @@ impl Link {
         Ok(link)
     }
 
+    /// Set when the switch's last resort would have ended the process
+    /// (unit tests).
+    #[cfg(test)]
+    pub(crate) fn forced(&self) -> Arc<AtomicBool> {
+        self.forced.clone()
+    }
+
     /// Watch a user task, so the dead man's switch can stop it.
     pub(crate) fn watch(&self, user: tokio::task::AbortHandle) {
         if let Ok(mut users) = self.users.lock() {

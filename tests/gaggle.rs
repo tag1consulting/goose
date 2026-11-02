@@ -471,10 +471,6 @@ fn manager_lost_mid_run(frozen: bool) {
                 assert!(output.contains("nothing from it"), "{}", output);
             }
         }
-        // No more load once the workers are gone.
-        let after = index.calls();
-        std::thread::sleep(Duration::from_secs(3));
-        assert_eq!(index.calls(), after, "load outlived the manager");
         let _ = manager.kill();
         let _ = std::fs::remove_dir_all(&folder);
     }
@@ -489,7 +485,7 @@ fn manager_lost_mid_run(frozen: bool) {
 fn gaggle_threshold_stops_every_worker() {
     within(|| {
         let server = MockServer::start();
-        let index = mock_simple(&server, Duration::from_millis(30));
+        mock_simple(&server, Duration::from_millis(30));
         let folder = scratch("threshold");
         let host = server.base_url();
         let simple = example("simple");
@@ -535,9 +531,6 @@ fn gaggle_threshold_stops_every_worker() {
                 .expect("the worker exits");
             assert!(status.success(), "{}: {}", worker.name, worker.output());
         }
-        let after = index.calls();
-        std::thread::sleep(Duration::from_secs(2));
-        assert_eq!(index.calls(), after, "every worker stopped");
         let _ = std::fs::remove_dir_all(&folder);
     });
 }

@@ -96,12 +96,12 @@ pub(crate) struct TestFaults {
     pub(crate) silent_final: bool,
     /// The metrics processor never answers a reset.
     pub(crate) silent_reset: bool,
-    /// The dead man's switch's last resort ends the process for real.
-    pub(crate) exit_for_real: bool,
     /// What the worker does with its `Prepare`.
     pub(crate) prepare: PrepareFault,
     /// What the worker sends when asked for its logs.
     pub(crate) logs: LogsFault,
+    /// End with an error a second into the run, its link dropped.
+    pub(crate) exit_mid_run: bool,
 }
 
 /// What a worker sends in place of its logs, in unit tests.
@@ -221,6 +221,11 @@ pub(crate) struct GaggleState {
     /// Where a manager reports each worker joining (unit tests).
     #[cfg(test)]
     pub(crate) joins: Option<tokio::sync::mpsc::UnboundedSender<usize>>,
+    /// Where a worker puts its link's record of the dead man's switch's
+    /// last resort, set when the last resort would have ended the process
+    /// (unit tests).
+    #[cfg(test)]
+    pub(crate) last_resort: Arc<std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>>,
     /// Where the client settings every user gets are reported (unit tests).
     #[cfg(test)]
     pub(crate) client_report:
@@ -459,6 +464,15 @@ impl GooseAttack {
     pub(crate) fn gaggle_test_faults(mut self, faults: TestFaults) -> Self {
         self.gaggle.test_faults = faults;
         self
+    }
+
+    /// Where a worker puts its link's record of the dead man's switch's last
+    /// resort, once it joined (unit tests).
+    #[cfg(test)]
+    pub(crate) fn last_resort_record(
+        &self,
+    ) -> Arc<std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>> {
+        self.gaggle.last_resort.clone()
     }
 
     /// Have a worker report the client settings its users get (unit tests).
@@ -709,9 +723,13 @@ impl GooseAttack {
             hello,
             token: self.configuration.gaggle_token().map(str::to_string),
             #[cfg(test)]
-            exit_for_real: self.gaggle.test_faults.exit_for_real,
+            exit_for_real: false,
         })
         .await?;
+        #[cfg(test)]
+        if let Ok(mut record) = self.gaggle.last_resort.lock() {
+            *record = Some(link.forced());
+        }
         // The manager waits for its other workers and runs test_start: the
         // heartbeats, and the dead man's switch, cover the wait.
         let bytes = loop {
@@ -1042,6 +1060,12 @@ impl GooseAttack {
             self.attack_phase,
             AttackPhase::Increase | AttackPhase::Maintain | AttackPhase::Decrease
         );
+        #[cfg(test)]
+        if running && self.gaggle.test_faults.exit_mid_run && self.series_elapsed_secs() >= 1 {
+            return Err(GooseError::Gaggle {
+                detail: "ended mid run on purpose".to_string(),
+            });
+        }
         if running && self.series_started.is_some() {
             let now = self.series_elapsed_secs();
             if run.tick_second != Some(now) {

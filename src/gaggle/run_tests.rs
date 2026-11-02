@@ -447,13 +447,10 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             "--manager-port",
             &port,
             "--quiet",
-        ]))
-        // The last resort ends the process for real here: that it does not
-        // is what this test checks.
-        .gaggle_test_faults(TestFaults {
-            exit_for_real: true,
-            ..Default::default()
-        });
+        ]));
+        // The last resort records that it would have ended the process:
+        // that it does not is what this test checks.
+        let last_resort = worker.last_resort_record();
         let worker = tokio::spawn(worker.execute());
         // Once it joined, the manager goes.
         assert_eq!(joined.recv().await, Some(1));
@@ -465,9 +462,15 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             }
             other => panic!("{:?}", other.map(|_| ())),
         }
-        // Past the switch's 2 second last resort: had the link not marked
-        // itself done, the process would have exited.
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Past the switch's last resort: had the link not marked itself
+        // done, it would have ended the process.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let forced = last_resort
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the worker joined");
+        assert!(!forced.load(std::sync::atomic::Ordering::Relaxed));
     };
     tokio::time::timeout(Duration::from_secs(30), test)
         .await
@@ -1639,4 +1642,73 @@ async fn gaggle_reports_are_written_before_the_logs() {
     tokio::time::timeout(Duration::from_secs(60), test)
         .await
         .expect("within 60 seconds");
+}
+
+/// A run that loses every worker ends early, and its record says so: ended
+/// by every worker lost, each worker lost, the run degraded, and test_stop
+/// run once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_every_worker_lost_ends_the_run() {
+    let server = MockServer::start_async().await;
+    let mock = |path: &'static str| {
+        let server = &server;
+        async move {
+            server
+                .mock_async(|when, then| {
+                    when.method(GET).path(path);
+                    then.status(200).body("ok");
+                })
+                .await
+        }
+    };
+    let (_a, stop) = (mock("/a").await, mock("/stop").await);
+    let _start = mock("/start").await;
+    let folder = scratch("every-worker-lost");
+    let build = |configuration, place| {
+        quick(configuration, place)
+            .test_start(get("/start"))
+            .test_stop(get("/stop"))
+    };
+    let faults = [TestFaults {
+        exit_mid_run: true,
+        ..Default::default()
+    }; 2];
+    let started = std::time::Instant::now();
+    let run = gaggle(
+        build,
+        2,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "4",
+            "--increase-rate",
+            "100",
+            "--run-time",
+            "30",
+            "--report-file",
+        ],
+        &[],
+        &faults,
+    );
+    let (manager, workers) = tokio::time::timeout(Duration::from_secs(60), run)
+        .await
+        .expect("the Gaggle ends within 60 seconds");
+    assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+    assert!(workers.iter().all(Result::is_err));
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "{:?}",
+        started.elapsed()
+    );
+    let report = std::fs::read_to_string(folder.join("manager").join("report.json")).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report).unwrap();
+    assert_eq!(report["ended_by"], "workers_lost", "{}", report["gaggle"]);
+    let gaggle = &report["gaggle"];
+    assert_eq!(gaggle["degraded"], true, "{}", gaggle);
+    let (lost, others) = split_workers(gaggle, |worker| worker["state"] == "lost");
+    assert_eq!((lost.len(), others.len()), (2, 0), "{}", gaggle);
+    assert_eq!(stop.calls_async().await, 1);
+    let _ = std::fs::remove_dir_all(&folder);
 }

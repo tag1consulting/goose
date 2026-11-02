@@ -1476,6 +1476,33 @@ pub(crate) mod handshake_tests {
         }
     }
 
+    /// A manager with a token refuses a stream presenting an empty `Bearer `
+    /// token, or none, before its handler runs.
+    #[tokio::test]
+    async fn an_empty_bearer_token_is_refused() {
+        let test = async {
+            let manager = Manager::start(
+                "127.0.0.1",
+                0,
+                1,
+                Some("tok-empty-check".to_string()),
+                7,
+                true,
+                Duration::from_secs(30),
+            )
+            .await
+            .unwrap();
+            for token in [Some(""), None] {
+                let answer = answer(&manager, hello(), token).await;
+                assert_eq!(answer, Err(WRONG_TOKEN.to_string()), "{:?}", token);
+            }
+            assert_eq!(handled(&manager), 0);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// The streams the handler ran for.
     fn handled(manager: &Manager) -> usize {
         manager
