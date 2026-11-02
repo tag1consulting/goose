@@ -1753,6 +1753,50 @@ pub(crate) struct GooseDefaults {
     pub pdf_timeout: Option<u64>,
 }
 
+impl GooseDefaults {
+    /// Clear every log default: each log, its format, and whether the
+    /// request log holds bodies and the debug log none. A Gaggle worker
+    /// writes the logs its manager asks for, and no other.
+    #[cfg(feature = "gaggle")]
+    pub(crate) fn clear_logs(&mut self) {
+        let GooseDefaults {
+            request_log,
+            request_format,
+            request_body,
+            transaction_log,
+            transaction_format,
+            scenario_log,
+            scenario_format,
+            error_log,
+            error_format,
+            debug_log,
+            debug_format,
+            no_debug_body,
+            ..
+        } = self;
+        for log in [
+            request_log,
+            transaction_log,
+            scenario_log,
+            error_log,
+            debug_log,
+        ] {
+            *log = None;
+        }
+        for format in [
+            request_format,
+            transaction_format,
+            scenario_format,
+            error_format,
+            debug_format,
+        ] {
+            *format = None;
+        }
+        *request_body = None;
+        *no_debug_body = None;
+    }
+}
+
 /// Defines all [`GooseConfiguration`] options that can be programmatically configured with
 /// a custom default.
 ///

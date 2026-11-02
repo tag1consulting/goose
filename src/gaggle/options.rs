@@ -817,6 +817,54 @@ mod tests {
         );
     }
 
+    /// Clearing the log defaults, as a worker does, leaves none of what a
+    /// load test may set in code: a configuration made from them asks for
+    /// no log, no format, and no body options.
+    #[test]
+    fn clearing_the_log_defaults_leaves_no_log() {
+        use crate::logger::GooseLogFormat;
+        let log = || Some("in-code.log".to_string());
+        let format = || Some(GooseLogFormat::Csv);
+        let mut defaults = GooseDefaults {
+            request_log: log(),
+            request_format: format(),
+            request_body: Some(true),
+            transaction_log: log(),
+            transaction_format: format(),
+            scenario_log: log(),
+            scenario_format: format(),
+            error_log: log(),
+            error_format: format(),
+            debug_log: log(),
+            debug_format: format(),
+            no_debug_body: Some(true),
+            ..Default::default()
+        };
+        // Every kind of log Goose writes is set above.
+        assert_eq!(crate::runs::LOG_NAMES.len(), 5);
+        let configured = |defaults: &GooseDefaults| {
+            let mut configuration = parse(&["--host", "http://h"]);
+            configuration.configure(defaults).unwrap();
+            configuration
+        };
+        let set = configured(&defaults);
+        assert_eq!(crate::gaggle::spec::log_specs(&set).len(), 5);
+        assert!(set.request_body && set.no_debug_body);
+        defaults.clear_logs();
+        let cleared = configured(&defaults);
+        assert!(crate::gaggle::spec::log_specs(&cleared).is_empty());
+        assert!(!cleared.request_body && !cleared.no_debug_body);
+        for format in [
+            &cleared.request_format,
+            &cleared.transaction_format,
+            &cleared.scenario_format,
+            &cleared.error_format,
+            &cleared.debug_format,
+        ] {
+            assert_ne!(format, &Some(GooseLogFormat::Csv));
+        }
+    }
+
     /// The token never shows in `config` (the `Debug` output) or
     /// `config-json`, nor when it comes from the environment. The process
     /// tests check no log line holds it.
