@@ -1064,7 +1064,7 @@ impl GooseAttack {
                     self.lose_worker(goose_attack_run_state, run, id, why);
                 } else if worker.lost.is_none() {
                     // It sends no more deltas, so it no longer holds back
-                    // which seconds are complete, though its final never
+                    // which seconds are complete, whether or not its final
                     // merged.
                     let _ = goose_attack_run_state
                         .metrics_cmd_tx
