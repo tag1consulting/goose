@@ -3173,7 +3173,14 @@ mod built_as_it_goes {
                     .unwrap();
             }
         }
-        let mut graph = accumulator.merged_and_excluded(GraphData::new()).1;
+        let (metrics, mut graph, _) = accumulator.merged_and_excluded(GraphData::new());
+        // As the manager's processor does, the events the build gave go back.
+        fn hand_back(accumulator: &GaggleAccumulator, metrics: GooseMetrics) {
+            if let Some(co) = metrics.coordinated_omission_metrics {
+                accumulator.hand_back_events(co.co_events);
+            }
+        }
+        hand_back(&accumulator, metrics);
         eprintln!(
             "filled {workers} workers x {NAMES} names x {seconds} s in {:?}",
             started.elapsed()
@@ -3230,6 +3237,7 @@ mod built_as_it_goes {
                     .map_or(0, |co| co.co_events.len());
                 assert_eq!(events as u64, u64::from(workers) * (at + 1));
             }
+            hand_back(&accumulator, metrics);
             refreshes.push(total);
             eprintln!(
                 "{seconds} s, refresh {next}: {total:?} ({applied:?} applying {workers} deltas)"

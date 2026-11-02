@@ -187,8 +187,14 @@ impl MetricsProcessor {
         }
         merge.dirty = false;
         merge.built_at = Some(merge.clock);
-        // The merge extends the graph data it built last, handed back.
+        // The merge extends the graph data it built last, handed back, and
+        // adds to the coordinated omission events it gave.
         let graph = std::mem::replace(&mut self.graph_data, GraphData::new());
+        if let Some(co) = self.metrics.coordinated_omission_metrics.as_mut() {
+            merge
+                .accumulator
+                .hand_back_events(std::mem::take(&mut co.co_events));
+        }
         let (merged, graph, excluded) = merge.accumulator.merged_and_excluded(graph);
         merge.excluded(excluded);
         let GooseMetrics {

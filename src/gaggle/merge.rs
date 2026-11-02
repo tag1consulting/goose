@@ -97,7 +97,21 @@ struct Merged {
     /// What the graph data last built holds, so the next build adds only
     /// the seconds completed since to it.
     built: Option<GraphCache>,
+    /// The key of each coordinated omission event the last build gave its
+    /// caller, in its order; `None` until a build gathered them.
+    event_keys: Option<Vec<EventKey>>,
+    /// The merged workers' events since, with their keys.
+    new_events: Vec<(EventKey, CoEvent)>,
+    /// The events the last build gave, handed back by its caller
+    /// ([`GaggleAccumulator::hand_back_events`]).
+    handed_back: Option<Vec<CoEvent>>,
 }
+
+/// Where a coordinated omission event goes in the merged list: by its
+/// timestamp, then its worker, then its place in the worker's own events,
+/// the order a stable sort by timestamp of every worker's events, in worker
+/// order, gives.
+type EventKey = (u64, u32, usize);
 
 /// What graph data built from the merged figures holds: every second before
 /// `before`. The graph data itself is the caller's, handed back to each
@@ -259,7 +273,17 @@ impl GaggleAccumulator {
             Taken::Added if !merged.current => {}
             Taken::Added => {
                 let excluded = merged.excluded.iter().any(|&(worker, _)| worker == from);
-                if !excluded && !merged.follow(&delta) {
+                // Its events are the last in the worker's total.
+                let held = self.workers.get(&from).map_or(0, |worker| {
+                    worker
+                        .total
+                        .metrics
+                        .co
+                        .as_ref()
+                        .map_or(0, |co| co.events.len())
+                });
+                let new = delta.metrics.co.as_ref().map_or(0, |co| co.events.len());
+                if !excluded && !merged.follow(&delta, from, held.saturating_sub(new)) {
                     merged.current = false;
                 }
             }
@@ -576,21 +600,14 @@ impl GaggleAccumulator {
         let mut merged = self.current();
         let merged = &mut *merged;
         let complete = self.complete_before();
-        // The merged workers, in order: their series origin, and their
-        // coordinated omission events, each worker's in its own order.
-        let mut series_origin = None;
-        let mut events = Vec::new();
-        for (id, worker) in &self.workers {
-            if merged.excluded.iter().any(|(left_out, _)| left_out == id) {
-                continue;
-            }
-            series_origin = series_origin.max(worker.total.series_origin);
-            if let Some(co) = worker.total.metrics.co.as_ref() {
-                #[cfg(test)]
-                EVENTS_GATHERED.with(|gathered| gathered.set(gathered.get() + co.events.len()));
-                events.extend(co.events.iter().cloned());
-            }
-        }
+        // The merged workers' series origin.
+        let series_origin = self
+            .workers
+            .iter()
+            .filter(|(id, _)| !merged.excluded.iter().any(|(left_out, _)| left_out == *id))
+            .filter_map(|(_, worker)| worker.total.series_origin)
+            .max();
+        let events = self.merged_events(merged);
         // The graph data built so far, when it still holds: only the
         // seconds completed since are added. Every second before the last
         // build's `before` is unchanged, or the cache was dropped.
@@ -636,6 +653,56 @@ impl GaggleAccumulator {
             graph,
             merged.excluded.clone(),
         )
+    }
+
+    /// Hand back the coordinated omission events the last build gave, as
+    /// they were given: the next build adds only the events merged since,
+    /// rather than gather and sort every worker's again. Without them, or
+    /// once the merge is built again from the totals, it gathers them all.
+    pub(crate) fn hand_back_events(&self, events: Vec<CoEvent>) {
+        self.merged.borrow_mut().handed_back = Some(events);
+    }
+
+    /// The merged workers' coordinated omission events, oldest first, each
+    /// worker's in its own order among events of the same second: those the
+    /// last build gave, handed back, with only the events since put in
+    /// their places, or every merged worker's gathered again.
+    fn merged_events(&self, merged: &mut Merged) -> Vec<CoEvent> {
+        let new = std::mem::take(&mut merged.new_events);
+        if let (Some(mut events), Some(keys)) =
+            (merged.handed_back.take(), merged.event_keys.as_mut())
+        {
+            if events.len() == keys.len() {
+                #[cfg(test)]
+                EVENTS_GATHERED.with(|gathered| gathered.set(gathered.get() + new.len()));
+                for (key, event) in new {
+                    let at = keys.partition_point(|held| *held < key);
+                    keys.insert(at, key);
+                    events.insert(at, event);
+                }
+                return events;
+            }
+        }
+        let mut keyed = Vec::new();
+        for (&id, worker) in &self.workers {
+            if merged.excluded.iter().any(|&(left_out, _)| left_out == id) {
+                continue;
+            }
+            if let Some(co) = worker.total.metrics.co.as_ref() {
+                #[cfg(test)]
+                EVENTS_GATHERED.with(|gathered| gathered.set(gathered.get() + co.events.len()));
+                keyed.extend(
+                    co.events
+                        .iter()
+                        .enumerate()
+                        .map(|(at, event)| ((event.timestamp_secs, id, at), event.clone())),
+                );
+            }
+        }
+        keyed.sort_unstable_by_key(|(key, _)| *key);
+        let (keys, events) = keyed.into_iter().unzip();
+        merged.event_keys = Some(keys);
+        events
     }
 
     /// Every worker's figures of the run's epoch added up, from their
@@ -758,9 +825,10 @@ impl GaggleAccumulator {
 }
 
 impl Merged {
-    /// Add a delta of a merged worker, as it was added to the worker's own
-    /// total: whether it fit, past [`Bounds::MERGED`] nothing being added.
-    fn follow(&mut self, delta: &GaggleDelta) -> bool {
+    /// Add a delta of merged worker `from`, as it was added to the worker's
+    /// own total, its coordinated omission events from `first_event` there:
+    /// whether it fit, past [`Bounds::MERGED`] nothing being added.
+    fn follow(&mut self, delta: &GaggleDelta, from: u32, first_event: usize) -> bool {
         let fits = self
             .metrics
             .add_pass(&delta.metrics, Pass::Check, Bounds::MERGED)
@@ -782,6 +850,16 @@ impl Merged {
             });
         debug_assert!(added.is_ok());
         self.drop_events();
+        // Kept for the next build, once a build gathered the events.
+        if let (Some(_), Some(co)) = (self.event_keys.as_ref(), delta.metrics.co.as_ref()) {
+            self.new_events
+                .extend(co.events.iter().enumerate().map(|(at, event)| {
+                    (
+                        (event.timestamp_secs, from, first_event + at),
+                        event.clone(),
+                    )
+                }));
+        }
         true
     }
 
@@ -847,7 +925,7 @@ pub(crate) fn coalesce(
 }
 
 /// `template` with every figure of `part` added, as `GooseMetrics`, and
-/// `events` as its coordinated omission events. Every field of every
+/// `events`, oldest first, as its coordinated omission events. Every field of every
 /// aggregate is named, so a field added to one fails to compile here until
 /// it is merged or left out on purpose.
 fn build_metrics(
@@ -1031,9 +1109,6 @@ fn build_metrics(
             // Counted by the shadow merge, which checks what they leave out.
             events_dropped: _,
         } = co;
-        let mut events = events;
-        // Oldest first; a stable sort keeps each worker's own order.
-        events.sort_by_key(|event| event.timestamp_secs);
         let mut merged = CoordinatedOmissionMetrics {
             actual_requests: *actual,
             synthetic_requests: *synthetic,
