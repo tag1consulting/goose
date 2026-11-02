@@ -282,11 +282,12 @@ fn canceled(while_: &str) -> Option<GooseError> {
 /// wait rather than ending the process: the cancel it held, for
 /// [`put_back_cancel`] to restore once the wait is over.
 fn set_cancel_aside() -> Option<String> {
-    let reason = crate::killswitch_reason();
-    if reason.is_some() {
-        crate::reset_killswitch();
+    // Taken under one lock, so a Ctrl-C can never land between the read and
+    // the clear and be lost.
+    match crate::CANCELED.write() {
+        Ok(mut canceled) => canceled.take(),
+        Err(poisoned) => poisoned.into_inner().take(),
     }
-    reason
 }
 
 /// Put back a cancel [`set_cancel_aside`] cleared, without logging it again:
