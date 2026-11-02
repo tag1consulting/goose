@@ -837,7 +837,7 @@ fn telnet(port: u16, command: &str) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
         .unwrap();
-    let mut read_reply = |stream: &mut std::net::TcpStream| {
+    let read_reply = |stream: &mut std::net::TcpStream| {
         let mut reply = Vec::new();
         let mut buf = [0; 4096];
         while !reply.ends_with(b"goose> ") {

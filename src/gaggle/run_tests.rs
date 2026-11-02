@@ -2704,10 +2704,11 @@ async fn gaggle_runtime_control_in_one_process() {
         let plans = applied(&mut reports, 2).await;
         let steps: Vec<Vec<(usize, usize)>> =
             plans.iter().map(|r| r.test_plan.clone().unwrap()).collect();
-        for step in 0..2 {
-            assert_eq!(steps[0][step].0 + steps[1][step].0, 50);
-            assert_eq!(steps[0][step].1, steps[1][step].1);
+        for (first, second) in steps[0].iter().zip(&steps[1]) {
+            assert_eq!(first.0 + second.0, 50);
+            assert_eq!(first.1, second.1);
         }
+        assert_eq!(steps[0].len(), 2);
 
         // Stopped by telnet once the plan holds, as a ramp down can not be
         // stopped: the manager waits for the next Start.

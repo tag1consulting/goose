@@ -136,10 +136,10 @@ async fn settings(body: &str) -> (u16, serde_json::Value) {
 /// The requests per second `mock` served over [`WINDOW`], after [`SETTLE`].
 async fn measured_rate(mock: &Mock<'_>) -> f64 {
     tokio::time::sleep(SETTLE).await;
-    let before = mock.hits_async().await;
+    let before = mock.calls_async().await;
     let start = std::time::Instant::now();
     tokio::time::sleep(WINDOW).await;
-    let served = mock.hits_async().await - before;
+    let served = mock.calls_async().await - before;
     served as f64 / start.elapsed().as_secs_f64()
 }
 
