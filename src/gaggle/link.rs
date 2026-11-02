@@ -1723,9 +1723,12 @@ mod tests {
     }
 
     /// A worker's link to a manager that sends it a Prepare of 4 MiB every
-    /// 50 ms for 3 seconds, its main loop taking none of them; and the
+    /// 50 ms for `flood`, its main loop taking none of them; and the
     /// manager. Each side's heartbeat timeout is `heartbeat_timeout`.
-    async fn flooded(heartbeat_timeout: Duration) -> (Link, super::super::manager::Manager) {
+    async fn flooded(
+        heartbeat_timeout: Duration,
+        flood: Duration,
+    ) -> (Link, super::super::manager::Manager) {
         use super::super::proto::{manager_message::Message as ToWorker, Prepare};
         let manager = super::super::manager::Manager::start(
             "127.0.0.1",
@@ -1749,7 +1752,7 @@ mod tests {
         .await
         .unwrap();
         let spec = vec![b'x'; 4 << 20];
-        let until = Instant::now() + Duration::from_secs(3);
+        let until = Instant::now() + flood;
         while Instant::now() < until {
             manager.send(link.id, ToWorker::Prepare(Prepare { spec: spec.clone() }));
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1762,7 +1765,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_flooding_manager_is_held_to_the_event_bounds() {
         let test = async {
-            let (link, _manager) = flooded(Duration::from_secs(30)).await;
+            let (link, _manager) = flooded(Duration::from_secs(30), Duration::from_secs(3)).await;
             let queued = link.drain_events();
             let bytes: usize = queued
                 .iter()
@@ -1786,10 +1789,11 @@ mod tests {
     async fn a_held_main_loop_with_a_full_queue_is_not_lost() {
         use super::super::manager::Event;
         let test = async {
-            // The flood lasts 3 seconds, past the 2 second timeout, and the
-            // main loop is held 3 more.
-            let (link, manager) = flooded(Duration::from_secs(2)).await;
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            // A 5 second timeout, past two heartbeats: the flood fills the
+            // queue within a second and lasts 6, and the main loop is held
+            // 4 more.
+            let (link, manager) = flooded(Duration::from_secs(5), Duration::from_secs(6)).await;
+            tokio::time::sleep(Duration::from_secs(4)).await;
             assert!(!link.fired.load(Ordering::SeqCst), "the switch fired");
             let events = link.drain_events();
             assert!(
