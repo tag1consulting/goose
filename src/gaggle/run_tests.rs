@@ -2410,7 +2410,7 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
             final_after: Some(Duration::from_secs(1)),
             ..Default::default()
         }];
-        let (_manager, _) = gaggle(
+        let (manager, _) = gaggle(
             quick,
             1,
             server.base_url(),
@@ -2435,6 +2435,12 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
         assert!(
             !super::faults::HOLD_THRESHOLD_CHECK.swap(false, SeqCst),
             "no threshold check was held"
+        );
+        // The held check judged, and failed, the run.
+        assert!(
+            matches!(manager, Err(crate::GooseError::ThresholdsFailed { .. })),
+            "{:?}",
+            manager.as_ref().map(|_| ())
         );
         let (gaggle, _) = record(&folder);
         let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
