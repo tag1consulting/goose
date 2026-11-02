@@ -1922,3 +1922,51 @@ async fn gaggle_canceled_run_shows_test_stop_the_killswitch() {
         "test_stop saw no cancel"
     );
 }
+
+/// A Ctrl-C once the manager sent `Stop`, before it asks for the logs, is
+/// kept for the log collection: the log stays on its worker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_killswitch_after_stop_leaves_the_logs() {
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("cancel-on-stop");
+        *LOG_FAULT_AT.lock().unwrap() = None;
+        let faults = [TestFaults {
+            cancel_on_stop: true,
+            ..Default::default()
+        }];
+        let _ = gaggle(
+            quick,
+            1,
+            server.base_url(),
+            &folder,
+            &[
+                "--users",
+                "1",
+                "--run-time",
+                "1",
+                "--report-file",
+                "--request-log",
+            ],
+            &[],
+            &faults,
+        )
+        .await;
+        crate::reset_killswitch();
+        assert!(
+            LOG_FAULT_AT.lock().unwrap().is_some(),
+            "the worker saw Stop"
+        );
+        let (gaggle, _) = record(&folder);
+        assert_eq!(
+            gaggle["logs_left"].as_array().map(Vec::len),
+            Some(1),
+            "{}",
+            gaggle
+        );
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}

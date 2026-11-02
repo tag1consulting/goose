@@ -2445,6 +2445,73 @@ fn gaggle_manager_users_samples_stay_out_of_the_merge() {
     assert_none("the manager's own users", &graph.gaggle_diff(&expected));
 }
 
+/// A manager's dashboard window, pruned between builds, stays pruned: the
+/// users series the merge puts back starts where the window does.
+#[test]
+fn gaggle_manager_users_keep_the_dashboard_window() {
+    let mut side = Side::new(0..0, Some(0));
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), Default::default());
+    // Save report off: the dashboard keeps only its window.
+    side.processor
+        .handle_command_for_test(MetricsCommand::KeepGraph {
+            keep: false,
+            now: 0,
+        });
+    let delta = |at: u64| {
+        let mut delta = GaggleDelta::new(0, at + 1, 0, DeltaKind::Delta);
+        delta.now = at + 1;
+        delta.graph.transactions.insert(at, 3);
+        delta.graph.users.insert(at, 3);
+        delta
+    };
+    for at in 0..1_000u64 {
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleClock {
+                second: at + crate::gaggle::run::CLOCK_SLACK,
+            });
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(delta(at)),
+                bytes: None,
+            });
+        let (respond, metrics) = tokio::sync::oneshot::channel();
+        side.processor
+            .handle_command_for_test(MetricsCommand::GetMetrics {
+                duration: 0,
+                total_users: 0,
+                maximum_users: 0,
+                history: Vec::new(),
+                respond,
+            });
+        let _ = metrics.blocking_recv();
+        // The manager's main loop records its users, which prunes.
+        side.processor
+            .handle_command_for_test(MetricsCommand::RecordUsers {
+                active_users: 3,
+                elapsed_secs: at as usize,
+            });
+    }
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: Box::new(delta(1_000)),
+            bytes: None,
+        });
+    let (respond, report) = tokio::sync::oneshot::channel();
+    side.processor
+        .handle_command_for_test(MetricsCommand::GetReportData {
+            duration: 0,
+            total_users: 0,
+            maximum_users: 0,
+            history: Vec::new(),
+            respond,
+        });
+    let (_, graph) = report.blocking_recv().unwrap();
+    assert!(graph.first_second() > 0, "the window was not kept");
+}
+
 /// Save report on a manager's dashboard changes what its merge builds: with
 /// it off the merged graph keeps no whole run heatmap columns, with it on
 /// it does, though the merge was set up with them.

@@ -114,6 +114,9 @@ pub(crate) struct TestFaults {
     pub(crate) exit_mid_run: bool,
     /// Send a final delta the manager refuses, and stop as told.
     pub(crate) refused_final: bool,
+    /// Trigger the killswitch, as Ctrl-C on the manager, as `Stop` arrives,
+    /// at [`LOG_FAULT_AT`].
+    pub(crate) cancel_on_stop: bool,
 }
 
 /// What a worker sends in place of its logs, in unit tests.
@@ -1178,6 +1181,11 @@ impl GooseAttack {
                             canceled: String::new(),
                             run_folder: String::new(),
                         });
+                    }
+                    #[cfg(test)]
+                    if self.gaggle.test_faults.cancel_on_stop {
+                        *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
+                        crate::trigger_killswitch("a test's Ctrl-C as the run stops");
                     }
                     if running && !goose_attack_run_state.stopping {
                         info!("gaggle: the manager stopped the run: {reason}");
