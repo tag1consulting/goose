@@ -553,7 +553,7 @@ A test plan sent to a running test starts from its first step, ramping from the 
 
 - A running test changes only the rate of the throttle it started with. A run started without one can not turn one on, nor clear the one it has: both are for Idle, where they shape the next Start.
 - The rate can rise to 100 times the one the run started with: the throttle holds one second of its starting rate, and drains at most that every 10 milliseconds.
-- After a change, the burst a quiet spell allows is one second of the new rate, never more than one second of the starting rate. Lowering a throttle from 3000 to 10 lets a quiet spell end with 10 requests at once, never 3000. An unchanged throttle drains at the same rate as before.
+- After a change, the burst a quiet spell allows is one second of the new rate, never more than one second of the starting rate. Lowering a throttle from 3000 to 10 lets a quiet spell end with 10 requests at once, never 3000. The throttle drains every 10 milliseconds and makes up a late wake, so it holds its rate closely.
 
 On a Gaggle manager, the throttle is one limit across every worker: see [Runtime control](../gaggle/manager.md#runtime-control).
 

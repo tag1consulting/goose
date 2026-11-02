@@ -128,8 +128,16 @@ fn validate_test(
     assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
-    // Requests are made while GooseUsers are launched, and then for RUN_TIME seconds.
-    assert!(current_requests_file_lines <= (RUN_TIME + 1) * throttle_value);
+    // Requests are made while GooseUsers are launched, and then for RUN_TIME
+    // seconds, at the throttle's rate, and each process's throttle starts
+    // with one token's room free.
+    let most = (RUN_TIME + 1) * throttle_value + request_logs.len();
+    assert!(
+        current_requests_file_lines <= most,
+        "{} requests, at most {}",
+        current_requests_file_lines,
+        most
+    );
 
     if let Some(previous_lines) = previous_requests_file_lines {
         // Verify the second load test generated more than 4x the load of the first test.

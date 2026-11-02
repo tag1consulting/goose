@@ -45,9 +45,9 @@ pub async fn throttle_main(
 
     // The tokens owed since the last tick, a fraction of one at low rates.
     let mut owed = 0.0_f64;
-    let mut last_tick = time::Instant::now();
     // The throttle_drift variable tracks how much time is spent on everything
     // else, and is subtracted from the time spent sleeping.
+    let mut last_tick = time::Instant::now();
     let mut throttle_drift = time::Instant::now();
 
     // Loop and remove tokens from channel at controlled rate until load test ends.
@@ -64,7 +64,9 @@ pub async fn throttle_main(
 
         let now = time::Instant::now();
         let per_second = rate.load(Ordering::Relaxed);
-        owed += per_second as f64 * now.duration_since(last_tick).as_secs_f64();
+        // The time since the last wake, as wakes run late, but at most two
+        // ticks: a thread held for long drains no faster than it would have.
+        owed += per_second as f64 * now.duration_since(last_tick).min(TICK * 2).as_secs_f64();
         last_tick = now;
         // A tick drains at most what the channel holds.
         owed = owed.min(capacity as f64);
