@@ -2295,10 +2295,10 @@ async fn gaggle_delta_past_the_message_limit() {
     manager.expect("the manager exits cleanly");
     assert!(workers[0].is_ok(), "{:?}", workers[0].as_ref().map(|_| ()));
     let (gaggle, _) = record(&folder);
-    let workers = gaggle["workers"].as_array().unwrap();
-    assert_eq!(workers[0]["state"], "finished", "{gaggle}");
-    assert!(workers[0]["missing_deltas"].as_u64() >= Some(1), "{gaggle}");
-    assert_eq!(workers[1]["state"], "lost", "{gaggle}");
-    let reason = workers[1]["lost_reason"].as_str().unwrap_or_default();
+    let (lost, kept) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+    assert_eq!((lost.len(), kept.len()), (1, 1), "{gaggle}");
+    assert_eq!(kept[0]["state"], "finished", "{gaggle}");
+    assert!(kept[0]["missing_deltas"].as_u64() >= Some(1), "{gaggle}");
+    let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
     assert!(reason.contains("bytes, more than the"), "{}", gaggle);
 }
