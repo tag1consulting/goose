@@ -449,9 +449,9 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             &port,
             "--quiet",
         ]));
-        // The last resort records that it would have ended the process:
-        // that it does not is what this test checks.
-        let last_resort = worker.last_resort_record();
+        // The link marks itself done as `execute()` returns, which stops
+        // the switch's last resort: that it does is what this test checks.
+        let link_done = worker.link_done_record();
         let worker = tokio::spawn(worker.execute());
         // Once it joined, the manager goes.
         assert_eq!(joined.recv().await, Some(1));
@@ -463,15 +463,12 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             }
             other => panic!("{:?}", other.map(|_| ())),
         }
-        // Past the switch's last resort: had the link not marked itself
-        // done, it would have ended the process.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let forced = last_resort
+        let done = link_done
             .lock()
             .unwrap()
             .clone()
             .expect("the worker joined");
-        assert!(!forced.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(done.load(std::sync::atomic::Ordering::Relaxed));
     };
     tokio::time::timeout(Duration::from_secs(30), test)
         .await

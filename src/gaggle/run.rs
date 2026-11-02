@@ -249,11 +249,10 @@ pub(crate) struct GaggleState {
     /// Where a manager reports each worker joining (unit tests).
     #[cfg(test)]
     pub(crate) joins: Option<tokio::sync::mpsc::UnboundedSender<usize>>,
-    /// Where a worker puts its link's record of the dead man's switch's
-    /// last resort, set when the last resort would have ended the process
-    /// (unit tests).
+    /// Where a worker puts its link's done flag, set once its `execute()`
+    /// returns, which stops the dead man's switch's last resort (unit tests).
     #[cfg(test)]
-    pub(crate) last_resort: Arc<std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>>,
+    pub(crate) link_done: Arc<std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>>,
     /// Where the client settings every user gets are reported (unit tests).
     #[cfg(test)]
     pub(crate) client_report:
@@ -502,13 +501,13 @@ impl GooseAttack {
         self
     }
 
-    /// Where a worker puts its link's record of the dead man's switch's last
-    /// resort, once it joined (unit tests).
+    /// Where a worker puts its link's done flag, once it joined (unit
+    /// tests).
     #[cfg(test)]
-    pub(crate) fn last_resort_record(
+    pub(crate) fn link_done_record(
         &self,
     ) -> Arc<std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>> {
-        self.gaggle.last_resort.clone()
+        self.gaggle.link_done.clone()
     }
 
     /// Have a worker report the client settings its users get (unit tests).
@@ -774,8 +773,8 @@ impl GooseAttack {
         })
         .await?;
         #[cfg(test)]
-        if let Ok(mut record) = self.gaggle.last_resort.lock() {
-            *record = Some(link.forced());
+        if let Ok(mut record) = self.gaggle.link_done.lock() {
+            *record = Some(link.done.clone());
         }
         // The manager waits for its other workers and runs test_start: the
         // heartbeats, and the dead man's switch, cover the wait.

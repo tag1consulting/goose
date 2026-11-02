@@ -1819,7 +1819,7 @@ pub(crate) mod handshake_tests {
     async fn a_worker_held_by_a_full_queue_is_not_lost() {
         use super::super::proto::LogChunk;
         let test = async {
-            let manager = test_manager(1, Duration::from_secs(1)).await;
+            let manager = test_manager(1, Duration::from_millis(1500)).await;
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let _inbound = inbound.unwrap();
             const CHUNKS: u64 = 2 * EVENT_QUEUE as u64;

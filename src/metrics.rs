@@ -4846,8 +4846,11 @@ impl GooseAttack {
         let Some(source) = source else {
             return Ok(());
         };
+        // A manager's only: every run of one is serial with this test fault.
         #[cfg(all(test, feature = "gaggle"))]
-        if crate::gaggle::run::DISK_FULL.load(std::sync::atomic::Ordering::Relaxed) {
+        if self.is_gaggle_manager()
+            && crate::gaggle::run::DISK_FULL.load(std::sync::atomic::Ordering::Relaxed)
+        {
             drop(file);
             if target != path {
                 let _ = tokio::fs::remove_file(&target).await;
