@@ -1628,7 +1628,9 @@ async fn gaggle_log_write_failure_leaves_the_reports_whole() {
 }
 
 /// The manager writes its reports before any worker's log arrives, so a
-/// disk the logs fill costs only logs.
+/// disk the logs fill costs only logs. File times of a second's resolution
+/// can make this pass with the order reversed;
+/// `gaggle_full_disk_keeps_the_first_reports` checks the order too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_reports_are_written_before_the_logs() {
@@ -1811,6 +1813,7 @@ async fn gaggle_full_disk_keeps_the_first_reports() {
     assert!(manager.is_err(), "the manager reports the failed write");
     let html = std::fs::read_to_string(&report).unwrap();
     assert!(html.trim_end().ends_with("</html>"), "{} bytes", html.len());
+    assert_eq!(parts(&folder), Vec::<PathBuf>::new());
 }
 
 /// A manager that fails once its workers were told to start, but before its

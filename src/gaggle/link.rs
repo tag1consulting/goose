@@ -1809,7 +1809,8 @@ mod tests {
                 flooded(Duration::from_secs(30), Duration::from_secs(2), 8 << 20).await;
             let (events, bytes) = queued(&link);
             assert!(bytes <= 64 << 20, "{} bytes queued", bytes);
-            assert!(events <= 8, "{} events queued", events);
+            // Held by the bytes, not short of messages: 8 of 8 MiB fit.
+            assert!((7..=8).contains(&events), "{} events queued", events);
         };
         tokio::time::timeout(Duration::from_secs(60), test)
             .await
