@@ -562,8 +562,9 @@ impl GaggleAccumulator {
     ///
     /// `graph` must be the graph data the last build returned, though the
     /// caller may since have pruned it: a build whose cache still holds
-    /// extends it in place with the seconds completed since, never copying
-    /// it; one whose cache was dropped drops it and builds from nothing.
+    /// extends it in place with the seconds completed since, copying only its
+    /// users series; one whose cache was dropped drops it and builds from
+    /// nothing.
     pub(crate) fn merged_and_excluded(
         &self,
         graph: GraphData,

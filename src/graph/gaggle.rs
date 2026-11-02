@@ -158,9 +158,11 @@ impl GraphData {
     }
 
     /// Put back the users series the merge built last, dropping any level
-    /// recorded since.
+    /// recorded since, and any second the dashboard's window pruned since.
     pub(crate) fn restore_merged_users(&mut self, users: MergedUsers) {
+        let origin = self.users_per_second.origin;
         self.users_per_second = users.0;
+        self.users_per_second.align_origin_to(origin);
     }
 
     /// How a manager builds graph data like this, which `records` per

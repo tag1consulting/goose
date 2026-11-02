@@ -31,11 +31,11 @@ Thresholds are judged on the merged metrics, by the manager, as a run of one pro
 
 - Runtime control: the manager's Controllers and dashboard can read the run but not yet change it. Starting, stopping and changing users, rates, the test plan, the throttle or the host while a Gaggle runs is refused with `not supported in Gaggle mode yet`, and `--no-autostart` can't be used with `--manager`. Ctrl-C on the manager stops the whole Gaggle.
 - Per worker tables in the reports, and a Gaggle view on the dashboard.
-- TLS between the manager and its workers, workers joining a running Gaggle, and workers reconnecting. Until TLS arrives the token, and all Gaggle traffic, cross the network unencrypted: run a Gaggle on a network you trust, and give it a `--gaggle-token`.
+- TLS between the manager and its workers, workers joining a running Gaggle, and workers reconnecting: until TLS arrives, see [Trust](#trust).
 
 ## Trust
 
-The token authenticates workers to the manager, not the manager to its workers. Until TLS arrives, whoever answers at the manager's address, or sits on the path between them, controls the workers' load, its target included, and sees all their traffic: run Gaggle only on a network you trust.
+The token authenticates workers to the manager, not the manager to its workers. Until TLS arrives, whoever answers at the manager's address, or sits on the path between them, controls the workers' load, its target included, and sees all their traffic, the token among it, unencrypted: run Gaggle only on a network you trust, and give it a `--gaggle-token`.
 
 ## An example on one machine
 
