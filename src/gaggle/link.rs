@@ -514,6 +514,9 @@ pub(crate) struct Link {
     sent_all: tokio::sync::watch::Receiver<bool>,
     /// Closed once the manager's stream ended.
     manager_open: tokio::sync::watch::Receiver<()>,
+    /// The reader of the manager's stream and the heartbeat task, aborted
+    /// once the link is dropped.
+    tasks: Vec<tokio::task::AbortHandle>,
     /// Held by the reader and heartbeat tasks too, through their switch:
     /// its count says which still run (unit tests).
     #[cfg(test)]
@@ -696,7 +699,7 @@ impl Link {
         let (events_tx, events) = flume::unbounded();
         // Held by the reader of the manager's stream until that stream ends.
         let (open, manager_open) = tokio::sync::watch::channel(());
-        let link = Link {
+        let mut link = Link {
             id,
             outbox,
             events,
@@ -709,6 +712,7 @@ impl Link {
             forced: Arc::new(AtomicBool::new(false)),
             sent_all,
             manager_open,
+            tasks: Vec::new(),
             #[cfg(test)]
             alive: Arc::new(()),
         };
@@ -726,7 +730,7 @@ impl Link {
             #[cfg(test)]
             alive: link.alive.clone(),
         };
-        tokio::spawn(read_manager(
+        let reader = tokio::spawn(read_manager(
             inbound,
             open,
             events_tx,
@@ -735,12 +739,13 @@ impl Link {
             link.shutdown.clone(),
             switch.clone(),
         ));
-        tokio::spawn(heartbeat_manager(
+        let heartbeats = tokio::spawn(heartbeat_manager(
             link.outbox.clone(),
             heard,
             link.shutdown.clone(),
             switch,
         ));
+        link.tasks = vec![reader.abort_handle(), heartbeats.abort_handle()];
         Ok(link)
     }
 
@@ -858,10 +863,14 @@ impl Link {
 
 impl Drop for Link {
     /// The worker is done with its manager: its `execute()` is returning, so
-    /// the switch's last resort must not end the process.
+    /// the switch must neither fire nor end the process, and the reader and
+    /// heartbeat tasks end.
     fn drop(&mut self) {
-        self.done.store(true, Ordering::Relaxed);
+        self.done.store(true, Ordering::SeqCst);
         self.outbox.close();
+        for task in &self.tasks {
+            task.abort();
+        }
     }
 }
 
@@ -1011,7 +1020,8 @@ impl Switch {
     /// exits the process with an error status: load never outlives its
     /// manager.
     fn fire(&self, why: String) {
-        if self.fired.swap(true, Ordering::SeqCst) {
+        // Once the worker's `execute()` returned, nothing it started runs.
+        if self.done.load(Ordering::SeqCst) || self.fired.swap(true, Ordering::SeqCst) {
             return;
         }
         error!("gaggle: lost the manager ({why}); stopping every user");
@@ -1372,8 +1382,9 @@ mod tests {
         assert!(next(&outbox).await.is_none());
     }
 
-    /// A switch over `users`, its events and outbox; `done` set, and its
-    /// last resort recording, so it never ends the test binary.
+    /// A switch over `users`, its events and outbox, its worker's
+    /// `execute()` not yet returned; its last resort only records, as in
+    /// every unit test, so it never ends the test binary.
     fn switch(
         users: Vec<tokio::task::AbortHandle>,
         heartbeat_timeout: Duration,
@@ -1387,7 +1398,7 @@ mod tests {
             events,
             outbox: outbox.clone(),
             heartbeat_timeout,
-            done: Arc::new(AtomicBool::new(true)),
+            done: Arc::new(AtomicBool::new(false)),
             forced: Arc::new(AtomicBool::new(false)),
             // Past its Prepare: silence fires it at the heartbeat timeout.
             prepared: Arc::new(AtomicBool::new(true)),
@@ -1411,6 +1422,7 @@ mod tests {
             forced: switch.forced.clone(),
             sent_all: tokio::sync::watch::channel(true).1,
             manager_open: tokio::sync::watch::channel(()).1,
+            tasks: Vec::new(),
             alive: switch.alive.clone(),
         }
     }
