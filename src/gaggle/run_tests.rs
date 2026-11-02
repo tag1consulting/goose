@@ -1745,3 +1745,59 @@ async fn gaggle_every_worker_lost_ends_the_run() {
     assert_eq!((lost.len(), others.len()), (2, 0), "{}", gaggle);
     assert_eq!(stop.calls_async().await, 1);
 }
+
+/// A worker whose final delta is refused, and which then stops as told, no
+/// longer holds back which seconds of the graphs are complete: the final
+/// graphs cover the whole run, the merge built past the workers' lag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_stopped_worker_without_its_final_completes_the_graphs() {
+    let server = answering().await;
+    let folder = scratch("final-refused");
+    let faults = [
+        TestFaults::default(),
+        TestFaults {
+            refused_final: true,
+            ..Default::default()
+        },
+    ];
+    let run = gaggle(
+        quick,
+        2,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "2",
+            "--increase-rate",
+            "100",
+            "--run-time",
+            "4",
+            "--report-file",
+            "--report-graph-data",
+        ],
+        &[],
+        &faults,
+    );
+    clean(
+        tokio::time::timeout(Duration::from_secs(60), run)
+            .await
+            .expect("the Gaggle ends within 60 seconds"),
+    );
+    let report = std::fs::read_to_string(folder.join("manager").join("report.json")).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report).unwrap();
+    let (_, html) = record(&folder);
+    assert!(
+        html.contains("final metrics never arrived"),
+        "the run is degraded"
+    );
+    let transactions = &report["graphs"]["transactions_per_second"];
+    let seconds = transactions["data"].as_array().map_or(0, Vec::len);
+    // 4 seconds of run, and the ramp: none of it held back.
+    assert!(
+        seconds >= 4,
+        "{} seconds of graph: {}",
+        seconds,
+        transactions
+    );
+}

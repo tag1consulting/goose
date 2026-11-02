@@ -217,6 +217,9 @@ pub(crate) struct Outbox {
     /// for none (unit tests).
     #[cfg(test)]
     pub(crate) corrupt_from: std::sync::atomic::AtomicU64,
+    /// Name another worker in the final delta (unit tests).
+    #[cfg(test)]
+    pub(crate) corrupt_final: AtomicBool,
     /// Fail to encode every delta (unit tests).
     #[cfg(test)]
     unencodable: AtomicBool,
@@ -249,7 +252,9 @@ impl Outbox {
         let delta = {
             let mut delta = delta;
             let from = self.corrupt_from.load(Ordering::Relaxed);
-            if self.corrupt_next.swap(false, Ordering::Relaxed) || (from != 0 && delta.seq >= from)
+            if self.corrupt_next.swap(false, Ordering::Relaxed)
+                || (from != 0 && delta.seq >= from)
+                || (delta.kind == DeltaKind::Final && self.corrupt_final.load(Ordering::Relaxed))
             {
                 delta.worker = u32::MAX;
             }

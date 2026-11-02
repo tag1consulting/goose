@@ -112,6 +112,8 @@ pub(crate) struct TestFaults {
     pub(crate) logs: LogsFault,
     /// End with an error a second into the run, its link dropped.
     pub(crate) exit_mid_run: bool,
+    /// Send a final delta the manager refuses, and stop as told.
+    pub(crate) refused_final: bool,
 }
 
 /// What a worker sends in place of its logs, in unit tests.
@@ -831,6 +833,11 @@ impl GooseAttack {
                 .corrupt_next
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        #[cfg(test)]
+        link.outbox.corrupt_final.store(
+            self.gaggle.test_faults.refused_final,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         #[cfg(test)]
         link.outbox.corrupt_from.store(
             self.gaggle.test_faults.refuse_from,
