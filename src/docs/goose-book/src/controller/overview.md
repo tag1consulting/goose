@@ -16,6 +16,7 @@ There are three ways to watch or change a load test while it runs: the Live Dash
 | Host and ramps | With control on, in the Edit settings form | `host`, `increaserate`, `increase-time`, `decreaserate`, `decrease-time` | the same commands |
 | Test plan | With control on, through [`POST /api/v1/control/settings` or `POST /api/v1/control/start`](dashboard-reference.md#run-settings); the form has no plan field | `test-plan` | `test-plan` |
 | Run time | With control on, in the Edit settings form | `runtime` | `runtime` |
+| Throttle | With control on, through [`POST /api/v1/control/settings`](dashboard-reference.md#the-throttle-on-a-running-test); the form has no throttle field | `throttle` | `throttle` |
 | Save report | On by default with `--dashboard`; turning it off and Save report now need control | No | No |
 | `config` | No | `config`, `config-json` | `config`, `config-json` |
 | Shut Goose down | With control on: Quit, from Idle only | `shutdown`, from any phase | `shutdown`, from any phase |
@@ -52,3 +53,21 @@ With `--no-autostart`, if no Controller could listen and dashboard control is of
 ```text
 Error: InvalidOption { option: "`configuration.no_autostart`", value: "true", detail: "`configuration.no_autostart` requires a Controller or dashboard control, and no Controller could listen on its port." }
 ```
+
+## Controlling a Gaggle
+
+On a [Gaggle](../gaggle/overview.md) manager, the telnet and WebSocket Controllers and dashboard control take the same commands, and each change reaches every worker as its share, so the workers together run what one process running the whole load test would. The manager checks a change against the rules one process applies before it sends anything, applies it to its own run, the run's clock, and answers once every worker has applied its share: within 10 seconds, inside the 15 a client waits. Later commands wait their turn meanwhile; the load test runs on.
+
+| Command | What each worker gets |
+|---------|-----------------------|
+| `users`, the dashboard's users, `users` in dashboard settings | Its users from now: more users take the next ordinals, dealt to the workers running fewest, each with the scenario one process would give it; fewer users stop those with the highest ordinals, as one process stops its last started first. Each worker's ramp takes as long as the whole load test's |
+| `increaserate`, `decreaserate` | The rate times its share of the users |
+| `increase-time`, `decrease-time` | The same time |
+| `test-plan` | The plan split step by step, so each step's users add up to the plan's |
+| `throttle` | Its share by its share of the users, the remainder spread, never 0; refused below one request a second for each worker |
+| `host` | The same host |
+| `start`, `stop`, `shutdown`, the dashboard's Quit and Start with settings | Each, as the manager takes it |
+| `runtime` | The same run time: each worker's run keeps the same clock as the manager's |
+| `config`, `metrics` and their JSON forms, Save report, the report switches | Nothing: the manager answers from its configuration and the merged metrics |
+
+A change the manager makes in Idle is kept for the next Start, whose shares carry it. A worker that does not answer a change within 10 seconds is marked lost, sent `Shutdown` and disconnected, and the reply names it; the change stands on the other workers. The manager's Controllers listen on loopback like any others, so reaching them from another machine takes `--telnet-host`, or `--websocket` with `--websocket-host`, and the warning that comes with them. See [Runtime control](../gaggle/manager.md#runtime-control).
