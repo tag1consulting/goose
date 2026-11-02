@@ -1801,3 +1801,51 @@ async fn gaggle_stopped_worker_without_its_final_completes_the_graphs() {
         transactions
     );
 }
+
+/// A full disk while the logs arrive costs only logs: the reports written
+/// first stay whole when the second write, to name the logs left, fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_full_disk_keeps_the_first_reports() {
+    use std::sync::atomic::Ordering::Relaxed;
+    // The disk empties again however the test ends.
+    struct Faults;
+    impl Drop for Faults {
+        fn drop(&mut self) {
+            super::run::FAIL_LOG_WRITES.store(false, Relaxed);
+            super::run::DISK_FULL_AFTER_LOGS.store(false, Relaxed);
+            super::run::DISK_FULL.store(false, Relaxed);
+        }
+    }
+    let _faults = Faults;
+    super::run::FAIL_LOG_WRITES.store(true, Relaxed);
+    super::run::DISK_FULL_AFTER_LOGS.store(true, Relaxed);
+    let server = answering().await;
+    let folder = scratch("full-disk");
+    let report = folder.join("report.html");
+    let report_file = format!("--report-file={}", report.display());
+    let (manager, _) = gaggle(
+        quick,
+        1,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "1",
+            "--run-time",
+            "1",
+            &report_file,
+            "--request-log",
+            "--output-dir",
+            &folder.join("manager").display().to_string(),
+        ],
+        &[],
+        &[],
+    )
+    .await;
+    assert!(super::run::DISK_FULL.load(Relaxed), "the disk filled");
+    // The second write failed, and says so.
+    assert!(manager.is_err(), "the manager reports the failed write");
+    let html = std::fs::read_to_string(&report).unwrap();
+    assert!(html.trim_end().ends_with("</html>"), "{} bytes", html.len());
+}

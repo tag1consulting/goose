@@ -4835,6 +4835,13 @@ impl GooseAttack {
         let Some(source) = source else {
             return Ok(());
         };
+        #[cfg(all(test, feature = "gaggle"))]
+        if crate::gaggle::run::DISK_FULL.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(report_io_error(
+                report,
+                std::io::Error::other("no space left on device"),
+            ));
+        }
         let mut out = ReportOut::new(
             file.into_std().await,
             gzip,

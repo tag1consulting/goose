@@ -140,6 +140,17 @@ pub(crate) enum LogsFault {
 pub(crate) static FAIL_LOG_WRITES: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// With [`FAIL_LOG_WRITES`], the first failed log write fills the disk:
+/// [`DISK_FULL`] is set (unit tests).
+#[cfg(test)]
+pub(crate) static DISK_FULL_AFTER_LOGS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Every report write fails, as on a full disk (unit tests).
+#[cfg(test)]
+pub(crate) static DISK_FULL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Every log a worker sent that the manager warned it did not ask for, by
 /// name (unit tests).
 #[cfg(test)]
@@ -1720,6 +1731,10 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                 #[cfg(test)]
                 let written =
                     written && !FAIL_LOG_WRITES.load(std::sync::atomic::Ordering::Relaxed);
+                #[cfg(test)]
+                if !written && DISK_FULL_AFTER_LOGS.load(std::sync::atomic::Ordering::Relaxed) {
+                    DISK_FULL.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 let mut ok = written;
                 if ok {
                     incoming.written += chunk.data.len() as u64;
