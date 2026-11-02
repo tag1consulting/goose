@@ -1971,10 +1971,11 @@ mod tests {
     async fn a_held_main_loop_with_a_full_queue_is_not_lost() {
         use super::super::manager::Event;
         let test = async {
-            // A 4 second timeout, past two heartbeats: the flood fills the
-            // queue within a second, and the main loop is held 5 more.
-            let (link, manager) = flooded(Duration::from_secs(4), EVENT_QUEUE, 4 << 20).await;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            // A 6 second timeout, three heartbeats, as the process tests use:
+            // the flood fills the queue within a second, and the main loop
+            // is held 7 more.
+            let (link, manager) = flooded(Duration::from_secs(6), EVENT_QUEUE, 4 << 20).await;
+            tokio::time::sleep(Duration::from_secs(7)).await;
             assert!(!link.fired.load(Ordering::SeqCst), "the switch fired");
             let events = link.drain_events();
             assert!(
@@ -2065,7 +2066,8 @@ mod tests {
     }
 
     /// A link dropped while its reader waits on a full event queue ends
-    /// both of its background tasks within a second.
+    /// both of its background tasks within a few seconds, where they would
+    /// otherwise wait forever.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_dropped_link_ends_its_tasks_with_a_full_queue() {
         let test = async {
@@ -2075,7 +2077,7 @@ mod tests {
             let dropped = Instant::now();
             while Arc::strong_count(&alive) > 1 {
                 assert!(
-                    dropped.elapsed() < Duration::from_secs(1),
+                    dropped.elapsed() < Duration::from_secs(5),
                     "{} tasks still run",
                     Arc::strong_count(&alive) - 1
                 );

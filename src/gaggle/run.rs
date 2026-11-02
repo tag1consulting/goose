@@ -934,6 +934,8 @@ impl GooseAttack {
                     return;
                 };
                 worker.stopped = Some(reason);
+                #[cfg(test)]
+                super::faults::STOPPED_SEEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 worker.run_folder = Some(stopped.run_folder).filter(|folder| !folder.is_empty());
                 if reason == Reason::Canceled && !stop_sent && worker.lost.is_none() {
                     let why = format!("it was stopped on the worker: {}", stopped.canceled);
@@ -1177,6 +1179,24 @@ impl GooseAttack {
         run: &mut ManagerRun,
     ) {
         run.stop_sent = true;
+        // Whatever the processor has queued, a threshold check among them,
+        // is done first: a rule that fails now triggers the killswitch before
+        // the cancel is set aside, never during the wait, where it would read
+        // as Ctrl-C. The main loop, held here, sends no other check.
+        let (respond, drained) = tokio::sync::oneshot::channel();
+        if goose_attack_run_state
+            .metrics_cmd_tx
+            .send(MetricsCommand::GetMetrics {
+                duration: self.metrics.duration,
+                total_users: self.metrics.total_users,
+                maximum_users: self.metrics.maximum_users,
+                history: Vec::new(),
+                respond,
+            })
+            .is_ok()
+        {
+            let _ = tokio::time::timeout(FINAL_TIMEOUT, drained).await;
+        }
         // A cancel that ended the run is set aside while the workers send
         // their final metrics, so a Ctrl-C now ends the wait rather than the
         // process; it is put back for test_stop and the log collection.

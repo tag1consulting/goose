@@ -2068,6 +2068,7 @@ async fn gaggle_killswitch_during_the_final_wait() {
         );
         let folder = scratch("cancel-final-wait");
         *LOG_FAULT_AT.lock().unwrap() = None;
+        super::faults::STOPPED_SEEN.store(0, std::sync::atomic::Ordering::SeqCst);
         let faults = [
             TestFaults::default(),
             TestFaults {

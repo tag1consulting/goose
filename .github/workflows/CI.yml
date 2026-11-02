@@ -217,7 +217,7 @@ jobs:
     # Everything but the Gaggle process tests, tests/gaggle.rs, which the gaggle job
     # runs: they take about 15 minutes, and need no other feature. Every test target,
     # tests/gaggle.rs among them, is still built here. The examples that run tests are
-    # those with `test = true` in Cargo.toml.
+    # those with `test = true` in Cargo.toml, umami only: name any other given it here.
     - name: 🔎 Test (all features)
       if: ${{ matrix.features == 'all-features' }}
       shell: bash

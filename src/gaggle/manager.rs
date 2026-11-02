@@ -105,7 +105,7 @@ pub(crate) const EVENT_QUEUE: usize = 64;
 /// past it, as past [`EVENT_QUEUE`] events, a worker's reader waits. Each
 /// message counts its encoded size, and a delta what it holds decoded (see
 /// [`GaggleDelta::decoded_bytes`]), so the budget bounds the queue's
-/// memory, not a multiple of it.
+/// memory, up to the one delta that takes it whole.
 const EVENT_BYTES: u64 = 256 << 20;
 
 /// An event as queued, holding its share of [`EVENT_BYTES`] until the main
@@ -1371,6 +1371,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let warned = REFUSED_WARNINGS.load(Ordering::Relaxed) - before;
             assert!(warned <= 5, "{} warnings for 1,000 refusals", warned);
+            // This manager's first refusal warns.
+            assert!(warned >= 1, "nothing was refused");
             drop(held);
         };
         tokio::time::timeout(Duration::from_secs(30), test)
@@ -2356,7 +2358,17 @@ pub(crate) mod handshake_tests {
             });
             // Nothing taken: by their encoded bytes, 8 MiB would hold more
             // than the queue's 64 events.
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            let filling = Instant::now();
+            while manager.events.len() < 4 {
+                assert!(
+                    filling.elapsed() < Duration::from_secs(20),
+                    "{} events queued",
+                    manager.events.len()
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            // Past the budget nothing more is taken: what is in flight settles.
+            tokio::time::sleep(Duration::from_millis(500)).await;
             let queued = manager.events.len();
             assert!(queued <= 16, "{} events queued past the budget", queued);
             assert!(queued >= 4, "{} events queued", queued);

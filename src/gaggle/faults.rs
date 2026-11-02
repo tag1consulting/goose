@@ -103,8 +103,9 @@ impl TestFaults {
 
     /// With [`Self::withhold_final`], wait to be shut down, never saying
     /// the users stopped, and with [`Self::cancel_on_stop`] trigger the
-    /// killswitch a second after `Stop`, once any other worker's final
-    /// merged: the error the worker then ends with. `None` without it.
+    /// killswitch once the manager took another worker's `Stopped`, which
+    /// follows its final metrics: the error the worker then ends with.
+    /// `None` without it.
     pub(crate) async fn withhold_final(&self, link: &Link) -> Option<GooseError> {
         if !self.withhold_final {
             return None;
@@ -118,7 +119,12 @@ impl TestFaults {
                 }
                 Some(LinkEvent::Stop(_)) if self.cancel_on_stop => {
                     tokio::spawn(async {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        let until = std::time::Instant::now() + Duration::from_secs(10);
+                        while STOPPED_SEEN.load(std::sync::atomic::Ordering::SeqCst) == 0
+                            && std::time::Instant::now() < until
+                        {
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                        }
                         *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
                         crate::trigger_killswitch("a test's Ctrl-C as the run stops");
                     });
@@ -146,6 +152,11 @@ impl TestFaults {
         None
     }
 }
+
+/// The workers' `Stopped`, which follows their final metrics, the manager
+/// has taken.
+pub(crate) static STOPPED_SEEN: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// What a worker sends in place of its logs, in unit tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

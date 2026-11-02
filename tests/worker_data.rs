@@ -157,6 +157,7 @@ async fn worker_data_hook_runs_again_on_a_controller_restart() {
             }
         };
         reply(&mut client).await;
+        let mut before = 0;
         for run in 1..=2 {
             // A stopped run takes a moment to be idle again.
             let asked = Instant::now();
@@ -169,11 +170,12 @@ async fn worker_data_hook_runs_again_on_a_controller_restart() {
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             let running = Instant::now();
-            while data.calls_async().await < run {
+            while data.calls_async().await <= before {
                 assert!(running.elapsed() < Duration::from_secs(20), "run {}", run);
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             send(&mut client, "stop").await;
+            before = data.calls_async().await;
         }
         let _ = client.write_all(b"shutdown\r\n").await;
         let _ = tokio::time::timeout(Duration::from_secs(30), run).await;
