@@ -776,7 +776,7 @@ impl Link {
         }
     }
 
-    /// Every event waiting now, taken (unit tests).
+    /// Every event, taken until none is left (unit tests).
     #[cfg(test)]
     fn drain_events(&self) -> Vec<LinkEvent> {
         std::iter::from_fn(|| self.try_event()).collect()

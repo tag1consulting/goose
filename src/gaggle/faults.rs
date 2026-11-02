@@ -170,7 +170,8 @@ pub(crate) fn hold_threshold_check(has_requests: bool) {
     if !has_requests || !HOLD_THRESHOLD_CHECK.swap(false, SeqCst) {
         return;
     }
-    // Off the runtime's own threads, so the manager's main loop runs on.
+    // This thread's other tasks go to another worker thread, so the
+    // manager's main loop runs on.
     tokio::task::block_in_place(|| {
         let until = std::time::Instant::now() + Duration::from_secs(20);
         while !MANAGER_STOPPING.load(SeqCst) && std::time::Instant::now() < until {
