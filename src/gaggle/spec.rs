@@ -85,6 +85,44 @@ pub(crate) struct WorkerRunSpec {
 /// The most test plan steps a worker runs: a plan of more fails `Prepare`.
 pub(crate) const MAX_PLAN_STEPS: usize = 100_000;
 
+/// A share past what a worker runs.
+#[derive(Debug, PartialEq)]
+pub(crate) enum WorkerBound {
+    /// More users than a delta may count.
+    Users(usize),
+    /// More test plan steps than [`MAX_PLAN_STEPS`].
+    PlanSteps(usize),
+}
+
+impl std::fmt::Display for WorkerBound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkerBound::Users(users) => write!(
+                f,
+                "{users} users, more than the {} users a worker runs",
+                super::delta::DeltaLimits::default().max_users
+            ),
+            WorkerBound::PlanSteps(steps) => write!(
+                f,
+                "{steps} test plan steps, more than the {MAX_PLAN_STEPS} steps a worker runs"
+            ),
+        }
+    }
+}
+
+/// Whether a worker runs a share of `users` users over a test plan of
+/// `plan_steps` steps: the worker checks its run spec with this, and the
+/// manager its largest share, before it waits for any worker.
+pub(crate) fn worker_bounds(users: usize, plan_steps: usize) -> Result<(), WorkerBound> {
+    if users as u64 > super::delta::DeltaLimits::default().max_users {
+        return Err(WorkerBound::Users(users));
+    }
+    if plan_steps > MAX_PLAN_STEPS {
+        return Err(WorkerBound::PlanSteps(plan_steps));
+    }
+    Ok(())
+}
+
 /// `total` split as evenly as it goes between `workers`, the remainder one
 /// each to the first: each worker's part never falls as `total` rises, so
 /// every worker moves the way the total does.
@@ -114,6 +152,16 @@ pub(crate) fn users_started(steps: &[(usize, usize)]) -> usize {
         previous = users;
         total.saturating_add(increase)
     })
+}
+
+/// The users worker 0 of `workers` starts over a load test of `steps`: the
+/// largest share, as [`split`] gives the first workers the remainder.
+pub(crate) fn largest_share(steps: &[(usize, usize)], workers: usize) -> usize {
+    let first: Vec<(usize, usize)> = steps
+        .iter()
+        .map(|&(users, ms)| (split(users, workers, 0), ms))
+        .collect();
+    users_started(&first)
 }
 
 /// The most users a test plan runs at once.
@@ -410,19 +458,8 @@ impl WorkerRunSpec {
     /// trusted no more than its network, so a bad spec fails `Prepare`
     /// rather than the worker.
     pub(crate) fn validate(&self, scenarios: usize) -> Result<(), String> {
-        let max_users = super::delta::DeltaLimits::default().max_users;
-        if self.users as u64 > max_users {
-            return Err(format!(
-                "the run spec gives {} users, more than the {max_users} users a worker runs",
-                self.users
-            ));
-        }
-        if self.test_plan.len() > MAX_PLAN_STEPS {
-            return Err(format!(
-                "the run spec's test plan has {} steps, more than the {MAX_PLAN_STEPS} steps a worker runs",
-                self.test_plan.len()
-            ));
-        }
+        worker_bounds(self.users, self.test_plan.len())
+            .map_err(|bound| format!("the run spec gives {bound}"))?;
         if self.custom_data.len() > crate::MAX_WORKER_DATA {
             return Err(format!(
                 "the run spec's custom data is {} bytes, more than the {} bytes allowed",

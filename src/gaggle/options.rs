@@ -388,8 +388,33 @@ impl GooseConfiguration {
             // A worker with no users, when there are more workers than
             // users, takes no share of the throttle.
             let workers = self.expect_workers.unwrap_or(1);
+            let plan = crate::test_plan::TestPlan::build(self).ok();
+            // What every worker would refuse in its share is refused here,
+            // before the manager waits for any worker or runs test_start.
+            if let Some(plan) = plan.as_ref() {
+                let largest = crate::gaggle::spec::largest_share(&plan.steps, workers);
+                match crate::gaggle::spec::worker_bounds(largest, plan.steps.len()) {
+                    Ok(()) => {}
+                    Err(bound @ crate::gaggle::spec::WorkerBound::Users(_)) => {
+                        return Err(refused(
+                            "--expect-workers",
+                            workers,
+                            format!(
+                                "--expect-workers {workers} gives worker 0 {bound}: expect more workers."
+                            ),
+                        ))
+                    }
+                    Err(bound @ crate::gaggle::spec::WorkerBound::PlanSteps(_)) => {
+                        return Err(refused(
+                            "--test-plan",
+                            "set",
+                            format!("the test plan gives every worker {bound}."),
+                        ))
+                    }
+                }
+            }
             let throttle = self.throttle_requests();
-            let busy = crate::test_plan::TestPlan::build(self).map_or(workers, |plan| {
+            let busy = plan.map_or(workers, |plan| {
                 crate::gaggle::spec::workers_with_users(&plan.steps, workers)
             });
             if throttle > 0 && throttle < busy {
