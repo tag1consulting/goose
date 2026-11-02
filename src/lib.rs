@@ -152,7 +152,6 @@ type UnsequencedTransactions = Vec<Transaction>;
 type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
-#[derive(Debug)]
 pub enum GooseError {
     /// Wraps a [`std::io::Error`](https://doc.rust-lang.org/std/io/struct.Error.html).
     Io(io::Error),
@@ -226,8 +225,8 @@ pub enum GooseError {
 
 /// The metrics of a run that failed a threshold, held by
 /// [`GooseError::ThresholdsFailed`]. It reads as the [`GooseMetrics`] it holds, as in
-/// `metrics.duration`, and its `Debug` leaves them out: a `main` that returns the
-/// error prints it, and the metrics of a whole run would bury the rules that failed.
+/// `metrics.duration`, and its `Debug` leaves them out: in `{:#?}` of the error, the
+/// metrics of a whole run would bury the rules that failed.
 #[derive(Default)]
 pub struct ThresholdMetrics(pub Box<GooseMetrics>);
 
@@ -262,6 +261,15 @@ impl GooseError {
             GooseError::ThresholdsFailed { .. } => "one or more thresholds failed",
         }
     }
+
+    /// The rules that failed, as `Display` and `Debug` write them.
+    fn failed_rules(failed: &[threshold::ThresholdResult]) -> String {
+        failed
+            .iter()
+            .map(|result| format!("{}, observed {}", result.rule, result.observed))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
 }
 
 /// Implement format trait to allow displaying errors.
@@ -280,14 +288,125 @@ impl fmt::Display for GooseError {
                 ref parse_error, ..
             } => write!(f, "GooseError: {} ({})", self.describe(), parse_error),
             GooseError::ThresholdsFailed { ref failed, .. } => {
-                let failed = failed
-                    .iter()
-                    .map(|result| format!("{}, observed {}", result.rule, result.observed))
-                    .collect::<Vec<_>>()
-                    .join("; ");
+                let failed = GooseError::failed_rules(failed);
                 write!(f, "GooseError: {} ({})", self.describe(), failed)
             }
             _ => write!(f, "GooseError: {}", self.describe()),
+        }
+    }
+}
+
+/// `{:?}` is the line a `main` that returns the error prints after `Error: `, so it
+/// reads as `Display` without `GooseError: `, with every useful field in one line.
+/// `{:#?}` prints the structure field for field, as a derived `Debug` would.
+impl fmt::Debug for GooseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if f.alternate() {
+            return match self {
+                GooseError::Io(source) => f.debug_tuple("Io").field(source).finish(),
+                GooseError::Reqwest(source) => f.debug_tuple("Reqwest").field(source).finish(),
+                GooseError::TokioJoin(source) => f.debug_tuple("TokioJoin").field(source).finish(),
+                GooseError::Serde(source) => f.debug_tuple("Serde").field(source).finish(),
+                GooseError::FeatureNotEnabled { feature, detail } => f
+                    .debug_struct("FeatureNotEnabled")
+                    .field("feature", feature)
+                    .field("detail", detail)
+                    .finish(),
+                GooseError::InvalidHost {
+                    host,
+                    detail,
+                    parse_error,
+                } => f
+                    .debug_struct("InvalidHost")
+                    .field("host", host)
+                    .field("detail", detail)
+                    .field("parse_error", parse_error)
+                    .finish(),
+                GooseError::InvalidOption {
+                    option,
+                    value,
+                    detail,
+                } => f
+                    .debug_struct("InvalidOption")
+                    .field("option", option)
+                    .field("value", value)
+                    .field("detail", detail)
+                    .finish(),
+                GooseError::InvalidWaitTime {
+                    min_wait,
+                    max_wait,
+                    detail,
+                } => f
+                    .debug_struct("InvalidWaitTime")
+                    .field("min_wait", min_wait)
+                    .field("max_wait", max_wait)
+                    .field("detail", detail)
+                    .finish(),
+                GooseError::InvalidWeight { weight, detail } => f
+                    .debug_struct("InvalidWeight")
+                    .field("weight", weight)
+                    .field("detail", detail)
+                    .finish(),
+                GooseError::InvalidControllerCommand { detail } => f
+                    .debug_struct("InvalidControllerCommand")
+                    .field("detail", detail)
+                    .finish(),
+                GooseError::NoScenarios { detail } => f
+                    .debug_struct("NoScenarios")
+                    .field("detail", detail)
+                    .finish(),
+                GooseError::ThresholdsFailed { failed, metrics } => f
+                    .debug_struct("ThresholdsFailed")
+                    .field("failed", failed)
+                    .field("metrics", metrics)
+                    .finish(),
+            };
+        }
+        // What the error names, then its explanation when it has one.
+        let with_detail = |what: String, detail: &str| {
+            if detail.is_empty() {
+                what
+            } else {
+                format!("{what}: {detail}")
+            }
+        };
+        let detail = match self {
+            GooseError::Io(source) => source.to_string(),
+            GooseError::Reqwest(source) => source.to_string(),
+            GooseError::TokioJoin(source) => source.to_string(),
+            GooseError::Serde(source) => source.to_string(),
+            GooseError::FeatureNotEnabled { feature, detail } => {
+                with_detail(feature.clone(), detail)
+            }
+            GooseError::InvalidHost {
+                host,
+                detail,
+                parse_error,
+            } => with_detail(format!("{host:?}, {parse_error}"), detail),
+            GooseError::InvalidOption {
+                option,
+                value,
+                detail,
+            } => with_detail(format!("{option} {value:?}"), detail),
+            GooseError::InvalidWaitTime {
+                min_wait,
+                max_wait,
+                detail,
+            } => with_detail(
+                format!("min_wait {min_wait:?}, max_wait {max_wait:?}"),
+                detail,
+            ),
+            GooseError::InvalidWeight { weight, detail } => {
+                with_detail(format!("weight {weight}"), detail)
+            }
+            GooseError::InvalidControllerCommand { detail }
+            | GooseError::NoScenarios { detail } => detail.clone(),
+            GooseError::ThresholdsFailed { failed, .. } => GooseError::failed_rules(failed),
+        };
+        if detail.is_empty() {
+            f.write_str(self.describe())
+        } else {
+            write!(f, "{} ({})", self.describe(), detail)
         }
     }
 }
@@ -4307,9 +4426,22 @@ mod tests {
         };
         assert_eq!(
             format!("{error:?}"),
-            "ThresholdsFailed { failed: [ThresholdResult { rule: \"p95<500ms\", \
-             observed: \"812ms\", value: Some(812.0), passed: false, aborted: true }], \
-             metrics: ThresholdMetrics { .. } }"
+            "one or more thresholds failed (p95<500ms, observed 812ms)"
+        );
+        assert_eq!(
+            format!("{error:#?}"),
+            "ThresholdsFailed {\n    \
+             failed: [\n        \
+             ThresholdResult {\n            \
+             rule: \"p95<500ms\",\n            \
+             observed: \"812ms\",\n            \
+             value: Some(\n                812.0,\n            ),\n            \
+             passed: false,\n            \
+             aborted: true,\n        \
+             },\n    \
+             ],\n    \
+             metrics: ThresholdMetrics { .. },\n\
+             }"
         );
         assert_eq!(
             error.to_string(),
@@ -4320,6 +4452,111 @@ mod tests {
         };
         assert_eq!(metrics.duration, 7);
         assert_eq!(metrics.0.duration, 7);
+    }
+
+    /// A `main` that returns a `GooseError` prints `Error: ` and its `{:?}`, so each
+    /// variant's `{:?}` is one line, without the `GooseError: ` of `Display`, that
+    /// names its detail.
+    #[test]
+    fn debug_is_one_readable_line() {
+        let host_error = url::Url::parse("htp//x").unwrap_err();
+        let serde_error = serde_json::from_str::<u8>("x").unwrap_err();
+        let cases = [
+            (
+                GooseError::Io(io::Error::other("disk full")),
+                "io::Error (disk full)",
+            ),
+            (
+                GooseError::Serde(serde_error),
+                "serde_json::Error (expected value at line 1 column 1)",
+            ),
+            (
+                GooseError::FeatureNotEnabled {
+                    feature: "dashboard".to_string(),
+                    detail: "rebuild with `--features dashboard`".to_string(),
+                },
+                "required compile-time feature not enabled \
+                 (dashboard: rebuild with `--features dashboard`)",
+            ),
+            (
+                GooseError::InvalidHost {
+                    host: "htp//x".to_string(),
+                    detail: "Invalid host.".to_string(),
+                    parse_error: host_error,
+                },
+                "failed to parse hostname \
+                 (\"htp//x\", relative URL without a base: Invalid host.)",
+            ),
+            (
+                GooseError::InvalidOption {
+                    option: "--host".to_string(),
+                    value: String::new(),
+                    detail: "A host must be defined.".to_string(),
+                },
+                "invalid option or value specified (--host \"\": A host must be defined.)",
+            ),
+            (
+                GooseError::InvalidWaitTime {
+                    min_wait: Duration::from_secs(2),
+                    max_wait: Duration::from_secs(1),
+                    detail: "max_wait must be at least min_wait.".to_string(),
+                },
+                "invalid wait_time specified \
+                 (min_wait 2s, max_wait 1s: max_wait must be at least min_wait.)",
+            ),
+            (
+                GooseError::InvalidWeight {
+                    weight: 0,
+                    detail: "Weight must be set to at least 1.".to_string(),
+                },
+                "invalid weight specified (weight 0: Weight must be set to at least 1.)",
+            ),
+            (
+                GooseError::InvalidControllerCommand {
+                    detail: "unknown command".to_string(),
+                },
+                "invalid controller command (unknown command)",
+            ),
+            (
+                GooseError::NoScenarios {
+                    detail: "No scenarios are enabled.".to_string(),
+                },
+                "no scenarios defined (No scenarios are enabled.)",
+            ),
+            (
+                GooseError::NoScenarios {
+                    detail: String::new(),
+                },
+                "no scenarios defined",
+            ),
+        ];
+        for (error, expected) in cases {
+            let debug = format!("{error:?}");
+            assert_eq!(debug, expected);
+            assert!(!debug.contains('\n'), "{}", debug);
+            assert!(debug.starts_with(error.describe()), "{}", debug);
+        }
+    }
+
+    /// `{:#?}` keeps the structure the derive printed, field for field.
+    #[test]
+    fn alternate_debug_keeps_the_structure() {
+        let error = GooseError::FeatureNotEnabled {
+            feature: "dashboard".to_string(),
+            detail: "rebuild with `--features dashboard`".to_string(),
+        };
+        assert_eq!(
+            format!("{error:#?}"),
+            "FeatureNotEnabled {\n    \
+             feature: \"dashboard\",\n    \
+             detail: \"rebuild with `--features dashboard`\",\n\
+             }"
+        );
+        let error = GooseError::Io(io::Error::from(io::ErrorKind::NotFound));
+        assert_eq!(
+            format!("{error:#?}"),
+            "Io(\n    Kind(\n        NotFound,\n    ),\n)"
+        );
     }
 
     /// A refused Start names its one cause: not idle, no host, or no users.
