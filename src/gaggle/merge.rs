@@ -66,7 +66,9 @@ struct WorkerTotal {
     /// The deltas from it that never arrived, as [`GaggleAccumulator::missing`]
     /// counts them.
     missing: u64,
-    /// Repeats of deltas already taken, ignored.
+    /// Repeats of deltas already taken, ignored (tests: a repeat changes
+    /// nothing in the results, so nothing reports it).
+    #[cfg(test)]
     repeats: u64,
 }
 
@@ -275,6 +277,7 @@ impl GaggleAccumulator {
                     got_final,
                     lost: false,
                     missing,
+                    #[cfg(test)]
                     repeats: 0,
                 },
             );
@@ -299,7 +302,10 @@ impl GaggleAccumulator {
         // `last_seq` is below `u64::MAX`, which no valid delta has.
         let expected = worker.last_seq + 1;
         if delta.seq < expected {
-            worker.repeats += 1;
+            #[cfg(test)]
+            {
+                worker.repeats += 1;
+            }
             keep_gap(
                 &mut self.gaps,
                 &mut self.gaps_dropped,
