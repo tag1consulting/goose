@@ -302,7 +302,9 @@ pub(crate) struct ManagerRun {
     clock_second: Option<usize>,
     /// `Stop` was sent: a worker that stops now is not lost.
     stop_sent: bool,
-    /// The killswitch had canceled the run when `Stop` was sent.
+    /// The killswitch had canceled the run when `Stop` was sent, and no
+    /// Ctrl-C came while the workers sent their final metrics: the log
+    /// collection sets that cancel aside, so it still collects.
     canceled_at_stop: bool,
     /// The run already ended for every worker lost or every worker's users
     /// exited.
@@ -416,6 +418,29 @@ fn gaggle_error(detail: String) -> GooseError {
 fn canceled(while_: &str) -> Option<GooseError> {
     crate::killswitch_reason()
         .map(|reason| gaggle_error(format!("canceled while {while_}: {reason}")))
+}
+
+/// Clear the killswitch for a wait, so a Ctrl-C during it is caught by the
+/// wait rather than ending the process: the cancel it held, for
+/// [`put_back_cancel`] to restore once the wait is over.
+fn set_cancel_aside() -> Option<String> {
+    let reason = crate::killswitch_reason();
+    if reason.is_some() {
+        crate::reset_killswitch();
+    }
+    reason
+}
+
+/// Put back a cancel [`set_cancel_aside`] cleared, without logging it again:
+/// the killswitch reads as it did before the wait, its first reason kept,
+/// whether or not a Ctrl-C came during it.
+fn put_back_cancel(reason: Option<String>) {
+    if let Some(reason) = reason {
+        match crate::CANCELED.write() {
+            Ok(mut canceled) => *canceled = Some(reason),
+            Err(poisoned) => *poisoned.into_inner() = Some(reason),
+        }
+    }
 }
 
 /// The manager's next event before `deadline`, `None` at the deadline, or
@@ -1328,8 +1353,11 @@ impl GooseAttack {
         run: &mut ManagerRun,
     ) {
         run.stop_sent = true;
-        // Kept for log collection: test_stop still sees the killswitch.
-        run.canceled_at_stop = crate::is_killswitch_triggered();
+        // A cancel that ended the run is set aside while the workers send
+        // their final metrics, so a Ctrl-C now ends the wait rather than the
+        // process; it is put back for test_stop and the log collection.
+        let aside = set_cancel_aside();
+        run.canceled_at_stop = aside.is_some();
         let reason = match &self.ended_by {
             Some((EndedBy::Canceled, Some(reason))) => format!("canceled: {reason}"),
             Some((EndedBy::WorkersLost, _)) => "every other worker was lost".to_string(),
@@ -1359,11 +1387,27 @@ impl GooseAttack {
             None => stop + users_bound,
         };
         while let Some(next) = run.running().map(deadline).min() {
-            if let Some(event) = run.manager.next_event(next).await {
+            // Ctrl-C: every worker still owed its final metrics is lost,
+            // and test_stop, the reports and Shutdown run as after any run.
+            if let Some(why) = crate::killswitch_reason() {
+                let owed: Vec<u32> = run.running().map(|worker| worker.id).collect();
+                for id in owed {
+                    let why = format!("canceled while the manager waited for its final metrics: {why}");
+                    self.lose_worker(goose_attack_run_state, run, id, why);
+                }
+                // The logs are given up too.
+                run.canceled_at_stop = false;
+                break;
+            }
+            let wake = next.min(Instant::now() + KILLSWITCH_POLL);
+            if let Some(event) = run.manager.next_event(wake).await {
                 self.manager_event(goose_attack_run_state, run, event);
                 continue;
             }
             let now = Instant::now();
+            if now < next {
+                continue;
+            }
             let late: Vec<(u32, bool)> = run
                 .running()
                 .filter(|worker| deadline(worker) <= now)
@@ -1385,6 +1429,7 @@ impl GooseAttack {
                 self.lose_worker(goose_attack_run_state, run, id, why);
             }
         }
+        put_back_cancel(aside);
     }
 
     /// A worker whose users stopped: say so, send its final metrics, then
