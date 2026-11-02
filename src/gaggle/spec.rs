@@ -124,7 +124,13 @@ pub(crate) fn peak_users(steps: &[(usize, usize)]) -> usize {
 /// `throttle` split in proportion to `users`, the remainder spread: every
 /// worker with users gets at least 1, and a worker with none gets 0, so the
 /// shares add up to `throttle` whenever any worker has users and `throttle`
-/// is at least the number that do ([`workers_with_users`]).
+/// is at least the number that do ([`workers_with_users`]). Each share is
+/// its proportion rounded down, raised to 1; the rest goes one at a time
+/// to the largest remainders, the first worker first among equals; and
+/// what raising shares to 1 put past `throttle` is taken back one at a time
+/// from the largest share, the last worker first among equals, never below
+/// 1. So beside many workers of one user, a large worker gives up what
+/// their floors cost it, and starves none of them.
 pub(crate) fn throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
     let workers = users.len();
     let total: u128 = users.iter().map(|&u| u as u128).sum();
@@ -517,6 +523,31 @@ mod tests {
         // More workers than users: a worker may hold 0 users.
         let plans = plans(&[(2, 1_000), (0, 0)], 3);
         assert_eq!(plans[2], [(0, 1_000), (0, 0)]);
+    }
+
+    /// One worker of 100 users beside many of 1, and idle workers: the
+    /// shares add up to the throttle, every busy worker gets at least 1,
+    /// no idle worker gets any, and the large worker keeps the rest.
+    #[test]
+    fn throttle_shares_starve_no_small_worker() {
+        for small in 1..=30 {
+            for idle in 0..=2 {
+                let mut users = vec![100];
+                users.extend(std::iter::repeat_n(1, small));
+                users.extend(std::iter::repeat_n(0, idle));
+                for throttle in (small + 1)..=300 {
+                    let shares = throttle_shares(throttle, &users);
+                    let why = format!("{throttle} {users:?}: {shares:?}");
+                    assert_eq!(shares.iter().sum::<usize>(), throttle, "{}", why);
+                    for (share, &u) in shares.iter().zip(&users) {
+                        assert_eq!(*share == 0, u == 0, "{}", why);
+                    }
+                    let others: usize = shares[1..].iter().sum();
+                    assert_eq!(shares[0], throttle - others, "{}", why);
+                    assert!(shares[0] >= shares[1], "{}", why);
+                }
+            }
+        }
     }
 
     #[test]
