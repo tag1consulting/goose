@@ -2849,6 +2849,14 @@ async fn runtime_control_in_one_process() {
         assert_eq!(body["ok"], true, "{body}");
         assert_eq!(body["settings"]["throttle"], 60, "{body}");
         let _ = applied(&mut reports, 2).await;
+        // A Start with settings is checked as settings alone are.
+        let body = dashboard_post(DASHBOARD, "start", r#"{"throttle": 1}"#).await;
+        assert_eq!(
+            (&body["ok"], &body["field"]),
+            (&false.into(), &"throttle".into()),
+            "{}",
+            body
+        );
         let body = dashboard_post(DASHBOARD, "start", "{}").await;
         assert_eq!(body["ok"], true, "{body}");
         let again = applied(&mut reports, 2).await;

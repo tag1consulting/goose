@@ -515,7 +515,7 @@ impl GooseAttack {
     /// [`MAX_THROTTLE_RISE`] times its start; and a running users ramp whose
     /// workers run test plans of their own, as one had no users at the
     /// start, can not change its users, rates or run time.
-    fn gaggle_refuse(
+    pub(crate) fn gaggle_refuse(
         &self,
         goose_attack_run_state: &GooseAttackRunState,
         settings: &RunSettings,
@@ -798,6 +798,19 @@ impl GooseAttack {
         if took.is_empty() && throttle == 0 {
             return;
         }
+        // During the ramp up, the moved users start with the survivors' own
+        // still to start, over what is left of the ramp, not all at once.
+        let ramp_ms = match self.attack_phase {
+            AttackPhase::Increase => {
+                let elapsed = self.step_elapsed() as usize;
+                self.test_plan
+                    .steps
+                    .get(self.test_plan.current)
+                    .map_or(0, |step| step.1.saturating_sub(elapsed))
+                    .max(REBALANCE_RAMP_MS)
+            }
+            _ => REBALANCE_RAMP_MS,
+        };
         let counts: Vec<usize> = ids
             .iter()
             .map(|&id| run.book.users(id as usize).len())
@@ -809,7 +822,7 @@ impl GooseAttack {
             .map(|(at, &id)| {
                 let users = took.contains(&(id as usize)).then(|| WorkerUsers {
                     users: run.book.users(id as usize).to_vec(),
-                    ramp_ms: REBALANCE_RAMP_MS,
+                    ramp_ms,
                 });
                 let settings = WorkerSettings {
                     users,

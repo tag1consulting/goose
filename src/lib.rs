@@ -3219,6 +3219,9 @@ impl GooseAttack {
                 running.set(None);
             }
             if let Err(e) = reports {
+                // A Gaggle manager failing here tells its workers, whatever
+                // it would have done with them.
+                self.gaggle_shut_down().await;
                 // Print the final metrics before failing on a report.
                 if self.metrics.display_metrics {
                     info!(
