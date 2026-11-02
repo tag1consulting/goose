@@ -2225,7 +2225,23 @@ impl GooseMetrics {
             );
 
             // Include a blank line after printing running metrics.
-            println!("{self}");
+            self.print(true);
+        }
+    }
+
+    /// Print the metrics to stdout, and a blank line after them with
+    /// `blank_line`. They are formatted first, stdout unlocked: formatting
+    /// them logs, and the logger takes its own lock and then stdout's, so a
+    /// print that held stdout while they were formatted waited for the
+    /// logger's lock as any other thread logging then held it and waited
+    /// for stdout, deadlocking both, as a Gaggle connection's tracing at
+    /// -vv made likely.
+    pub(crate) fn print(&self, blank_line: bool) {
+        let text = self.to_string();
+        if blank_line {
+            println!("{text}");
+        } else {
+            print!("{text}");
         }
     }
 
