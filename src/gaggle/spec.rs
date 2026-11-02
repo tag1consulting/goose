@@ -230,17 +230,9 @@ pub(crate) fn workers_with_users(steps: &[(usize, usize)], workers: usize) -> us
 
 /// The logs the manager's flags ask for, as each worker writes them.
 pub(crate) fn log_specs(configuration: &GooseConfiguration) -> Vec<LogSpec> {
-    let logs = [
-        (&configuration.request_log, &configuration.request_format),
-        (
-            &configuration.transaction_log,
-            &configuration.transaction_format,
-        ),
-        (&configuration.scenario_log, &configuration.scenario_format),
-        (&configuration.error_log, &configuration.error_format),
-        (&configuration.debug_log, &configuration.debug_format),
-    ];
-    logs.iter()
+    configuration
+        .logs()
+        .iter()
         .enumerate()
         .filter_map(|(kind, (log, format))| {
             let log = log.as_deref().filter(|log| !log.is_empty())?;
@@ -383,56 +375,17 @@ impl WorkerRunSpec {
             }
         }
         configuration.gaggle_log_gzip = Some(gzip);
-        for (log, format) in [
-            (
-                &mut configuration.request_log,
-                &mut configuration.request_format,
-            ),
-            (
-                &mut configuration.transaction_log,
-                &mut configuration.transaction_format,
-            ),
-            (
-                &mut configuration.scenario_log,
-                &mut configuration.scenario_format,
-            ),
-            (
-                &mut configuration.error_log,
-                &mut configuration.error_format,
-            ),
-            (
-                &mut configuration.debug_log,
-                &mut configuration.debug_format,
-            ),
-        ] {
+        for (log, format) in configuration.logs_mut() {
             *log = None;
             *format = None;
         }
         for log in &self.logs {
-            let run_folder = Some(RUN_FOLDER.to_string());
-            match log.kind {
-                0 => {
-                    configuration.request_log = run_folder;
-                    configuration.request_format.clone_from(&log.format);
-                }
-                1 => {
-                    configuration.transaction_log = run_folder;
-                    configuration.transaction_format.clone_from(&log.format);
-                }
-                2 => {
-                    configuration.scenario_log = run_folder;
-                    configuration.scenario_format.clone_from(&log.format);
-                }
-                3 => {
-                    configuration.error_log = run_folder;
-                    configuration.error_format.clone_from(&log.format);
-                }
-                4 => {
-                    configuration.debug_log = run_folder;
-                    configuration.debug_format.clone_from(&log.format);
-                }
-                // Refused by `validate`.
-                _ => {}
+            // Of a kind `validate` checked.
+            if let Some((path, format)) =
+                configuration.logs_mut().into_iter().nth(log.kind as usize)
+            {
+                *path = Some(RUN_FOLDER.to_string());
+                format.clone_from(&log.format);
             }
         }
     }

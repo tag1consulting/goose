@@ -1145,34 +1145,9 @@ impl GooseConfiguration {
         // named in the run's folder.
         let mut configuration = self.clone();
         if let Some(folder) = folder {
-            for (kind, (log, name, format)) in IntoIterator::into_iter([
-                (
-                    &mut configuration.request_log,
-                    LOG_NAMES[0],
-                    &self.request_format,
-                ),
-                (
-                    &mut configuration.transaction_log,
-                    LOG_NAMES[1],
-                    &self.transaction_format,
-                ),
-                (
-                    &mut configuration.scenario_log,
-                    LOG_NAMES[2],
-                    &self.scenario_format,
-                ),
-                (
-                    &mut configuration.error_log,
-                    LOG_NAMES[3],
-                    &self.error_format,
-                ),
-                (
-                    &mut configuration.debug_log,
-                    LOG_NAMES[4],
-                    &self.debug_format,
-                ),
-            ])
-            .enumerate()
+            for (kind, ((log, format), name)) in IntoIterator::into_iter(configuration.logs_mut())
+                .zip(LOG_NAMES)
+                .enumerate()
             {
                 if log.as_deref() == Some(RUN_FOLDER) {
                     let mut file = log_file_name(name, format.as_ref());

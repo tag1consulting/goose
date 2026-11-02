@@ -4412,18 +4412,40 @@ impl GooseConfiguration {
         false
     }
 
+    /// Each request, transaction, scenario, error and debug log and its
+    /// format, in [`LOG_NAMES`](crate::runs::LOG_NAMES) order.
+    pub(crate) fn logs_mut(
+        &mut self,
+    ) -> [(&mut Option<String>, &mut Option<GooseLogFormat>); crate::runs::LOG_NAMES.len()] {
+        [
+            (&mut self.request_log, &mut self.request_format),
+            (&mut self.transaction_log, &mut self.transaction_format),
+            (&mut self.scenario_log, &mut self.scenario_format),
+            (&mut self.error_log, &mut self.error_format),
+            (&mut self.debug_log, &mut self.debug_format),
+        ]
+    }
+
+    /// [`Self::logs_mut`], to read.
+    #[cfg(feature = "gaggle")]
+    pub(crate) fn logs(
+        &self,
+    ) -> [(&Option<String>, &Option<GooseLogFormat>); crate::runs::LOG_NAMES.len()] {
+        [
+            (&self.request_log, &self.request_format),
+            (&self.transaction_log, &self.transaction_format),
+            (&self.scenario_log, &self.scenario_format),
+            (&self.error_log, &self.error_format),
+            (&self.debug_log, &self.debug_format),
+        ]
+    }
+
     /// Whether any request, transaction, scenario, error or debug log is set.
     #[cfg(feature = "gaggle")]
     pub(crate) fn data_logs(&self) -> bool {
-        [
-            &self.request_log,
-            &self.transaction_log,
-            &self.scenario_log,
-            &self.error_log,
-            &self.debug_log,
-        ]
-        .iter()
-        .any(|log| log.as_deref().is_some_and(|log| !log.is_empty()))
+        self.logs()
+            .iter()
+            .any(|(log, _)| log.as_deref().is_some_and(|log| !log.is_empty()))
     }
 
     /// This configuration as a Controller's `config` and `config-json` show it:
