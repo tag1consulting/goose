@@ -149,6 +149,10 @@ std::thread_local! {
     /// The graph data built from nothing on this thread (tests).
     #[cfg(test)]
     pub(crate) static FRESH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The coordinated omission events builds on this thread took from the
+    /// workers' totals, or added since (tests).
+    #[cfg(test)]
+    pub(crate) static EVENTS_GATHERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The most gaps an accumulator keeping them holds; past it they are
@@ -582,6 +586,8 @@ impl GaggleAccumulator {
             }
             series_origin = series_origin.max(worker.total.series_origin);
             if let Some(co) = worker.total.metrics.co.as_ref() {
+                #[cfg(test)]
+                EVENTS_GATHERED.with(|gathered| gathered.set(gathered.get() + co.events.len()));
                 events.extend(co.events.iter().cloned());
             }
         }
