@@ -5391,6 +5391,7 @@ mod tests {
     /// A run started after another, as a Controller start after stop does,
     /// counts its requests from zero.
     #[tokio::test]
+    #[serial_test::serial]
     async fn a_new_run_counts_requests_from_zero() {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--no-telnet",
@@ -5889,6 +5890,7 @@ mod tests {
     /// fails to launch, rather than running some other allocation.
     #[cfg(feature = "gaggle")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn gaggle_worker_share_of_another_size_fails_to_launch() {
         let mut attack = gaggle_attack(GooseScheduler::RoundRobin);
         attack.set_user_slice(5, vec![0, 1]);
@@ -5943,6 +5945,7 @@ mod tests {
     /// scenario counts the ordinals of the users that ran it.
     #[cfg(feature = "gaggle")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn gaggle_worker_users_start_at_offset() {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--host",
@@ -5984,6 +5987,7 @@ mod tests {
     /// enabled, takes a delta each second and matches.
     #[cfg(feature = "gaggle")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn gaggle_shadow_merge_runs_in_execute() {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--host",

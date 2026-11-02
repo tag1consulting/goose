@@ -1512,6 +1512,7 @@ mod tests {
     /// the whole run's graphs only when no `--report-file` path needs them.
     #[cfg(feature = "dashboard")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn save_report_off_keeps_the_graphs_a_path_needs() {
         for (path, sent) in [(true, None), (false, Some(false))] {
             let report_file = if path {

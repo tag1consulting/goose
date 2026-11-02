@@ -1890,6 +1890,7 @@ mod tests {
     /// Chunks of a log already given up are dropped without a warning each:
     /// its one warning came as it was given up.
     #[tokio::test]
+    #[serial_test::serial]
     async fn a_log_given_up_warns_once() {
         let test = async {
             let folder = std::env::temp_dir()
@@ -1940,6 +1941,7 @@ mod tests {
     /// A log the worker says it could not read is recorded as left on it,
     /// and the manager creates no file for it.
     #[tokio::test]
+    #[serial_test::serial]
     async fn a_log_the_worker_could_not_read_is_left_on_it() {
         let test = async {
             let folder = std::env::temp_dir()
@@ -1973,6 +1975,7 @@ mod tests {
     /// cannot be created, and every log of a run with no folder, is left on
     /// its worker. None leaves a file under a log's name.
     #[tokio::test]
+    #[serial_test::serial]
     async fn log_collection_failures_leave_logs_on_their_worker() {
         let test = async {
             let folder = std::env::temp_dir()
@@ -2187,6 +2190,7 @@ mod tests {
     /// for or empty and not the last, is not kept alive by them: its log
     /// is left on it once the idle deadline passes.
     #[tokio::test]
+    #[serial_test::serial]
     async fn chunks_without_progress_do_not_keep_a_transfer_alive() {
         let test = async {
             let folder =
@@ -2266,6 +2270,7 @@ mod tests {
     /// the log's name, nor any part of it, and the log is recorded as left
     /// on the worker; a log that arrives whole is renamed into place.
     #[tokio::test]
+    #[serial_test::serial]
     async fn a_log_cut_off_part_way_leaves_no_file() {
         let test = async {
             let folder =
