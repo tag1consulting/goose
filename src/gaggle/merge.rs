@@ -78,6 +78,10 @@ struct WorkerTotal {
 /// final delta, a worker's metrics restarting on a new epoch, or a worker
 /// newly merged or left out) and when a worker is lost or done, so the
 /// figures are added in worker order, as a build from nothing adds them.
+/// While deltas are only added, the live figures match a build from nothing
+/// to within `f64` rounding: the average sums are added in arrival order,
+/// not worker order. The final figures, built again once every worker is
+/// done or lost, match it exactly.
 #[derive(Default)]
 struct Merged {
     /// The figures, coordinated omission events left out: those are taken
