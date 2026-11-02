@@ -1293,6 +1293,10 @@ impl GooseAttack {
         run: &mut ManagerRun,
     ) {
         run.stop_sent = true;
+        // The run is over: a Ctrl-C from here stops the wait for logs. One
+        // that canceled the run is cleared, so the next is caught rather
+        // than ending the process at once.
+        crate::reset_killswitch();
         let reason = match &self.ended_by {
             Some((EndedBy::Canceled, Some(reason))) => format!("canceled: {reason}"),
             Some((EndedBy::WorkersLost, _)) => "every other worker was lost".to_string(),
@@ -1563,10 +1567,6 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     if run.logs.is_empty() {
         return;
     }
-    // The run is over: a Ctrl-C from here stops the wait for logs. One that
-    // canceled the run is cleared, so the next is caught here rather than
-    // ending the process at once.
-    crate::reset_killswitch();
     // Each worker's logs still to come, by the name the manager keeps them
     // under.
     let mut pending: BTreeMap<u32, BTreeMap<String, LogSpec>> = BTreeMap::new();
