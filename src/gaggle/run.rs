@@ -291,6 +291,8 @@ pub(crate) struct ManagerRun {
     clock_second: Option<usize>,
     /// `Stop` was sent: a worker that stops now is not lost.
     stop_sent: bool,
+    /// The killswitch had canceled the run when `Stop` was sent.
+    canceled_at_stop: bool,
     /// The run already ended for every worker lost or every worker's users
     /// exited.
     ending: bool,
@@ -630,6 +632,7 @@ impl GooseAttack {
             logs_left: Vec::new(),
             clock_second: None,
             stop_sent: false,
+            canceled_at_stop: false,
             ending: false,
             health: MergeHealth::default(),
         })));
@@ -1293,10 +1296,8 @@ impl GooseAttack {
         run: &mut ManagerRun,
     ) {
         run.stop_sent = true;
-        // The run is over: a Ctrl-C from here stops the wait for logs. One
-        // that canceled the run is cleared, so the next is caught rather
-        // than ending the process at once.
-        crate::reset_killswitch();
+        // Kept for log collection: test_stop still sees the killswitch.
+        run.canceled_at_stop = crate::is_killswitch_triggered();
         let reason = match &self.ended_by {
             Some((EndedBy::Canceled, Some(reason))) => format!("canceled: {reason}"),
             Some((EndedBy::WorkersLost, _)) => "every other worker was lost".to_string(),
@@ -1566,6 +1567,12 @@ async fn give_up(
 async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     if run.logs.is_empty() {
         return;
+    }
+    // A Ctrl-C from here stops the wait for logs, as does one since `Stop`.
+    // One that canceled the run is cleared, so the next is caught rather
+    // than ending the process at once.
+    if run.canceled_at_stop {
+        crate::reset_killswitch();
     }
     // Each worker's logs still to come, by the name the manager keeps them
     // under.
