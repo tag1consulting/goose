@@ -91,3 +91,57 @@ pub async fn throttle_main(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// How many tokens a sender gets in at once: the burst.
+    fn burst(sender: &flume::Sender<bool>) -> usize {
+        let mut sent = 0;
+        while sender.try_send(true).is_ok() {
+            sent += 1;
+        }
+        sent
+    }
+
+    /// After a quiet spell, users may send one second of the current rate
+    /// at once, never more than one second of the starting rate.
+    #[tokio::test]
+    async fn the_burst_follows_the_rate() {
+        let test = async {
+            let (sender, receiver) = flume::bounded(200);
+            let (stop, stopped) = flume::bounded(1);
+            let rate: ThrottleRate = Arc::new(AtomicUsize::new(200));
+            tokio::spawn(throttle_main(
+                200,
+                rate.clone(),
+                sender.clone(),
+                receiver,
+                stopped,
+            ));
+            // Full: no burst at the starting rate once the channel fills.
+            burst(&sender);
+            rate.store(50, Ordering::Relaxed);
+            tokio::time::sleep(time::Duration::from_millis(1_500)).await;
+            let low = burst(&sender);
+            assert!(
+                (40..=60).contains(&low),
+                "a burst of {} at 50 a second",
+                low
+            );
+            rate.store(200, Ordering::Relaxed);
+            tokio::time::sleep(time::Duration::from_millis(1_500)).await;
+            let high = burst(&sender);
+            assert!(
+                (150..=200).contains(&high),
+                "a burst of {} at 200 a second",
+                high
+            );
+            stop.send(true).unwrap();
+        };
+        tokio::time::timeout(time::Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+}

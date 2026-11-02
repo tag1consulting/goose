@@ -60,6 +60,10 @@ pub(crate) struct WorkerRunSpec {
     /// user: it then runs `test_plan` as one process runs a users ramp, so
     /// a Controller can change its users, rates and run time as it runs.
     pub(crate) ramp: Option<WorkerRamp>,
+    /// Whether the whole load test's test plan holds until stopped, its last
+    /// step running users: a worker whose share of that step is none then
+    /// waits for its manager rather than ending its run.
+    pub(crate) holds: bool,
     pub(crate) iterations: Option<usize>,
     pub(crate) co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     pub(crate) timeout: Option<String>,
@@ -115,7 +119,13 @@ impl WorkerRamp {
                 .and_then(|rate| rate.parse::<f32>().ok())
                 .map(|rate| super::control::rate_shares(rate, users))
         };
-        let increase = rates(&configuration.increase_rate);
+        // With neither an increase rate nor time, one process ramps at 1
+        // user a second: each worker takes its share of that rate.
+        let increase_rate = match (&configuration.increase_rate, &configuration.increase_time) {
+            (None, None) => Some("1".to_string()),
+            (rate, _) => rate.clone(),
+        };
+        let increase = rates(&increase_rate);
         let decrease = rates(&configuration.decrease_rate);
         Some(
             users
@@ -347,6 +357,7 @@ pub(crate) fn worker_specs(
                 test_plan,
                 throttle_requests: throttles[worker],
                 ramp: ramps.as_mut().and_then(Iterator::next),
+                holds: steps.last().is_some_and(|&(users, _)| users > 0),
                 iterations: configuration.iterations,
                 co_mitigation: configuration.co_mitigation.clone(),
                 timeout: configuration.timeout.clone(),

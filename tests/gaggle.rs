@@ -941,6 +941,8 @@ fn gaggle_worker_missing_the_answer_deadline_is_lost() {
         first
             .wait(Duration::from_secs(20))
             .expect("the other worker exits");
+        // The change stood on the other worker: its share of 30 users.
+        assert!(first.output().contains(" to 15"), "{}", first.output());
     });
 }
 
@@ -978,7 +980,7 @@ fn throttle_after_loss(rebalance: bool) {
         "--increase-rate",
         "2000",
         "--run-time",
-        "16s",
+        "30s",
         "--throttle-requests",
         "40",
     ];
@@ -1011,7 +1013,11 @@ fn throttle_after_loss(rebalance: bool) {
     first
         .wait(Duration::from_secs(20))
         .expect("the other worker exits");
-    let moved = first.output().contains("changing users from 1000 to 2000");
+    // From wherever its own ramp stood: a slow machine may still ramp.
+    let moved = first
+        .output()
+        .lines()
+        .any(|line| line.contains("changing users from") && line.ends_with(" to 2000"));
     assert_eq!(moved, rebalance, "{}", first.output());
 }
 

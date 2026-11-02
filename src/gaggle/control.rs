@@ -17,6 +17,7 @@ use crate::metrics::MetricsCommand;
 use crate::throttle::MAX_THROTTLE_RISE;
 use crate::{AttackPhase, ControlOutcome, GooseAttack, GooseAttackRunState, GooseError};
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
@@ -82,6 +83,9 @@ pub(crate) struct WorkerPlan {
     pub(crate) steps: Vec<(usize, usize)>,
     /// Every user the plan starts, in the order it starts them.
     pub(crate) users: Vec<User>,
+    /// Whether the whole plan holds until stopped, its last step running
+    /// users.
+    pub(crate) holds: bool,
 }
 
 impl WorkerSettings {
@@ -187,20 +191,20 @@ impl UserBook {
     /// Deal `users` one at a time to the live worker running fewest, the
     /// first among equals: the workers that took any.
     pub(crate) fn deal(&mut self, users: Vec<User>, live: &[bool]) -> Vec<usize> {
-        let mut took = Vec::new();
+        let mut fewest: BinaryHeap<Reverse<(usize, usize)>> = (0..self.workers.len())
+            .filter(|&worker| live.get(worker).copied().unwrap_or(false))
+            .map(|worker| Reverse((self.workers[worker].len(), worker)))
+            .collect();
+        let mut took = vec![false; self.workers.len()];
         for user in users {
-            let fewest = (0..self.workers.len())
-                .filter(|&worker| live.get(worker).copied().unwrap_or(false))
-                .min_by_key(|&worker| (self.workers[worker].len(), worker));
-            let Some(worker) = fewest else {
+            let Some(Reverse((count, worker))) = fewest.pop() else {
                 break;
             };
             self.workers[worker].push(user);
-            if !took.contains(&worker) {
-                took.push(worker);
-            }
+            took[worker] = true;
+            fewest.push(Reverse((count + 1, worker)));
         }
-        took
+        (0..took.len()).filter(|&worker| took[worker]).collect()
     }
 
     /// Worker `worker` is lost: its users, which it no longer runs.
@@ -282,7 +286,7 @@ type Change = (ControlOutcome, Option<Vec<(u32, WorkerControl)>>);
 /// How long the manager waits for every worker to answer a change: 10
 /// seconds, inside the 15 a front end waits.
 pub(crate) const ACK_TIMEOUT: Duration = if cfg!(test) {
-    Duration::from_secs(2)
+    Duration::from_secs(5)
 } else {
     Duration::from_secs(10)
 };
@@ -395,12 +399,25 @@ impl GooseAttack {
             }
             ControlCommand::Command(ControllerCommand::Shutdown) => {
                 let outcome = self.control_shutdown(state).await?;
-                // From Idle, every worker is told to shut down as the
-                // manager does.
-                let stop = running.then(|| self.every_worker(WorkerControl::Shutdown));
-                (outcome, stop)
+                let stop = self.every_worker(WorkerControl::Shutdown);
+                if running {
+                    (outcome, Some(stop))
+                } else {
+                    // From Idle the manager exits at once: each worker is
+                    // told it was asked to, ahead of the `Shutdown` that
+                    // follows, so it exits cleanly.
+                    self.tell_workers(stop);
+                    (outcome, None)
+                }
             }
-            ControlCommand::Command(ControllerCommand::Quit) => (self.control_quit(state), None),
+            ControlCommand::Command(ControllerCommand::Quit) => {
+                let outcome = self.control_quit(state);
+                if outcome.ok {
+                    let stop = self.every_worker(WorkerControl::Shutdown);
+                    self.tell_workers(stop);
+                }
+                (outcome, None)
+            }
             ControlCommand::Command(ControllerCommand::Users(users)) => {
                 let settings = RunSettings {
                     users: Some(users),
@@ -434,6 +451,13 @@ impl GooseAttack {
                 (refused, None)
             }
         })
+    }
+
+    /// Send each worker its control, waiting for no answer.
+    fn tell_workers(&mut self, controls: Vec<(u32, WorkerControl)>) {
+        if let Some(run) = self.manager_run_mut() {
+            let _ = send_controls(run, controls);
+        }
     }
 
     /// `control` for every worker still running.
@@ -524,6 +548,15 @@ impl GooseAttack {
             }
         }
         if let Some(Some(throttle)) = settings.throttle {
+            // The shares follow the users the change would leave: checked
+            // alone, against the users each worker runs now.
+            if running && (settings.users.is_some() || settings.test_plan.is_some()) {
+                return refuse(
+                    "conflicting_settings",
+                    "throttle",
+                    "failed to configure throttle, a running Gaggle changes its throttle alone, not with users or a test plan".to_string(),
+                );
+            }
             if throttle < live.len() {
                 return refuse(
                     "conflicting_settings",
@@ -614,7 +647,8 @@ impl GooseAttack {
         }
         if let Some(plan) = &settings.test_plan {
             match plan {
-                Some(_) => {
+                Some(plan) => {
+                    let holds = plan.steps.last().is_some_and(|&(users, _)| users > 0);
                     let mut plans = vec![Vec::new(); workers];
                     for (&id, steps) in ids.iter().zip(split) {
                         plans[id as usize] = steps;
@@ -624,6 +658,7 @@ impl GooseAttack {
                         shares[id as usize].test_plan = Some(Some(WorkerPlan {
                             steps: plans[id as usize].clone(),
                             users: users.clone(),
+                            holds,
                         }));
                     }
                     moved = true;
@@ -744,7 +779,11 @@ impl GooseAttack {
         }
         let mut took = Vec::new();
         if self.configuration.gaggle_rebalance && !users.is_empty() {
-            if run.ramps && self.run_shape.is_some() {
+            let ramping_down = self
+                .run_shape
+                .as_ref()
+                .is_none_or(|shape| shape.ramp_down_started);
+            if run.ramps && !ramping_down {
                 info!(
                     "gaggle: moving worker {id}'s {} users to the {} workers left",
                     users.len(),
@@ -752,7 +791,7 @@ impl GooseAttack {
                 );
                 took = run.book.deal(users, &mask(run));
             } else {
-                warn!("gaggle: worker {id}'s users are not moved: --gaggle-rebalance moves the users of a users ramp, not of a test plan");
+                warn!("gaggle: worker {id}'s users are not moved: --gaggle-rebalance moves the users of a users ramp before its ramp down, not of a test plan");
             }
         }
         let throttle = self.configuration.throttle_requests();
@@ -806,6 +845,10 @@ impl GooseAttack {
                 ACK_TIMEOUT.as_secs()
             );
             self.lose_worker(goose_attack_run_state, run, id, why);
+            // Never waited on again, however it was marked.
+            if let Some(pending) = run.pending.as_mut() {
+                pending.awaiting.remove(&id);
+            }
         }
         if run
             .pending
@@ -1119,5 +1162,47 @@ mod tests {
             control
         );
         assert!(WorkerControl::decode(&[0xff, 0xff]).is_err());
+    }
+
+    /// The scenarios the manager gives the users a `users` change adds are
+    /// those one process starts: it builds a change's users with
+    /// `user_scenario_order` and starts the last built first.
+    #[test]
+    fn a_managers_users_take_one_process_scenarios() {
+        use crate::goose::{Scenario, Transaction};
+        let noop = || Transaction::new(std::sync::Arc::new(|_| Box::pin(async { Ok(()) })));
+        let mut attack = crate::GooseAttack::initialize_with_config(Default::default())
+            .unwrap()
+            .register_scenario(
+                Scenario::new("A")
+                    .set_weight(3)
+                    .unwrap()
+                    .register_transaction(noop()),
+            )
+            .register_scenario(Scenario::new("B").register_transaction(noop()));
+        let live = vec![true; 3];
+        let mut book = UserBook::new(vec![Vec::new(); 3], 0);
+        let mut one: Vec<User> = Vec::new();
+        let mut next = 0;
+        for users in [5, 12, 7, 15, 1, 9] {
+            if users > one.len() {
+                let added = users - one.len();
+                // One process: built in order, popped from the end.
+                let mut built = attack.user_scenario_order(added).unwrap();
+                while let Some(scenario) = built.pop() {
+                    one.push((next, scenario));
+                    next += 1;
+                }
+            } else {
+                one.truncate(users);
+            }
+            let added = users.saturating_sub(book.total());
+            let scenarios = match added {
+                0 => Vec::new(),
+                added => attack.user_scenarios(added).unwrap(),
+            };
+            book.set_users(users, &live, scenarios);
+            assert_eq!(every_user(&book, 3), one, "after users {}", users);
+        }
     }
 }

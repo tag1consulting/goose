@@ -1846,8 +1846,10 @@ impl GooseAttack {
         }
 
         // A worker joins its manager, and runs the share it is handed.
-        if self.configuration.is_worker() {
-            self.gaggle_worker_join().await?;
+        // A worker whose manager shut down before handing it a share has
+        // nothing to run.
+        if self.configuration.is_worker() && !self.gaggle_worker_join().await? {
+            return Ok(self.metrics);
         }
 
         // Build TestPlan, and the shape of a users ramp.
@@ -3040,17 +3042,13 @@ impl GooseAttack {
             assert!(self.test_plan.current > 0);
         }
 
-        // A Gaggle worker its manager took to 0 users, in a run that holds
-        // until stopped, waits for more users or for the manager to stop the
-        // run, as the whole load test still runs.
+        // A Gaggle worker at 0 users at the end of its plan, in a load test
+        // that holds until stopped, waits for more users or for the manager
+        // to stop the run, as the whole load test still runs.
         if goose_attack_run_state.active_users == 0
             && self.test_plan.current >= self.test_plan.steps.len() - 1
-            && self.is_gaggle_worker()
             && !goose_attack_run_state.stopping
-            && self
-                .run_shape
-                .as_ref()
-                .is_some_and(run_shape::RunShape::holds_until_stopped)
+            && self.gaggle_worker_holds()
         {
             tokio::time::sleep(Duration::from_millis(100)).await;
             return Ok(());
@@ -3192,9 +3190,18 @@ impl GooseAttack {
             } else {
                 reports
             };
+            // After an autostarted run, wait for a dashboard tab that is
+            // open so the run's report can still be downloaded from it.
+            #[cfg(feature = "dashboard")]
+            let wait_for_dashboard = ran
+                && goose_attack_run_state.shutdown_after_stop
+                && self.should_wait_for_dashboard(goose_attack_run_state);
+            #[cfg(not(feature = "dashboard"))]
+            let wait_for_dashboard = false;
             // Then its workers shut down, unless the run was stopped to wait
-            // for the next Start, as they do too.
-            if ran && goose_attack_run_state.shutdown_after_stop {
+            // for the next Start, or waits for the dashboard, from which a
+            // Start can follow: they wait too, and shut down with it.
+            if ran && goose_attack_run_state.shutdown_after_stop && !wait_for_dashboard {
                 self.gaggle_shut_down().await;
             }
             self.run_in_progress = false;
@@ -3222,14 +3229,6 @@ impl GooseAttack {
                 }
                 return Err(e);
             }
-            // After an autostarted run, wait for a dashboard tab that is
-            // open so the run's report can still be downloaded from it.
-            #[cfg(feature = "dashboard")]
-            let wait_for_dashboard = ran
-                && goose_attack_run_state.shutdown_after_stop
-                && self.should_wait_for_dashboard(goose_attack_run_state);
-            #[cfg(not(feature = "dashboard"))]
-            let wait_for_dashboard = false;
             // Shutdown Goose or go into an idle waiting state.
             if goose_attack_run_state.shutdown_after_stop && !wait_for_dashboard {
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Shutdown);
