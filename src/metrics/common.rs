@@ -38,7 +38,7 @@ where
     serializer.collect_seq(rows.iter().filter(|row| !row.is_breakdown))
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ReportData<'m> {
     pub raw_metrics: Cow<'m, GooseMetrics>,
 
@@ -676,7 +676,7 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
     let mut baseline = read_report(file).map_err(|err| GooseError::InvalidOption {
         option: "--baseline-file".to_string(),
         value: path_str.to_string(),
-        detail: format!("Failed to parse baseline file as JSON: {err}"),
+        detail: err.describe(|err| format!("Failed to parse baseline file as JSON: {err}")),
     })?;
 
     // Validate the loaded baseline data
@@ -702,12 +702,13 @@ impl LoadedReport {
     pub(crate) fn read(path: &Path) -> Result<LoadedReport, String> {
         let text =
             read_report_text(path).map_err(|e| format!("Can't read {}: {e}", path.display()))?;
-        Self::parse(&text)
-            .map_err(|e| format!("{} is not a Goose JSON report: {e}", path.display()))
+        Self::parse(&text).map_err(|e| {
+            e.describe(|e| format!("{} is not a Goose JSON report: {e}", path.display()))
+        })
     }
 
     /// A JSON report's text read back.
-    pub(crate) fn parse(text: &str) -> Result<LoadedReport, serde_json::Error> {
+    pub(crate) fn parse(text: &str) -> Result<LoadedReport, ReadReportError> {
         #[derive(Deserialize)]
         struct Graphs {
             graphs: Option<crate::graph::RecordedGraphs>,
@@ -759,8 +760,8 @@ pub(crate) fn compare_reports(
 ) -> Result<Vec<u8>, String> {
     let load = |path: &Path, id: &str| -> Result<ReportData<'static>, String> {
         let reader = open_report(path).map_err(|e| format!("Can't read run {id}: {e}"))?;
-        let data =
-            read_report(reader).map_err(|e| format!("Can't read the report of run {id}: {e}"))?;
+        let data = read_report(reader)
+            .map_err(|e| e.describe(|e| format!("Can't read the report of run {id}: {e}")))?;
         let requests = data
             .raw_request_metrics
             .iter()
@@ -783,85 +784,88 @@ pub(crate) fn compare_reports(
     Ok(out)
 }
 
-/// A JSON report as a baseline. A report's JSON minimums, maximums and
-/// percentiles hold whole milliseconds, so when the report has microsecond
-/// buckets its rows are rebuilt from its raw timing data, as a live report's
-/// are. A report without microsecond buckets keeps its rows.
-fn read_report(mut reader: impl Read) -> Result<ReportData<'static>, serde_json::Error> {
+/// What `--baseline-file`, `--render-report` and the dashboard's compare say
+/// of a JSON report written by Goose 0.18 or earlier, which they refuse.
+pub(crate) const GOOSE_0_18_REPORT: &str = "this JSON report is from Goose 0.18 or earlier, \
+which this Goose cannot read; convert it to a new JSON report with Goose 0.19.1, \
+the last release that reads it: --render-report <old.json> --report-file <new.json>";
+
+/// Why a JSON report could not be read.
+#[derive(Debug)]
+pub(crate) enum ReadReportError {
+    /// The report is from Goose 0.18 or earlier.
+    Goose018,
+    /// The text is not a JSON report this Goose can read.
+    Json(serde_json::Error),
+}
+
+impl From<serde_json::Error> for ReadReportError {
+    fn from(error: serde_json::Error) -> Self {
+        ReadReportError::Json(error)
+    }
+}
+
+impl ReadReportError {
+    /// The error as one line: [`GOOSE_0_18_REPORT`] for a Goose 0.18 report,
+    /// the same wherever it is refused, otherwise `json` of the JSON error.
+    pub(crate) fn describe(self, json: impl FnOnce(serde_json::Error) -> String) -> String {
+        match self {
+            ReadReportError::Goose018 => GOOSE_0_18_REPORT.to_string(),
+            ReadReportError::Json(error) => json(error),
+        }
+    }
+}
+
+/// Whether a JSON report was written by Goose 0.19.0 or later: each of those
+/// holds `goose_version`, from the record of its run, and no 0.18 report
+/// does. `times_us` cannot tell them apart: a 0.19 report of a run with no
+/// requests, transactions or scenarios has none.
+#[derive(Deserialize)]
+struct VersionProbe {
+    #[serde(rename = "raw_metrics")]
+    _raw_metrics: serde::de::IgnoredAny,
+    goose_version: Option<serde::de::IgnoredAny>,
+}
+
+/// A JSON report read back, as a baseline or to render. Its request,
+/// coordinated omission, transaction and scenario rows are rebuilt from its
+/// raw timing data, as a live report's are, so the times in its rows are
+/// never read. A report from Goose 0.18 or earlier is refused.
+fn read_report(mut reader: impl Read) -> Result<ReportData<'static>, ReadReportError> {
     let mut text = String::new();
     reader
         .read_to_string(&mut text)
         .map_err(serde_json::Error::io)?;
-    let mut report = serde_json::from_str::<BaselineReportData>(&text)?.into_report_data();
-    if serde_json::from_str::<MicrosecondsProbe>(&text)?.has_microseconds() {
-        // The rows are rebuilt as a live report's are, which takes each
-        // request's name from its key, "{method} {name}".
-        if let Some(key) = report
-            .raw_metrics
-            .requests
-            .iter()
-            .find_map(|(key, request)| {
-                (!key.starts_with(&format!("{} ", request.method_label()))).then_some(key)
-            })
-        {
-            return Err(serde::de::Error::custom(format!(
-                "request {key:?} does not start with its method"
-            )));
-        }
-        rebuild_timed_rows(&mut report);
+    if serde_json::from_str::<VersionProbe>(&text)?
+        .goose_version
+        .is_none()
+    {
+        return Err(ReadReportError::Goose018);
     }
+    let mut report = serde_json::from_str::<BaselineReportData>(&text)?.into_report_data();
+    // The rows are rebuilt as a live report's are, which takes each
+    // request's name from its key, "{method} {name}".
+    if let Some(key) = report
+        .raw_metrics
+        .requests
+        .iter()
+        .find_map(|(key, request)| {
+            (!key.starts_with(&format!("{} ", request.method_label()))).then_some(key)
+        })
+    {
+        return Err(ReadReportError::Json(serde::de::Error::custom(format!(
+            "request {key:?} does not start with its method"
+        ))));
+    }
+    rebuild_timed_rows(&mut report)
+        .map_err(|detail| ReadReportError::Json(serde::de::Error::custom(detail)))?;
     Ok(report)
 }
 
-/// Whether a JSON report's requests, transactions or scenarios carry
-/// `times_us`, as reports from Goose 0.19 on do.
-#[derive(Deserialize)]
-struct MicrosecondsProbe {
-    raw_metrics: ProbeMetrics,
-}
-
-#[derive(Deserialize)]
-struct ProbeMetrics {
-    requests: HashMap<String, ProbeRequest>,
-    #[serde(default)]
-    transactions: Vec<Vec<ProbeTimingData>>,
-    #[serde(default)]
-    scenarios: Vec<ProbeTimingData>,
-}
-
-#[derive(Deserialize)]
-struct ProbeRequest {
-    raw_data: ProbeTimingData,
-}
-
-#[derive(Deserialize)]
-struct ProbeTimingData {
-    times_us: Option<serde::de::IgnoredAny>,
-}
-
-impl MicrosecondsProbe {
-    fn has_microseconds(&self) -> bool {
-        let metrics = &self.raw_metrics;
-        metrics
-            .requests
-            .values()
-            .any(|request| request.raw_data.times_us.is_some())
-            || metrics
-                .transactions
-                .iter()
-                .flatten()
-                .any(|transaction| transaction.times_us.is_some())
-            || metrics
-                .scenarios
-                .iter()
-                .any(|scenario| scenario.times_us.is_some())
-    }
-}
-
 /// Replace the request, coordinated omission, transaction and scenario rows
-/// of `report` with the rows its raw timing data gives. Status code
-/// breakdown rows, whose times the raw data does not keep, stay.
-fn rebuild_timed_rows(report: &mut ReportData<'static>) {
+/// of `report` with the rows its raw timing data gives. A row the raw data
+/// gives no row for is an error, as its times would be unknown.
+fn rebuild_timed_rows(report: &mut ReportData<'static>) -> Result<(), String> {
     let ReportData {
         raw_request_metrics,
         raw_response_metrics,
@@ -882,27 +886,50 @@ fn rebuild_timed_rows(report: &mut ReportData<'static>) {
     let request_key = |r: &RequestMetric| (r.method.clone(), r.name.clone());
     let response_key = |r: &ResponseMetric| (r.method.clone(), r.name.clone());
     replace_rows(
+        "raw_request_metrics",
         &mut report.raw_request_metrics,
         raw_request_metrics,
         request_key,
-    );
+    )?;
     replace_rows(
+        "raw_response_metrics",
         &mut report.raw_response_metrics,
         raw_response_metrics,
         response_key,
-    );
-    if let (Some(stored), Some(rebuilt)) = (&mut report.co_request_metrics, co_request_metrics) {
-        replace_rows(stored, rebuilt, |r| (r.method.clone(), r.name.clone()));
+    )?;
+    if let Some(stored) = &mut report.co_request_metrics {
+        replace_rows(
+            "co_request_metrics",
+            stored,
+            co_request_metrics.unwrap_or_default(),
+            |r| (r.method.clone(), r.name.clone()),
+        )?;
     }
-    if let (Some(stored), Some(rebuilt)) = (&mut report.co_response_metrics, co_response_metrics) {
-        replace_rows(stored, rebuilt, response_key);
+    if let Some(stored) = &mut report.co_response_metrics {
+        replace_rows(
+            "co_response_metrics",
+            stored,
+            co_response_metrics.unwrap_or_default(),
+            response_key,
+        )?;
     }
-    if let (Some(stored), Some(rebuilt)) = (&mut report.transaction_metrics, transaction_metrics) {
-        replace_rows(stored, rebuilt, |t| (t.transaction.clone(), t.name.clone()));
+    if let Some(stored) = &mut report.transaction_metrics {
+        replace_rows(
+            "transaction_metrics",
+            stored,
+            transaction_metrics.unwrap_or_default(),
+            |t| (t.transaction.clone(), t.name.clone()),
+        )?;
     }
-    if let (Some(stored), Some(rebuilt)) = (&mut report.scenario_metrics, scenario_metrics) {
-        replace_rows(stored, rebuilt, |s| s.name.clone());
+    if let Some(stored) = &mut report.scenario_metrics {
+        replace_rows(
+            "scenario_metrics",
+            stored,
+            scenario_metrics.unwrap_or_default(),
+            |s| s.name.clone(),
+        )?;
     }
+    Ok(())
 }
 
 /// Put back the per status code breakdown rows a JSON report leaves out, each
@@ -942,18 +969,30 @@ fn restore_breakdown_rows(report: &mut ReportData<'static>) {
     }
 }
 
-/// Replace each row of `stored` with the row of `rebuilt` that has its key.
-fn replace_rows<T, K: Eq + Hash>(stored: &mut [T], rebuilt: Vec<T>, key: impl Fn(&T) -> K) {
+/// Replace each row of `stored`, the rows of `table`, with the row of
+/// `rebuilt` that has its key; an error names a row with none.
+fn replace_rows<T, K: Eq + Hash + std::fmt::Debug>(
+    table: &str,
+    stored: &mut [T],
+    rebuilt: Vec<T>,
+    key: impl Fn(&T) -> K,
+) -> Result<(), String> {
     let mut rebuilt: HashMap<K, T> = rebuilt.into_iter().map(|row| (key(&row), row)).collect();
     for row in stored {
-        if let Some(new) = rebuilt.remove(&key(row)) {
-            *row = new;
+        let row_key = key(row);
+        match rebuilt.remove(&row_key) {
+            Some(new) => *row = new,
+            None => return Err(format!("{table} row {row_key:?} has no raw timing data")),
         }
     }
+    Ok(())
 }
 
 /// Intermediate structure for deserializing baseline data with plain values
-/// that need to be converted to Value<T> enum format
+/// that need to be converted to Value<T> enum format. The row structs read
+/// no minimum, maximum or percentile: `read_report` rebuilds every timed row
+/// from the raw timing data, so each is left at zero here, and the report
+/// loads whether its rows hold whole milliseconds, microseconds or both.
 #[derive(Debug, Deserialize)]
 struct BaselineReportData {
     pub raw_metrics: BaselineGooseMetrics,
@@ -1071,14 +1110,10 @@ struct BaselineRequestMetric {
     pub number_of_failures: usize,
     #[serde(deserialize_with = "deserialize_nullable_f64")]
     pub response_time_average: f64,
-    pub response_time_minimum: usize,
-    pub response_time_maximum: usize,
     #[serde(deserialize_with = "deserialize_nullable_f64")]
     pub requests_per_second: f64,
     #[serde(deserialize_with = "deserialize_nullable_f64")]
     pub failures_per_second: f64,
-    #[serde(default)]
-    pub is_breakdown: bool,
 }
 
 impl From<BaselineRequestMetric> for RequestMetric {
@@ -1089,11 +1124,11 @@ impl From<BaselineRequestMetric> for RequestMetric {
             number_of_requests: Value::Plain(baseline.number_of_requests),
             number_of_failures: Value::Plain(baseline.number_of_failures),
             response_time_average: Value::Plain(MillisFloat(baseline.response_time_average)),
-            response_time_minimum: baseline.response_time_minimum.into(),
-            response_time_maximum: baseline.response_time_maximum.into(),
+            response_time_minimum: Value::Plain(Millis::default()),
+            response_time_maximum: Value::Plain(Millis::default()),
             requests_per_second: Value::Plain(NullableFloat(baseline.requests_per_second)),
             failures_per_second: Value::Plain(NullableFloat(baseline.failures_per_second)),
-            is_breakdown: baseline.is_breakdown,
+            is_breakdown: false,
         }
     }
 }
@@ -1103,14 +1138,6 @@ impl From<BaselineRequestMetric> for RequestMetric {
 struct BaselineResponseMetric {
     pub method: String,
     pub name: String,
-    pub percentile_50: usize,
-    pub percentile_60: usize,
-    pub percentile_70: usize,
-    pub percentile_80: usize,
-    pub percentile_90: usize,
-    pub percentile_95: usize,
-    pub percentile_99: usize,
-    pub percentile_100: usize,
 }
 
 impl From<BaselineResponseMetric> for ResponseMetric {
@@ -1118,14 +1145,14 @@ impl From<BaselineResponseMetric> for ResponseMetric {
         ResponseMetric {
             method: baseline.method,
             name: baseline.name,
-            percentile_50: baseline.percentile_50.into(),
-            percentile_60: baseline.percentile_60.into(),
-            percentile_70: baseline.percentile_70.into(),
-            percentile_80: baseline.percentile_80.into(),
-            percentile_90: baseline.percentile_90.into(),
-            percentile_95: baseline.percentile_95.into(),
-            percentile_99: baseline.percentile_99.into(),
-            percentile_100: baseline.percentile_100.into(),
+            percentile_50: Value::Plain(Millis::default()),
+            percentile_60: Value::Plain(Millis::default()),
+            percentile_70: Value::Plain(Millis::default()),
+            percentile_80: Value::Plain(Millis::default()),
+            percentile_90: Value::Plain(Millis::default()),
+            percentile_95: Value::Plain(Millis::default()),
+            percentile_99: Value::Plain(Millis::default()),
+            percentile_100: Value::Plain(Millis::default()),
         }
     }
 }
@@ -1137,7 +1164,6 @@ struct BaselineCORequestMetric {
     pub name: String,
     pub response_time_average: f64,
     pub response_time_standard_deviation: f64,
-    pub response_time_maximum: usize,
 }
 
 impl From<BaselineCORequestMetric> for CORequestMetric {
@@ -1149,7 +1175,7 @@ impl From<BaselineCORequestMetric> for CORequestMetric {
             response_time_standard_deviation: Value::Plain(MillisFloat(
                 baseline.response_time_standard_deviation,
             )),
-            response_time_maximum: baseline.response_time_maximum.into(),
+            response_time_maximum: Value::Plain(Millis::default()),
         }
     }
 }
@@ -1163,8 +1189,6 @@ struct BaselineTransactionMetric {
     pub number_of_requests: usize,
     pub number_of_failures: usize,
     pub response_time_average: Option<f64>,
-    pub response_time_minimum: usize,
-    pub response_time_maximum: usize,
     pub requests_per_second: Option<f64>,
     pub failures_per_second: Option<f64>,
 }
@@ -1180,8 +1204,8 @@ impl From<BaselineTransactionMetric> for TransactionMetric {
             response_time_average: baseline
                 .response_time_average
                 .map(|v| Value::Plain(MillisFloat(v))),
-            response_time_minimum: baseline.response_time_minimum.into(),
-            response_time_maximum: baseline.response_time_maximum.into(),
+            response_time_minimum: Value::Plain(Millis::default()),
+            response_time_maximum: Value::Plain(Millis::default()),
             requests_per_second: baseline
                 .requests_per_second
                 .map(|v| Value::Plain(NullableFloat(v))),
@@ -1199,8 +1223,6 @@ struct BaselineScenarioMetric {
     pub users: usize,
     pub count: usize,
     pub response_time_average: Option<f64>,
-    pub response_time_minimum: usize,
-    pub response_time_maximum: usize,
     pub count_per_second: f64,
     pub iterations: Option<f64>,
 }
@@ -1214,8 +1236,8 @@ impl From<BaselineScenarioMetric> for ScenarioMetric {
             response_time_average: Value::Plain(MillisFloat(
                 baseline.response_time_average.unwrap_or(f64::NAN),
             )),
-            response_time_minimum: baseline.response_time_minimum.into(),
-            response_time_maximum: baseline.response_time_maximum.into(),
+            response_time_minimum: Value::Plain(Millis::default()),
+            response_time_maximum: Value::Plain(Millis::default()),
             count_per_second: Value::Plain(NullableFloat(baseline.count_per_second)),
             iterations: Value::Plain(NullableFloat(baseline.iterations.unwrap_or(f64::NAN))),
         }
@@ -1464,75 +1486,109 @@ mod test {
         assert!(matches!(current[1].number_of_requests, Value::Plain(_)));
     }
 
-    /// Helper: build a minimal valid baseline JSON string.
-    fn minimal_baseline_json(
-        requests: usize,
-        failures: usize,
-        avg_response: f32,
-        min_response: usize,
-        max_response: usize,
-    ) -> String {
-        format!(
-            r#"{{
-                "raw_metrics": {{
-                    "hash": 0,
-                    "duration": 60,
-                    "maximum_users": 10,
-                    "total_users": 10,
-                    "requests": {{}},
-                    "transactions": [],
-                    "errors": {{}}
-                }},
-                "raw_request_metrics": [
-                    {{
-                        "method": "GET",
-                        "name": "/",
-                        "number_of_requests": {requests},
-                        "number_of_failures": {failures},
-                        "response_time_average": {avg_response},
-                        "response_time_minimum": {min_response},
-                        "response_time_maximum": {max_response},
-                        "requests_per_second": 10.0,
-                        "failures_per_second": 0.5
-                    }}
-                ],
-                "raw_response_metrics": [
-                    {{
-                        "method": "GET",
-                        "name": "/",
-                        "percentile_50": 50,
-                        "percentile_60": 60,
-                        "percentile_70": 70,
-                        "percentile_80": 80,
-                        "percentile_90": 90,
-                        "percentile_95": 95,
-                        "percentile_99": 99,
-                        "percentile_100": 100
-                    }}
-                ]
-            }}"#,
-        )
+    /// Metrics holding one request, `key`, whose `times` are in
+    /// microseconds, `failures` of them failed.
+    fn one_request_metrics(key: &str, times: &[u64], failures: usize) -> GooseMetrics {
+        use crate::goose::GooseMethod;
+        let (method, path) = key.split_once(' ').unwrap();
+        let method = match method {
+            "GET" => GooseMethod::Get,
+            "POST" => GooseMethod::Post,
+            other => panic!("{}", other),
+        };
+        let mut aggregate = GooseRequestMetricAggregate::new(path, method, 0, "");
+        for &us in times {
+            aggregate.record_time_us(us, false);
+        }
+        aggregate.success_count = times.len() - failures;
+        aggregate.fail_count = failures;
+        let mut metrics = GooseMetrics {
+            duration: 60,
+            ..Default::default()
+        };
+        metrics.requests.insert(key.to_string(), aggregate);
+        metrics
+    }
+
+    /// The JSON report of `metrics`, with the `goose_version` the record of
+    /// a run gives it.
+    fn report_json(metrics: &GooseMetrics) -> String {
+        let data = prepare_data_with_baseline(
+            ReportOptions {
+                no_transaction_metrics: false,
+                no_scenario_metrics: false,
+                no_status_codes: false,
+            },
+            metrics,
+            None,
+        );
+        let mut json = serde_json::to_value(&data).unwrap();
+        json["goose_version"] = env!("CARGO_PKG_VERSION").into();
+        json.to_string()
+    }
+
+    /// A baseline JSON report: 500 `GET /` requests, 10 of them failed,
+    /// five each at 1 to 100 ms.
+    fn minimal_baseline_json() -> String {
+        let times: Vec<u64> = (1..=100u64)
+            .flat_map(|ms| std::iter::repeat_n(ms * 1000, 5))
+            .collect();
+        report_json(&one_request_metrics("GET /", &times, 10))
+    }
+
+    /// Whether `value` is within 1% of `ms` milliseconds.
+    fn near_ms(value: Millis, ms: u64) -> bool {
+        value.0.abs_diff(ms * 1000) * 100 <= ms * 1000
     }
 
     #[test]
     fn load_baseline_file_valid() {
         let path = std::env::temp_dir().join("goose_test_valid_baseline.json");
-        std::fs::write(&path, minimal_baseline_json(500, 10, 45.5, 5, 200)).unwrap();
+        std::fs::write(&path, minimal_baseline_json()).unwrap();
         let result = load_baseline_file(&path);
         std::fs::remove_file(&path).ok();
 
         let data = result.expect("should load valid baseline");
-        assert_eq!(data.raw_request_metrics.len(), 1);
-        assert_eq!(data.raw_response_metrics.len(), 1);
+        // The request's row and the Aggregated row.
+        assert_eq!(data.raw_request_metrics.len(), 2);
+        assert_eq!(data.raw_response_metrics.len(), 2);
         assert_eq!(data.raw_request_metrics[0].number_of_requests.value(), 500);
         assert_eq!(data.raw_request_metrics[0].number_of_failures.value(), 10);
-        assert_eq!(data.raw_response_metrics[0].percentile_50.value(), 50);
-        assert_eq!(data.raw_response_metrics[0].percentile_100.value(), 100);
+        assert_eq!(data.raw_request_metrics[0].response_time_minimum.value(), 1);
+        assert_eq!(
+            data.raw_request_metrics[0].response_time_maximum.value(),
+            100
+        );
+        let p50 = data.raw_response_metrics[0].percentile_50.value();
+        assert!(near_ms(p50, 50), "{:?}", p50);
+        let p100 = data.raw_response_metrics[0].percentile_100.value();
+        assert!(near_ms(p100, 100), "{:?}", p100);
         // All values should be Plain (no deltas yet)
         assert!(matches!(
             data.raw_request_metrics[0].number_of_requests,
             Value::Plain(500)
         ));
+    }
+
+    /// A row whose request the raw timing data does not hold is refused: its
+    /// times are taken from the raw timing data, which has none for it.
+    #[test]
+    fn load_baseline_file_row_without_raw_timing_data() {
+        let mut json: serde_json::Value = serde_json::from_str(&minimal_baseline_json()).unwrap();
+        json["raw_metrics"]["requests"] = serde_json::json!({});
+        let path = std::env::temp_dir().join(format!(
+            "goose_test_row_without_raw_data_{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, json.to_string()).unwrap();
+        let result = load_baseline_file(&path);
+        std::fs::remove_file(&path).ok();
+        match result {
+            Err(GooseError::InvalidOption { detail, .. }) => {
+                assert!(detail.contains("has no raw timing data"), "{}", detail);
+            }
+            other => panic!("expected InvalidOption error, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -1757,53 +1813,16 @@ mod test {
 
     #[test]
     fn round_trip_serialize_then_load_as_baseline() {
-        use crate::report::ResponseMetric;
-
-        // Build a ReportData, serialize to JSON, load as baseline
-        let mut metrics = GooseMetrics::default();
+        // Build a JSON report, write it, load it as a baseline.
+        let times: Vec<u64> = (1..=100u64).map(|ms| ms * 15_000).collect();
+        let mut metrics = one_request_metrics("POST /api/submit", &times, 25);
         metrics
             .history
             .push(crate::test_plan::TestPlanHistory::step(
                 crate::test_plan::TestPlanStepAction::Increasing,
                 0,
             ));
-        let original = ReportData {
-            raw_metrics: Cow::Owned(metrics),
-            raw_request_metrics: vec![RequestMetric {
-                method: "POST".into(),
-                name: "/api/submit".into(),
-                number_of_requests: 1000usize.into(),
-                number_of_failures: 25usize.into(),
-                response_time_average: 120.5f32.into(),
-                response_time_minimum: 15usize.into(),
-                response_time_maximum: 3000usize.into(),
-                requests_per_second: 16.7f32.into(),
-                failures_per_second: 0.42f32.into(),
-                is_breakdown: false,
-            }],
-            raw_response_metrics: vec![ResponseMetric {
-                method: "POST".into(),
-                name: "/api/submit".into(),
-                percentile_50: 100usize.into(),
-                percentile_60: 110usize.into(),
-                percentile_70: 130usize.into(),
-                percentile_80: 150usize.into(),
-                percentile_90: 200usize.into(),
-                percentile_95: 500usize.into(),
-                percentile_99: 1500usize.into(),
-                percentile_100: 3000usize.into(),
-            }],
-            co_request_metrics: None,
-            co_response_metrics: None,
-            scenario_metrics: None,
-            transaction_metrics: None,
-            status_code_metrics: None,
-            errors: None,
-            transaction_errors: None,
-            coordinated_omission_metrics: None,
-        };
-
-        let json = serde_json::to_string_pretty(&original).unwrap();
+        let json = report_json(&metrics);
 
         let path = std::env::temp_dir().join("goose_test_roundtrip.json");
         std::fs::write(&path, &json).unwrap();
@@ -1811,11 +1830,13 @@ mod test {
         std::fs::remove_file(&path).ok();
 
         let data = loaded.expect("round-trip should succeed");
-        assert_eq!(data.raw_request_metrics.len(), 1);
+        assert_eq!(data.raw_request_metrics.len(), 2);
         assert_eq!(data.raw_request_metrics[0].method, "POST");
         assert_eq!(data.raw_request_metrics[0].name, "/api/submit");
-        assert_eq!(data.raw_request_metrics[0].number_of_requests.value(), 1000);
-        assert_eq!(data.raw_response_metrics[0].percentile_99.value(), 1500);
+        assert_eq!(data.raw_request_metrics[0].number_of_requests.value(), 100);
+        assert_eq!(data.raw_request_metrics[0].number_of_failures.value(), 25);
+        let p99 = data.raw_response_metrics[0].percentile_99.value();
+        assert!(near_ms(p99, 1485), "{:?}", p99);
         // The test plan history is kept, so a report rendered from the JSON
         // has a plan overview.
         assert_eq!(data.raw_metrics.history.len(), 1);
@@ -1828,11 +1849,7 @@ mod test {
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join(crate::runs::REPORT_JSON),
-            minimal_baseline_json(500, 10, 45.5, 5, 200),
-        )
-        .unwrap();
+        std::fs::write(dir.join(crate::runs::REPORT_JSON), minimal_baseline_json()).unwrap();
         let result = load_baseline_file(&dir);
         std::fs::remove_dir_all(&dir).ok();
 
@@ -1861,6 +1878,7 @@ mod test {
         std::fs::write(
             &path,
             r#"{
+                "goose_version": "0.20.0-dev",
                 "raw_metrics": {
                     "hash": 0,
                     "duration": 10,
