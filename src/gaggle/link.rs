@@ -1939,8 +1939,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_flooding_manager_is_held_to_the_event_bounds() {
         let test = async {
+            // What is queued now: taking more as the reader refills the
+            // queue would count past it.
             let queued = |link: &Link| {
-                let queued = link.drain_events();
+                let queued: Vec<LinkEvent> = (0..link.events.len())
+                    .filter_map(|_| link.events.try_recv().ok().map(|(event, _)| event))
+                    .collect();
                 let bytes: usize = queued
                     .iter()
                     .map(|event| match event {
