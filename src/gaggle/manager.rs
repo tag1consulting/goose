@@ -105,7 +105,8 @@ pub(crate) const EVENT_QUEUE: usize = 64;
 /// past it, as past [`EVENT_QUEUE`] events, a worker's reader waits. Each
 /// message counts its encoded size, and a delta what it holds decoded (see
 /// [`GaggleDelta::decoded_bytes`]), so the budget bounds the queue's
-/// memory, up to the one delta that takes it whole.
+/// memory, and each worker's reader holds at most one decoded delta
+/// beyond it while it waits; a delta counts at most the whole budget.
 const EVENT_BYTES: u64 = 256 << 20;
 
 /// An event as queued, holding its share of [`EVENT_BYTES`] until the main
