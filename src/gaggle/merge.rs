@@ -557,9 +557,10 @@ impl GaggleAccumulator {
     /// undercounts the results: the manager records each one, and its run
     /// record marks the run degraded and names the worker.
     ///
-    /// `graph` is the graph data the last build returned, which this one
-    /// extends in place with the seconds completed since, never copying it;
-    /// any other is dropped for a build from nothing.
+    /// `graph` must be the graph data the last build returned, though the
+    /// caller may since have pruned it: a build whose cache still holds
+    /// extends it in place with the seconds completed since, never copying
+    /// it; one whose cache was dropped drops it and builds from nothing.
     pub(crate) fn merged_and_excluded(
         &self,
         graph: GraphData,

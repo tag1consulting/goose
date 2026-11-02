@@ -4863,14 +4863,18 @@ impl GooseAttack {
             self.configuration.compression_level(),
         );
         let written = match kind {
-            "html" => {
-                let content = match html {
-                    Some(content) => content,
-                    None => html.insert(source.html(baseline)?),
-                };
-                out.write_all(content.as_bytes())
-                    .map_err(|err| report_io_error(report, err))
-            }
+            // A report that cannot be rendered fails as one that cannot be
+            // written does, so a part file never outlives it.
+            "html" => match html.take().map_or_else(|| source.html(baseline), Ok) {
+                Ok(content) => {
+                    let wrote = out
+                        .write_all(content.as_bytes())
+                        .map_err(|err| report_io_error(report, err));
+                    *html = Some(content);
+                    wrote
+                }
+                Err(e) => Err(e),
+            },
             "json" => source.write_json(&mut out, baseline),
             "markdown" => source.write_markdown(&mut out, baseline),
             _ => {

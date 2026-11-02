@@ -259,17 +259,7 @@ fn clean(
 #[serial_test::serial]
 async fn gaggle_manager_and_two_workers_in_one_process() {
     let server = MockServer::start_async().await;
-    let mock = |path: &'static str| {
-        let server = &server;
-        async move {
-            server
-                .mock_async(|when, then| {
-                    when.method(GET).path(path);
-                    then.status(200).body("ok");
-                })
-                .await
-        }
-    };
+    let mock = |path: &'static str| mock_ok(&server, path);
     let (a, b, pre, start, stop) = (
         mock("/a").await,
         mock("/b").await,
@@ -495,6 +485,16 @@ fn record(folder: &Path) -> (serde_json::Value, String) {
     let report: serde_json::Value = serde_json::from_str(&report).unwrap();
     let html = std::fs::read_to_string(manager.join("report.html")).unwrap();
     (report["gaggle"].clone(), html)
+}
+
+/// A mock on `server` that answers a GET of `path` with 200 and `ok`.
+async fn mock_ok<'a>(server: &'a MockServer, path: &str) -> httpmock::Mock<'a> {
+    server
+        .mock_async(|when, then| {
+            when.method(GET).path(path);
+            then.status(200).body("ok");
+        })
+        .await
 }
 
 /// A server answering every path the load test asks for.
@@ -946,17 +946,7 @@ async fn gaggle_worker_data_is_capped() {
 #[serial_test::serial]
 async fn worker_data_past_the_cap_still_runs_test_stop() {
     let server = MockServer::start_async().await;
-    let mock = |path: &'static str| {
-        let server = &server;
-        async move {
-            server
-                .mock_async(|when, then| {
-                    when.method(GET).path(path);
-                    then.status(200).body("ok");
-                })
-                .await
-        }
-    };
+    let mock = |path: &'static str| mock_ok(&server, path);
     let (start, stop) = (mock("/start").await, mock("/stop").await);
     let host = server.base_url();
     let run = with_worker_data(
@@ -1231,17 +1221,7 @@ async fn manager_fails(
 ) {
     let test = async {
         let server = MockServer::start_async().await;
-        let mock = |path: &'static str| {
-            let server = &server;
-            async move {
-                server
-                    .mock_async(|when, then| {
-                        when.method(GET).path(path);
-                        then.status(200).body("ok");
-                    })
-                    .await
-            }
-        };
+        let mock = |path: &'static str| mock_ok(&server, path);
         let (start, stop, a) = (mock("/start").await, mock("/stop").await, mock("/a").await);
         let folder = scratch("manager-failures");
         let build = |configuration, place: Option<usize>| {
@@ -1356,17 +1336,7 @@ async fn gaggle_killswitch_while_joining_and_preparing() {
             no_token_from_the_environment();
             crate::reset_killswitch();
             let server = MockServer::start_async().await;
-            let mock = |path: &'static str| {
-                let server = &server;
-                async move {
-                    server
-                        .mock_async(|when, then| {
-                            when.method(GET).path(path);
-                            then.status(200).body("ok");
-                        })
-                        .await
-                }
-            };
+            let mock = |path: &'static str| mock_ok(&server, path);
             let (start, stop) = (mock("/start").await, mock("/stop").await);
             let host = server.base_url();
             let (bound, address) = tokio::sync::oneshot::channel();
@@ -1685,17 +1655,7 @@ async fn gaggle_reports_are_written_before_the_logs() {
 #[serial_test::serial]
 async fn gaggle_every_worker_lost_ends_the_run() {
     let server = MockServer::start_async().await;
-    let mock = |path: &'static str| {
-        let server = &server;
-        async move {
-            server
-                .mock_async(|when, then| {
-                    when.method(GET).path(path);
-                    then.status(200).body("ok");
-                })
-                .await
-        }
-    };
+    let mock = |path: &'static str| mock_ok(&server, path);
     let (_a, stop) = (mock("/a").await, mock("/stop").await);
     let _start = mock("/start").await;
     let folder = scratch("every-worker-lost");
@@ -1857,17 +1817,7 @@ async fn gaggle_full_disk_keeps_the_first_reports() {
 async fn gaggle_manager_failing_to_start_its_run_runs_test_stop() {
     let test = async {
         let server = MockServer::start_async().await;
-        let mock = |path: &'static str| {
-            let server = &server;
-            async move {
-                server
-                    .mock_async(|when, then| {
-                        when.method(GET).path(path);
-                        then.status(200).body("ok");
-                    })
-                    .await
-            }
-        };
+        let mock = |path: &'static str| mock_ok(&server, path);
         let (start, stop, _a) = (mock("/start").await, mock("/stop").await, mock("/a").await);
         let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = taken.local_addr().unwrap().port().to_string();
