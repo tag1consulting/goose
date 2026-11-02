@@ -17,7 +17,7 @@
 //! network must be trusted until TLS arrives. The first message, `Hello`,
 //! may be at most [`MAX_HELLO`] bytes.
 
-use super::delta::{DeltaKind, GaggleDelta};
+use super::delta::{DeltaKind, GaggleDelta, DECODED_PER_ENCODED};
 use super::proto::{
     gaggle_server::{Gaggle, GaggleServer},
     manager_message::Message as ToWorker,
@@ -101,11 +101,11 @@ const SPARE_CONNECTIONS: usize = 4;
 /// reader waits, and HTTP/2 flow control slows the worker.
 pub(crate) const EVENT_QUEUE: usize = 64;
 
-/// The most bytes the events queued for the manager's main loop may hold,
-/// counted as their messages' encoded sizes, taken before a delta is
-/// decoded: past it, as past [`EVENT_QUEUE`] events, a worker's reader
-/// waits. A decoded delta holds more than its encoded bytes, so this bounds
-/// the queue's memory to a multiple of the budget, not the budget itself.
+/// The most bytes the events queued for the manager's main loop may hold:
+/// past it, as past [`EVENT_QUEUE`] events, a worker's reader waits. Each
+/// message counts its encoded size, and a delta what it holds decoded (see
+/// [`GaggleDelta::decoded_bytes`]), so the budget bounds the queue's
+/// memory, not a multiple of it.
 const EVENT_BYTES: u64 = 256 << 20;
 
 /// An event as queued, holding its share of [`EVENT_BYTES`] until the main
@@ -850,8 +850,14 @@ async fn read_worker(
             continue;
         }
         // Its share of the byte budget first, before a delta is decoded, so
-        // no reader holds a decoded delta outside the budget.
-        let bytes = (message.encoded_len() as u64).min(EVENT_BYTES) as u32;
+        // no reader holds a decoded delta outside the budget: for a delta, as
+        // much as it may decode to, and once decoded what it holds.
+        let encoded = message.encoded_len();
+        let reserve = match &message.message {
+            Some(FromWorker::Metrics(_)) => encoded.saturating_mul(DECODED_PER_ENCODED),
+            _ => encoded,
+        };
+        let bytes = (reserve as u64).min(EVENT_BYTES) as u32;
         let permit = held(
             shared.event_bytes.clone().acquire_many_owned(bytes),
             &worker,
@@ -859,7 +865,7 @@ async fn read_worker(
             &heard,
         )
         .await;
-        let Some(permit) = permit else {
+        let Some(mut permit) = permit else {
             break;
         };
         let event = match message.message {
@@ -876,6 +882,14 @@ async fn read_worker(
             Some(FromWorker::Metrics(metrics)) => match GaggleDelta::decode(&metrics.delta) {
                 Ok(delta) => {
                     got_final |= delta.kind == DeltaKind::Final;
+                    // What it holds decoded, at least its encoded size, is
+                    // kept; the rest of the reserve goes back.
+                    let holds = delta.decoded_bytes().max(encoded).min(EVENT_BYTES as usize);
+                    if let Ok(permit) = permit.as_mut() {
+                        if let Some(rest) = permit.num_permits().checked_sub(holds) {
+                            drop(permit.split(rest));
+                        }
+                    }
                     Event::Delta {
                         id,
                         delta: Box::new(delta),
@@ -2006,10 +2020,10 @@ pub(crate) mod handshake_tests {
             // 30,000 rows of a few bytes each on the wire, about 120 KiB,
             // and many times that decoded.
             let mut delta = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
-            delta
-                .graph
-                .requests
-                .insert("GET /".to_string(), (0..30_000).map(|second| (second, 1)).collect());
+            delta.graph.requests.insert(
+                "GET /".to_string(),
+                (0..30_000).map(|second| (second, 1)).collect(),
+            );
             let encoded = delta.encode().unwrap();
             assert!(encoded.len() < 150 << 10, "{} bytes", encoded.len());
             let sender = tokio::spawn(async move {

@@ -1310,7 +1310,10 @@ async fn manager_past_a_worker_bound(more: &[&str], message: &str) {
     let test = async {
         no_token_from_the_environment();
         let server = MockServer::start_async().await;
-        let (start, a) = (mock_ok(&server, "/start").await, mock_ok(&server, "/a").await);
+        let (start, a) = (
+            mock_ok(&server, "/start").await,
+            mock_ok(&server, "/a").await,
+        );
         let host = server.base_url();
         let mut args = vec![
             "--manager",
@@ -2167,12 +2170,19 @@ async fn gaggle_unknown_stop_reasons_lose_the_workers() {
         .iter()
         .map(|worker| {
             assert_eq!(worker["state"], "lost", "{}", gaggle);
-            worker["lost_reason"].as_str().unwrap_or_default().to_string()
+            worker["lost_reason"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
         })
         .collect();
     reasons.sort();
     assert!(reasons[0].contains("an unknown reason, 0"), "{:?}", reasons);
-    assert!(reasons[1].contains("an unknown reason, 99"), "{:?}", reasons);
+    assert!(
+        reasons[1].contains("an unknown reason, 99"),
+        "{:?}",
+        reasons
+    );
 }
 
 /// A load test whose user triggers the killswitch, as Ctrl-C, after its
@@ -2229,7 +2239,11 @@ async fn gaggle_killswitch_after_a_canceled_run_reads_as_one_process() {
         assert!(one.is_ok(), "{:?}", one.map(|_| ()));
         let single = crate::is_killswitch_triggered();
         crate::reset_killswitch();
-        assert_eq!(after, [single, single], "without and with logs, then one process");
+        assert_eq!(
+            after,
+            [single, single],
+            "without and with logs, then one process"
+        );
     };
     tokio::time::timeout(Duration::from_secs(120), test)
         .await

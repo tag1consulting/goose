@@ -1431,7 +1431,8 @@ impl GooseAttack {
             if let Some(why) = crate::killswitch_reason() {
                 let owed: Vec<u32> = run.running().map(|worker| worker.id).collect();
                 for id in owed {
-                    let why = format!("canceled while the manager waited for its final metrics: {why}");
+                    let why =
+                        format!("canceled while the manager waited for its final metrics: {why}");
                     self.lose_worker(goose_attack_run_state, run, id, why);
                 }
                 // The logs are given up too.
@@ -1534,12 +1535,8 @@ impl GooseAttack {
         };
         #[cfg(not(test))]
         let command = Some(command);
-        let sent = command.is_none_or(|command| {
-            goose_attack_run_state
-                .metrics_cmd_tx
-                .send(command)
-                .is_ok()
-        });
+        let sent = command
+            .is_none_or(|command| goose_attack_run_state.metrics_cmd_tx.send(command).is_ok());
         if sent && !answered(done, WORKER_FINAL_TIMEOUT).await {
             return Err(worker_failed(&run.link, no_final()).await);
         }
