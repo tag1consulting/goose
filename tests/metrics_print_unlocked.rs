@@ -80,6 +80,9 @@ fn main() {
             "1",
             "--no-telnet",
             "--no-websocket",
+            // Goose's own logger, refused as the probe is installed, still
+            // sets the level it asks for: debug, for the percentile lines.
+            "-v",
         ])
         .unwrap();
         GooseAttack::initialize_with_config(configuration)
