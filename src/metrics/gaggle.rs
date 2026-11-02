@@ -71,6 +71,8 @@ impl MetricsProcessor {
         // second may be at most the slack past the start: no worker can grow
         // the graph data far ahead before then.
         accumulator.set_max_second(crate::gaggle::run::CLOCK_SLACK);
+        // A worker's rows reach back its own lag (see `gaggle_enable`).
+        accumulator.set_lag(self.configuration.request_timeout().as_secs() + 60);
         // The run's epoch is this processor's: the run's start began it on
         // the manager, as on every worker.
         accumulator.set_epoch(self.metrics_epoch.load(AtomicOrdering::Relaxed));
@@ -179,7 +181,9 @@ impl MetricsProcessor {
         }
         merge.dirty = false;
         merge.built = Some(merge.clock);
-        let (merged, graph, excluded) = merge.accumulator.merged_and_excluded();
+        // The merge extends the graph data it built last, handed back.
+        let graph = std::mem::replace(&mut self.graph_data, GraphData::new());
+        let (merged, graph, excluded) = merge.accumulator.merged_and_excluded(graph);
         merge.excluded(excluded);
         let GooseMetrics {
             requests,

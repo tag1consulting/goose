@@ -169,7 +169,8 @@ impl ShadowMerge {
         let mut run_graph = run.1.clone();
         let run_snapshot = snapshot.map(|build| build(run.0, &mut run_graph));
         for (name, accumulator) in [("deltas", &self.deltas), ("final", &self.finals)] {
-            let (mut metrics, mut graph, excluded) = accumulator.merged_and_excluded();
+            let (mut metrics, mut graph, excluded) =
+                accumulator.merged_and_excluded(GraphData::new());
             for (worker, why) in excluded {
                 differences.push(format!(
                     "{name}: worker {worker} left out of the merge: {why}"

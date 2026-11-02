@@ -94,15 +94,15 @@ struct Merged {
     /// Whether it adds up the per worker totals: false until it is built
     /// again.
     current: bool,
-    /// The graph data built so far, kept so the next build adds only the
-    /// seconds completed since.
+    /// What the graph data last built holds, so the next build adds only
+    /// the seconds completed since to it.
     built: Option<GraphCache>,
 }
 
-/// Graph data built from the merged figures, unfinished, for every second
-/// before `before`.
+/// What graph data built from the merged figures holds: every second before
+/// `before`. The graph data itself is the caller's, handed back to each
+/// build ([`GaggleAccumulator::merged_and_excluded`]).
 struct GraphCache {
-    data: GraphData,
     before: Second,
     series_origin: Option<Second>,
     columns: bool,
@@ -133,6 +133,13 @@ pub(crate) struct GaggleAccumulator {
     epoch: u64,
     /// The merged figures, kept as deltas arrive and built again on demand.
     merged: RefCell<Merged>,
+    /// How many seconds before its latest delta's second a worker's graph
+    /// rows may still arrive: the workers' own lag, their request timeout
+    /// and a minute. A second is complete only once it is older.
+    lag: Second,
+    /// The graph data [`Self::merged`] built last (tests).
+    #[cfg(test)]
+    test_graph: RefCell<Option<GraphData>>,
 }
 
 /// The most gaps an accumulator keeping them holds; past it they are
@@ -184,7 +191,17 @@ impl GaggleAccumulator {
                 current: true,
                 ..Merged::default()
             }),
+            lag: 0,
+            #[cfg(test)]
+            test_graph: RefCell::new(None),
         }
+    }
+
+    /// Count a second complete only once it is `lag` seconds older than
+    /// every worker's latest: the workers' own lag (see
+    /// [`Self::complete_before`]).
+    pub(crate) fn set_lag(&mut self, lag: Second) {
+        self.lag = lag;
     }
 
     /// Add a delta from worker `from`, the worker the caller knows sent it,
@@ -479,12 +496,15 @@ impl GaggleAccumulator {
     }
 
     /// The first second not yet complete: one that a worker still sending
-    /// could still add to. `None` once every worker finished or was lost.
+    /// could still add to, its rows reaching back the lag before its latest
+    /// delta's second ([`Self::set_lag`]). `None` once every worker
+    /// finished or was lost. A row for a second already built, past the
+    /// lag, builds the graph data again from nothing.
     pub(crate) fn complete_before(&self) -> Option<Second> {
         self.workers
             .values()
             .filter(|worker| !worker.finished && !worker.lost)
-            .map(|worker| worker.total.now.saturating_sub(1))
+            .map(|worker| worker.total.now.saturating_sub(1).saturating_sub(self.lag))
             .min()
     }
 
@@ -514,7 +534,9 @@ impl GaggleAccumulator {
     /// [`Self::merged_and_excluded`] (tests).
     #[cfg(test)]
     pub(crate) fn merged(&self) -> (GooseMetrics, GraphData) {
-        let (metrics, graph, _) = self.merged_and_excluded();
+        let graph = self.test_graph.take().unwrap_or_else(GraphData::new);
+        let (metrics, graph, _) = self.merged_and_excluded(graph);
+        self.test_graph.replace(Some(graph.clone()));
         (metrics, graph)
     }
 
@@ -528,7 +550,14 @@ impl GaggleAccumulator {
     /// and [`super::delta::MAX_WORKERS`] rule out. Leaving a worker out
     /// undercounts the results: the manager records each one, and its run
     /// record marks the run degraded and names the worker.
-    pub(crate) fn merged_and_excluded(&self) -> (GooseMetrics, GraphData, Vec<(u32, String)>) {
+    ///
+    /// `graph` is the graph data the last build returned, which this one
+    /// extends in place with the seconds completed since, never copying it;
+    /// any other is dropped for a build from nothing.
+    pub(crate) fn merged_and_excluded(
+        &self,
+        graph: GraphData,
+    ) -> (GooseMetrics, GraphData, Vec<(u32, String)>) {
         let mut merged = self.current();
         let merged = &mut *merged;
         let complete = self.complete_before();
@@ -553,20 +582,24 @@ impl GaggleAccumulator {
                 && built.columns == self.settings.columns
                 && complete.is_none_or(|complete| complete >= built.before)
         });
-        let mut built = reusable.unwrap_or_else(|| GraphCache {
-            data: GraphData::gaggle_start(self.settings, series_origin),
-            before: 0,
-            series_origin,
-            columns: self.settings.columns,
-        });
+        let (mut graph, mut built) = match reusable {
+            Some(built) => (graph, built),
+            None => (
+                GraphData::gaggle_start(self.settings, series_origin),
+                GraphCache {
+                    before: 0,
+                    series_origin,
+                    columns: self.settings.columns,
+                },
+            ),
+        };
         let users = self.users_levels(built.before, complete, &merged.excluded);
-        built
-            .data
-            .gaggle_extend(&merged.graph, &users, self.settings, built.before, complete);
+        graph.gaggle_extend(&merged.graph, &users, self.settings, built.before, complete);
         // With every worker done, nothing later can be added but by a
         // delta, which builds again.
         built.before = complete.unwrap_or(Second::MAX);
-        let mut graph = built.data.clone();
+        // Finished each build: a later extend writes a second's response
+        // times to the heatmap's columns once its ring slot is packed.
         graph.finish_latency_columns();
         merged.built = Some(built);
         (
@@ -1125,14 +1158,15 @@ mod tests {
         let accumulator =
             || GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
         let (mut built, mut fresh) = (accumulator(), accumulator());
+        let mut graph = GraphData::new();
         for delta in &deltas {
             built.apply(delta.worker, delta.clone()).unwrap();
             // Built after every delta, so the late row's second was built.
-            let _ = built.merged_and_excluded();
+            graph = built.merged_and_excluded(graph).1;
             fresh.apply(delta.worker, delta.clone()).unwrap();
         }
-        let (_, built, _) = built.merged_and_excluded();
-        let (_, fresh, _) = fresh.merged_and_excluded();
+        let (_, built, _) = built.merged_and_excluded(graph);
+        let (_, fresh, _) = fresh.merged_and_excluded(GraphData::new());
         assert_eq!(built.gaggle_diff(&fresh), Vec::<String>::new());
     }
 
@@ -1151,13 +1185,15 @@ mod tests {
         };
         let mut accumulator =
             GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+        // A manager's lag, at the default 60 second request timeout.
+        accumulator.set_lag(60 + 60);
         let started = Instant::now();
         for worker in 0..WORKERS {
             accumulator
                 .apply(worker, second(worker, 1, seconds, 0..seconds, NAMES))
                 .unwrap();
         }
-        let _ = accumulator.merged_and_excluded();
+        let mut graph = accumulator.merged_and_excluded(GraphData::new()).1;
         eprintln!(
             "filled {WORKERS} workers x {NAMES} names x {seconds} s in {:?}",
             started.elapsed()
@@ -1199,7 +1235,8 @@ mod tests {
                 accumulator.apply(worker, delta).unwrap();
             }
             let applied = started.elapsed();
-            let (metrics, _, excluded) = accumulator.merged_and_excluded();
+            let (metrics, built, excluded) = accumulator.merged_and_excluded(graph);
+            graph = built;
             let total = started.elapsed();
             assert!(excluded.is_empty());
             assert_eq!(metrics.requests.len(), NAMES);
