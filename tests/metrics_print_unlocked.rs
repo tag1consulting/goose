@@ -5,20 +5,28 @@
 //!
 //! A test of its own, without the test harness, which would capture stdout:
 //! the logger here is a probe that, as Goose logs from inside the metrics'
-//! formatting, checks from another thread that stdout is free.
+//! formatting for the print, checks from another thread that stdout is
+//! free, and fails the test at the first time it is not.
 
 use httpmock::{Method::GET, MockServer};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use goose::config::GooseConfiguration;
 use goose::prelude::*;
 
-/// Set when stdout was held while the metrics logged.
-static HELD: AtomicBool = AtomicBool::new(false);
-
-/// The metrics' percentile log lines checked.
+/// The metrics' percentile log lines checked, all logged as the metrics
+/// were printed.
 static CHECKED: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether this thread is in `GooseMetrics::print`, as its backtrace shows:
+/// percentiles worked out anywhere else, before the print, are not checked,
+/// so they cannot spend the checks.
+fn in_print() -> bool {
+    std::backtrace::Backtrace::force_capture()
+        .to_string()
+        .contains("GooseMetrics::print")
+}
 
 /// A logger that checks stdout is free each time the metrics log.
 struct Probe;
@@ -29,10 +37,12 @@ impl log::Log for Probe {
     }
 
     fn log(&self, record: &log::Record<'_>) {
-        // The line the metrics' formatting logs, for each percentile.
+        // The line the metrics' formatting logs, for each percentile, as
+        // they are printed.
         if !record.target().starts_with("goose::metrics")
             || !record.args().to_string().starts_with("percentile:")
             || CHECKED.load(Ordering::SeqCst) >= 20
+            || !in_print()
         {
             return;
         }
@@ -43,7 +53,8 @@ impl log::Log for Probe {
             let _ = locked.send(());
         });
         if free.recv_timeout(Duration::from_secs(2)).is_err() {
-            HELD.store(true, Ordering::SeqCst);
+            eprintln!("stdout was held while the metrics were formatted for the print");
+            std::process::exit(1);
         }
     }
 
@@ -94,11 +105,7 @@ fn main() {
     });
     assert!(
         CHECKED.load(Ordering::SeqCst) > 0,
-        "the metrics logged nothing to check"
-    );
-    assert!(
-        !HELD.load(Ordering::SeqCst),
-        "stdout was held while the metrics were formatted"
+        "the metrics logged nothing to check as they were printed"
     );
     println!("test metrics_print_unlocked ... ok");
 }
