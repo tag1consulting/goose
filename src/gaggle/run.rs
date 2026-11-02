@@ -1494,6 +1494,34 @@ impl Incoming {
     }
 }
 
+/// Where worker `id` of `workers` keeps `log`, which stays on it.
+fn log_left(workers: &[WorkerEntry], id: u32, log: &LogSpec) -> GaggleLogLeft {
+    let worker = find(workers, id);
+    GaggleLogLeft {
+        worker: worker.map_or_else(|| id.to_string(), |worker| worker.name.clone()),
+        path: match worker.and_then(|worker| worker.run_folder.as_ref()) {
+            Some(folder) => format!("{folder}/{}", log.worker_file()),
+            None => log.worker_file(),
+        },
+    }
+}
+
+/// Give worker `id`'s `log` up: what arrived of it is deleted, and it is
+/// recorded as left on its worker. The record, to warn with.
+async fn give_up(
+    run: &mut ManagerRun,
+    open: &mut BTreeMap<(u32, String), Incoming>,
+    id: u32,
+    log: &LogSpec,
+) -> GaggleLogLeft {
+    if let Some(incoming) = open.remove(&(id, log.manager_file.clone())) {
+        incoming.abandon().await;
+    }
+    let entry = log_left(&run.workers, id, log);
+    run.logs_left.push(entry.clone());
+    entry
+}
+
 async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     if run.logs.is_empty() {
         return;
@@ -1502,17 +1530,6 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     // canceled the run is cleared, so the next is caught here rather than
     // ending the process at once.
     crate::reset_killswitch();
-    // Where worker `id` of `workers` keeps `log`, which stays on it.
-    let left = |workers: &[WorkerEntry], id: u32, log: &LogSpec| {
-        let worker = find(workers, id);
-        GaggleLogLeft {
-            worker: worker.map_or_else(|| id.to_string(), |worker| worker.name.clone()),
-            path: match worker.and_then(|worker| worker.run_folder.as_ref()) {
-                Some(folder) => format!("{folder}/{}", log.worker_file()),
-                None => log.worker_file(),
-            },
-        }
-    };
     // Each worker's logs still to come, by the name the manager keeps them
     // under.
     let mut pending: BTreeMap<u32, BTreeMap<String, LogSpec>> = BTreeMap::new();
@@ -1522,7 +1539,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
         if !worker.sends_logs() || folder.is_none() {
             if !never_ran {
                 for log in &run.logs {
-                    run.logs_left.push(left(&run.workers, worker.id, log));
+                    run.logs_left.push(log_left(&run.workers, worker.id, log));
                 }
             }
             continue;
@@ -1551,11 +1568,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
         if crate::is_killswitch_triggered() {
             warn!("gaggle: canceled while the workers sent their logs; every log not yet whole stays on its worker");
             for (id, files) in std::mem::take(&mut pending) {
-                for (file, log) in files {
-                    if let Some(incoming) = open.remove(&(id, file)) {
-                        incoming.abandon().await;
-                    }
-                    run.logs_left.push(left(&run.workers, id, &log));
+                for log in files.into_values() {
+                    give_up(run, &mut open, id, &log).await;
                 }
             }
             return;
@@ -1587,18 +1601,14 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                 {
                     continue;
                 }
-                for (file, log) in std::mem::take(files) {
-                    if let Some(incoming) = open.remove(&(id, file)) {
-                        incoming.abandon().await;
-                    }
-                    let entry = left(&run.workers, id, &log);
+                for log in std::mem::take(files).into_values() {
+                    let entry = give_up(run, &mut open, id, &log).await;
                     warn!(
                         "gaggle: worker {}'s log {} made no progress, a full chunk or its last, for {} seconds; it stays on the worker",
                         entry.worker,
                         entry.path,
                         LOG_IDLE_TIMEOUT.as_secs()
                     );
-                    run.logs_left.push(entry);
                 }
             }
             continue;
@@ -1627,11 +1637,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         "gaggle: worker {id} could not send its {}: {why}",
                         chunk.file
                     );
-                    if let Some(incoming) = open.remove(&key) {
-                        incoming.abandon().await;
-                    }
                     if let Some(log) = files.remove(&chunk.file) {
-                        run.logs_left.push(left(&run.workers, id, &log));
+                        give_up(run, &mut open, id, &log).await;
                     }
                     continue;
                 }
@@ -1673,7 +1680,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                                 chunk.file
                             );
                             if let Some(log) = files.remove(&chunk.file) {
-                                run.logs_left.push(left(&run.workers, id, &log));
+                                give_up(run, &mut open, id, &log).await;
                             }
                             continue;
                         }
@@ -1688,11 +1695,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         "gaggle: worker {id}'s {} passed the {} bytes it was announced as; it stays on the worker",
                         chunk.file, incoming.size
                     );
-                    if let Some(incoming) = open.remove(&key) {
-                        incoming.abandon().await;
-                    }
                     if let Some(log) = files.remove(&chunk.file) {
-                        run.logs_left.push(left(&run.workers, id, &log));
+                        give_up(run, &mut open, id, &log).await;
                     }
                     continue;
                 }
@@ -1728,22 +1732,16 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         "gaggle: worker {id}'s {} arrived out of order or could not be written",
                         chunk.file
                     );
-                    if let Some(incoming) = open.remove(&key) {
-                        incoming.abandon().await;
-                    }
                     if let Some(log) = files.remove(&chunk.file) {
-                        run.logs_left.push(left(&run.workers, id, &log));
+                        give_up(run, &mut open, id, &log).await;
                     }
                 }
             }
             Event::Lost { id, why } => {
                 warn!("gaggle: worker {id} lost while sending its logs: {why}");
                 if let Some(files) = pending.get_mut(&id) {
-                    for (file, log) in std::mem::take(files) {
-                        if let Some(incoming) = open.remove(&(id, file)) {
-                            incoming.abandon().await;
-                        }
-                        run.logs_left.push(left(&run.workers, id, &log));
+                    for log in std::mem::take(files).into_values() {
+                        give_up(run, &mut open, id, &log).await;
                     }
                 }
             }
