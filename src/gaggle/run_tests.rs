@@ -2406,6 +2406,7 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
         let folder = scratch("queued-threshold");
         super::faults::MANAGER_STOPPING.store(false, SeqCst);
         super::faults::HOLD_THRESHOLD_CHECK.store(true, SeqCst);
+        super::faults::HELD_TO_STOP.store(false, SeqCst);
         let faults = [TestFaults {
             final_after: Some(Duration::from_secs(1)),
             ..Default::default()
@@ -2436,6 +2437,10 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
             !super::faults::HOLD_THRESHOLD_CHECK.swap(false, SeqCst),
             "no threshold check was held"
         );
+        assert!(
+            super::faults::HELD_TO_STOP.swap(false, SeqCst),
+            "the held check was released before the manager stopped"
+        );
         // The held check judged, and failed, the run.
         assert!(
             matches!(manager, Err(crate::GooseError::ThresholdsFailed { .. })),
@@ -2443,8 +2448,9 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
             manager.as_ref().map(|_| ())
         );
         let (gaggle, _) = record(&folder);
-        let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
-        assert!(lost.is_empty(), "{}", gaggle);
+        let (lost, kept) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+        assert_eq!((lost.len(), kept.len()), (0, 1), "{gaggle}");
+        assert_eq!(kept[0]["state"], "finished", "{gaggle}");
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await

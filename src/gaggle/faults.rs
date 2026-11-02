@@ -170,12 +170,21 @@ pub(crate) fn hold_threshold_check(has_requests: bool) {
     if !has_requests || !HOLD_THRESHOLD_CHECK.swap(false, SeqCst) {
         return;
     }
-    let until = std::time::Instant::now() + Duration::from_secs(20);
-    while !MANAGER_STOPPING.load(SeqCst) && std::time::Instant::now() < until {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    std::thread::sleep(Duration::from_millis(300));
+    // Off the runtime's own threads, so the manager's main loop runs on.
+    tokio::task::block_in_place(|| {
+        let until = std::time::Instant::now() + Duration::from_secs(20);
+        while !MANAGER_STOPPING.load(SeqCst) && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        HELD_TO_STOP.store(MANAGER_STOPPING.load(SeqCst), SeqCst);
+        std::thread::sleep(Duration::from_millis(300));
+    });
 }
+
+/// The held check was released as the manager stopped, not at its 20 second
+/// cap.
+pub(crate) static HELD_TO_STOP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// The workers' `Stopped`, which follows their final metrics, the manager
 /// has taken.
