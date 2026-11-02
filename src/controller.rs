@@ -1018,11 +1018,6 @@ impl GooseAttack {
         if self.attack_phase != AttackPhase::Idle {
             return self.control_start_begin(goose_attack_run_state);
         }
-        // A Gaggle manager's own rules first, as for settings alone.
-        #[cfg(feature = "gaggle")]
-        if let Some(refused) = self.gaggle_refuse(goose_attack_run_state, &settings) {
-            return Ok(ControlStartBegin::Rejected(refused));
-        }
         if let Some(refused) = self.refuse_settings(goose_attack_run_state, &settings) {
             return Ok(ControlStartBegin::Rejected(refused));
         }
@@ -1071,6 +1066,11 @@ impl GooseAttack {
         goose_attack_run_state: &GooseAttackRunState,
         settings: &RunSettings,
     ) -> Option<ControlOutcome> {
+        // A Gaggle manager's own rules first: none on any other process.
+        #[cfg(feature = "gaggle")]
+        if let Some(refused) = self.gaggle_refuse(goose_attack_run_state, settings) {
+            return Some(refused);
+        }
         let refuse = |error, field, message: String| {
             Some(
                 self.control_outcome(goose_attack_run_state, false, Some(error), message, None)

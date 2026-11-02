@@ -482,8 +482,12 @@ impl GooseAttack {
         settings: RunSettings,
         users: bool,
     ) -> Result<Change, GooseError> {
-        if let Some(refused) = self.gaggle_refuse(goose_attack_run_state, &settings) {
-            return Ok((refused, None));
+        // Settings go through `refuse_settings`, which checks what a Gaggle
+        // needs first; the users command does not.
+        if users {
+            if let Some(refused) = self.gaggle_refuse(goose_attack_run_state, &settings) {
+                return Ok((refused, None));
+            }
         }
         let running = matches!(
             self.attack_phase,
@@ -888,11 +892,13 @@ fn live(run: &ManagerRun) -> Vec<u32> {
         .collect()
 }
 
-/// Whether each worker, at its id, is neither lost nor gone.
+/// Whether each worker, at its id, can take users: neither lost nor gone,
+/// and still running, as one whose users all exited (`--iterations`) is
+/// idle until the next run.
 fn mask(run: &ManagerRun) -> Vec<bool> {
     run.workers
         .iter()
-        .map(|worker| worker.lost.is_none() && !worker.gone)
+        .map(|worker| worker.lost.is_none() && !worker.gone && worker.stopped.is_none())
         .collect()
 }
 

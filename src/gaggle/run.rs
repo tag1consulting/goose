@@ -164,7 +164,7 @@ pub(super) struct WorkerEntry {
     users: usize,
     /// When it said its users stopped: its final metrics follow.
     users_stopped: Option<Instant>,
-    stopped: Option<Reason>,
+    pub(super) stopped: Option<Reason>,
     pub(super) lost: Option<(chrono::DateTime<chrono::Utc>, String)>,
     /// It stopped as told and then went away: not lost, but nothing more,
     /// its logs among them, will come from it.
@@ -1300,6 +1300,11 @@ impl GooseAttack {
                     let _ = goose_attack_run_state
                         .metrics_cmd_tx
                         .send(MetricsCommand::GaggleDone { worker: id });
+                }
+                // Its users exited: it runs none of the book's while the
+                // others go on.
+                if reason == Reason::UsersExited {
+                    run.book.lose(id as usize);
                 }
             }
             Event::UsersStopped { id } => {
