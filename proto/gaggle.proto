@@ -85,6 +85,9 @@ message LogChunk {
   // Why the worker could not read the log: no data comes, and the log
   // stays on the worker.
   optional string error = 5;
+  // The log's size in bytes, in its first chunk: the manager refuses a log
+  // that grows past it.
+  optional uint64 size = 6;
 }
 
 // What a manager sends.

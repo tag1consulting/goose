@@ -1787,6 +1787,7 @@ pub(crate) mod handshake_tests {
                         data: vec![b'x'; 1 << 10],
                         last: offset + 1 == CHUNKS,
                         error: None,
+                        size: None,
                     };
                     if tx
                         .send(WorkerMessage {
@@ -1840,6 +1841,7 @@ pub(crate) mod handshake_tests {
                         data: vec![b'x'; 16 << 10],
                         last: offset + 1 == CHUNKS,
                         error: None,
+                        size: None,
                     };
                     if tx
                         .send(WorkerMessage {
@@ -1899,6 +1901,7 @@ pub(crate) mod handshake_tests {
                         data: vec![b'x'; (256 << 10) - 64],
                         last: offset + 1 == CHUNKS,
                         error: None,
+                        size: None,
                     };
                     if tx
                         .send(WorkerMessage {

@@ -141,6 +141,10 @@ pub struct LogChunk {
     /// stays on the worker.
     #[prost(string, optional, tag = "5")]
     pub error: ::core::option::Option<::prost::alloc::string::String>,
+    /// The log's size in bytes, in its first chunk: the manager refuses a log
+    /// that grows past it.
+    #[prost(uint64, optional, tag = "6")]
+    pub size: ::core::option::Option<u64>,
 }
 /// What a manager sends.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

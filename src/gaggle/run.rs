@@ -118,7 +118,15 @@ pub(crate) enum LogsFault {
     /// 10 bytes of each log every 500 ms, never the last; the first at
     /// [`LOG_FAULT_AT`].
     Trickle,
+    /// Each log in one chunk of 20 bytes, announced as 10.
+    Oversize,
 }
+
+/// The manager fails every write of a worker's log, as on a full disk (unit
+/// tests).
+#[cfg(test)]
+pub(crate) static FAIL_LOG_WRITES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// When a worker's [`LogsFault`] triggered the killswitch or sent its first
 /// chunk (unit tests).
@@ -135,6 +143,21 @@ fn send_faulty_logs(fault: LogsFault, outbox: Arc<super::link::Outbox>, files: V
         _ => (10, Duration::from_millis(500)),
     };
     tokio::spawn(async move {
+        if fault == LogsFault::Oversize {
+            for file in files {
+                outbox
+                    .push_chunk(LogChunk {
+                        file,
+                        offset: 0,
+                        data: vec![b'x'; 20],
+                        last: true,
+                        error: None,
+                        size: Some(10),
+                    })
+                    .await;
+            }
+            return;
+        }
         for n in 0..(30_000 / every.as_millis() as u64) {
             for file in &files {
                 outbox
@@ -144,6 +167,7 @@ fn send_faulty_logs(fault: LogsFault, outbox: Arc<super::link::Outbox>, files: V
                         data: vec![b'x'; size],
                         last: false,
                         error: None,
+                        size: None,
                     })
                     .await;
             }
@@ -1582,6 +1606,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                 use tokio::io::AsyncWriteExt;
                 let mut ok = chunk.offset == incoming.written
                     && incoming.file.write_all(&chunk.data).await.is_ok();
+                #[cfg(test)]
+                let mut ok = ok && !FAIL_LOG_WRITES.load(std::sync::atomic::Ordering::Relaxed);
                 if ok {
                     incoming.written += chunk.data.len() as u64;
                     // Only progress keeps a transfer alive: a worker sends
@@ -2064,6 +2090,7 @@ mod tests {
                     data: data.to_vec(),
                     last,
                     error: None,
+                    size: None,
                 },
             )),
         }

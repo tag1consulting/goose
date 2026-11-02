@@ -1399,15 +1399,15 @@ async fn gaggle_killswitch_while_joining_and_preparing() {
 }
 
 /// A run whose one worker sends its request log as `fault` says: the
-/// manager's result, when it ended against [`LOG_FAULT_AT`], its run record,
-/// and the `.part` files left in its folder.
+/// manager's result, when it ended against [`LOG_FAULT_AT`] if the fault
+/// set it, its run record, and the run's folder, for the caller to remove.
 async fn faulty_logs_run(
     fault: LogsFault,
 ) -> (
     Result<GooseMetrics, crate::GooseError>,
-    Duration,
+    Option<Duration>,
     serde_json::Value,
-    Vec<PathBuf>,
+    PathBuf,
 ) {
     let server = answering().await;
     let folder = scratch("faulty-logs");
@@ -1435,17 +1435,18 @@ async fn faulty_logs_run(
     .await;
     crate::reset_killswitch();
     drop(workers);
-    let at = LOG_FAULT_AT
-        .lock()
-        .unwrap()
-        .expect("the worker sent a chunk");
+    let at = *LOG_FAULT_AT.lock().unwrap();
     let (gaggle, _) = record(&folder);
-    let parts = walk(&folder.join("manager"))
+    let took = at.map(|at| ended.saturating_duration_since(at));
+    (manager, took, gaggle, folder)
+}
+
+/// The `.part` files under `folder`.
+fn parts(folder: &Path) -> Vec<PathBuf> {
+    walk(folder)
         .into_iter()
         .filter(|path| path.extension().is_some_and(|ext| ext == "part"))
-        .collect();
-    let _ = std::fs::remove_dir_all(&folder);
-    (manager, ended.saturating_duration_since(at), gaggle, parts)
+        .collect()
 }
 
 /// Every file under `folder`.
@@ -1469,15 +1470,17 @@ fn walk(folder: &Path) -> Vec<PathBuf> {
 #[serial_test::serial]
 async fn gaggle_killswitch_while_collecting_logs() {
     let test = async {
-        let (manager, took, gaggle, parts) = faulty_logs_run(LogsFault::Slow).await;
+        let (manager, took, gaggle, folder) = faulty_logs_run(LogsFault::Slow).await;
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        let took = took.expect("the worker triggered the killswitch");
         assert!(took <= Duration::from_secs(2), "{took:?}");
         assert_eq!(
             gaggle["logs_left"].as_array().map(Vec::len),
             Some(1),
             "{gaggle}"
         );
-        assert!(parts.is_empty(), "{parts:?}");
+        assert_eq!(parts(&folder), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(90), test)
         .await
@@ -1490,8 +1493,9 @@ async fn gaggle_killswitch_while_collecting_logs() {
 #[serial_test::serial]
 async fn gaggle_trickled_log_is_given_up() {
     let test = async {
-        let (manager, took, gaggle, parts) = faulty_logs_run(LogsFault::Trickle).await;
+        let (manager, took, gaggle, folder) = faulty_logs_run(LogsFault::Trickle).await;
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        let took = took.expect("the worker sent a chunk");
         // The 2 second idle timeout from the first chunk, and the reports.
         assert!(took <= Duration::from_secs(5), "{took:?}");
         assert_eq!(
@@ -1499,7 +1503,8 @@ async fn gaggle_trickled_log_is_given_up() {
             Some(1),
             "{gaggle}"
         );
-        assert!(parts.is_empty(), "{parts:?}");
+        assert_eq!(parts(&folder), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(90), test)
         .await
@@ -1554,4 +1559,82 @@ async fn gaggle_slow_stop_keeps_every_final() {
         assert!(worker.get("final_missing").is_none(), "{gaggle}");
     }
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A log that grows past the size its worker announced is cut off: nothing
+/// of it is left on the manager, and the run record names it as left on the
+/// worker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_log_past_its_announced_size_is_cut_off() {
+    let test = async {
+        let (manager, _, gaggle, folder) = faulty_logs_run(LogsFault::Oversize).await;
+        assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        assert_eq!(
+            gaggle["logs_left"].as_array().map(Vec::len),
+            Some(1),
+            "{gaggle}"
+        );
+        let collected: Vec<PathBuf> = walk(&folder.join("manager").join("workers"));
+        assert_eq!(collected, Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&folder);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}
+
+/// A log the manager cannot write, as on a full disk, is deleted and
+/// recorded as left on its worker, and the reports are whole.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_log_write_failure_leaves_the_reports_whole() {
+    let test = async {
+        super::run::FAIL_LOG_WRITES.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (manager, _, gaggle, folder) = faulty_logs_run(LogsFault::None).await;
+        super::run::FAIL_LOG_WRITES.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        assert_eq!(
+            gaggle["logs_left"].as_array().map(Vec::len),
+            Some(1),
+            "{gaggle}"
+        );
+        assert_eq!(parts(&folder), Vec::<PathBuf>::new());
+        let (_, html) = record(&folder);
+        assert!(
+            html.contains("Logs left on their workers"),
+            "the HTML report names it"
+        );
+        let _ = std::fs::remove_dir_all(&folder);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}
+
+/// The manager writes its reports before any worker's log arrives, so a
+/// disk the logs fill costs only logs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_reports_are_written_before_the_logs() {
+    let test = async {
+        let (manager, _, _, folder) = faulty_logs_run(LogsFault::None).await;
+        assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        let modified = |path: &Path| {
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        };
+        let report = modified(&folder.join("manager").join("report.json"));
+        let logs = walk(&folder.join("manager").join("workers"));
+        assert_eq!(logs.len(), 1, "{logs:?}");
+        assert!(
+            report <= modified(&logs[0]),
+            "the report came after the log"
+        );
+        let _ = std::fs::remove_dir_all(&folder);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
 }

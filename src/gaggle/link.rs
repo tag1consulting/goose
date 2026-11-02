@@ -708,6 +708,7 @@ impl Link {
                             data: Vec::new(),
                             last: true,
                             error: Some(e.to_string()),
+                            size: None,
                         })
                         .await;
                 }
@@ -760,6 +761,7 @@ async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::i
                     data: Vec::new(),
                     last: true,
                     error: None,
+                    size: None,
                 })
                 .await;
             return Ok(());
@@ -789,6 +791,7 @@ async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::i
                     data: chunk,
                     last: end,
                     error: None,
+                    size: None,
                 })
                 .await;
             offset += filled as u64;
