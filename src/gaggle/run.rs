@@ -2242,15 +2242,15 @@ mod tests {
             let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
             let worker = tokio::spawn(async move {
                 send_logs_asked(&mut inbound).await;
-                // Every 20 ms for 10 seconds: never quiet for the manager's
-                // 100 ms wait.
-                for _ in 0..500 {
+                // Back to back for 10 seconds: the manager's queue is never
+                // empty, so its wait for the next event always has one.
+                let until = Instant::now() + Duration::from_secs(10);
+                while Instant::now() < until {
                     let unasked = chunk("other.json", 0, b"", false);
                     let empty = chunk("requests.json", 0, b"", false);
                     if tx.send(unasked).await.is_err() || tx.send(empty).await.is_err() {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 (tx, inbound)
             });
