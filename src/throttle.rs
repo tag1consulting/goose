@@ -1,6 +1,20 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::time;
 
 use crate::util;
+
+/// How often the throttle drains tokens: `delay_for` has millisecond granularity.
+const TICK: time::Duration = time::Duration::from_millis(10);
+
+/// How far a running throttle can rise past the one its run started with:
+/// the channel holds one second of the starting rate, and a tick drains at
+/// most what it holds, so 100 ticks a second reach 100 times that.
+pub(crate) const MAX_THROTTLE_RISE: usize = 100;
+
+/// The live throttle's rate, shared by the drain task and the main loop, which
+/// changes it while the run goes on.
+pub(crate) type ThrottleRate = Arc<AtomicUsize>;
 
 /// This throttle thread limits the maximum number of requests that can be made across
 /// all GooseUser threads. When enabled, GooseUser threads must add a token to the
@@ -9,37 +23,36 @@ use crate::util;
 /// implementation of the leaky bucket algorithm as a queue: instead of leaking the
 /// overflow we asynchronously block. More information on the leaky bucket algorithm
 /// can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
+///
+/// The rate is read from `rate` each tick, so a Controller or the dashboard
+/// changes it without touching the users. The channel's capacity, one second
+/// of the starting rate, never changes. The burst follows the rate: after a
+/// quiet spell users may send one second of the current rate at once, never
+/// more than the channel holds. The thread keeps its own filler tokens in the
+/// channel so no more than that is free, which with an unchanged rate is
+/// none: the channel then behaves exactly as a fixed throttle.
 pub async fn throttle_main(
-    throttle_requests: usize,
+    capacity: usize,
+    rate: ThrottleRate,
+    filler: flume::Sender<bool>,
     throttle_receiver: flume::Receiver<bool>,
     parent_receiver: flume::Receiver<bool>,
 ) {
-    // Use microseconds to allow configurations up to 1,000,000 requests per second.
-    let mut sleep_duration = time::Duration::from_micros(1_000_000 / throttle_requests as u64);
-    let tokens_per_duration;
+    info!(
+        "[throttle]: allowing {} request(s) a second",
+        rate.load(Ordering::Relaxed)
+    );
 
-    let ten_milliseconds = time::Duration::from_millis(10);
-    debug!("sleep_duration: {sleep_duration:?} ten_milliseconds: {ten_milliseconds:?}");
-
-    // Keep sleep_duration at least ~10ms as `delay_for` has millisecond granularity.
-    if sleep_duration < ten_milliseconds {
-        tokens_per_duration = (ten_milliseconds.as_nanos() / sleep_duration.as_nanos()) as u32;
-        sleep_duration *= tokens_per_duration;
-    } else {
-        tokens_per_duration = 1;
-    }
-
-    info!("[throttle]: allowing {tokens_per_duration} request(s) every {sleep_duration:?}");
-
-    // One or more token gets removed from the throttle_receiver bucket at regular
-    // intervals. The throttle_drift variable tracks how much time is spent on
-    // everything else, and is subtracted from the time spent sleeping.
-    let mut throttle_drift = tokio::time::Instant::now();
+    // The tokens owed since the last tick, a fraction of one at low rates.
+    let mut owed = 0.0_f64;
+    let mut last_tick = time::Instant::now();
+    // The throttle_drift variable tracks how much time is spent on everything
+    // else, and is subtracted from the time spent sleeping.
+    let mut throttle_drift = time::Instant::now();
 
     // Loop and remove tokens from channel at controlled rate until load test ends.
     loop {
-        debug!("[throttle]: removing {tokens_per_duration} token(s) from channel");
-        throttle_drift = util::sleep_minus_drift(sleep_duration, throttle_drift).await;
+        throttle_drift = util::sleep_minus_drift(TICK, throttle_drift).await;
 
         // A message will be received when the load test is over.
         if parent_receiver.try_recv().is_ok() {
@@ -49,11 +62,30 @@ pub async fn throttle_main(
             break;
         }
 
+        let now = time::Instant::now();
+        let per_second = rate.load(Ordering::Relaxed);
+        owed += per_second as f64 * now.duration_since(last_tick).as_secs_f64();
+        last_tick = now;
+        // A tick drains at most what the channel holds.
+        owed = owed.min(capacity as f64);
+        let tokens = owed as usize;
+        owed -= tokens as f64;
+        debug!("[throttle]: removing {tokens} token(s) from channel");
+
         // Remove tokens from the channel, freeing spots for request to be made.
-        for token in 0..tokens_per_duration {
+        for token in 0..tokens {
             // If the channel is empty, we will get an error, so stop trying to remove tokens.
             if throttle_receiver.try_recv().is_err() {
                 debug!("[throttle]: empty channel, exit after removing {token} tokens");
+                owed = 0.0;
+                break;
+            }
+        }
+
+        // Keep no more than one second of the current rate free.
+        let held = capacity.saturating_sub(per_second.min(capacity));
+        while throttle_receiver.len() < held {
+            if filler.try_send(true).is_err() {
                 break;
             }
         }

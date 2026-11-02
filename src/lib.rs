@@ -547,6 +547,13 @@ struct GooseAttackRunState {
     throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
+    /// The throttle thread's rate, which a Controller or the dashboard
+    /// changes while the run goes on, if enabled.
+    throttle_rate: Option<throttle::ThrottleRate>,
+    /// The throttle the run started with, 0 without one: a running throttle
+    /// changes only its rate, up to [`throttle::MAX_THROTTLE_RISE`] times
+    /// this.
+    throttle_started: usize,
     /// The channel telnet and WebSocket send commands on, when either is
     /// enabled.
     controller_channel_rx: Option<flume::Receiver<ControlRequest>>,
@@ -2078,11 +2085,13 @@ impl GooseAttack {
         Option<flume::Sender<bool>>,
         // A channel used by parent to tell throttle the load test is complete.
         Option<flume::Sender<bool>>,
+        // The rate the throttle thread drains at, changed while running.
+        Option<throttle::ThrottleRate>,
     ) {
         // If the throttle isn't enabled, return immediately.
         let throttle_requests = self.configuration.throttle_requests();
         if throttle_requests == 0 {
-            return (None, None);
+            return (None, None, None);
         }
 
         // Create a bounded channel allowing single-sender multi-receiver to throttle
@@ -2098,8 +2107,11 @@ impl GooseAttack {
         let (parent_to_throttle_tx, throttle_rx) = flume::bounded(1);
 
         // Launch a new thread for throttling, no need to rejoin it.
+        let throttle_rate = Arc::new(std::sync::atomic::AtomicUsize::new(throttle_requests));
         let _ = Some(tokio::spawn(throttle::throttle_main(
             throttle_requests,
+            throttle_rate.clone(),
+            all_threads_throttle.clone(),
             throttle_receiver,
             throttle_rx,
         )));
@@ -2115,7 +2127,11 @@ impl GooseAttack {
             let _ = sender.send_async(true).await;
         }
 
-        (Some(all_threads_throttle), Some(parent_to_throttle_tx))
+        (
+            Some(all_threads_throttle),
+            Some(parent_to_throttle_tx),
+            Some(throttle_rate),
+        )
     }
 
     // Helper to optionally spawn a telnet and/or WebSocket Controller thread. The Controller
@@ -2528,6 +2544,7 @@ impl GooseAttack {
             decrease_time_secs: secs(configuration.decrease_time_secs()),
             run_time_secs: secs(configuration.run_time_secs()),
             test_plan: configuration.test_plan.as_ref().map(TestPlan::to_string),
+            throttle: Some(configuration.throttle_requests() as u64).filter(|&t| t > 0),
             hold_ends_in_secs: None,
             stage: String::new(),
         }
@@ -2710,6 +2727,8 @@ impl GooseAttack {
             all_threads_logger_tx: None,
             throttle_threads_tx: None,
             parent_to_throttle_tx: None,
+            throttle_rate: None,
+            throttle_started: 0,
             controller_channel_rx,
             dashboard_control_rx,
             #[cfg(feature = "dashboard")]
@@ -3856,10 +3875,18 @@ impl GooseAttack {
         goose_attack_run_state.logger_handle = logger_handle;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
 
-        // If enabled, spawn a throttle thread.
-        let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
+        // If enabled, spawn a throttle thread: a Gaggle manager has no users
+        // to throttle, its workers each throttle their share.
+        goose_attack_run_state.throttle_started = self.configuration.throttle_requests();
+        let (throttle_threads_tx, parent_to_throttle_tx, throttle_rate) =
+            if self.is_gaggle_manager() {
+                (None, None, None)
+            } else {
+                self.setup_throttle().await
+            };
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
+        goose_attack_run_state.throttle_rate = throttle_rate;
 
         // A new run counts its requests from zero: the atomic counters
         // outlive the processor, and batches from the last run's users are
@@ -5035,6 +5062,7 @@ mod tests {
                 decrease_time_secs: Some(30),
                 run_time_secs: Some(600),
                 test_plan: None,
+                throttle: None,
                 hold_ends_in_secs: None,
                 stage: "idle".to_string(),
             }

@@ -263,6 +263,11 @@ run_time_secs: number | null,
  */
 test_plan: string | null,
 /**
+ * The most requests per second all users make together, `null` without
+ * a throttle. A running load test changes only its rate.
+ */
+throttle: number | null,
+/**
  * Seconds until the hold ends once it has a fixed end, 0 while a ramp
  * runs past it. `null` in Idle, during the first ramp up, once the
  * ramp down starts, with no run time, and with a test plan.

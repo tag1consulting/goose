@@ -8,6 +8,7 @@
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
 use crate::test_plan::TestPlan;
+use crate::throttle::MAX_THROTTLE_RISE;
 use crate::GooseError;
 use crate::{AttackPhase, ControlOutcome, ControlStartBegin, GooseAttack, GooseAttackRunState};
 
@@ -68,7 +69,8 @@ const HELP: &str = concat!(
     "decrease-time TIME set total time to take decreasing users (0 clears)\n",
     "users INT          set number of simulated users (1 to 100000)\n",
     "runtime TIME       set how long to hold users after the ramp up, (ie 1h30m5s, 0 clears)\n",
-    "test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
+    "test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n",
+    "throttle INT       set most requests per second (1 to 1000000, 0 clears)\n\n",
     "config             display load test configuration\n",
     "config-json        display load test configuration in json format\n",
     "metrics            display metrics for current load test\n",
@@ -228,6 +230,19 @@ pub enum ControllerCommand {
     ///
     /// Can be configured on an idle or running load test.
     TestPlan(TestPlan),
+    /// Configure the most requests per second all users make together, 1 to
+    /// 1000000, or 0 to clear it.
+    ///
+    /// # Example
+    /// Tells Goose to make at most 50 requests a second.
+    /// ```notest
+    /// throttle 50
+    /// ```
+    ///
+    /// Goose can be idle or running when processing this command: a running
+    /// load test changes the rate of the throttle it started with, up to 100
+    /// times that, and can not turn it on or off.
+    Throttle(usize),
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -290,6 +305,8 @@ pub(crate) struct RunSettings {
     pub(crate) decrease_time: Option<Option<usize>>,
     pub(crate) run_time: Option<Option<usize>>,
     pub(crate) test_plan: Option<Option<TestPlan>>,
+    /// `--throttle-requests`: a running load test changes only its rate.
+    pub(crate) throttle: Option<Option<usize>>,
 }
 
 impl RunSettings {
@@ -304,6 +321,7 @@ impl RunSettings {
             ControllerCommand::IncreaseTime(seconds) => settings.increase_time = time(seconds),
             ControllerCommand::DecreaseTime(seconds) => settings.decrease_time = time(seconds),
             ControllerCommand::RunTime(seconds) => settings.run_time = time(seconds),
+            ControllerCommand::Throttle(requests) => settings.throttle = time(requests),
             _ => {}
         }
         settings
@@ -321,6 +339,7 @@ impl RunSettings {
             ("decrease_time", self.decrease_time.is_some()),
             ("run_time", self.run_time.is_some()),
             ("test_plan", self.test_plan.is_some()),
+            ("throttle", self.throttle.is_some()),
         ]
         .iter()
         .filter_map(|&(field, sent)| sent.then_some(field))
@@ -402,6 +421,8 @@ fn settings_message(settings: &RunSettings) -> String {
         ["users"] => "users configured".to_string(),
         ["host"] if matches!(settings.host, Some(None)) => "host cleared".to_string(),
         ["host"] => "host configured".to_string(),
+        ["throttle"] if matches!(settings.throttle, Some(None)) => "throttle cleared".to_string(),
+        ["throttle"] => "throttle configured".to_string(),
         [field] if settings.ramp_values().contains(field) => format!("{field} configured"),
         [field] => format!("{field} cleared"),
         _ => "settings configured".to_string(),
@@ -460,6 +481,23 @@ pub(crate) const MAX_CONTROL_PLAN_BYTES: usize = 4 * 1024;
 /// user name or password.
 pub(crate) const INVALID_HOST_MSG: &str =
     "host must be a valid url starting with http:// or https://, without a user name or password";
+
+/// Most requests per second `--throttle-requests` and any front end can set.
+pub(crate) const MAX_CONTROL_THROTTLE: usize = 1_000_000;
+
+/// Refusal for a throttle outside the bounds.
+pub(crate) const INVALID_THROTTLE_MSG: &str =
+    "throttle must be an integer from 1 to 1000000 requests per second, or 0 to clear";
+
+/// A throttle in requests per second, up to [`MAX_CONTROL_THROTTLE`]; 0
+/// means unset.
+pub(crate) fn bounded_throttle(requests: u64) -> Result<usize, &'static str> {
+    if requests <= MAX_CONTROL_THROTTLE as u64 {
+        Ok(requests as usize)
+    } else {
+        Err(INVALID_THROTTLE_MSG)
+    }
+}
 
 /// Refusal for a test plan outside the bounds.
 pub(crate) const INVALID_PLAN_MSG: &str = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total";
@@ -595,6 +633,13 @@ impl FromStr for ControllerCommand {
                 time(value, INVALID_RUN_TIME_MSG).map(Self::RunTime)
             }
             "testplan" | "test_plan" | "test-plan" | "plan" => test_plan(value).map(Self::TestPlan),
+            "throttle" | "throttle_requests" | "throttle-requests" => {
+                grammar(&USERS, value, INVALID_THROTTLE_MSG)?
+                    .parse()
+                    .map_err(|_| INVALID_THROTTLE_MSG)
+                    .and_then(bounded_throttle)
+                    .map(Self::Throttle)
+            }
             _ => Err(UNRECOGNIZED),
         }
     }
@@ -1013,7 +1058,12 @@ impl GooseAttack {
     ///    the settings as they would be.
     /// 6. `no_host`: clearing host leaves a scenario, or a `test_start` or
     ///    `test_stop` transaction, with no host.
-    fn refuse_settings(
+    ///
+    /// The throttle is checked first: anything but Idle and Shutdown changes
+    /// only its rate, refused as `invalid_phase` to turn it on or off, and as
+    /// `conflicting_settings` past [`MAX_THROTTLE_RISE`] times the throttle
+    /// the run started with.
+    pub(crate) fn refuse_settings(
         &self,
         goose_attack_run_state: &GooseAttackRunState,
         settings: &RunSettings,
@@ -1028,8 +1078,38 @@ impl GooseAttack {
         let stopping =
             goose_attack_run_state.stopping || self.attack_phase == AttackPhase::Shutdown;
 
+        // A running throttle changes only its rate.
+        if let (false, Some(throttle)) = (idle, settings.throttle) {
+            let started = goose_attack_run_state.throttle_started;
+            let refused = match throttle {
+                _ if self.attack_phase == AttackPhase::Shutdown => Some((
+                    "invalid_phase",
+                    "failed to configure throttle, load test is shutting down".to_string(),
+                )),
+                None => Some((
+                    "invalid_phase",
+                    "failed to clear throttle, a running load test keeps the throttle it started with: change its rate, or clear it when idle".to_string(),
+                )),
+                Some(_) if started == 0 => Some((
+                    "invalid_phase",
+                    "failed to configure throttle, the load test started without one: set it when idle".to_string(),
+                )),
+                Some(requests) if requests > started.saturating_mul(MAX_THROTTLE_RISE) => Some((
+                    "conflicting_settings",
+                    format!("failed to configure throttle, a running load test's throttle can rise to at most {MAX_THROTTLE_RISE} times the {started} it started with"),
+                )),
+                Some(_) => None,
+            };
+            if let Some((error, message)) = refused {
+                return refuse(error, "throttle", message);
+            }
+        }
+
         // The phase.
         for field in settings.fields() {
+            if field == "throttle" {
+                continue;
+            }
             let ramp = !matches!(field, "host" | "users" | "test_plan");
             let message = if idle {
                 None
@@ -1269,6 +1349,9 @@ impl GooseAttack {
         if let Some(run_time) = secs(settings.run_time) {
             configuration.run_time = run_time;
         }
+        if let Some(throttle) = settings.throttle {
+            configuration.throttle_requests = throttle;
+        }
         configuration
     }
 
@@ -1284,6 +1367,12 @@ impl GooseAttack {
         self.configuration = self.candidate_configuration(&settings);
         if self.attack_phase == AttackPhase::Idle {
             return Ok(());
+        }
+        // The throttle thread reads its rate each tick.
+        if let (Some(Some(requests)), Some(rate)) =
+            (settings.throttle, goose_attack_run_state.throttle_rate.as_ref())
+        {
+            rate.store(requests, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(Some(plan)) = settings.test_plan {
             return self.run_test_plan(goose_attack_run_state, plan);

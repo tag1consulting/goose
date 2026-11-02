@@ -2446,6 +2446,8 @@ struct SettingsBody {
     run_time_secs: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present")]
     test_plan: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    throttle: Option<serde_json::Value>,
 }
 
 /// A field that is present, `null` included, so `null` is told from absent.
@@ -2459,6 +2461,10 @@ where
 /// Refusal for `users: null`: users can only be switched to.
 const NULL_USERS_MSG: &str =
     "users can not be cleared: send a user count, or a test_plan to switch to";
+
+/// Refusal for a throttle outside the bounds.
+const INVALID_THROTTLE_BODY_MSG: &str =
+    "throttle must be an integer from 1 to 1000000 requests per second, or null to clear";
 
 /// Refusal for a time outside the bounds, sent as whole seconds.
 fn invalid_secs_msg(field: &str) -> &'static str {
@@ -2486,7 +2492,7 @@ type BodyRefusal = (&'static str, &'static str, Option<&'static str>);
 pub(crate) fn parse_settings_body(body: &[u8]) -> Result<RunSettings, BodyRefusal> {
     let bad_request = (
         "bad_request",
-        "request body must be a JSON object of run settings: host, users, increase_rate, increase_time_secs, decrease_rate, decrease_time_secs, run_time_secs and test_plan",
+        "request body must be a JSON object of run settings: host, users, increase_rate, increase_time_secs, decrease_rate, decrease_time_secs, run_time_secs, test_plan and throttle",
         None,
     );
     let body: serde_json::Value =
@@ -2569,6 +2575,20 @@ pub(crate) fn parse_settings_body(body: &[u8]) -> Result<RunSettings, BodyRefusa
             controller::INVALID_PLAN_MSG,
         )
         .map_err(|message| invalid("test_plan", message))?,
+        throttle: read(
+            body.throttle,
+            |value| {
+                value
+                    .as_u64()
+                    .filter(|&requests| requests > 0)
+                    .map(|requests| {
+                        controller::bounded_throttle(requests)
+                            .map_err(|_| INVALID_THROTTLE_BODY_MSG)
+                    })
+            },
+            INVALID_THROTTLE_BODY_MSG,
+        )
+        .map_err(|message| invalid("throttle", message))?,
     };
     match settings.conflict() {
         Some((field, message)) => Err(("conflicting_settings", message, Some(field))),

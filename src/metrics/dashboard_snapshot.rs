@@ -133,6 +133,9 @@ pub(crate) struct SnapshotSettings {
     /// The test plan as `--test-plan` takes it, in canonical form: each
     /// step's duration in whole seconds.
     pub test_plan: Option<String>,
+    /// The most requests per second all users make together, `null` without
+    /// a throttle. A running load test changes only its rate.
+    pub throttle: Option<u64>,
     /// Seconds until the hold ends once it has a fixed end, 0 while a ramp
     /// runs past it. `null` in Idle, during the first ramp up, once the
     /// ramp down starts, with no run time, and with a test plan.
@@ -164,6 +167,7 @@ impl SnapshotSettings {
             decrease_time_secs: None,
             run_time_secs: None,
             test_plan: None,
+            throttle: None,
             hold_ends_in_secs: None,
             stage: "idle".to_string(),
         }
