@@ -214,12 +214,24 @@ jobs:
         command: test 
         args: --verbose --no-default-features --features "${{ matrix.features }}"
     
+    # Everything but the Gaggle process tests, tests/gaggle.rs, which the gaggle job
+    # runs: they take about 15 minutes, and need no other feature. Every test target,
+    # tests/gaggle.rs among them, is still built here. The examples that run tests are
+    # those with `test = true` in Cargo.toml.
     - name: 🔎 Test (all features)
       if: ${{ matrix.features == 'all-features' }}
-      uses: actions-rs/cargo@v1
-      with:
-        command: test 
-        args: --verbose --all-features
+      shell: bash
+      run: |
+        cargo test --verbose --all-features --no-run
+        tests=()
+        for file in tests/*.rs; do
+          name=$(basename "$file" .rs)
+          if [ "$name" != gaggle ]; then
+            tests+=(--test "$name")
+          fi
+        done
+        cargo test --verbose --all-features --lib --bins --example umami "${tests[@]}"
+        cargo test --verbose --all-features --doc
     
     # The ubuntu-latest image ships Google Chrome, which these ignored tests need.
     - name: 🔎 Test PDF reports with an installed Chrome
