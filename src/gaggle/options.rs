@@ -84,7 +84,6 @@ const WORKER_KEEPS: &[&str] = &[
     "--manager-port",
     "--gaggle-connect-timeout",
     "--gaggle-token",
-    "--no-hash-check",
     "--gaggle-heartbeat-timeout",
 ];
 
@@ -95,6 +94,7 @@ const MANAGER_ONLY: &[&str] = &[
     "--expect-workers",
     "--manager-bind-host",
     "--manager-bind-port",
+    "--no-hash-check",
     "--gaggle-shadow-merge",
 ];
 
@@ -264,9 +264,8 @@ impl GooseConfiguration {
             ));
         }
         let either = self.manager || self.worker;
-        let shared: [(&str, bool); 4] = [
+        let shared: [(&str, bool); 3] = [
             ("--gaggle-token", self.gaggle_token.is_some() && !either),
-            ("--no-hash-check", self.no_hash_check && !either),
             (
                 "--gaggle-connect-timeout",
                 self.gaggle_connect_timeout.is_some() && !either,
@@ -288,10 +287,12 @@ impl GooseConfiguration {
                 "--gaggle-token must be printable ASCII, with no spaces.",
             ));
         }
-        let manager_only: [(&str, bool); 3] = [
+        // Only the manager checks the plan hash.
+        let manager_only: [(&str, bool); 4] = [
             ("--expect-workers", self.expect_workers.is_some()),
             ("--manager-bind-host", self.manager_bind_host.is_some()),
             ("--manager-bind-port", self.manager_bind_port.is_some()),
+            ("--no-hash-check", self.no_hash_check),
         ];
         let worker_only: [(&str, bool); 2] = [
             ("--manager-host", self.manager_host.is_some()),
