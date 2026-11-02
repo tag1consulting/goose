@@ -536,6 +536,63 @@ fn gaggle_threshold_stops_every_worker() {
     });
 }
 
+/// A manager and two workers at -vv, every crate tracing, run a few
+/// seconds of load and all exit: printing metrics while other threads log
+/// once deadlocked a worker. No log line of any of them holds the token.
+#[test]
+#[serial_test::serial]
+fn gaggle_at_trace_level_completes() {
+    within(|| {
+        let server = MockServer::start();
+        mock_simple(&server, Duration::ZERO);
+        let folder = scratch("trace-level");
+        let host = server.base_url();
+        let simple = example("simple");
+        let token = ["--gaggle-token", "tok-trace-7f3a", "-vv"];
+        let mut manager = Process::start(
+            &simple,
+            "manager",
+            &folder,
+            &manager_args(
+                &host,
+                "2",
+                &[
+                    "--users",
+                    "10",
+                    "--increase-rate",
+                    "10",
+                    "--run-time",
+                    "4s",
+                    "--gaggle-token",
+                    "tok-trace-7f3a",
+                    "-vv",
+                ],
+            ),
+        );
+        let port = manager.port();
+        let mut workers = [
+            Process::start(&simple, "first", &folder, &worker_args(&port, &token)),
+            Process::start(&simple, "second", &folder, &worker_args(&port, &token)),
+        ];
+        let (status, _) = manager
+            .wait(Duration::from_secs(60))
+            .expect("the manager finishes");
+        assert!(status.success(), "{}", manager.output());
+        for worker in workers.iter_mut() {
+            let (status, _) = worker
+                .wait(Duration::from_secs(20))
+                .unwrap_or_else(|| panic!("{} hung at -vv", worker.name));
+            assert!(status.success(), "{}", worker.name);
+        }
+        for output in [manager.output(), workers[0].output(), workers[1].output()] {
+            assert!(
+                !output.contains("tok-trace-7f3a"),
+                "a log line holds the token"
+            );
+        }
+    });
+}
+
 /// A worker with the wrong token is refused, and no log line of either
 /// process, at -vv, holds either token. A process test, to read the logs;
 /// the refusals themselves are tested in the library.
