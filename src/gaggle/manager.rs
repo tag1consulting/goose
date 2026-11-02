@@ -1845,7 +1845,7 @@ pub(crate) mod handshake_tests {
                 }
                 tx
             });
-            // Three heartbeat timeouts with the queue full and nothing taken.
+            // Two heartbeat timeouts with the queue full and nothing taken.
             tokio::time::sleep(Duration::from_secs(3)).await;
             assert_eq!(manager.events.len(), EVENT_QUEUE);
             let deadline = Instant::now() + Duration::from_secs(20);

@@ -456,7 +456,15 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
         // Once it joined, the manager goes.
         assert_eq!(joined.recv().await, Some(1));
         manager.abort();
+        let gone = std::time::Instant::now();
         let result = worker.await.expect("the worker task ends");
+        // Within the last resort's real 2 seconds: past them, a worker
+        // process would have been ended.
+        assert!(
+            gone.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            gone.elapsed()
+        );
         match result {
             Err(crate::GooseError::Gaggle { detail }) => {
                 assert!(detail.contains("lost the manager"), "{}", detail)
@@ -1021,7 +1029,7 @@ async fn gaggle_handshake_refusals() {
                 ("plan", Some(_)) => quick(configuration, place),
                 _ => standard(configuration, place),
             };
-            let mut manager_args = vec!["--users", "2", "--gaggle-connect-timeout", "1s"];
+            let mut manager_args = vec!["--users", "2", "--gaggle-connect-timeout", "3s"];
             manager_args.extend(manager_extra);
             let (manager, workers) = gaggle(
                 build,

@@ -2371,6 +2371,27 @@ mod tests {
             );
             assert!(run.logs_left.is_empty(), "{:?}", run.logs_left);
             let _ = std::fs::remove_dir_all(&folder);
+            // Its last chunk short of the size announced: not whole.
+            let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                let mut first = chunk("requests.json", 0, b"whole ", false);
+                if let Some(crate::gaggle::proto::worker_message::Message::LogChunk(chunk)) =
+                    first.message.as_mut()
+                {
+                    chunk.size = Some(9);
+                }
+                tx.send(first).await.unwrap();
+                tx.send(chunk("requests.json", 6, b"lo", true))
+                    .await
+                    .unwrap();
+                (tx, inbound)
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            drop(worker.await.unwrap());
+            assert_eq!(files_under(&folder), Vec::<String>::new());
+            assert_eq!(run.logs_left.len(), 1, "{:?}", run.logs_left);
+            let _ = std::fs::remove_dir_all(&folder);
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
