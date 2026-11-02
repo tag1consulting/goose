@@ -2284,8 +2284,13 @@ mod tests {
                     data: data.to_vec(),
                     last,
                     error: None,
-                    // Larger than any a test sends.
-                    size: Some(1 << 30),
+                    // A log in one chunk is its size; one in more is
+                    // announced larger than any a test sends.
+                    size: Some(if last && offset == 0 {
+                        data.len() as u64
+                    } else {
+                        1 << 30
+                    }),
                 },
             )),
         }
@@ -2343,9 +2348,13 @@ mod tests {
             let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
             let worker = tokio::spawn(async move {
                 send_logs_asked(&mut inbound).await;
-                tx.send(chunk("requests.json", 0, b"whole ", false))
-                    .await
-                    .unwrap();
+                let mut first = chunk("requests.json", 0, b"whole ", false);
+                if let Some(crate::gaggle::proto::worker_message::Message::LogChunk(chunk)) =
+                    first.message.as_mut()
+                {
+                    chunk.size = Some(9);
+                }
+                tx.send(first).await.unwrap();
                 tx.send(chunk("requests.json", 6, b"log", true))
                     .await
                     .unwrap();
