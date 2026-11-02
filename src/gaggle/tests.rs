@@ -2387,6 +2387,47 @@ fn gaggle_merge_cost() {
     }
 }
 
+/// A manager refreshing its merge every second, each worker's delta holding
+/// a row for a request of 4 seconds, stamped with the second it started:
+/// the late rows never build the graph data again from nothing, so a
+/// refresh costs the same an hour or four hours in.
+#[test]
+fn gaggle_late_rows_build_the_graph_once() {
+    let mut side = Side::new(0..0, Some(0));
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), Default::default());
+    super::merge::FRESH_BUILDS.with(|builds| builds.set(0));
+    for at in 0..200u64 {
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleClock {
+                second: at + crate::gaggle::run::CLOCK_SLACK,
+            });
+        for worker in 0..2u32 {
+            let mut delta = GaggleDelta::new(worker, at + 1, 0, DeltaKind::Delta);
+            delta.now = at + 1;
+            delta.graph.transactions.insert(at, 3);
+            delta.graph.transactions.insert(at.saturating_sub(4), 1);
+            side.processor
+                .handle_command_for_test(MetricsCommand::GaggleApply {
+                    worker,
+                    delta: Box::new(delta),
+                    bytes: None,
+                });
+        }
+        let (respond, metrics) = tokio::sync::oneshot::channel();
+        side.processor
+            .handle_command_for_test(MetricsCommand::GetMetrics {
+                duration: 0,
+                total_users: 0,
+                maximum_users: 0,
+                history: Vec::new(),
+                respond,
+            });
+        let _ = metrics.blocking_recv();
+    }
+    assert_eq!(super::merge::FRESH_BUILDS.with(std::cell::Cell::get), 1);
+}
+
 /// Save report on a manager's dashboard changes what its merge builds: with
 /// it off the merged graph keeps no whole run heatmap columns, with it on
 /// it does, though the merge was set up with them.

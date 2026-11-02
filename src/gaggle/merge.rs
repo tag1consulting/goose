@@ -142,6 +142,12 @@ pub(crate) struct GaggleAccumulator {
     test_graph: RefCell<Option<GraphData>>,
 }
 
+std::thread_local! {
+    /// The graph data built from nothing on this thread (tests).
+    #[cfg(test)]
+    pub(crate) static FRESH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The most gaps an accumulator keeping them holds; past it they are
 /// counted.
 const MAX_GAPS_KEPT: usize = 1_000;
@@ -582,6 +588,10 @@ impl GaggleAccumulator {
                 && built.columns == self.settings.columns
                 && complete.is_none_or(|complete| complete >= built.before)
         });
+        #[cfg(test)]
+        if reusable.is_none() {
+            FRESH_BUILDS.with(|builds| builds.set(builds.get() + 1));
+        }
         let (mut graph, mut built) = match reusable {
             Some(built) => (graph, built),
             None => (
