@@ -675,6 +675,7 @@ impl Link {
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
             forced: link.forced.clone(),
+            prepared: Arc::new(AtomicBool::new(false)),
         };
         tokio::spawn(read_manager(
             inbound,
@@ -910,6 +911,12 @@ const LAST_RESORT_AFTER: Duration = if cfg!(test) {
     Duration::from_secs(2)
 };
 
+/// The longest the switch lets the manager go silent before its `Prepare`
+/// arrived, when that is longer than the heartbeat timeout: a `Prepare` of
+/// 16 MiB of custom data takes about 13 seconds at 1.25 MB/s, as 100
+/// workers sharing a 1 Gb/s link get.
+const BEFORE_PREPARE_SILENCE: Duration = Duration::from_secs(120);
+
 /// Stop users at once, every one or, with `running_only`, those not yet
 /// finished, and any started later: `stopped` is set before `users` is
 /// locked, so [`Link::watch`] sees one or the other. How many it stopped.
@@ -947,6 +954,10 @@ struct Switch {
     /// Set when the last resort ends the process, or in unit tests would
     /// have.
     forced: Arc<AtomicBool>,
+    /// Set once the manager's `Prepare` arrived: before it, the switch
+    /// waits [`BEFORE_PREPARE_SILENCE`], as a large one on a slow link
+    /// holds back the heartbeats behind it, and no user runs yet.
+    prepared: Arc<AtomicBool>,
 }
 
 impl Switch {
@@ -1048,7 +1059,10 @@ async fn read_manager(
         let event = match message.message {
             Some(FromManager::Heartbeat(_)) | None => continue,
             Some(FromManager::Welcome(_)) | Some(FromManager::Reject(_)) => continue,
-            Some(FromManager::Prepare(prepare)) => LinkEvent::Prepare(prepare.spec),
+            Some(FromManager::Prepare(prepare)) => {
+                switch.prepared.store(true, Ordering::Relaxed);
+                LinkEvent::Prepare(prepare.spec)
+            }
             Some(FromManager::StartAt(start)) => match start_instant(start.delay_ms) {
                 Ok(at) => LinkEvent::StartAt(at),
                 Err(why) => LinkEvent::Refused(why),
@@ -1075,7 +1089,8 @@ async fn read_manager(
 
 /// Send the manager a heartbeat every [`HEARTBEAT_INTERVAL`], on its own
 /// task, whatever else the worker is doing; fire the switch when nothing has
-/// come from the manager for the heartbeat timeout.
+/// come from the manager for the heartbeat timeout, or before its `Prepare`
+/// arrived, [`BEFORE_PREPARE_SILENCE`] if that is longer.
 async fn heartbeat_manager(
     outbox: Arc<Outbox>,
     heard: Arc<Mutex<Instant>>,
@@ -1097,11 +1112,13 @@ async fn heartbeat_manager(
             .lock()
             .map(|heard| heard.elapsed())
             .unwrap_or_default();
-        if silent > switch.heartbeat_timeout {
-            switch.fire(format!(
-                "nothing from it for {:?}",
-                switch.heartbeat_timeout
-            ));
+        let limit = if switch.prepared.load(Ordering::Relaxed) {
+            switch.heartbeat_timeout
+        } else {
+            switch.heartbeat_timeout.max(BEFORE_PREPARE_SILENCE)
+        };
+        if silent > limit {
+            switch.fire(format!("nothing from it for {limit:?}"));
             return;
         }
         if last_sent.elapsed() >= HEARTBEAT_INTERVAL {
@@ -1327,6 +1344,8 @@ mod tests {
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(true)),
             forced: Arc::new(AtomicBool::new(false)),
+            // Past its Prepare: silence fires it at the heartbeat timeout.
+            prepared: Arc::new(AtomicBool::new(true)),
         };
         (switch, received, outbox)
     }
