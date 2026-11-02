@@ -1872,3 +1872,53 @@ async fn gaggle_manager_failing_to_start_its_run_runs_test_stop() {
         .await
         .expect("within 60 seconds");
 }
+
+/// A Gaggle run canceled by the killswitch, as Ctrl-C or a threshold does,
+/// still shows its test_stop the killswitch triggered, as a run of one
+/// process does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_canceled_run_shows_test_stop_the_killswitch() {
+    static SEEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+    SEEN.store(0, std::sync::atomic::Ordering::SeqCst);
+    let test_stop = || {
+        Transaction::new(Arc::new(|_| {
+            Box::pin(async move {
+                let seen = if crate::is_killswitch_triggered() {
+                    2
+                } else {
+                    1
+                };
+                SEEN.store(seen, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }))
+    };
+    let server = answering().await;
+    let folder = scratch("canceled-test-stop");
+    let build = |configuration, place| quick(configuration, place).test_stop(test_stop());
+    let canceling = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        crate::trigger_killswitch("a test's Ctrl-C mid run");
+    });
+    let run = gaggle(
+        build,
+        1,
+        server.base_url(),
+        &folder,
+        &["--users", "1", "--run-time", "30"],
+        &[],
+        &[],
+    );
+    let (manager, _) = tokio::time::timeout(Duration::from_secs(60), run)
+        .await
+        .expect("the Gaggle ends within 60 seconds");
+    canceling.await.unwrap();
+    crate::reset_killswitch();
+    assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+    assert_eq!(
+        SEEN.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "test_stop saw no cancel"
+    );
+}
