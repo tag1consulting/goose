@@ -118,7 +118,8 @@ pub(crate) struct TestFaults {
     /// at [`LOG_FAULT_AT`].
     pub(crate) cancel_on_stop: bool,
     /// Never say its users stopped, nor send its final metrics: wait to be
-    /// shut down.
+    /// shut down. With `cancel_on_stop`, the killswitch is triggered a
+    /// second after `Stop` arrives.
     pub(crate) withhold_final: bool,
     /// A second into the run, say it stopped for this reason, as sent, and
     /// run on.
@@ -1484,9 +1485,14 @@ impl GooseAttack {
                             detail: "withheld its final metrics on purpose".to_string(),
                         })
                     }
+                    // A second later, once any other worker's final metrics
+                    // merged.
                     Some(LinkEvent::Stop(_)) if self.gaggle.test_faults.cancel_on_stop => {
-                        *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
-                        crate::trigger_killswitch("a test's Ctrl-C as the run stops");
+                        tokio::spawn(async {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
+                            crate::trigger_killswitch("a test's Ctrl-C as the run stops");
+                        });
                     }
                     _ => {}
                 }

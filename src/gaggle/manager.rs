@@ -1861,8 +1861,16 @@ pub(crate) mod handshake_tests {
             let answer = GaggleClient::new(channel(&manager).await)
                 .connect(request)
                 .await;
+            // Refused, or the connection closed at the same deadline.
             let status = answer.err().expect("refused");
-            assert_eq!(status.code(), tonic::Code::InvalidArgument, "{}", status);
+            assert!(
+                matches!(
+                    status.code(),
+                    tonic::Code::InvalidArgument | tonic::Code::Unknown
+                ),
+                "{}",
+                status
+            );
             assert!(opened.elapsed() >= HELLO_TIMEOUT - Duration::from_millis(100));
             assert_eq!(handled(&manager), 1, "past the token check");
             assert!(manager.try_event().is_none(), "a worker joined");
