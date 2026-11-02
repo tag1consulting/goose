@@ -1229,8 +1229,9 @@ impl GooseAttack {
     }
 
     /// The end of a run, once every local user stopped and before
-    /// `test_stop`: a manager stops every worker and waits for its final
-    /// metrics; a worker sends its final metrics, then `Stopped`.
+    /// `test_stop`: a manager stops every worker and waits for each to say
+    /// its users stopped, then for its final metrics; a worker says its
+    /// users stopped, sends its final metrics, then `Stopped`.
     pub(crate) async fn gaggle_end_of_run(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -1301,7 +1302,8 @@ impl GooseAttack {
         }
     }
 
-    /// A worker whose users stopped: send its final metrics, then `Stopped`.
+    /// A worker whose users stopped: say so, send its final metrics, then
+    /// `Stopped`.
     /// One whose metrics processor does not hand over the final metrics
     /// within [`FINAL_TIMEOUT`], as long as the manager waits for them,
     /// fails.
@@ -1376,8 +1378,8 @@ impl GooseAttack {
 
     /// The manager, once its workers stopped and its reports are written:
     /// ask every worker for its logs and keep them in `workers/<name>/` in the
-    /// run's folder. A worker whose transfers move nothing for
-    /// [`LOG_IDLE_TIMEOUT`] gives them up, as Ctrl-C gives up every one: a
+    /// run's folder. A worker that sends no full chunk, nor a log's last,
+    /// for [`LOG_IDLE_TIMEOUT`] gives them up, as Ctrl-C gives up every one: a
     /// log not whole then stays on its worker, and the run record says so.
     /// A log past the size its worker announced is refused the same way.
     /// Whether any log was left on a worker, which the reports then name.
@@ -1538,7 +1540,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
         warn!("gaggle: this run has no folder, so its workers' logs stay on them");
         return;
     };
-    // When each worker last sent a chunk, from when it was asked.
+    // When each worker last made progress, a full chunk or a log's last,
+    // from when it was asked.
     let asked = Instant::now();
     let mut heard: BTreeMap<u32, Instant> = pending.keys().map(|&id| (id, asked)).collect();
     let mut open: BTreeMap<(u32, String), Incoming> = BTreeMap::new();
@@ -1565,8 +1568,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
             .map_or(asked, |&last| last + LOG_IDLE_TIMEOUT);
         let wake = deadline.min(Instant::now() + KILLSWITCH_POLL);
         let Some(event) = run.manager.next_event(wake).await else {
-            // Every worker that sent nothing for the idle timeout: its logs
-            // still to come stay on it.
+            // Every worker that made no progress for the idle timeout: its
+            // logs still to come stay on it.
             let now = Instant::now();
             if now < wake {
                 // No event, and no wake yet: the event queue closed.
@@ -1590,7 +1593,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     }
                     let entry = left(&run.workers, id, &log);
                     warn!(
-                        "gaggle: no part of worker {}'s log {} came for {} seconds; it stays on the worker",
+                        "gaggle: worker {}'s log {} made no progress, a full chunk or its last, for {} seconds; it stays on the worker",
                         entry.worker,
                         entry.path,
                         LOG_IDLE_TIMEOUT.as_secs()

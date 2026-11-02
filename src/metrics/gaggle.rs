@@ -71,8 +71,8 @@ impl MetricsProcessor {
         // second may be at most the slack past the start: no worker can grow
         // the graph data far ahead before then.
         accumulator.set_max_second(crate::gaggle::run::CLOCK_SLACK);
-        // A worker's rows reach back its own lag (see `gaggle_enable`).
-        accumulator.set_lag(self.configuration.request_timeout().as_secs() + 60);
+        // A worker's rows reach back its own lag.
+        accumulator.set_lag(self.gaggle_lag());
         // The run's epoch is this processor's: the run's start began it on
         // the manager, as on every worker.
         accumulator.set_epoch(self.metrics_epoch.load(AtomicOrdering::Relaxed));
@@ -208,12 +208,19 @@ impl MetricsProcessor {
 
 /// The metrics processor as a Gaggle worker.
 impl MetricsProcessor {
+    /// How far back a worker's graph rows may still reach: its request
+    /// timeout and a minute. The manager counts a second complete only once
+    /// it is this much older than every worker's latest.
+    fn gaggle_lag(&self) -> u64 {
+        self.configuration.request_timeout().as_secs() + 60
+    }
+
     /// Run as Gaggle worker `worker`: from now on every metric is also kept
     /// in what the next delta sends.
     pub(crate) fn gaggle_enable(&mut self, worker: u32) {
         let template = self.gaggle_template();
         let synthetic = template.coordinated_omission_metrics.is_some();
-        let lag = self.configuration.request_timeout().as_secs() as usize + 60;
+        let lag = self.gaggle_lag() as usize;
         self.gaggle = Some(Box::new(crate::gaggle::worker::WorkerState::new(
             worker, template, synthetic, lag,
         )));

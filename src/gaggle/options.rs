@@ -204,7 +204,8 @@ impl GooseConfiguration {
     }
 
     /// Every option the command line set that [`Self::worker_refusals`]
-    /// refuses, in the order the configuration holds them: each whose value
+    /// refuses, in the alphabetical order of their field names, as
+    /// serde_json's map keeps them: each whose value
     /// is not its default, but those in [`WORKER_KEEPS`] and
     /// [`MANAGER_ONLY`]. An option is a field whose name, in kebab case, is
     /// its long flag, and which is unset by default: `None`, empty, `false`

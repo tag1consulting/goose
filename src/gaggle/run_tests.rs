@@ -626,7 +626,7 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str, expected_last_seq
         .await
         .expect("the Gaggle ends within 90 seconds");
     manager.expect("the manager exits cleanly");
-    // Joining, a 2 second start, a ramp, 3 seconds of run, and the
+    // Joining, a 300 ms start, a ramp, 3 seconds of run, and the
     // deadline, under cfg(test): 3 seconds for the final metrics, 2 for a
     // reset.
     assert!(
@@ -643,8 +643,8 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str, expected_last_seq
     assert_eq!(gaggle["degraded"], true, "{gaggle}");
     let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
     assert_eq!(lost.len(), 1, "{gaggle}");
-    // The worker's deadline for its final metrics is the manager's wait
-    // for them, which starts first, when it sends Stop: either may end it.
+    // The worker's deadline for its final metrics and the manager's wait
+    // for them both start as its users stop: either may end it.
     let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
     assert!(
         (reason.contains("could not finish") && reason.contains(phase))
@@ -1158,7 +1158,7 @@ async fn gaggle_without_metrics_exits_cleanly() {
             .await
             .expect("the Gaggle ends within 60 seconds"),
     );
-    // Joining, a 2 second start, a 1 second ramp and 3 seconds of run.
+    // Joining, a 300 ms start, a 1 second ramp and 3 seconds of run.
     assert!(
         started.elapsed() < Duration::from_secs(30),
         "{:?}",
