@@ -365,17 +365,16 @@ impl WorkerEntry {
     }
 }
 
-/// Worker `id` of `workers`: the one at its index whose own id it is.
-fn find(workers: &[WorkerEntry], id: u32) -> Option<&WorkerEntry> {
-    workers.get(id as usize).filter(|worker| worker.id == id)
+impl super::WorkerId for WorkerEntry {
+    fn worker_id(&self) -> u32 {
+        self.id
+    }
 }
 
 impl ManagerRun {
-    /// Worker `id`, as [`find`] finds it.
+    /// Worker `id`.
     fn worker(&mut self, id: u32) -> Option<&mut WorkerEntry> {
-        self.workers
-            .get_mut(id as usize)
-            .filter(|worker| worker.id == id)
+        super::worker_mut(&mut self.workers, id)
     }
 
     /// Workers neither lost nor stopped.
@@ -1698,7 +1697,7 @@ impl Incoming {
 
 /// Where worker `id` of `workers` keeps `log`, which stays on it.
 fn log_left(workers: &[WorkerEntry], id: u32, log: &LogSpec) -> GaggleLogLeft {
-    let worker = find(workers, id);
+    let worker = super::worker(workers, id);
     GaggleLogLeft {
         worker: worker.map_or_else(|| id.to_string(), |worker| worker.name.clone()),
         path: match worker.and_then(|worker| worker.run_folder.as_ref()) {
@@ -1856,7 +1855,8 @@ async fn collect_logs_into(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     continue;
                 }
                 if !open.contains_key(&key) {
-                    let Some(name) = find(&run.workers, id).map(|worker| worker.name.clone())
+                    let Some(name) =
+                        super::worker(&run.workers, id).map(|worker| worker.name.clone())
                     else {
                         continue;
                     };
@@ -2102,9 +2102,12 @@ mod tests {
     #[test]
     fn workers_are_found_by_their_id() {
         let workers = vec![entry(), WorkerEntry { id: 5, ..entry() }];
-        assert_eq!(find(&workers, 0).map(|worker| worker.id), Some(0));
-        assert!(find(&workers, 1).is_none());
-        assert!(find(&workers, 5).is_none());
+        assert_eq!(
+            crate::gaggle::worker(&workers, 0).map(|worker| worker.id),
+            Some(0)
+        );
+        assert!(crate::gaggle::worker(&workers, 1).is_none());
+        assert!(crate::gaggle::worker(&workers, 5).is_none());
     }
 
     /// Chunks of a log already given up are dropped without a warning each:

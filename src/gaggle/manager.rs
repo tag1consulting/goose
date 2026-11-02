@@ -1076,10 +1076,10 @@ fn taken((mut event, permit): Queued) -> Event {
     event
 }
 
-/// Worker `id` of `joined`: the one at its index, which ids follow, whose
-/// own id it is.
-fn find(joined: &[Joined], id: u32) -> Option<&Joined> {
-    joined.get(id as usize).filter(|worker| worker.id == id)
+impl super::WorkerId for Joined {
+    fn worker_id(&self) -> u32 {
+        self.id
+    }
 }
 
 /// A running manager: its listening service and its workers.
@@ -1199,7 +1199,7 @@ impl Manager {
     /// Send worker `id` `message`.
     pub(crate) fn send(&self, id: u32, message: ToWorker) {
         if let Ok(joined) = self.shared.joined.lock() {
-            if let Some(worker) = find(&joined, id) {
+            if let Some(worker) = super::worker(joined.as_slice(), id) {
                 let _ = worker.send(message);
             }
         }
@@ -1220,7 +1220,7 @@ impl Manager {
     /// its own dead man's switch when its stream closes or goes silent.
     pub(crate) fn shut_down(&self, id: u32) {
         if let Ok(joined) = self.shared.joined.lock() {
-            if let Some(worker) = find(&joined, id) {
+            if let Some(worker) = super::worker(joined.as_slice(), id) {
                 worker.shut_down();
             }
         }

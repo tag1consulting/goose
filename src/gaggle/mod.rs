@@ -35,6 +35,26 @@ mod run_tests;
 #[cfg(test)]
 mod tests;
 
+/// Something kept for each worker at the index of its id.
+pub(crate) trait WorkerId {
+    fn worker_id(&self) -> u32;
+}
+
+/// Worker `id` of `workers`: the one at its index, which ids follow, whose
+/// own id it is.
+pub(crate) fn worker<T: WorkerId>(workers: &[T], id: u32) -> Option<&T> {
+    workers
+        .get(id as usize)
+        .filter(|worker| worker.worker_id() == id)
+}
+
+/// [`worker`], to change.
+pub(crate) fn worker_mut<T: WorkerId>(workers: &mut [T], id: u32) -> Option<&mut T> {
+    workers
+        .get_mut(id as usize)
+        .filter(|worker| worker.worker_id() == id)
+}
+
 /// Whether two f32 averages agree to f32 rounding. A per second average
 /// response time is an f32 moving average whose last digits depend on the
 /// order its times arrive in, even in one process.
