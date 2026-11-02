@@ -159,6 +159,11 @@ impl TestFaults {
 pub(crate) static HOLD_THRESHOLD_CHECK: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// The held check was released as the manager stopped, not at its 20 second
+/// cap.
+pub(crate) static HELD_TO_STOP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Set as the manager starts to stop its workers.
 pub(crate) static MANAGER_STOPPING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -181,11 +186,6 @@ pub(crate) fn hold_threshold_check(has_requests: bool) {
         std::thread::sleep(Duration::from_millis(300));
     });
 }
-
-/// The held check was released as the manager stopped, not at its 20 second
-/// cap.
-pub(crate) static HELD_TO_STOP: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
 
 /// The workers' `Stopped`, which follows their final metrics, the manager
 /// has taken.

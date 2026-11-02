@@ -2401,6 +2401,15 @@ async fn gaggle_worker_whose_users_never_stop_is_lost_at_the_deadline() {
 #[serial_test::serial]
 async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
     use std::sync::atomic::Ordering::SeqCst;
+    // Disarmed however the test ends, so no later test meets the hold.
+    struct Disarm;
+    impl Drop for Disarm {
+        fn drop(&mut self) {
+            super::faults::HOLD_THRESHOLD_CHECK.store(false, SeqCst);
+            super::faults::MANAGER_STOPPING.store(false, SeqCst);
+        }
+    }
+    let _disarm = Disarm;
     let test = async {
         let server = answering().await;
         let folder = scratch("queued-threshold");
