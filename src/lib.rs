@@ -3966,7 +3966,14 @@ impl GooseAttack {
         // Propagate initialization errors (e.g. dashboard bind failure) as
         // `GooseError` rather than panicking — library callers of `execute()`
         // should get a structured Result.
-        let mut goose_attack_run_state = self.initialize_attack().await?;
+        let mut goose_attack_run_state = match self.initialize_attack().await {
+            Ok(state) => state,
+            Err(e) => {
+                #[cfg(feature = "gaggle")]
+                self.gaggle_manager_failed_to_start().await;
+                return Err(e);
+            }
+        };
 
         // Without autostart, something has to be able to start the load test.
         if self.configuration.no_autostart
@@ -3983,6 +3990,12 @@ impl GooseAttack {
         }
 
         let result = self.run_attack(&mut goose_attack_run_state).await;
+        // A run that failed before its clock started, as a Gaggle manager
+        // whose run folder cannot be made.
+        #[cfg(feature = "gaggle")]
+        if result.is_err() && self.series_started.is_none() {
+            self.gaggle_manager_failed_to_start().await;
+        }
 
         // A run that ended early, on an error, leaves its logger running: end it,
         // so every line is written.

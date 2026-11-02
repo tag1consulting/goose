@@ -740,6 +740,19 @@ impl GooseAttack {
         Ok(workers)
     }
 
+    /// The manager, failing once its workers were told to start but before
+    /// its own run began, as when its dashboard cannot listen: every worker
+    /// is shut down, and `test_stop` runs, as `test_start` did.
+    pub(crate) async fn gaggle_manager_failed_to_start(&mut self) {
+        let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_mut() else {
+            return;
+        };
+        run.manager.shut_down_all().await;
+        if let Err(stop) = self.run_test_stop().await {
+            warn!("test_stop after the manager failed: {stop}");
+        }
+    }
+
     /// The worker, before its run: connect to the manager, wait for its
     /// share, and configure this process to run it. The Controllers and the
     /// dashboard stay off.
