@@ -426,10 +426,12 @@ impl GooseAttack {
         self
     }
 
-    /// The manager, before its run: listen, wait for every worker, run
-    /// `test_start` once, hand each worker its share and custom data, wait
-    /// for each to prepare, then tell all of them to start in
-    /// [`START_DELAY`] and wait for that instant, when its own run starts.
+    /// The manager, before its run: listen, wait for every worker, confirm
+    /// the report files can be created, run `test_start` once, hand each
+    /// worker its share and custom data, wait for each to prepare, then tell
+    /// all of them to start in [`START_DELAY`] and wait for that instant,
+    /// when its own run starts. A failure shuts every worker down, and once
+    /// `test_start` ran, runs `test_stop`.
     pub(crate) async fn gaggle_manager_start(&mut self) -> Result<(), GooseError> {
         self.attack_mode = AttackMode::Manager;
         let (host, port) = self.configuration.manager_bind();
@@ -479,103 +481,29 @@ impl GooseAttack {
         }
         info!("gaggle: all {expected} workers joined");
 
+        // The report files can be created: a path that cannot fails here,
+        // before test_start runs or any worker starts.
+        if let Err(e) = self.create_reports().await {
+            return Err(fail(&mut manager, e).await);
+        }
+
         // test_start runs once, here, before any worker starts.
         if let Err(e) = self.run_test_start().await {
             return Err(fail(&mut manager, e).await);
         }
 
-        let total = self.test_plan.total_users();
-        let order = match self.user_scenarios(total) {
-            Ok(order) => order,
-            Err(e) => return Err(fail(&mut manager, e).await),
+        // test_start ran: any failure from here runs test_stop too, once, as
+        // after any run.
+        let workers = match self.gaggle_prepare_workers(&manager, expected).await {
+            Ok(workers) => workers,
+            Err(e) => {
+                let e = fail(&mut manager, e).await;
+                if let Err(stop) = self.run_test_stop().await {
+                    warn!("test_stop after the manager failed: {stop}");
+                }
+                return Err(e);
+            }
         };
-        let specs = spec::worker_specs(
-            &self.configuration,
-            self.gaggle.client_command_line,
-            &self.test_plan.steps,
-            &order,
-            expected,
-            self.configuration.records_graph_data(),
-        );
-        let names = manager.workers();
-        let mut workers = Vec::with_capacity(expected);
-        // One worker at a time: its data is made, encoded into its Prepare
-        // and dropped before the next worker's is made. Each encoded Prepare
-        // then waits in its worker's send queue until the link takes it.
-        for (mut spec, (id, name)) in specs.into_iter().zip(names) {
-            let share = WorkerShare {
-                index: spec.worker as usize,
-                workers: expected,
-                users: spec.users,
-                user_offset: spec.user_offset,
-            };
-            match self.call_worker_data_hook(&share) {
-                Ok(data) => spec.custom_data = data.unwrap_or_default(),
-                Err(e) => return Err(fail(&mut manager, e).await),
-            }
-            let users = spec.users;
-            let encoded = spec.encode();
-            drop(spec);
-            let bytes = match encoded {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    return Err(fail(
-                        &mut manager,
-                        gaggle_error(format!("could not encode a run spec: {e}")),
-                    )
-                    .await)
-                }
-            };
-            manager.send(id, ToWorker::Prepare(Prepare { spec: bytes }));
-            workers.push(WorkerEntry {
-                id,
-                name,
-                users,
-                stopped: None,
-                lost: None,
-                gone: false,
-                run_folder: None,
-            });
-        }
-
-        let deadline = Instant::now() + PREPARE_TIMEOUT;
-        let mut ready = BTreeSet::new();
-        while ready.len() < expected {
-            match manager.next_event(deadline).await {
-                Some(Event::PrepareAck { id, error: None }) => {
-                    ready.insert(id);
-                }
-                Some(Event::PrepareAck {
-                    id,
-                    error: Some(error),
-                }) => {
-                    return Err(fail(
-                        &mut manager,
-                        gaggle_error(format!("worker {id} could not prepare its share: {error}")),
-                    )
-                    .await)
-                }
-                Some(Event::Lost { id, why }) => {
-                    return Err(fail(
-                        &mut manager,
-                        gaggle_error(format!("worker {id} was lost while preparing: {why}")),
-                    )
-                    .await)
-                }
-                Some(_) => {}
-                None => {
-                    return Err(fail(
-                        &mut manager,
-                        gaggle_error(format!(
-                            "{} of {expected} workers prepared within {} seconds",
-                            ready.len(),
-                            PREPARE_TIMEOUT.as_secs()
-                        )),
-                    )
-                    .await)
-                }
-            }
-        }
 
         let start = tokio::time::Instant::now() + START_DELAY;
         manager.broadcast(ToWorker::StartAt(StartAt {
@@ -601,6 +529,86 @@ impl GooseAttack {
             chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
         );
         Ok(())
+    }
+
+    /// Hand each worker its share and custom data, and wait for each to
+    /// prepare: the manager's workers, as it keeps them for the run.
+    async fn gaggle_prepare_workers(
+        &mut self,
+        manager: &Manager,
+        expected: usize,
+    ) -> Result<Vec<WorkerEntry>, GooseError> {
+        let total = self.test_plan.total_users();
+        let order = self.user_scenarios(total)?;
+        let specs = spec::worker_specs(
+            &self.configuration,
+            self.gaggle.client_command_line,
+            &self.test_plan.steps,
+            &order,
+            expected,
+            self.configuration.records_graph_data(),
+        );
+        let names = manager.workers();
+        let mut workers = Vec::with_capacity(expected);
+        // One worker at a time: its data is made, encoded into its Prepare
+        // and dropped before the next worker's is made. Each encoded Prepare
+        // then waits in its worker's send queue until the link takes it.
+        for (mut spec, (id, name)) in specs.into_iter().zip(names) {
+            let share = WorkerShare {
+                index: spec.worker as usize,
+                workers: expected,
+                users: spec.users,
+                user_offset: spec.user_offset,
+            };
+            spec.custom_data = self.call_worker_data_hook(&share)?.unwrap_or_default();
+            let users = spec.users;
+            let encoded = spec.encode();
+            drop(spec);
+            let bytes =
+                encoded.map_err(|e| gaggle_error(format!("could not encode a run spec: {e}")))?;
+            manager.send(id, ToWorker::Prepare(Prepare { spec: bytes }));
+            workers.push(WorkerEntry {
+                id,
+                name,
+                users,
+                stopped: None,
+                lost: None,
+                gone: false,
+                run_folder: None,
+            });
+        }
+
+        let deadline = Instant::now() + PREPARE_TIMEOUT;
+        let mut ready = BTreeSet::new();
+        while ready.len() < expected {
+            match manager.next_event(deadline).await {
+                Some(Event::PrepareAck { id, error: None }) => {
+                    ready.insert(id);
+                }
+                Some(Event::PrepareAck {
+                    id,
+                    error: Some(error),
+                }) => {
+                    return Err(gaggle_error(format!(
+                        "worker {id} could not prepare its share: {error}"
+                    )))
+                }
+                Some(Event::Lost { id, why }) => {
+                    return Err(gaggle_error(format!(
+                        "worker {id} was lost while preparing: {why}"
+                    )))
+                }
+                Some(_) => {}
+                None => {
+                    return Err(gaggle_error(format!(
+                        "{} of {expected} workers prepared within {} seconds",
+                        ready.len(),
+                        PREPARE_TIMEOUT.as_secs()
+                    )))
+                }
+            }
+        }
+        Ok(workers)
     }
 
     /// The worker, before its run: connect to the manager, wait for its

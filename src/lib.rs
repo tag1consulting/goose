@@ -3929,8 +3929,11 @@ impl GooseAttack {
         }
         goose_attack_run_state.metrics_processor_handle = Some(tokio::spawn(processor.run()));
 
-        // Try to create the requested report files, to confirm access.
-        self.create_reports().await?;
+        // Try to create the requested report files, to confirm access: a
+        // Gaggle manager did, before its workers started.
+        if !self.is_gaggle_manager() {
+            self.create_reports().await?;
+        }
 
         self.run_in_progress = true;
         self.ended_by = None;
