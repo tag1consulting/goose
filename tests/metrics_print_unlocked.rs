@@ -19,13 +19,16 @@ use goose::prelude::*;
 /// were printed.
 static CHECKED: AtomicUsize = AtomicUsize::new(0);
 
-/// Whether this thread is in `GooseMetrics::print`, as its backtrace shows:
-/// percentiles worked out anywhere else, before the print, are not checked,
-/// so they cannot spend the checks.
+/// The thread that printed the final metrics, once Goose logged that it was
+/// about to: it logs nothing else between that line and the print, so every
+/// percentile line it logs from then is the print's. Percentiles worked out
+/// anywhere else, before the print, are not checked, so they cannot spend
+/// the checks.
+static PRINTING: std::sync::Mutex<Option<std::thread::ThreadId>> = std::sync::Mutex::new(None);
+
+/// Whether this thread is printing the final metrics.
 fn in_print() -> bool {
-    std::backtrace::Backtrace::force_capture()
-        .to_string()
-        .contains("GooseMetrics::print")
+    *PRINTING.lock().unwrap() == Some(std::thread::current().id())
 }
 
 /// A logger that checks stdout is free each time the metrics log.
@@ -37,6 +40,14 @@ impl log::Log for Probe {
     }
 
     fn log(&self, record: &log::Record<'_>) {
+        if record
+            .args()
+            .to_string()
+            .starts_with("printing final metrics after")
+        {
+            *PRINTING.lock().unwrap() = Some(std::thread::current().id());
+            return;
+        }
         // The line the metrics' formatting logs, for each percentile, as
         // they are printed.
         if !record.target().starts_with("goose::metrics")
