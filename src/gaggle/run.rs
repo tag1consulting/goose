@@ -1036,6 +1036,11 @@ impl GooseAttack {
                 };
                 worker.stopped = Some(reason);
                 worker.run_folder = Some(stopped.run_folder).filter(|folder| !folder.is_empty());
+                // It sends no more deltas, so it no longer holds back which
+                // seconds are complete, though its final never merged.
+                let _ = goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::GaggleDone { worker: id });
                 if reason == Reason::Canceled && !stop_sent && worker.lost.is_none() {
                     let why = format!("it was stopped on the worker: {}", stopped.canceled);
                     self.lose_worker(goose_attack_run_state, run, id, why);

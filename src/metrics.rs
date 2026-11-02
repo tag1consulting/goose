@@ -437,6 +437,10 @@ pub(crate) enum MetricsCommand {
     /// A Gaggle manager: worker `worker` is gone without its final delta.
     #[cfg(feature = "gaggle")]
     GaggleLost { worker: u32 },
+    /// A Gaggle manager: worker `worker` stopped as told and sends no more
+    /// deltas, its final among them or not.
+    #[cfg(feature = "gaggle")]
+    GaggleDone { worker: u32 },
     /// A Gaggle manager: refuse a delta carrying a second past `second`.
     #[cfg(feature = "gaggle")]
     GaggleClock { second: u64 },
@@ -3803,6 +3807,7 @@ impl MetricsProcessor {
             #[cfg(feature = "gaggle")]
             MetricsCommand::GaggleApply { .. }
             | MetricsCommand::GaggleLost { .. }
+            | MetricsCommand::GaggleDone { .. }
             | MetricsCommand::GaggleClock { .. } => false,
             MetricsCommand::Shutdown {
                 duration,

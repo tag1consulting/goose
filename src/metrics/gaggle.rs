@@ -120,6 +120,11 @@ impl MetricsProcessor {
                 merge.dirty = true;
                 false
             }
+            MetricsCommand::GaggleDone { worker } => {
+                merge.accumulator.done(worker);
+                merge.dirty = true;
+                false
+            }
             MetricsCommand::GaggleClock { second } => {
                 merge.accumulator.set_max_second(second);
                 merge.clock = second;
