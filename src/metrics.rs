@@ -4833,17 +4833,26 @@ impl GooseAttack {
         // are in, perhaps as they fill the disk: each goes to a part file
         // renamed over the report once whole, so a failed write keeps the
         // report the first wrote.
-        let target = match source {
-            Some(_) if self.is_gaggle_manager() => path.with_file_name(format!(
+        let target = if self.is_gaggle_manager() {
+            path.with_file_name(format!(
                 "{}.part",
                 path.file_name().unwrap_or_default().to_string_lossy()
-            )),
-            _ => path.clone(),
+            ))
+        } else {
+            path.clone()
         };
         let file = File::create(&target)
             .await
             .map_err(|err| report_io_error(report, err))?;
         let Some(source) = source else {
+            // The access check: a manager's part file, then the report.
+            if target != path {
+                drop(file);
+                let _ = tokio::fs::remove_file(&target).await;
+                File::create(&path)
+                    .await
+                    .map_err(|err| report_io_error(report, err))?;
+            }
             return Ok(());
         };
         // A manager's only: every run of one is serial with this test fault.
