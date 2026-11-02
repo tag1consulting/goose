@@ -1836,8 +1836,6 @@ async fn gaggle_full_disk_keeps_the_first_reports() {
             "1",
             &report_file,
             "--request-log",
-            "--output-dir",
-            &folder.join("manager").display().to_string(),
         ],
         &[],
         &[],
