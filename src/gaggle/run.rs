@@ -1062,7 +1062,7 @@ impl GooseAttack {
                 if reason == Reason::Canceled && !stop_sent && worker.lost.is_none() {
                     let why = format!("it was stopped on the worker: {}", stopped.canceled);
                     self.lose_worker(goose_attack_run_state, run, id, why);
-                } else {
+                } else if worker.lost.is_none() {
                     // It sends no more deltas, so it no longer holds back
                     // which seconds are complete, though its final never
                     // merged.
@@ -1757,8 +1757,10 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         heard.insert(id, Instant::now());
                     }
                 }
+                // A log is whole only at the size its worker announced.
                 if ok && chunk.last {
-                    ok = incoming.file.flush().await.is_ok()
+                    ok = incoming.written == incoming.size
+                        && incoming.file.flush().await.is_ok()
                         && tokio::fs::rename(&incoming.part, &incoming.path)
                             .await
                             .is_ok();
