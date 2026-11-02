@@ -1597,6 +1597,49 @@ mod tests {
             .expect("within 60 seconds");
     }
 
+    /// A Prepare that takes longer than the heartbeat timeout to cross a
+    /// slow link, the manager's heartbeats queued behind it, does not take
+    /// the manager for silent: 16 MiB at 400 ms round trips takes about 7
+    /// seconds, past a 3 second timeout.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_slow_prepare_does_not_fire_the_switch() {
+        use super::super::proto::{manager_message::Message as ToWorker, Prepare};
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(200)).await;
+            let link = Link::connect(LinkSettings {
+                address: proxy.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(3),
+                hello: LinkSettings::hello(7, "far".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            let sent = Instant::now();
+            manager.send(
+                link.id,
+                ToWorker::Prepare(Prepare {
+                    spec: vec![b'x'; 16 << 20],
+                }),
+            );
+            let event = link.next_event(Duration::from_secs(40)).await;
+            println!(
+                "16 MiB Prepare across 400 ms round trips in {:?}",
+                sent.elapsed()
+            );
+            assert!(
+                matches!(event, Some(LinkEvent::Prepare(ref spec)) if spec.len() == 16 << 20),
+                "{:?}",
+                event.map(|_| ())
+            );
+            assert!(!link.fired.load(Ordering::SeqCst), "the switch fired");
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
     /// A worker that fails, its last message behind a slow link, gives it
     /// time to arrive: `flush` returns only once the manager has read it and
     /// shut the worker down, never as soon as the queue is empty.
