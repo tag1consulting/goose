@@ -65,51 +65,31 @@ const EVENT_QUEUE: usize = 16;
 /// counted as the size of what each carries: a `Prepare`'s run spec.
 const EVENT_BYTES: usize = 64 << 20;
 
-/// What a queued event holds of [`Room`], in bytes: `None` for the switch's
-/// `Lost` and the reader's last event, `Shutdown`, which never wait.
-fn cost(event: &LinkEvent) -> Option<u32> {
-    match event {
-        LinkEvent::Lost(_) | LinkEvent::Shutdown => None,
-        LinkEvent::Prepare(spec) => Some(spec.len().min(EVENT_BYTES) as u32),
-        _ => Some(0),
-    }
+/// An event as queued, holding its share of [`EVENT_BYTES`] until the main
+/// loop takes it.
+type Queued = (LinkEvent, Option<tokio::sync::OwnedSemaphorePermit>);
+
+/// The event that ends the reader or comes from the switch, `Shutdown` or
+/// `Lost`, kept outside the queue so neither ever waits for room: the main
+/// loop takes it once the queue is empty.
+#[derive(Default)]
+struct Last {
+    event: Mutex<Option<LinkEvent>>,
+    /// Woken when it is set.
+    ready: Notify,
 }
 
-/// The room left in the worker's event queue: an event takes one slot and
-/// its bytes as the reader queues it, and gives them back as the main loop
-/// takes it.
-struct Room {
-    slots: tokio::sync::Semaphore,
-    bytes: tokio::sync::Semaphore,
-}
-
-impl Room {
-    fn new() -> Self {
-        Room {
-            slots: tokio::sync::Semaphore::new(EVENT_QUEUE),
-            bytes: tokio::sync::Semaphore::new(EVENT_BYTES),
+impl Last {
+    /// Leave `event`, unless one waits already.
+    fn set(&self, event: LinkEvent) {
+        if let Ok(mut last) = self.event.lock() {
+            last.get_or_insert(event);
         }
+        self.ready.notify_waiters();
     }
 
-    /// Wait for room for `event`, and take it.
-    async fn take(&self, event: &LinkEvent) {
-        let Some(bytes) = cost(event) else {
-            return;
-        };
-        if let Ok(slot) = self.slots.acquire().await {
-            slot.forget();
-        }
-        if let Ok(bytes) = self.bytes.acquire_many(bytes).await {
-            bytes.forget();
-        }
-    }
-
-    /// Give back the room `event` took.
-    fn give(&self, event: &LinkEvent) {
-        if let Some(bytes) = cost(event) {
-            self.slots.add_permits(1);
-            self.bytes.add_permits(bytes as usize);
-        }
+    fn take(&self) -> Option<LinkEvent> {
+        self.event.lock().ok()?.take()
     }
 }
 
@@ -491,9 +471,12 @@ pub(crate) enum LinkEvent {
 pub(crate) struct Link {
     pub(crate) id: u32,
     pub(crate) outbox: Arc<Outbox>,
-    events: flume::Receiver<LinkEvent>,
-    /// The room left in `events`.
-    room: Arc<Room>,
+    events: flume::Receiver<Queued>,
+    /// `Shutdown` or `Lost`, once either came.
+    last: Arc<Last>,
+    /// Woken once the link is dropped, so a reader the main loop holds back
+    /// stops waiting.
+    closing: Arc<Notify>,
     /// Every user task the worker started, aborted at once by the dead man's
     /// switch.
     users: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
@@ -696,14 +679,15 @@ impl Link {
             "gaggle: joined the manager at {} as worker {id}",
             settings.address
         );
-        let (events_tx, events) = flume::unbounded();
+        let (events_tx, events) = flume::bounded(EVENT_QUEUE);
         // Held by the reader of the manager's stream until that stream ends.
         let (open, manager_open) = tokio::sync::watch::channel(());
         let mut link = Link {
             id,
             outbox,
             events,
-            room: Arc::new(Room::new()),
+            last: Arc::new(Last::default()),
+            closing: Arc::new(Notify::new()),
             users: Arc::new(Mutex::new(Vec::new())),
             shutdown: Arc::new(AtomicBool::new(false)),
             done: Arc::new(AtomicBool::new(false)),
@@ -721,7 +705,7 @@ impl Link {
             fired: link.fired.clone(),
             users_stopped: link.users_stopped.clone(),
             users: link.users.clone(),
-            events: events_tx.clone(),
+            last: link.last.clone(),
             outbox: link.outbox.clone(),
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
@@ -730,11 +714,20 @@ impl Link {
             #[cfg(test)]
             alive: link.alive.clone(),
         };
+        let exits = Exits {
+            done: link.done.clone(),
+            closing: link.closing.clone(),
+            sent_all: link.sent_all.clone(),
+        };
         let reader = tokio::spawn(read_manager(
             inbound,
             open,
-            events_tx,
-            link.room.clone(),
+            Events {
+                queue: events_tx,
+                bytes: Arc::new(tokio::sync::Semaphore::new(EVENT_BYTES)),
+                last: link.last.clone(),
+            },
+            exits,
             heard.clone(),
             link.shutdown.clone(),
             switch.clone(),
@@ -770,31 +763,41 @@ impl Link {
         abort_users(&self.users, &self.users_stopped, false);
     }
 
-    /// The next event if one is waiting.
+    /// The next event if one is waiting: what is queued, in order, then
+    /// `Shutdown` or `Lost`. Its share of the byte budget is given back.
     pub(crate) fn try_event(&self) -> Option<LinkEvent> {
-        let event = self.events.try_recv().ok()?;
-        self.room.give(&event);
-        Some(event)
+        match self.events.try_recv() {
+            Ok((event, _bytes)) => Some(event),
+            Err(_) => self.last.take(),
+        }
     }
 
-    /// Every event queued now, taken (unit tests).
+    /// Every event waiting now, taken (unit tests).
     #[cfg(test)]
     fn drain_events(&self) -> Vec<LinkEvent> {
-        let events: Vec<LinkEvent> = self.events.drain().collect();
-        for event in &events {
-            self.room.give(event);
-        }
-        events
+        std::iter::from_fn(|| self.try_event()).collect()
     }
 
     /// The next event, waiting at most `wait`.
     pub(crate) async fn next_event(&self, wait: Duration) -> Option<LinkEvent> {
-        let event = tokio::time::timeout(wait, self.events.recv_async())
-            .await
-            .ok()?
-            .ok()?;
-        self.room.give(&event);
-        Some(event)
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            // Created before the check, so an event left between them still
+            // wakes it.
+            let ready = self.last.ready.notified();
+            if let Some(event) = self.try_event() {
+                return Some(event);
+            }
+            // Once the reader has ended, only the last event can come.
+            let queued = tokio::select! {
+                queued = self.events.recv_async(), if !self.events.is_disconnected() => queued.ok(),
+                () = ready => None,
+                () = tokio::time::sleep_until(deadline) => return self.try_event(),
+            };
+            if let Some((event, _bytes)) = queued {
+                return Some(event);
+            }
+        }
     }
 
     /// Answer `Prepare`.
@@ -867,6 +870,7 @@ impl Drop for Link {
     /// heartbeat tasks end.
     fn drop(&mut self) {
         self.done.store(true, Ordering::SeqCst);
+        self.closing.notify_waiters();
         self.outbox.close();
         for task in &self.tasks {
             task.abort();
@@ -998,7 +1002,8 @@ struct Switch {
     fired: Arc<AtomicBool>,
     users_stopped: Arc<AtomicBool>,
     users: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
-    events: flume::Sender<LinkEvent>,
+    /// Where it leaves `Lost`.
+    last: Arc<Last>,
     outbox: Arc<Outbox>,
     heartbeat_timeout: Duration,
     done: Arc<AtomicBool>,
@@ -1027,7 +1032,7 @@ impl Switch {
         error!("gaggle: lost the manager ({why}); stopping every user");
         abort_users(&self.users, &self.users_stopped, false);
         self.outbox.close();
-        let _ = self.events.send(LinkEvent::Lost(why));
+        self.last.set(LinkEvent::Lost(why));
         self.last_resort("gaggle: lost the manager and the worker has not exited; exiting now");
     }
 
@@ -1065,19 +1070,64 @@ impl Switch {
     }
 }
 
+/// Where the reader queues the manager's messages for the main loop.
+struct Events {
+    queue: flume::Sender<Queued>,
+    /// What is left of [`EVENT_BYTES`].
+    bytes: Arc<tokio::sync::Semaphore>,
+    last: Arc<Last>,
+}
+
+/// What ends a wait the main loop holds back: the link dropped, or the
+/// connection to the manager gone.
+struct Exits {
+    done: Arc<AtomicBool>,
+    closing: Arc<Notify>,
+    sent_all: tokio::sync::watch::Receiver<bool>,
+}
+
+impl Exits {
+    /// Wait until the link is dropped, or the request stream was dropped
+    /// before it ended, as hyper drops it once the connection is gone.
+    async fn any(&self) {
+        // Created before the check, so a drop between them still wakes it.
+        let closing = self.closing.notified();
+        if self.done.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut sent_all = self.sent_all.clone();
+        let gone = async move {
+            while sent_all.changed().await.is_ok() {}
+            if !*sent_all.borrow() {
+                return;
+            }
+            // It ended as the outbox closed: nothing is gone.
+            std::future::pending::<()>().await
+        };
+        tokio::select! {
+            () = closing => {}
+            () = gone => {}
+        }
+    }
+}
+
 /// Wait for `future`, which the main loop holds back, as when the event
 /// queue is full: `heard` is kept fresh meanwhile, as the manager has not
-/// gone silent, so a held main loop never fires the switch.
+/// gone silent, so a held main loop never fires the switch. `None`, the
+/// wait given up, once `exits` says the link was dropped or the connection
+/// to the manager is gone.
 async fn held<T>(
     future: impl std::future::Future<Output = T>,
     heard: &Mutex<Instant>,
     heartbeat_timeout: Duration,
-) -> T {
-    let mut future = std::pin::pin!(future);
+    exits: &Exits,
+) -> Option<T> {
+    let (mut future, mut exit) = (std::pin::pin!(future), std::pin::pin!(exits.any()));
     let mut holding = tokio::time::interval(HEARTBEAT_INTERVAL.min(heartbeat_timeout / 2));
     loop {
         tokio::select! {
-            out = &mut future => return out,
+            out = &mut future => return Some(out),
+            () = &mut exit => return None,
             _ = holding.tick() => {
                 if let Ok(mut heard) = heard.lock() {
                     *heard = Instant::now();
@@ -1087,14 +1137,16 @@ async fn held<T>(
     }
 }
 
-/// Read the manager's stream until it ends, as events. Past [`Room`], this
-/// waits, reading nothing more; heartbeats never take any.
+/// Read the manager's stream until it ends, as events. Past
+/// [`EVENT_QUEUE`] events or [`EVENT_BYTES`], this waits, reading nothing
+/// more; heartbeats never take any room, and `Shutdown` goes outside the
+/// queue.
 async fn read_manager(
     mut inbound: tonic::Streaming<super::proto::ManagerMessage>,
     // Dropped as this returns: the manager's stream has ended.
     _open: tokio::sync::watch::Sender<()>,
-    events: flume::Sender<LinkEvent>,
-    room: Arc<Room>,
+    events: Events,
+    exits: Exits,
     heard: Arc<Mutex<Instant>>,
     shutdown: Arc<AtomicBool>,
     switch: Switch,
@@ -1128,15 +1180,36 @@ async fn read_manager(
             Some(FromManager::Shutdown(_)) => {
                 shutdown.store(true, Ordering::Relaxed);
                 switch.shut_down();
-                let _ = events.send(LinkEvent::Shutdown);
+                events.last.set(LinkEvent::Shutdown);
                 return;
             }
         };
-        held(room.take(&event), &heard, switch.heartbeat_timeout).await;
-        if events.send(event).is_err() {
-            return;
+        let bytes = match &event {
+            LinkEvent::Prepare(spec) => spec.len().min(EVENT_BYTES) as u32,
+            _ => 0,
+        };
+        let permit = held(
+            events.bytes.clone().acquire_many_owned(bytes),
+            &heard,
+            switch.heartbeat_timeout,
+            &exits,
+        )
+        .await;
+        let Some(Ok(permit)) = permit else {
+            break;
+        };
+        let queued = held(
+            events.queue.send_async((event, Some(permit))),
+            &heard,
+            switch.heartbeat_timeout,
+            &exits,
+        )
+        .await;
+        if !matches!(queued, Some(Ok(()))) {
+            break;
         }
     }
+    // Never once the link is dropped: the switch checks.
     if !shutdown.load(Ordering::Relaxed) {
         switch.fire("its stream closed without Shutdown".to_string());
     }
@@ -1160,7 +1233,10 @@ async fn heartbeat_manager(
     let mut last_sent = Instant::now();
     loop {
         interval.tick().await;
-        if shutdown.load(Ordering::Relaxed) || switch.fired.load(Ordering::Relaxed) {
+        if shutdown.load(Ordering::Relaxed)
+            || switch.fired.load(Ordering::Relaxed)
+            || switch.done.load(Ordering::SeqCst)
+        {
             return;
         }
         let silent = heard
@@ -1388,14 +1464,14 @@ mod tests {
     fn switch(
         users: Vec<tokio::task::AbortHandle>,
         heartbeat_timeout: Duration,
-    ) -> (Switch, flume::Receiver<LinkEvent>, Arc<Outbox>) {
-        let (events, received) = flume::unbounded();
+    ) -> (Switch, Arc<Last>, Arc<Outbox>) {
+        let last = Arc::new(Last::default());
         let outbox = Arc::new(Outbox::default());
         let switch = Switch {
             fired: Arc::new(AtomicBool::new(false)),
             users_stopped: Arc::new(AtomicBool::new(false)),
             users: Arc::new(Mutex::new(users)),
-            events,
+            last: last.clone(),
             outbox: outbox.clone(),
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(false)),
@@ -1404,16 +1480,17 @@ mod tests {
             prepared: Arc::new(AtomicBool::new(true)),
             alive: Arc::new(()),
         };
-        (switch, received, outbox)
+        (switch, last, outbox)
     }
 
     /// A link over `switch`'s users, events and flags.
-    fn link_of(switch: &Switch, outbox: Arc<Outbox>, events: flume::Receiver<LinkEvent>) -> Link {
+    fn link_of(switch: &Switch, outbox: Arc<Outbox>, last: Arc<Last>) -> Link {
         Link {
             id: 0,
             outbox,
-            events,
-            room: Arc::new(Room::new()),
+            events: flume::bounded(EVENT_QUEUE).1,
+            last,
+            closing: Arc::new(Notify::new()),
             users: switch.users.clone(),
             shutdown: Arc::new(AtomicBool::new(false)),
             done: switch.done.clone(),
@@ -1476,7 +1553,7 @@ mod tests {
             .await
             .expect("within 30 seconds");
         assert!(ended.unwrap_err().is_cancelled());
-        assert!(matches!(events.try_recv(), Ok(LinkEvent::Lost(why)) if why == "test"));
+        assert!(matches!(events.take(), Some(LinkEvent::Lost(why)) if why == "test"));
         assert!(next(&outbox).await.is_none());
     }
 
@@ -1495,7 +1572,7 @@ mod tests {
             .expect("within 30 seconds");
         assert!(ended.unwrap_err().is_cancelled());
         assert!(
-            matches!(events.try_recv(), Ok(LinkEvent::Lost(why)) if why.starts_with("nothing from it"))
+            matches!(events.take(), Some(LinkEvent::Lost(why)) if why.starts_with("nothing from it"))
         );
         tokio::time::timeout(Duration::from_secs(30), task)
             .await
