@@ -2304,7 +2304,7 @@ async fn gaggle_delta_past_the_message_limit() {
     let (lost, kept) = split_workers(&gaggle, |worker| worker["state"] == "lost");
     assert_eq!((lost.len(), kept.len()), (1, 1), "{gaggle}");
     assert_eq!(kept[0]["state"], "finished", "{gaggle}");
-    assert!(kept[0]["missing_deltas"].as_u64() >= Some(1), "{gaggle}");
+    assert!(kept[0]["missing_deltas"].as_u64() >= Some(1), "{}", gaggle);
     let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
     assert!(reason.contains("bytes, more than the"), "{}", gaggle);
 }
@@ -2390,5 +2390,5 @@ async fn gaggle_worker_whose_users_never_stop_is_lost_at_the_deadline() {
         gaggle
     );
     assert_eq!(kept[0]["state"], "finished", "{gaggle}");
-    assert!(kept[0].get("final_missing").is_none(), "{gaggle}");
+    assert!(kept[0].get("final_missing").is_none(), "{}", gaggle);
 }

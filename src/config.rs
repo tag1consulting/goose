@@ -935,10 +935,11 @@ pub struct GooseConfiguration {
     /// Run as a Gaggle worker
     ///
     /// Connects to the manager at --manager-host and runs the share of the load test it
-    /// hands out. The manager gives every option that shapes the load, the metrics, the
-    /// reports and the logs, so a worker refuses them, and every Controller and dashboard
-    /// option; it keeps --output-dir, --goose-log and verbosity, and runs no Controller
-    /// and no dashboard. Can't be used with --manager.
+    /// hands out, which every option that shapes the load, the metrics, the reports and the
+    /// logs comes with. A worker keeps only --output-dir, --goose-log, --verbose, --quiet,
+    /// --log-level, --no-print-metrics, --no-error-summary, the help and list options, and
+    /// its own Gaggle options, and refuses every other; it runs no Controller and no
+    /// dashboard. Can't be used with --manager.
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long)]
     pub worker: bool,
@@ -971,9 +972,10 @@ pub struct GooseConfiguration {
     /// Shared Gaggle token
     ///
     /// A secret the manager and every worker must share; a worker with another token is
-    /// turned away. Also read from the GOOSE_GAGGLE_TOKEN environment variable. Never
-    /// shown in output. Printable ASCII. The token, and all Gaggle traffic, cross the
-    /// network unencrypted until TLS arrives: run a Gaggle on a network you trust.
+    /// turned away. Printable ASCII without spaces. Better read from the GOOSE_GAGGLE_TOKEN
+    /// environment variable: Goose never shows it, but on a command line it shows in ps
+    /// and shell history. The token, and all Gaggle traffic, cross the network
+    /// unencrypted until TLS arrives: run a Gaggle on a network you trust.
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long, value_name = "TOKEN")]
     #[serde(serialize_with = "serialize_token")]
