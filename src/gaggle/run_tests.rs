@@ -1623,9 +1623,17 @@ async fn gaggle_log_past_its_announced_size_is_cut_off() {
 #[serial_test::serial]
 async fn gaggle_log_write_failure_leaves_the_reports_whole() {
     let test = async {
+        // Writes work again however the test ends.
+        struct FailWrites;
+        impl Drop for FailWrites {
+            fn drop(&mut self) {
+                super::run::FAIL_LOG_WRITES.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         super::run::FAIL_LOG_WRITES.store(true, std::sync::atomic::Ordering::Relaxed);
+        let restore = FailWrites;
         let (manager, _, gaggle, folder) = faulty_logs_run(LogsFault::None).await;
-        super::run::FAIL_LOG_WRITES.store(false, std::sync::atomic::Ordering::Relaxed);
+        drop(restore);
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
         assert_eq!(
             gaggle["logs_left"].as_array().map(Vec::len),
