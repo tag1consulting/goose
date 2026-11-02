@@ -153,6 +153,29 @@ impl TestFaults {
     }
 }
 
+/// Armed by a test: the manager's processor holds its first threshold check
+/// with requests to judge until the manager is stopping, and 300 ms more.
+pub(crate) static HOLD_THRESHOLD_CHECK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Set as the manager starts to stop its workers.
+pub(crate) static MANAGER_STOPPING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Hold a threshold check, as [`HOLD_THRESHOLD_CHECK`] says, once there are
+/// requests to judge.
+pub(crate) fn hold_threshold_check(has_requests: bool) {
+    use std::sync::atomic::Ordering::SeqCst;
+    if !has_requests || !HOLD_THRESHOLD_CHECK.swap(false, SeqCst) {
+        return;
+    }
+    let until = std::time::Instant::now() + Duration::from_secs(20);
+    while !MANAGER_STOPPING.load(SeqCst) && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+}
+
 /// The workers' `Stopped`, which follows their final metrics, the manager
 /// has taken.
 pub(crate) static STOPPED_SEEN: std::sync::atomic::AtomicUsize =

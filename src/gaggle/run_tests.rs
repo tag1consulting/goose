@@ -2393,3 +2393,54 @@ async fn gaggle_worker_whose_users_never_stop_is_lost_at_the_deadline() {
     assert_eq!(kept[0]["state"], "finished", "{gaggle}");
     assert!(kept[0].get("final_missing").is_none(), "{}", gaggle);
 }
+
+/// A failing threshold check still queued in the manager's metrics processor
+/// as the run stops is judged before the cancel is set aside: the worker's
+/// late final metrics are kept, never lost as to a Ctrl-C during the wait.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("queued-threshold");
+        super::faults::MANAGER_STOPPING.store(false, SeqCst);
+        super::faults::HOLD_THRESHOLD_CHECK.store(true, SeqCst);
+        let faults = [TestFaults {
+            final_after: Some(Duration::from_secs(1)),
+            ..Default::default()
+        }];
+        let (_manager, _) = gaggle(
+            quick,
+            1,
+            server.base_url(),
+            &folder,
+            &[
+                "--users",
+                "1",
+                "--run-time",
+                "5",
+                "--threshold",
+                "error-rate>99%",
+                "--threshold-abort-delay",
+                "1",
+                "--report-file",
+            ],
+            &[],
+            &faults,
+        )
+        .await;
+        crate::reset_killswitch();
+        super::faults::MANAGER_STOPPING.store(false, SeqCst);
+        assert!(
+            !super::faults::HOLD_THRESHOLD_CHECK.swap(false, SeqCst),
+            "no threshold check was held"
+        );
+        let (gaggle, _) = record(&folder);
+        let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+        assert!(lost.is_empty(), "{}", gaggle);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}

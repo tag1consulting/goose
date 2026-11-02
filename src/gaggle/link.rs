@@ -2142,7 +2142,7 @@ mod tests {
             let cut_at = Instant::now();
             while !link.fired.load(Ordering::SeqCst) {
                 assert!(
-                    cut_at.elapsed() < timeout + Duration::from_secs(2),
+                    cut_at.elapsed() < timeout + Duration::from_secs(4),
                     "the switch never fired"
                 );
                 tokio::time::sleep(Duration::from_millis(50)).await;

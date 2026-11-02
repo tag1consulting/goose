@@ -1351,6 +1351,7 @@ mod tests {
     /// most one warning: no client floods the manager's log. Managers of
     /// other tests may warn meanwhile, each at most once.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
     async fn refused_connections_do_not_flood_the_log() {
         let test = async {
             let manager = test_manager(1, Duration::from_secs(30)).await;
@@ -2370,8 +2371,17 @@ pub(crate) mod handshake_tests {
                 );
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            // Past the budget nothing more is taken: what is in flight settles.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Past the budget nothing more is taken: until the queue stops
+            // growing.
+            let mut settled = manager.events.len();
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let now = manager.events.len();
+                if now == settled {
+                    break;
+                }
+                settled = now;
+            }
             let queued = manager.events.len();
             assert!(queued <= 16, "{} events queued past the budget", queued);
             assert!(queued >= 4, "{} events queued", queued);

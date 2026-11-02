@@ -3595,6 +3595,8 @@ impl MetricsProcessor {
                 false
             }
             MetricsCommand::CheckThresholds { duration, seconds } => {
+                #[cfg(all(test, feature = "gaggle"))]
+                crate::gaggle::faults::hold_threshold_check(!self.metrics.requests.is_empty());
                 // Once the killswitch is triggered, by a threshold or anything
                 // else, the run is stopping and there is nothing more to judge.
                 if self.metrics.threshold_abort.is_none() && !crate::is_killswitch_triggered() {

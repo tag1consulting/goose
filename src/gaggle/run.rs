@@ -1178,6 +1178,8 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut ManagerRun,
     ) {
+        #[cfg(test)]
+        super::faults::MANAGER_STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
         run.stop_sent = true;
         // Whatever the processor has queued, a threshold check among them,
         // is done first: a rule that fails now triggers the killswitch before
