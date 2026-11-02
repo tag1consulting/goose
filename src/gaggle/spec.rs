@@ -82,6 +82,9 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) custom_data: Vec<u8>,
 }
 
+/// The most test plan steps a worker runs: a plan of more fails `Prepare`.
+pub(crate) const MAX_PLAN_STEPS: usize = 100_000;
+
 /// `total` split as evenly as it goes between `workers`, the remainder one
 /// each to the first: each worker's part never falls as `total` rises, so
 /// every worker moves the way the total does.
@@ -393,11 +396,34 @@ impl WorkerRunSpec {
     }
 
     /// Why a worker whose load test has `scenarios` scenarios cannot run
-    /// this spec, when it cannot: a log of no kind a worker writes, or a
-    /// user given a scenario the load test lacks. A worker's manager is
+    /// this spec, when it cannot: a log of no kind a worker writes, or one
+    /// asked for twice, a user given a scenario the load test lacks, or a
+    /// spec past a size bound: more users than a delta may count, more test
+    /// plan steps than [`MAX_PLAN_STEPS`], or custom data past
+    /// [`MAX_WORKER_DATA`](crate::MAX_WORKER_DATA). A worker's manager is
     /// trusted no more than its network, so a bad spec fails `Prepare`
     /// rather than the worker.
     pub(crate) fn validate(&self, scenarios: usize) -> Result<(), String> {
+        let max_users = super::delta::DeltaLimits::default().max_users;
+        if self.users as u64 > max_users {
+            return Err(format!(
+                "the run spec gives {} users, more than the {max_users} users a worker runs",
+                self.users
+            ));
+        }
+        if self.test_plan.len() > MAX_PLAN_STEPS {
+            return Err(format!(
+                "the run spec's test plan has {} steps, more than the {MAX_PLAN_STEPS} steps a worker runs",
+                self.test_plan.len()
+            ));
+        }
+        if self.custom_data.len() > crate::MAX_WORKER_DATA {
+            return Err(format!(
+                "the run spec's custom data is {} bytes, more than the {} bytes allowed",
+                self.custom_data.len(),
+                crate::MAX_WORKER_DATA
+            ));
+        }
         if let Some(log) = self
             .logs
             .iter()
@@ -408,6 +434,14 @@ impl WorkerRunSpec {
                 log.kind,
                 LOG_NAMES.len()
             ));
+        }
+        for (n, log) in self.logs.iter().enumerate() {
+            if self.logs[..n].iter().any(|before| before.kind == log.kind) {
+                return Err(format!(
+                    "the run spec asks for the {} log twice",
+                    LOG_NAMES[log.kind as usize]
+                ));
+            }
         }
         // The worker starts a user for each entry of the slice.
         if self.users != self.slice.len() {
