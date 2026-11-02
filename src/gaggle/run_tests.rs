@@ -2253,3 +2253,52 @@ async fn gaggle_late_final_handover_names_the_processor() {
     )
     .await;
 }
+
+/// A worker one of whose running deltas encodes past the message limit
+/// keeps running, the manager recording the gap; one whose final does is
+/// lost for that, its size named, never for losing its manager.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_delta_past_the_message_limit() {
+    let server = answering().await;
+    let folder = scratch("oversized-delta");
+    let faults = [
+        TestFaults {
+            oversize_delta: 2,
+            ..Default::default()
+        },
+        TestFaults {
+            oversize_final: true,
+            ..Default::default()
+        },
+    ];
+    let run = gaggle(
+        quick,
+        2,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "2",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "4",
+            "--report-file",
+        ],
+        &[],
+        &faults,
+    );
+    let (manager, workers) = tokio::time::timeout(Duration::from_secs(90), run)
+        .await
+        .expect("the Gaggle ends within 90 seconds");
+    manager.expect("the manager exits cleanly");
+    assert!(workers[0].is_ok(), "{:?}", workers[0].as_ref().map(|_| ()));
+    let (gaggle, _) = record(&folder);
+    let workers = gaggle["workers"].as_array().unwrap();
+    assert_eq!(workers[0]["state"], "finished", "{gaggle}");
+    assert!(workers[0]["missing_deltas"].as_u64() >= Some(1), "{gaggle}");
+    assert_eq!(workers[1]["state"], "lost", "{gaggle}");
+    let reason = workers[1]["lost_reason"].as_str().unwrap_or_default();
+    assert!(reason.contains("bytes, more than the"), "{}", gaggle);
+}

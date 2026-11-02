@@ -123,6 +123,15 @@ fn backoff(attempt: u32) -> Duration {
     })
 }
 
+/// Give `delta` a request name past what a message may carry (unit tests).
+#[cfg(test)]
+pub(crate) fn oversized(delta: &mut GaggleDelta) {
+    delta
+        .graph
+        .requests
+        .insert("x".repeat(MAX_MESSAGE), [(delta.now, 1)].into());
+}
+
 /// The delta in `slot`, an empty one left in its place.
 fn take(slot: &mut GaggleDelta) -> GaggleDelta {
     std::mem::replace(slot, GaggleDelta::new(0, 0, 0, DeltaKind::Delta))
@@ -223,6 +232,13 @@ pub(crate) struct Outbox {
     /// Fail to encode every delta (unit tests).
     #[cfg(test)]
     unencodable: AtomicBool,
+    /// Make the delta of this sequence number larger than a message may
+    /// be, 0 for none (unit tests).
+    #[cfg(test)]
+    pub(crate) oversize_seq: std::sync::atomic::AtomicU64,
+    /// Make the final delta larger than a message may be (unit tests).
+    #[cfg(test)]
+    pub(crate) oversize_final: AtomicBool,
 }
 
 impl Outbox {
@@ -257,6 +273,12 @@ impl Outbox {
                 || (delta.kind == DeltaKind::Final && self.corrupt_final.load(Ordering::Relaxed))
             {
                 delta.worker = u32::MAX;
+            }
+            let oversize = self.oversize_seq.load(Ordering::Relaxed);
+            if (oversize != 0 && delta.seq == oversize)
+                || (delta.kind == DeltaKind::Final && self.oversize_final.load(Ordering::Relaxed))
+            {
+                oversized(&mut delta);
             }
             delta
         };
@@ -478,6 +500,10 @@ pub(crate) struct Link {
     sent_all: tokio::sync::watch::Receiver<bool>,
     /// Closed once the manager's stream ended.
     manager_open: tokio::sync::watch::Receiver<()>,
+    /// Held by the reader and heartbeat tasks too, through their switch:
+    /// its count says which still run (unit tests).
+    #[cfg(test)]
+    alive: Arc<()>,
 }
 
 /// What [`Link::connect`] needs. No `Debug`: it holds the token.
@@ -669,6 +695,8 @@ impl Link {
             forced: Arc::new(AtomicBool::new(false)),
             sent_all,
             manager_open,
+            #[cfg(test)]
+            alive: Arc::new(()),
         };
         let heard = Arc::new(Mutex::new(Instant::now()));
         let switch = Switch {
@@ -681,6 +709,8 @@ impl Link {
             done: link.done.clone(),
             forced: link.forced.clone(),
             prepared: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            alive: link.alive.clone(),
         };
         tokio::spawn(read_manager(
             inbound,
@@ -956,6 +986,9 @@ struct Switch {
     /// waits [`BEFORE_PREPARE_SILENCE`], as a large one on a slow link
     /// holds back the heartbeats behind it, and no user runs yet.
     prepared: Arc<AtomicBool>,
+    /// The link's [`Link::alive`] (unit tests).
+    #[cfg(test)]
+    alive: Arc<()>,
 }
 
 impl Switch {
@@ -1344,6 +1377,7 @@ mod tests {
             forced: Arc::new(AtomicBool::new(false)),
             // Past its Prepare: silence fires it at the heartbeat timeout.
             prepared: Arc::new(AtomicBool::new(true)),
+            alive: Arc::new(()),
         };
         (switch, received, outbox)
     }
@@ -1363,6 +1397,7 @@ mod tests {
             forced: switch.forced.clone(),
             sent_all: tokio::sync::watch::channel(true).1,
             manager_open: tokio::sync::watch::channel(()).1,
+            alive: switch.alive.clone(),
         }
     }
 
@@ -1844,6 +1879,162 @@ mod tests {
                     "the manager lost its worker: {:?}",
                     event
                 );
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// A delta whose encoding is past the message limit never reaches
+    /// tonic, which would reset the stream: a running one is dropped,
+    /// leaving a gap, and a final one says the worker failed, naming its
+    /// size.
+    #[tokio::test]
+    async fn a_delta_past_the_message_limit_is_never_sent() {
+        let outbox = Outbox::default();
+        let mut big = delta(1);
+        oversized(&mut big);
+        outbox.push_delta(big);
+        outbox.push_delta(delta(2));
+        let mut big_final = delta(3);
+        big_final.kind = DeltaKind::Final;
+        oversized(&mut big_final);
+        outbox.push_delta(big_final);
+        outbox.close();
+        match next(&outbox).await.expect("delta 2").message {
+            Some(ToManager::Metrics(metrics)) => {
+                assert_eq!(GaggleDelta::decode(&metrics.delta).unwrap().seq, 2)
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        match next(&outbox).await.expect("the failed final").message {
+            Some(ToManager::Stopped(stopped)) => {
+                assert_eq!(stopped.reason(), Reason::Failed);
+                assert!(
+                    stopped.canceled.contains("bytes, more than the"),
+                    "{}",
+                    stopped.canceled
+                );
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert!(next(&outbox).await.is_none());
+    }
+
+    /// Once its link is dropped, as when the worker's `execute()` returned,
+    /// a manager that closes its stream without `Shutdown` fires nothing:
+    /// no user is aborted, and the switch reports no loss.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_dropped_link_ignores_its_manager_closing() {
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(10)).await;
+            let link = Link::connect(LinkSettings {
+                address: manager.local_addr.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: Duration::from_secs(10),
+                hello: LinkSettings::hello(7, "dropped".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            let user = tokio::spawn(std::future::pending::<()>());
+            link.watch(user.abort_handle());
+            let fired = link.fired.clone();
+            drop(link);
+            // Every worker's stream closes without Shutdown.
+            drop(manager);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(!fired.load(Ordering::SeqCst), "the switch fired");
+            assert!(!user.is_finished(), "a user was aborted");
+            user.abort();
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A link dropped while its reader waits on a full event queue ends
+    /// both of its background tasks within a second.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_dropped_link_ends_its_tasks_with_a_full_queue() {
+        let test = async {
+            let (link, _manager) =
+                flooded(Duration::from_secs(30), Duration::from_secs(2), 1 << 10).await;
+            let alive = link.alive.clone();
+            drop(link);
+            let dropped = Instant::now();
+            while Arc::strong_count(&alive) > 1 {
+                assert!(
+                    dropped.elapsed() < Duration::from_secs(1),
+                    "{} tasks still run",
+                    Arc::strong_count(&alive) - 1
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// Relay every connection to `to` until the notify is woken, when every
+    /// relayed connection is closed at once, as when the manager's process
+    /// dies: the address it listens on, and the notify.
+    async fn cut_proxy(to: std::net::SocketAddr) -> (std::net::SocketAddr, Arc<Notify>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let cut = Arc::new(Notify::new());
+        let cut_all = cut.clone();
+        tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                let Ok(mut server) = tokio::net::TcpStream::connect(to).await else {
+                    continue;
+                };
+                let cut = cut_all.clone();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                        () = cut.notified() => {}
+                    }
+                });
+            }
+        });
+        (address, cut)
+    }
+
+    /// A manager that dies while the worker's event queue is full and its
+    /// main loop held: the switch fires within the heartbeat timeout, as
+    /// for any manager gone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_dead_manager_fires_the_switch_with_a_full_queue() {
+        use super::super::proto::{manager_message::Message as ToWorker, Prepare};
+        let test = async {
+            let timeout = Duration::from_secs(4);
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (address, cut) = cut_proxy(manager.local_addr).await;
+            let link = Link::connect(LinkSettings {
+                address: address.to_string(),
+                connect_timeout: Duration::from_secs(10),
+                heartbeat_timeout: timeout,
+                hello: LinkSettings::hello(7, "cut".to_string()),
+                token: None,
+            })
+            .await
+            .unwrap();
+            // More than the queue holds; the main loop takes none.
+            for _ in 0..EVENT_QUEUE + 4 {
+                manager.send(link.id, ToWorker::Prepare(Prepare { spec: vec![1] }));
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cut.notify_waiters();
+            let cut_at = Instant::now();
+            while !link.fired.load(Ordering::SeqCst) {
+                assert!(
+                    cut_at.elapsed() < timeout + Duration::from_secs(2),
+                    "the switch never fired"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
         };
         tokio::time::timeout(Duration::from_secs(60), test)

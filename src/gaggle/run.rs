@@ -137,6 +137,11 @@ pub(crate) struct TestFaults {
     pub(crate) stop_reason: Option<i32>,
     /// The metrics processor gets the final metrics command this late.
     pub(crate) final_after: Option<Duration>,
+    /// Make the delta of this sequence number larger than a message may
+    /// be, 0 for none.
+    pub(crate) oversize_delta: u64,
+    /// Make the final delta larger than a message may be.
+    pub(crate) oversize_final: bool,
 }
 
 /// What a worker sends in place of its logs, in unit tests.
@@ -918,6 +923,16 @@ impl GooseAttack {
         #[cfg(test)]
         link.outbox.corrupt_from.store(
             self.gaggle.test_faults.refuse_from,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        #[cfg(test)]
+        link.outbox.oversize_seq.store(
+            self.gaggle.test_faults.oversize_delta,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        #[cfg(test)]
+        link.outbox.oversize_final.store(
+            self.gaggle.test_faults.oversize_final,
             std::sync::atomic::Ordering::Relaxed,
         );
         self.gaggle.role = Some(GaggleRole::Worker(Box::new(WorkerRun {
