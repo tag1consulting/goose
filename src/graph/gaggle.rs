@@ -145,7 +145,24 @@ fn series_count(count: u64) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
+/// The users series a Gaggle manager's merge built, kept so the next build
+/// starts from it: the manager records its own users levels into its graph
+/// data between builds, and the merge's are the ones the results hold.
+#[derive(Clone)]
+pub(crate) struct MergedUsers(TimeSeries<usize, usize>);
+
 impl GraphData {
+    /// The users series, as the merge just built it.
+    pub(crate) fn merged_users(&self) -> MergedUsers {
+        MergedUsers(self.users_per_second.clone())
+    }
+
+    /// Put back the users series the merge built last, dropping any level
+    /// recorded since.
+    pub(crate) fn restore_merged_users(&mut self, users: MergedUsers) {
+        self.users_per_second = users.0;
+    }
+
     /// How a manager builds graph data like this, which `records` per
     /// second graphs or not.
     pub(crate) fn gaggle_settings(&self, records: bool) -> GraphSettings {

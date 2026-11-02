@@ -104,6 +104,9 @@ struct Merged {
 /// build ([`GaggleAccumulator::merged_and_excluded`]).
 struct GraphCache {
     before: Second,
+    /// The users series the build left, which the caller's graph data may
+    /// since have added to.
+    users: Option<crate::graph::MergedUsers>,
     series_origin: Option<Second>,
     columns: bool,
 }
@@ -594,11 +597,18 @@ impl GaggleAccumulator {
             FRESH_BUILDS.with(|builds| builds.set(builds.get() + 1));
         }
         let (mut graph, mut built) = match reusable {
-            Some(built) => (graph, built),
+            Some(mut built) => {
+                let mut graph = graph;
+                if let Some(users) = built.users.take() {
+                    graph.restore_merged_users(users);
+                }
+                (graph, built)
+            }
             None => (
                 GraphData::gaggle_start(self.settings, series_origin),
                 GraphCache {
                     before: 0,
+                    users: None,
                     series_origin,
                     columns: self.settings.columns,
                 },
@@ -609,6 +619,7 @@ impl GaggleAccumulator {
         // With every worker done, nothing later can be added but by a
         // delta, which builds again.
         built.before = complete.unwrap_or(Second::MAX);
+        built.users = Some(graph.merged_users());
         // Finished each build: a later extend writes a second's response
         // times to the heatmap's columns once its ring slot is packed.
         graph.finish_latency_columns();

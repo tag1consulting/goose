@@ -138,7 +138,8 @@ impl MetricsProcessor {
                 merge.built_at = None;
                 self.dispatch_command(MetricsCommand::KeepGraph { keep, now })
             }
-            // Recorded on state the merge replaces, and read from it later.
+            // Recorded on the manager's own state, read until the next
+            // build, which puts back the users the merge built.
             cmd @ (MetricsCommand::UserStarted { .. } | MetricsCommand::RecordUsers { .. }) => {
                 self.dispatch_command(cmd)
             }
