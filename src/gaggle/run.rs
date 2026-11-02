@@ -95,6 +95,67 @@ pub(crate) struct TestFaults {
     pub(crate) exit_for_real: bool,
     /// What the worker does with its `Prepare`.
     pub(crate) prepare: PrepareFault,
+    /// What the worker sends when asked for its logs.
+    pub(crate) logs: LogsFault,
+}
+
+/// What a worker sends in place of its logs, in unit tests.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum LogsFault {
+    /// Nothing wrong: its logs.
+    #[default]
+    None,
+    /// A full chunk of each log every 250 ms, never the last, its main loop
+    /// held for 10 seconds; the killswitch is triggered after the second
+    /// chunk, at [`LOG_FAULT_AT`].
+    Slow,
+    /// 10 bytes of each log every 500 ms, never the last; the first at
+    /// [`LOG_FAULT_AT`].
+    Trickle,
+}
+
+/// When a worker's [`LogsFault`] triggered the killswitch or sent its first
+/// chunk (unit tests).
+#[cfg(test)]
+pub(crate) static LOG_FAULT_AT: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
+/// Send `files` as `fault` says, for 30 seconds, in the background.
+#[cfg(test)]
+fn send_faulty_logs(fault: LogsFault, outbox: Arc<super::link::Outbox>, files: Vec<String>) {
+    use super::link::LOG_CHUNK;
+    use super::proto::LogChunk;
+    let (size, every) = match fault {
+        LogsFault::Slow => (LOG_CHUNK, Duration::from_millis(250)),
+        _ => (10, Duration::from_millis(500)),
+    };
+    tokio::spawn(async move {
+        for n in 0..(30_000 / every.as_millis() as u64) {
+            for file in &files {
+                outbox
+                    .push_chunk(LogChunk {
+                        file: file.clone(),
+                        offset: n * size as u64,
+                        data: vec![b'x'; size],
+                        last: false,
+                        error: None,
+                    })
+                    .await;
+            }
+            let mark = match fault {
+                LogsFault::Slow => n == 1,
+                _ => n == 0,
+            };
+            if mark {
+                *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
+                if fault == LogsFault::Slow {
+                    crate::trigger_killswitch("a test's Ctrl-C while logs arrive");
+                }
+            }
+            tokio::time::sleep(every).await;
+        }
+    });
 }
 
 /// What a worker does wrong with its `Prepare`, in unit tests.
@@ -945,6 +1006,15 @@ impl GooseAttack {
                         info!("gaggle: the manager stopped the run: {reason}");
                         self.set_ended_by(EndedBy::Stopped, None);
                         self.cancel_attack(goose_attack_run_state).await?;
+                    }
+                }
+                #[cfg(test)]
+                LinkEvent::SendLogs if self.gaggle.test_faults.logs != LogsFault::None => {
+                    let fault = self.gaggle.test_faults.logs;
+                    let files = run.log_files.iter().map(|(file, _)| file.clone()).collect();
+                    send_faulty_logs(fault, run.link.outbox.clone(), files);
+                    if fault == LogsFault::Slow {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
                     }
                 }
                 LinkEvent::SendLogs => {

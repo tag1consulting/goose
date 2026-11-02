@@ -49,7 +49,7 @@ fn start_instant(delay_ms: u64) -> Result<tokio::time::Instant, String> {
 }
 
 /// A log chunk's size.
-const LOG_CHUNK: usize = 1 << 20;
+pub(crate) const LOG_CHUNK: usize = 1 << 20;
 
 /// The HTTP/2 stream and connection windows a worker offers its manager.
 const WORKER_WINDOW: u32 = 1 << 20;
@@ -273,7 +273,7 @@ impl Outbox {
 
     /// Queue a log chunk, once fewer than [`MAX_QUEUED_CHUNKS`] messages
     /// wait, so a large log is never read into memory whole.
-    async fn push_chunk(&self, chunk: LogChunk) {
+    pub(crate) async fn push_chunk(&self, chunk: LogChunk) {
         loop {
             let sent = self.sent.notified();
             let room = self.state.lock().map_or(true, |state| {

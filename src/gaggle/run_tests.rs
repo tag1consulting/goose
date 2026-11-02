@@ -1,6 +1,6 @@
 //! A manager and two workers in one process, against a mock server.
 
-use super::run::{PrepareFault, TestFaults};
+use super::run::{LogsFault, PrepareFault, TestFaults, LOG_FAULT_AT};
 use crate::config::GooseConfiguration;
 use crate::goose::{Scenario, Transaction};
 use crate::metrics::GooseMetrics;
@@ -126,6 +126,32 @@ async fn gaggle(
     Result<GooseMetrics, crate::GooseError>,
     Vec<Result<GooseMetrics, crate::GooseError>>,
 ) {
+    let ((manager, _), workers) = gaggle_timed(
+        build,
+        count,
+        host,
+        folder,
+        manager_args,
+        worker_args,
+        faults,
+    )
+    .await;
+    (manager, workers)
+}
+
+/// [`gaggle`], with when the manager's `execute()` returned.
+async fn gaggle_timed(
+    build: impl Fn(GooseConfiguration, Option<usize>) -> GooseAttack,
+    count: usize,
+    host: String,
+    folder: &Path,
+    manager_args: &[&str],
+    worker_args: &[&str],
+    faults: &[TestFaults],
+) -> (
+    (Result<GooseMetrics, crate::GooseError>, std::time::Instant),
+    Vec<Result<GooseMetrics, crate::GooseError>>,
+) {
     no_token_from_the_environment();
     let count_text = count.to_string();
     let manager_folder = folder.join("manager").display().to_string();
@@ -151,12 +177,15 @@ async fn gaggle(
     args.extend_from_slice(manager_args);
     let (bound, address) = tokio::sync::oneshot::channel();
     let manager = build(configuration(&args), None).report_manager_address(bound);
-    let manager = tokio::spawn(manager.execute());
+    let manager = tokio::spawn(async move {
+        let result = manager.execute().await;
+        (result, std::time::Instant::now())
+    });
     let address = match address.await {
         Ok(address) => address,
         Err(_) => panic!(
             "the manager never listened: {:?}",
-            manager.await.map(|r| r.map(|_| ()))
+            manager.await.map(|(r, _)| r.map(|_| ()))
         ),
     };
     let port = address.port().to_string();
@@ -1265,3 +1294,197 @@ async fn gaggle_manager_failures_run_test_stop_once() {
         .await
         .expect("within 120 seconds");
 }
+
+/// The manager of a run that a killswitch cancels part way: it ends within
+/// 2 seconds of it, with an error saying it was canceled.
+fn canceled_within(manager: &Result<GooseMetrics, crate::GooseError>, took: Duration, stage: &str) {
+    crate::reset_killswitch();
+    match manager {
+        Err(crate::GooseError::Gaggle { detail }) => {
+            assert!(detail.contains("canceled"), "{stage}: {detail}")
+        }
+        other => panic!("{stage}: {:?}", other.as_ref().map(|_| ())),
+    }
+    assert!(took <= Duration::from_secs(2), "{stage}: {took:?}");
+}
+
+/// The killswitch, as Ctrl-C, while the manager waits for its workers to
+/// join, and while it waits for one to prepare: the manager shuts its
+/// workers down and ends within 2 seconds, test_stop run only once
+/// test_start did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_killswitch_while_joining_and_preparing() {
+    let test = async {
+        for stage in ["joining", "preparing"] {
+            no_token_from_the_environment();
+            crate::reset_killswitch();
+            let server = MockServer::start_async().await;
+            let mock = |path: &'static str| {
+                let server = &server;
+                async move {
+                    server
+                        .mock_async(|when, then| {
+                            when.method(GET).path(path);
+                            then.status(200).body("ok");
+                        })
+                        .await
+                }
+            };
+            let (start, stop) = (mock("/start").await, mock("/stop").await);
+            let host = server.base_url();
+            let (bound, address) = tokio::sync::oneshot::channel();
+            let (joins, mut joined) = tokio::sync::mpsc::unbounded_channel();
+            // Joining: two workers expected and one started. Preparing: one
+            // worker, which never answers its Prepare.
+            let expected = if stage == "joining" { "2" } else { "1" };
+            let manager = load_test(configuration(&[
+                "--manager",
+                "--expect-workers",
+                expected,
+                "--manager-bind-port",
+                "0",
+                "--no-telnet",
+                "--quiet",
+                "--host",
+                &host,
+                "--users",
+                "2",
+                "--gaggle-connect-timeout",
+                "10s",
+            ]))
+            .report_manager_address(bound)
+            .report_joins(joins);
+            let manager = tokio::spawn(async move {
+                let result = manager.execute().await;
+                (result, std::time::Instant::now())
+            });
+            let port = address.await.expect("the manager listens").port().to_string();
+            let worker = load_test(configuration(&[
+                "--worker",
+                "--manager-host",
+                "127.0.0.1",
+                "--manager-port",
+                &port,
+                "--quiet",
+            ]))
+            .gaggle_test_faults(TestFaults {
+                prepare: PrepareFault::Stall,
+                ..Default::default()
+            });
+            let worker = tokio::spawn(worker.execute());
+            assert_eq!(joined.recv().await, Some(1));
+            // The manager sends its Prepare at once.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            crate::trigger_killswitch("a test's Ctrl-C");
+            let canceled = std::time::Instant::now();
+            let (result, ended) = manager.await.expect("the manager task ends");
+            canceled_within(&result, ended - canceled, stage);
+            assert!(worker.await.expect("the worker task ends").is_err(), "{stage}");
+            let ran = usize::from(stage == "preparing");
+            assert_eq!(start.calls_async().await, ran, "{stage}: test_start");
+            assert_eq!(stop.calls_async().await, ran, "{stage}: test_stop");
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(90), test)
+        .await
+        .expect("within 90 seconds");
+}
+
+/// A run whose one worker sends its request log as `fault` says: the
+/// manager's result, when it ended against [`LOG_FAULT_AT`], its run record,
+/// and the `.part` files left in its folder.
+async fn faulty_logs_run(
+    fault: LogsFault,
+) -> (
+    Result<GooseMetrics, crate::GooseError>,
+    Duration,
+    serde_json::Value,
+    Vec<PathBuf>,
+) {
+    let server = answering().await;
+    let folder = scratch("faulty-logs");
+    *LOG_FAULT_AT.lock().unwrap() = None;
+    let faults = [TestFaults {
+        logs: fault,
+        ..Default::default()
+    }];
+    let ((manager, ended), workers) = gaggle_timed(
+        quick,
+        1,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "1",
+            "--run-time",
+            "1",
+            "--report-file",
+            "--request-log",
+        ],
+        &[],
+        &faults,
+    )
+    .await;
+    crate::reset_killswitch();
+    drop(workers);
+    let at = LOG_FAULT_AT.lock().unwrap().expect("the worker sent a chunk");
+    let (gaggle, _) = record(&folder);
+    let parts = walk(&folder.join("manager"))
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "part"))
+        .collect();
+    let _ = std::fs::remove_dir_all(&folder);
+    (manager, ended.saturating_duration_since(at), gaggle, parts)
+}
+
+/// Every file under `folder`.
+fn walk(folder: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
+
+/// The killswitch while a log arrives, one full chunk at a time: the manager
+/// stops waiting within 2 seconds, deletes what arrived, and records the
+/// log as left on its worker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_killswitch_while_collecting_logs() {
+    let test = async {
+        let (manager, took, gaggle, parts) = faulty_logs_run(LogsFault::Slow).await;
+        assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        assert!(took <= Duration::from_secs(2), "{took:?}");
+        assert_eq!(gaggle["logs_left"].as_array().map(Vec::len), Some(1), "{gaggle}");
+        assert!(parts.is_empty(), "{parts:?}");
+    };
+    tokio::time::timeout(Duration::from_secs(90), test)
+        .await
+        .expect("within 90 seconds");
+}
+
+/// A log arriving 10 bytes at a time, never its last chunk, moves too
+/// little to keep its transfer alive: it is given up at the idle timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_trickled_log_is_given_up() {
+    let test = async {
+        let (manager, took, gaggle, parts) = faulty_logs_run(LogsFault::Trickle).await;
+        assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        // The 2 second idle timeout from the first chunk, and the reports.
+        assert!(took <= Duration::from_secs(5), "{took:?}");
+        assert_eq!(gaggle["logs_left"].as_array().map(Vec::len), Some(1), "{gaggle}");
+        assert!(parts.is_empty(), "{parts:?}");
+    };
+    tokio::time::timeout(Duration::from_secs(90), test)
+        .await
+        .expect("within 90 seconds");
+}
+
