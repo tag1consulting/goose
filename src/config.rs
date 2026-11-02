@@ -999,7 +999,7 @@ pub struct GooseConfiguration {
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long, value_name = "TIME")]
     pub gaggle_heartbeat_timeout: Option<String>,
-    /// Move a lost worker's users to the others
+    /// Move a lost worker's users
     ///
     /// When a worker is lost during a run, the manager hands its users to the workers
     /// left, each user keeping its scenario, so the run goes on with as many users as

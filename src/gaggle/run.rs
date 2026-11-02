@@ -124,10 +124,28 @@ pub(crate) struct GaggleState {
     /// returns, which stops the dead man's switch's last resort (unit tests).
     #[cfg(test)]
     pub(crate) link_done: Arc<std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>>,
+    /// Where a worker reports the settings it runs after each change and
+    /// each `Prepare` (unit tests).
+    #[cfg(test)]
+    pub(crate) applied: Option<tokio::sync::mpsc::UnboundedSender<WorkerApplied>>,
     /// Where the client settings every user gets are reported (unit tests).
     #[cfg(test)]
     pub(crate) client_report:
         Option<tokio::sync::oneshot::Sender<crate::client::GooseClientConfig>>,
+}
+
+/// What a worker runs after a change or a `Prepare` (unit tests).
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WorkerApplied {
+    /// Its link's id.
+    pub(crate) worker: u32,
+    pub(crate) users: Option<usize>,
+    pub(crate) test_plan: Option<Vec<(usize, usize)>>,
+    pub(crate) throttle: usize,
+    pub(crate) host: Option<String>,
+    /// Whether the change was refused.
+    pub(crate) refused: bool,
 }
 
 /// This process's side of a Gaggle.
@@ -448,6 +466,36 @@ impl GooseAttack {
     ) -> Self {
         self.gaggle.client_report = Some(report);
         self
+    }
+
+    /// Have a worker report what it runs after each change and `Prepare`
+    /// (unit tests).
+    #[cfg(test)]
+    pub(crate) fn report_applied(
+        mut self,
+        applied: tokio::sync::mpsc::UnboundedSender<WorkerApplied>,
+    ) -> Self {
+        self.gaggle.applied = Some(applied);
+        self
+    }
+
+    /// What this worker runs, to its test's report (unit tests).
+    #[cfg(test)]
+    fn report(&self, worker: u32, refused: bool) {
+        if let Some(applied) = self.gaggle.applied.as_ref() {
+            let _ = applied.send(WorkerApplied {
+                worker,
+                users: self.configuration.users,
+                test_plan: self
+                    .configuration
+                    .test_plan
+                    .as_ref()
+                    .map(|plan| plan.steps.clone()),
+                throttle: self.configuration.throttle_requests(),
+                host: self.configuration.host.clone(),
+                refused,
+            });
+        }
     }
 
     /// Have the manager report how many workers joined, as each does (unit
@@ -811,6 +859,8 @@ impl GooseAttack {
         };
         self.gaggle_worker_take(&mut spec);
         #[cfg(test)]
+        self.report(link.id, false);
+        #[cfg(test)]
         let skip_reset = self.gaggle.test_faults.skip_reset;
         #[cfg(test)]
         self.gaggle.test_faults.arm(&link.outbox);
@@ -878,6 +928,8 @@ impl GooseAttack {
         run.log_files.clear();
         run.run_folder = None;
         run.pending_controls.clear();
+        #[cfg(test)]
+        self.report(run.link.id, prepared.is_err());
         run.link.prepared(prepared.err());
     }
 
@@ -928,6 +980,8 @@ impl GooseAttack {
         if let Some(why) = &refused {
             error!("gaggle: this worker refused a change its manager accepted: {why}");
         }
+        #[cfg(test)]
+        self.report(run.link.id, refused.is_some());
         run.link.control_ack(id, refused);
         Ok(())
     }

@@ -299,6 +299,11 @@ impl RunShape {
         self.regenerate_tail(steps, current);
     }
 
+    /// Whether the run holds until stopped, with no end of its own.
+    pub(crate) fn holds_until_stopped(&self) -> bool {
+        matches!(self.hold, Hold::UntilStopped { .. })
+    }
+
     /// Whether clearing the decrease rate would remove a ramp down still
     /// ahead that the run started with.
     pub(crate) fn keeps_decrease_rate(&self) -> bool {

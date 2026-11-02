@@ -2465,3 +2465,317 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
         .await
         .expect("within 60 seconds");
 }
+
+/// A telnet Controller session with the manager in one process.
+struct Telnet(tokio::net::TcpStream);
+
+impl Telnet {
+    async fn connect(port: u16) -> Self {
+        for _ in 0..100 {
+            if let Ok(stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                let mut telnet = Telnet(stream);
+                telnet.read().await;
+                return telnet;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("the manager's telnet Controller never listened");
+    }
+
+    async fn read(&mut self) -> String {
+        use tokio::io::AsyncReadExt;
+        let mut reply = Vec::new();
+        let mut buf = [0; 65536];
+        while !reply.ends_with(b"goose> ") {
+            let read = self.0.read(&mut buf).await.expect("telnet read");
+            assert!(read > 0, "the telnet Controller closed");
+            reply.extend_from_slice(&buf[..read]);
+        }
+        String::from_utf8(reply).unwrap()
+    }
+
+    async fn send(&mut self, command: &str) -> String {
+        use tokio::io::AsyncWriteExt;
+        self.0
+            .write_all(format!("{command}\r\n").as_bytes())
+            .await
+            .unwrap();
+        self.read().await
+    }
+}
+
+/// The next report from each of `workers` workers, by link id.
+async fn applied(
+    reports: &mut tokio::sync::mpsc::UnboundedReceiver<super::run::WorkerApplied>,
+    workers: usize,
+) -> Vec<super::run::WorkerApplied> {
+    let mut got = Vec::new();
+    while got.len() < workers {
+        let report = tokio::time::timeout(Duration::from_secs(10), reports.recv())
+            .await
+            .expect("each worker reports within 10 seconds")
+            .expect("a report");
+        assert!(!report.refused, "a worker refused a change: {:?}", report);
+        got.push(report);
+    }
+    got.sort_by_key(|report| report.worker);
+    got
+}
+
+/// The ordinals of every user the manager's merged metrics counted.
+async fn merged_ordinals(telnet: &mut Telnet) -> BTreeSet<usize> {
+    let reply = telnet.send("metrics-json").await;
+    let json = reply.trim_end_matches("goose> ").trim();
+    let metrics: serde_json::Value = serde_json::from_str(json).unwrap();
+    metrics["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|scenario| scenario["users"].as_array().cloned().unwrap_or_default())
+        .map(|user| user.as_u64().unwrap() as usize)
+        .collect()
+}
+
+/// A dashboard control POST to the manager, with its token: the reply's
+/// JSON.
+async fn dashboard_post(port: u16, path: &str, body: &str) -> serde_json::Value {
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/api/v1/control/{path}"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", "Bearer gaggle-control-token")
+        .body(body.to_string())
+        .send()
+        .await
+        .expect("dashboard POST");
+    assert_eq!(response.status(), 200);
+    response.json().await.unwrap()
+}
+
+/// A manager waiting for a Start, and two workers. Every runtime change
+/// reaches both workers as their shares, which add up to the change, and
+/// shows in the merged state: telnet `users` up and down, a WebSocket
+/// `throttle`, the dashboard's users, a test plan replaced by telnet, a Stop
+/// and a Start again, and a dashboard settings change of the throttle and
+/// host together while idle, which the next run takes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_runtime_control_in_one_process() {
+    const TELNET: u16 = 5226;
+    const WEBSOCKET: u16 = 5227;
+    const DASHBOARD: u16 = 5228;
+    let test = async {
+        no_token_from_the_environment();
+        let server = answering().await;
+        let second = MockServer::start_async().await;
+        let second_a = mock_ok(&second, "/a").await;
+        let folder = scratch("runtime-control");
+        let host = server.base_url();
+        let (telnet_port, websocket_port, dashboard_port) = (
+            TELNET.to_string(),
+            WEBSOCKET.to_string(),
+            DASHBOARD.to_string(),
+        );
+        let manager_folder = folder.join("manager").display().to_string();
+        let args = [
+            "--manager",
+            "--expect-workers",
+            "2",
+            "--manager-bind-port",
+            "0",
+            "--no-autostart",
+            "--users",
+            "20",
+            "--increase-rate",
+            "200",
+            "--throttle-requests",
+            "1000",
+            "--telnet-port",
+            &telnet_port,
+            "--websocket",
+            "--websocket-port",
+            &websocket_port,
+            "--dashboard",
+            "--dashboard-port",
+            &dashboard_port,
+            "--dashboard-control",
+            "--dashboard-auth-token",
+            "gaggle-control-token",
+            "--quiet",
+            "--output-dir",
+            &manager_folder,
+            "--host",
+            &host,
+        ];
+        let (bound, address) = tokio::sync::oneshot::channel();
+        let manager = quick(configuration(&args), None).report_manager_address(bound);
+        let manager = tokio::spawn(manager.execute());
+        let port = address
+            .await
+            .expect("the manager listens")
+            .port()
+            .to_string();
+        let (report, mut reports) = tokio::sync::mpsc::unbounded_channel();
+        let mut workers = Vec::new();
+        for worker in 0..2 {
+            let worker_folder = folder.join(format!("worker{worker}")).display().to_string();
+            let args = [
+                "--worker",
+                "--manager-host",
+                "127.0.0.1",
+                "--manager-port",
+                &port,
+                "--quiet",
+                "--output-dir",
+                &worker_folder,
+            ];
+            let attack = quick(configuration(&args), Some(worker)).report_applied(report.clone());
+            workers.push(tokio::spawn(attack.execute()));
+        }
+        let mut telnet = Telnet::connect(TELNET).await;
+
+        // Started by telnet: each worker runs half the users, and half the
+        // throttle.
+        let reply = telnet.send("start").await;
+        assert!(reply.starts_with("load test started"), "{}", reply);
+        let start = applied(&mut reports, 2).await;
+        assert_eq!(
+            start.iter().map(|r| r.users).collect::<Vec<_>>(),
+            [Some(10), Some(10)]
+        );
+        assert_eq!(start.iter().map(|r| r.throttle).sum::<usize>(), 1_000);
+
+        // Users up and down by telnet.
+        let reply = telnet.send("users 60").await;
+        assert!(reply.starts_with("users configured"), "{}", reply);
+        let more = applied(&mut reports, 2).await;
+        assert_eq!(more.iter().filter_map(|r| r.users).sum::<usize>(), 60);
+        assert_eq!(more.iter().map(|r| r.throttle).sum::<usize>(), 1_000);
+        // The merged state counts 60 users, ordinals 0 to 59, no gap.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let ordinals = merged_ordinals(&mut telnet).await;
+            if ordinals == (0..60).collect() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "merged {:?}",
+                ordinals
+            );
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        let reply = telnet.send("users 20").await;
+        assert!(reply.starts_with("users configured"), "{}", reply);
+        let fewer = applied(&mut reports, 2).await;
+        assert_eq!(fewer.iter().filter_map(|r| r.users).sum::<usize>(), 20);
+
+        // The throttle by WebSocket.
+        let (mut websocket, _) =
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{WEBSOCKET}"))
+                .await
+                .unwrap();
+        use futures::{SinkExt, StreamExt};
+        websocket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"request":"throttle 100"}"#.into(),
+            ))
+            .await
+            .unwrap();
+        let reply = websocket
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap();
+        assert!(reply.contains(r#""success":true"#), "{}", reply);
+        let throttled = applied(&mut reports, 2).await;
+        assert_eq!(throttled.iter().map(|r| r.throttle).sum::<usize>(), 100);
+
+        // Users by the dashboard.
+        let body = dashboard_post(DASHBOARD, "users", r#"{"users": 40}"#).await;
+        assert_eq!(body["ok"], true, "{body}");
+        let users = applied(&mut reports, 2).await;
+        assert_eq!(users.iter().filter_map(|r| r.users).sum::<usize>(), 40);
+
+        // A test plan replaced by telnet: each step's users add up.
+        let reply = telnet.send("test-plan 50,1s;50,1h").await;
+        assert!(reply.starts_with("test-plan configured"), "{}", reply);
+        let plans = applied(&mut reports, 2).await;
+        let steps: Vec<Vec<(usize, usize)>> =
+            plans.iter().map(|r| r.test_plan.clone().unwrap()).collect();
+        for step in 0..2 {
+            assert_eq!(steps[0][step].0 + steps[1][step].0, 50);
+            assert_eq!(steps[0][step].1, steps[1][step].1);
+        }
+
+        // Stopped by telnet once the plan holds, as a ramp down can not be
+        // stopped: the manager waits for the next Start.
+        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        let reply = telnet.send("stop").await;
+        assert!(reply.starts_with("load test stopped"), "{}", reply);
+        let _ = applied(&mut reports, 2).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let snapshot: serde_json::Value = reqwest::Client::new()
+                .get(format!("http://127.0.0.1:{DASHBOARD}/api/v1/snapshot"))
+                .header("Authorization", "Bearer gaggle-control-token")
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap_or_default();
+            if snapshot["phase"] == "idle" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never idle: {}",
+                snapshot
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let body = dashboard_post(DASHBOARD, "settings", r#"{"throttle": 50}"#).await;
+        assert_eq!(body["ok"], true, "{body}");
+        let _ = applied(&mut reports, 2).await;
+
+        // The throttle and host together while idle, then a Start by the
+        // dashboard: the workers' next shares carry both.
+        let second_host = second.base_url();
+        let body = dashboard_post(
+            DASHBOARD,
+            "settings",
+            &format!(r#"{{"throttle": 60, "host": "{second_host}"}}"#),
+        )
+        .await;
+        assert_eq!(body["ok"], true, "{body}");
+        assert_eq!(body["settings"]["throttle"], 60, "{body}");
+        let _ = applied(&mut reports, 2).await;
+        let body = dashboard_post(DASHBOARD, "start", "{}").await;
+        assert_eq!(body["ok"], true, "{body}");
+        let again = applied(&mut reports, 2).await;
+        assert!(again
+            .iter()
+            .all(|r| r.host.as_deref() == Some(second_host.as_str())));
+        assert_eq!(again.iter().map(|r| r.throttle).sum::<usize>(), 60);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while second_a.calls_async().await == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the second host saw no request"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let _ = telnet.send("shutdown").await;
+        manager.await.unwrap().expect("the manager exits cleanly");
+        for worker in workers {
+            worker.await.unwrap().expect("the worker exits cleanly");
+        }
+    };
+    // Boxed: the test's future is too large for the test thread's stack.
+    tokio::time::timeout(Duration::from_secs(30), Box::pin(test))
+        .await
+        .expect("within 30 seconds");
+}

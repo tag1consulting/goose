@@ -506,8 +506,12 @@ mod tests {
                 "--manager can't be used with --worker",
             ),
             (
-                with(&manager, &["--no-autostart"]),
-                "--no-autostart can't be used with --manager",
+                with(&["--gaggle-rebalance"], &[]),
+                "--gaggle-rebalance needs --manager",
+            ),
+            (
+                with(&worker, &["--gaggle-rebalance"]),
+                "--gaggle-rebalance can't be used with --worker",
             ),
             (
                 with(&manager, &["--manager-bind-host", "0.0.0.0"]),
@@ -515,7 +519,7 @@ mod tests {
             ),
             (
                 with(&manager, &["--throttle-requests", "1", "--users", "4"]),
-                "is fewer than the 2 workers that run users",
+                "is fewer than the 2 workers: each needs at least 1",
             ),
             (
                 with(&manager, &["--gaggle-shadow-merge"]),
@@ -724,8 +728,8 @@ mod tests {
             assert!(refusal(&args)
                 .contains("--pdf-scale and --pdf-timeout can't be used with --worker"));
         }
-        // A throttle as large as the workers that run users is enough,
-        // when more workers than users are expected.
+        // Every worker takes a share of the throttle, one with no users too;
+        // a manager can wait for a Start, and move a lost worker's users.
         let mut fewer = parse(&[
             "--manager",
             "--expect-workers",
@@ -735,7 +739,9 @@ mod tests {
             "--users",
             "2",
             "--throttle-requests",
-            "2",
+            "4",
+            "--no-autostart",
+            "--gaggle-rebalance",
         ]);
         fewer.configure(&GooseDefaults::default()).unwrap();
         fewer.validate().unwrap();

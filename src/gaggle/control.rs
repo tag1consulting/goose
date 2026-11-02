@@ -244,6 +244,12 @@ impl UserBook {
 /// workers. A worker with no users keeps 1, as it may get users later; the
 /// rest follow [`super::spec::throttle_shares`].
 pub(crate) fn live_throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
+    // With no users anywhere, the throttle is split evenly.
+    if users.iter().all(|&users| users == 0) {
+        return (0..users.len())
+            .map(|worker| super::spec::split(throttle, users.len(), worker).max(1))
+            .collect();
+    }
     let idle = users.iter().filter(|&&users| users == 0).count();
     let busy: Vec<usize> = users.iter().copied().filter(|&users| users > 0).collect();
     let mut shares = super::spec::throttle_shares(throttle.saturating_sub(idle), &busy).into_iter();
@@ -877,4 +883,241 @@ fn send_controls(
         }
     }
     (id, sent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gaggle::spec::{plans, split, users_started};
+    use rand::{Rng, SeedableRng};
+
+    /// The scenario one process gives each of `added` users, in the order
+    /// they start: a stand in for its weighted allocation.
+    fn allocation(added: usize, weights: &[usize]) -> Vec<usize> {
+        let cycle: Vec<usize> = weights
+            .iter()
+            .enumerate()
+            .flat_map(|(scenario, &weight)| std::iter::repeat_n(scenario, weight))
+            .collect();
+        let mut order: Vec<usize> = cycle.iter().copied().cycle().take(added).collect();
+        order.reverse();
+        order
+    }
+
+    /// One process running `users` changes: the users it runs, by ordinal,
+    /// stopping the last started first.
+    #[derive(Default)]
+    struct OneProcess {
+        running: Vec<User>,
+        next: usize,
+    }
+
+    impl OneProcess {
+        fn set_users(&mut self, users: usize, scenarios: &[usize]) {
+            while self.running.len() > users {
+                self.running.pop();
+            }
+            for &scenario in scenarios
+                .iter()
+                .take(users.saturating_sub(self.running.len()))
+            {
+                self.running.push((self.next, scenario));
+                self.next += 1;
+            }
+        }
+    }
+
+    /// Every user of `book`'s live workers, by ordinal.
+    fn every_user(book: &UserBook, workers: usize) -> Vec<User> {
+        let mut users: Vec<User> = (0..workers).flat_map(|w| book.users(w).to_vec()).collect();
+        users.sort_unstable();
+        users
+    }
+
+    #[test]
+    fn shares_add_up_to_the_whole() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(645);
+        for _ in 0..2_000 {
+            let workers = rng.random_range(1..12);
+            let users: Vec<usize> = (0..workers).map(|_| rng.random_range(0..400)).collect();
+            let total: usize = users.iter().sum();
+            // Users.
+            let global = rng.random_range(0..100_000);
+            let parts: usize = (0..workers).map(|w| split(global, workers, w)).sum();
+            assert_eq!(parts, global);
+            // Rates, over the workers that run users.
+            let rate = rng.random_range(0.01_f32..100_000.0);
+            let rates = rate_shares(rate, &users);
+            let busy: f64 = rates
+                .iter()
+                .zip(&users)
+                .filter(|(_, &users)| users > 0)
+                .map(|(&rate, _)| f64::from(rate))
+                .sum();
+            if total > 0 {
+                assert!(
+                    (busy - f64::from(rate)).abs() <= f64::from(rate) * 1e-5,
+                    "{} {:?}",
+                    rate,
+                    rates
+                );
+            }
+            assert!(rates.iter().all(|&rate| rate > 0.0));
+            // Test plan steps.
+            let steps: Vec<(usize, usize)> = (0..rng.random_range(1..6))
+                .map(|_| (rng.random_range(0..5_000), rng.random_range(0..60_000)))
+                .collect();
+            let split_plans = plans(&steps, workers);
+            for (step, &(users, ms)) in steps.iter().enumerate() {
+                let sum: usize = split_plans.iter().map(|plan| plan[step].0).sum();
+                assert_eq!(sum, users);
+                assert!(split_plans.iter().all(|plan| plan[step].1 == ms));
+            }
+            // The throttle: never 0, and the whole once it covers a request a
+            // second for each worker.
+            let throttle = rng.random_range(1..1_000_000);
+            let shares = live_throttle_shares(throttle, &users);
+            assert!(
+                shares.iter().all(|&share| share > 0),
+                "{} {:?}",
+                throttle,
+                users
+            );
+            if throttle >= workers {
+                assert_eq!(
+                    shares.iter().sum::<usize>(),
+                    throttle,
+                    "{users:?} {shares:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn users_changes_run_what_one_process_runs() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(797);
+        for _ in 0..300 {
+            let workers = rng.random_range(1..8);
+            let weights: Vec<usize> = (0..rng.random_range(1..4))
+                .map(|_| rng.random_range(1..7))
+                .collect();
+            let live = vec![true; workers];
+            // The run starts as a manager hands out shares: blocks of
+            // ordinals in worker order.
+            let start = rng.random_range(workers..300);
+            let order = allocation(start, &weights);
+            let mut offset = 0;
+            let blocks = (0..workers)
+                .map(|w| {
+                    let count = split(start, workers, w);
+                    let block = (offset..offset + count).map(|at| (at, order[at])).collect();
+                    offset += count;
+                    block
+                })
+                .collect();
+            let mut book = UserBook::new(blocks, start);
+            let mut one = OneProcess::default();
+            one.set_users(start, &order);
+            for _ in 0..rng.random_range(1..20) {
+                let users: usize = rng.random_range(1..600);
+                let added = users.saturating_sub(book.total());
+                let scenarios = allocation(added, &weights);
+                book.set_users(users, &live, scenarios.clone());
+                one.set_users(users, &scenarios);
+                assert_eq!(book.total(), users);
+                assert_eq!(book.next_ordinal(), one.next);
+                // The same users, each with the same scenario: no ordinal
+                // twice, none skipped, as one process numbers them.
+                assert_eq!(every_user(&book, workers), one.running);
+                // Each worker starts its users in ordinal order.
+                for w in 0..workers {
+                    assert!(book.users(w).windows(2).all(|pair| pair[0].0 < pair[1].0));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn added_users_go_to_the_workers_running_fewest() {
+        let first = vec![(0, 0), (1, 0), (2, 0)];
+        let mut book = UserBook::new(vec![first, vec![(3, 0)], Vec::new()], 4);
+        let changed = book.set_users(9, &[true, true, false], vec![1; 5]);
+        assert_eq!(changed, [true, true, false]);
+        assert_eq!(
+            [
+                book.users(0).len(),
+                book.users(1).len(),
+                book.users(2).len()
+            ],
+            [5, 4, 0]
+        );
+        // The highest ordinals stop first, wherever they run.
+        book.set_users(4, &[true, true, false], Vec::new());
+        assert_eq!(book.total(), 4);
+        assert_eq!(every_user(&book, 3), [(0, 0), (1, 0), (2, 0), (3, 0)]);
+    }
+
+    #[test]
+    fn a_lost_workers_users_keep_their_ordinals_and_scenarios() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(66);
+        for _ in 0..200 {
+            let workers = rng.random_range(2..8);
+            let blocks: Vec<Vec<User>> = (0..workers)
+                .map(|w| {
+                    (0..rng.random_range(0..50))
+                        .map(|at| (w * 100 + at, at % 3))
+                        .collect()
+                })
+                .collect();
+            let mut book = UserBook::new(blocks, workers * 100);
+            let before = every_user(&book, workers);
+            let lost = rng.random_range(0..workers);
+            let mut live = vec![true; workers];
+            live[lost] = false;
+            let users = book.lose(lost);
+            book.deal(users, &live);
+            assert!(book.users(lost).is_empty());
+            assert_eq!(every_user(&book, workers), before);
+        }
+    }
+
+    #[test]
+    fn a_test_plan_hands_out_new_ordinals() {
+        let steps = [(10, 1_000), (4, 1_000), (7, 1_000)];
+        let split_plans = plans(&steps, 3);
+        let total: usize = split_plans.iter().map(|plan| users_started(plan)).sum();
+        let order: Vec<usize> = (0..total).map(|at| at % 2).collect();
+        let mut book = UserBook::new(vec![vec![(0, 0)], vec![(1, 1)], vec![(2, 0)]], 3);
+        let users = book.set_plan(&split_plans, &order);
+        let ordinals: Vec<usize> = users
+            .iter()
+            .flatten()
+            .map(|&(ordinal, _)| ordinal)
+            .collect();
+        assert_eq!(ordinals, (3..3 + total).collect::<Vec<_>>());
+        for (plan, users) in split_plans.iter().zip(&users) {
+            assert_eq!(users.len(), users_started(plan));
+        }
+        assert_eq!(book.next_ordinal(), 3 + total);
+    }
+
+    #[test]
+    fn worker_controls_survive_the_wire() {
+        let control = WorkerControl::Settings(WorkerSettings {
+            host: Some(Some("http://h/".to_string())),
+            users: Some(WorkerUsers {
+                users: vec![(7, 1), (9, 0)],
+                ramp_ms: 1_500,
+            }),
+            decrease_rate: Some(Some(0.5)),
+            run_time: Some(None),
+            throttle: Some(Some(40)),
+            ..WorkerSettings::default()
+        });
+        assert_eq!(
+            WorkerControl::decode(&control.encode().unwrap()).unwrap(),
+            control
+        );
+        assert!(WorkerControl::decode(&[0xff, 0xff]).is_err());
+    }
 }

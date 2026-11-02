@@ -107,6 +107,7 @@ Gaggle:
       --gaggle-token <TOKEN>             Shared Gaggle token
       --no-hash-check                    Don't check the load test matches
       --gaggle-heartbeat-timeout <TIME>  Heartbeat timeout [default: 10s]
+      --gaggle-rebalance                 Move a lost worker's users
 
 Examples:
   loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m

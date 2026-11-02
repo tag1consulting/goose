@@ -3040,12 +3040,17 @@ impl GooseAttack {
             assert!(self.test_plan.current > 0);
         }
 
-        // A Gaggle worker taken to 0 users by its manager waits for more
-        // users, or for the manager to stop the run: it never ends its own.
+        // A Gaggle worker its manager took to 0 users, in a run that holds
+        // until stopped, waits for more users or for the manager to stop the
+        // run, as the whole load test still runs.
         if goose_attack_run_state.active_users == 0
             && self.test_plan.current >= self.test_plan.steps.len() - 1
             && self.is_gaggle_worker()
             && !goose_attack_run_state.stopping
+            && self
+                .run_shape
+                .as_ref()
+                .is_some_and(run_shape::RunShape::holds_until_stopped)
         {
             tokio::time::sleep(Duration::from_millis(100)).await;
             return Ok(());

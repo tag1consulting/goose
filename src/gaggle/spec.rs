@@ -871,9 +871,90 @@ mod tests {
         assert!(worker.transaction_log.is_none() && worker.error_log.is_none());
         assert!(worker.no_reset_metrics);
         assert!(worker.gaggle_records_graph);
+        // A users ramp's worker runs a users ramp of its own.
+        assert_eq!(spec.ramp.as_ref().map(|ramp| ramp.users), Some(2));
+        assert!(worker.test_plan.is_none());
+        // A test plan's worker runs its share of the plan.
+        let manager = GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://example.com",
+            "--test-plan",
+            "5,1s;0,0s",
+        ])
+        .unwrap();
+        let spec = worker_specs(
+            &manager,
+            CommandLineClientOptions::default(),
+            &[(5, 1_000), (0, 0)],
+            &[0; 5],
+            2,
+            true,
+        )
+        .remove(1);
+        assert!(spec.ramp.is_none());
+        spec.configure(&mut worker);
         assert_eq!(
             worker.test_plan.as_ref().map(|plan| plan.steps.clone()),
             Some(vec![(2, 1_000), (0, 0)])
         );
+    }
+
+    /// A users ramp's workers each run their share of the users, each rate
+    /// scaled by that share and the same times; none does once a worker
+    /// would have no users.
+    #[test]
+    fn a_users_ramp_is_shared_as_ramps() {
+        let manager = GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://example.com",
+            "--users",
+            "9",
+            "--increase-rate",
+            "3",
+            "--decrease-time",
+            "10s",
+            "--run-time",
+            "1m",
+            "--throttle-requests",
+            "10",
+        ])
+        .unwrap();
+        let steps = [(9, 3_000), (9, 60_000), (0, 10_000)];
+        let specs = worker_specs(
+            &manager,
+            CommandLineClientOptions::default(),
+            &steps,
+            &[0; 9],
+            3,
+            true,
+        );
+        let ramps: Vec<WorkerRamp> = specs
+            .iter()
+            .map(|spec| spec.ramp.clone().unwrap())
+            .collect();
+        assert!(ramps.iter().all(|ramp| ramp.users == 3));
+        assert!(ramps
+            .iter()
+            .all(|ramp| ramp.increase_rate.as_deref() == Some("1")));
+        assert!(ramps
+            .iter()
+            .all(|ramp| ramp.decrease_time.as_deref() == Some("10s")));
+        assert!(ramps
+            .iter()
+            .all(|ramp| ramp.run_time.as_deref() == Some("1m")));
+        let throttles: Vec<usize> = specs.iter().map(|spec| spec.throttle_requests).collect();
+        assert_eq!(throttles.iter().sum::<usize>(), 10);
+        // Four workers for three users: the shares run test plans.
+        let specs = worker_specs(
+            &manager,
+            CommandLineClientOptions::default(),
+            &[(3, 1_000)],
+            &[0; 3],
+            4,
+            true,
+        );
+        assert!(specs.iter().all(|spec| spec.ramp.is_none()));
+        // A worker with no users still takes a share of the throttle.
+        assert!(specs.iter().all(|spec| spec.throttle_requests > 0));
     }
 }

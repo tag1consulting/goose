@@ -1235,7 +1235,9 @@ impl GooseAttack {
         if settings.sets_test_plan() {
             let flag = if candidate.iterations() > 0 {
                 Some("--iterations")
-            } else if candidate.no_reset_metrics {
+            // A Gaggle worker never resets its metrics itself: its manager
+            // does, and checked this against its own.
+            } else if candidate.no_reset_metrics && !self.is_gaggle_worker() {
                 Some("--no-reset-metrics")
             } else {
                 None
@@ -1931,6 +1933,8 @@ pub(crate) mod tests {
         const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
         const RUN_TIME: &str =
             "run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
+        const THROTTLE: &str =
+            "throttle must be an integer from 1 to 1000000 requests per second, or 0 to clear";
         const FORTY_DIGITS: &str = "increaserate 1000000000000000000000000000000000000000";
         const TEST_PLAN: &str = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total";
         // 100 steps of 1,1s are accepted and 101 refused; so is a plan of
@@ -2001,6 +2005,10 @@ pub(crate) mod tests {
             ("run_time 1h2s", "RunTime(3602)"),
             ("run-time 10s", "RunTime(10)"),
             ("runtime 1H2M3S", "RunTime(3723)"),
+            ("throttle 50", "Throttle(50)"),
+            ("throttle_requests 1000000", "Throttle(1000000)"),
+            ("throttle-requests 0", "Throttle(0)"),
+            ("THROTTLE 7", "Throttle(7)"),
             (
                 "testplan 10,5s;10,30s;0,5s",
                 "TestPlan(TestPlan { steps: [(10, 5000), (10, 30000), (0, 5000)], current: 0 })",
@@ -2039,6 +2047,12 @@ pub(crate) mod tests {
             ("users", USERS),
             ("users 0", USERS),
             ("users 100001", USERS),
+            ("throttle 1000001", THROTTLE),
+            ("throttle -1", THROTTLE),
+            ("throttle 1.5", THROTTLE),
+            ("throttle", THROTTLE),
+            ("throttle ١", THROTTLE),
+            ("throttle 99999999999999999999", THROTTLE),
             ("users 1.1", USERS),
             ("users -1", USERS),
             ("users 99999999999999999999", USERS),
@@ -2804,12 +2818,12 @@ pub(crate) mod tests {
         });
     }
 
-    /// A Gaggle manager refuses a command that changes the run with the
-    /// documented code and message, changing nothing, and answers metrics.
+    /// A Gaggle manager applies a change as one process does, answering at
+    /// once with no worker to wait for, and answers metrics.
     #[cfg(feature = "gaggle")]
     #[test]
     #[serial_test::serial]
-    fn test_control_gaggle_manager_refuses_changes_and_answers_metrics() {
+    fn test_control_gaggle_manager_applies_changes_and_answers_metrics() {
         use crate::controller::{ControlReply, ControllerCommand};
 
         finishes(|| async {
@@ -2840,13 +2854,12 @@ pub(crate) mod tests {
                 .unwrap();
             match users_reply.await {
                 Ok(ControlReply::Outcome(outcome)) => {
-                    assert!(!outcome.ok);
-                    assert_eq!(outcome.error, Some("gaggle_unsupported"));
-                    assert_eq!(outcome.message, "not supported in Gaggle mode yet");
+                    assert!(outcome.ok, "{}", outcome.message);
+                    assert_eq!(outcome.message, "users configured");
                 }
                 other => panic!("users 5 was answered with {}", other.is_ok()),
             }
-            assert_eq!(goose_attack.configuration.users, None);
+            assert_eq!(goose_attack.configuration.users, Some(5));
             assert!(matches!(metrics_reply.await, Ok(ControlReply::Metrics(_))));
         });
     }
