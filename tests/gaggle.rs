@@ -957,7 +957,12 @@ fn rate(count: impl Fn() -> usize, window: Duration) -> f64 {
 /// a second; with `rebalance`, it also starts the lost worker's users.
 fn throttle_after_loss(rebalance: bool) {
     let server = MockServer::start();
-    let index = mock_simple(&server, Duration::ZERO);
+    // Every request counts: under the throttle, the users are still logging
+    // in for the whole run.
+    let index = server.mock(|when, then| {
+        when.path_prefix("/");
+        then.status(200).body("ok");
+    });
     let folder = scratch(if rebalance {
         "rebalance"
     } else {
@@ -965,8 +970,8 @@ fn throttle_after_loss(rebalance: bool) {
     });
     let host = server.base_url();
     let simple = example("simple");
-    // Each user waits 5 to 15 seconds between requests: 2000 users ask
-    // for about 200 a second, far past the throttle.
+    // 2000 users log in first, far more than the throttle lets through in
+    // the run, so the users always reach it.
     let mut extra = vec![
         "--users",
         "2000",

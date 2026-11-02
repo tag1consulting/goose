@@ -192,7 +192,7 @@ async fn a_running_throttle_follows_the_controller_and_dashboard() {
         assert_eq!(body["field"], "throttle", "{body}");
 
         let config = telnet.send("config-json").await;
-        assert!(config.contains(r#""throttle_requests":400"#), "{config}");
+        assert!(config.contains(r#""throttle_requests":400"#), "{}", config);
         let _ = telnet.send("shutdown").await;
     };
     tokio::time::timeout(TEST_TIMEOUT, test)
