@@ -1986,6 +1986,67 @@ pub(crate) mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// Deltas that decode to several times their encoded bytes, as a varint
+    /// of 1 byte becomes 8, hold the byte budget at their decoded size: the
+    /// reader waits once their decoded bytes fill it, far short of the
+    /// events their encoded bytes would let in.
+    #[tokio::test]
+    async fn deltas_hold_the_budget_at_their_decoded_size() {
+        use super::super::delta::{DeltaKind, GaggleDelta};
+        use super::super::proto::Metrics;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            // A budget of 8 MiB, for the test.
+            manager
+                .shared
+                .event_bytes
+                .forget_permits((EVENT_BYTES - (8 << 20)) as usize);
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let _inbound = inbound.unwrap();
+            // 30,000 rows of a few bytes each on the wire, about 120 KiB,
+            // and many times that decoded.
+            let mut delta = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
+            delta
+                .graph
+                .requests
+                .insert("GET /".to_string(), (0..30_000).map(|second| (second, 1)).collect());
+            let encoded = delta.encode().unwrap();
+            assert!(encoded.len() < 150 << 10, "{} bytes", encoded.len());
+            let sender = tokio::spawn(async move {
+                for _ in 0..40 {
+                    let message = WorkerMessage {
+                        message: Some(FromWorker::Metrics(Metrics {
+                            delta: encoded.clone(),
+                        })),
+                    };
+                    if tx.send(message).await.is_err() {
+                        break;
+                    }
+                }
+                tx
+            });
+            // Nothing taken: by their encoded bytes, 8 MiB would hold more
+            // than the queue's 64 events.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let queued = manager.events.len();
+            assert!(queued <= 16, "{} events queued past the budget", queued);
+            assert!(queued >= 4, "{} events queued", queued);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut deltas = 0;
+            while deltas < 40 {
+                match manager.next_event(deadline).await {
+                    Some(Event::Delta { .. }) => deltas += 1,
+                    Some(Event::Joined) => {}
+                    other => panic!("{:?}", other),
+                }
+            }
+            drop(sender.await);
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
     /// A client with no token, or a wrong one of any length, is refused by
     /// the interceptor: the stream handler, which decodes the first
     /// message, never runs for it.
