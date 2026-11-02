@@ -666,6 +666,12 @@ impl Link {
         self.events.try_recv().ok()
     }
 
+    /// Every event queued now, taken (unit tests).
+    #[cfg(test)]
+    fn drain_events(&self) -> Vec<LinkEvent> {
+        self.events.drain().collect()
+    }
+
     /// The next event, waiting at most `wait`.
     pub(crate) async fn next_event(&self, wait: Duration) -> Option<LinkEvent> {
         tokio::time::timeout(wait, self.events.recv_async())
@@ -1619,6 +1625,95 @@ mod tests {
         }
         assert!(elapsed <= timeout + Duration::from_secs(2), "{:?}", elapsed);
         held.abort();
+    }
+
+    /// A worker's link to a manager that sends it a Prepare of 4 MiB every
+    /// 50 ms for 3 seconds, its main loop taking none of them; and the
+    /// manager. Each side's heartbeat timeout is `heartbeat_timeout`.
+    async fn flooded(heartbeat_timeout: Duration) -> (Link, super::super::manager::Manager) {
+        use super::super::proto::{manager_message::Message as ToWorker, Prepare};
+        let manager = super::super::manager::Manager::start(
+            "127.0.0.1",
+            0,
+            1,
+            None,
+            7,
+            true,
+            heartbeat_timeout,
+        )
+        .await
+        .unwrap();
+        let link = Link::connect(LinkSettings {
+            address: manager.local_addr.to_string(),
+            connect_timeout: Duration::from_secs(10),
+            heartbeat_timeout,
+            hello: LinkSettings::hello(7, "flooded".to_string()),
+            token: None,
+            exit_for_real: false,
+        })
+        .await
+        .unwrap();
+        let spec = vec![b'x'; 4 << 20];
+        let until = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < until {
+            manager.send(link.id, ToWorker::Prepare(Prepare { spec: spec.clone() }));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        (link, manager)
+    }
+
+    /// A manager that floods its worker, whose main loop takes nothing,
+    /// fills the worker's event queue to 16 messages, or 64 MiB, at most.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_flooding_manager_is_held_to_the_event_bounds() {
+        let test = async {
+            let (link, _manager) = flooded(Duration::from_secs(30)).await;
+            let queued = link.drain_events();
+            let bytes: usize = queued
+                .iter()
+                .map(|event| match event {
+                    LinkEvent::Prepare(spec) => spec.len(),
+                    _ => 0,
+                })
+                .sum();
+            assert!(queued.len() <= 16, "{} events queued", queued.len());
+            assert!(bytes <= 64 << 20, "{} bytes queued", bytes);
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
+    /// A worker whose main loop is held past its heartbeat timeout, its
+    /// event queue full, is not taken for one whose manager went silent,
+    /// and its manager does not lose it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_held_main_loop_with_a_full_queue_is_not_lost() {
+        use super::super::manager::Event;
+        let test = async {
+            // The flood lasts 3 seconds, past the 2 second timeout, and the
+            // main loop is held 3 more.
+            let (link, manager) = flooded(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            assert!(!link.fired.load(Ordering::SeqCst), "the switch fired");
+            let events = link.drain_events();
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, LinkEvent::Lost(_))),
+                "the worker lost its manager"
+            );
+            while let Some(event) = manager.try_event() {
+                assert!(
+                    !matches!(event, Event::Lost { .. }),
+                    "the manager lost its worker: {:?}",
+                    event
+                );
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
     }
 
     #[test]
