@@ -2411,8 +2411,10 @@ pub(crate) mod handshake_tests {
                 .test
                 .admit_delay_ms
                 .store(2_000, Ordering::Relaxed);
-            let connected = Instant::now();
+            // The manager's deadline starts as it accepts the connection,
+            // before the channel is connected.
             let channel = channel(&manager).await;
+            let connected = Instant::now();
             let (tx, rx) = mpsc::channel(4);
             let joining = tokio::spawn(async move {
                 GaggleClient::new(channel)

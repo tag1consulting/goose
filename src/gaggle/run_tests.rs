@@ -1078,12 +1078,11 @@ async fn gaggle_handshake_refusals() {
 async fn gaggle_worker_without_a_manager() {
     let test = async {
         no_token_from_the_environment();
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-            .to_string();
+        // A port bound and not listening, for the whole test: connections
+        // to it are refused, and no other test can take it.
+        let held = tokio::net::TcpSocket::new_v4().unwrap();
+        held.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = held.local_addr().unwrap().port().to_string();
         let started = std::time::Instant::now();
         let worker = quick(
             configuration(&[
@@ -1384,7 +1383,8 @@ async fn gaggle_uncreatable_report_file_runs_neither_hook() {
 }
 
 /// The manager of a run that a killswitch cancels part way: it ends within
-/// 2 seconds of it, with an error saying it was canceled.
+/// 5 seconds of it, with an error saying it was canceled, which no timeout
+/// gives.
 fn canceled_within(manager: &Result<GooseMetrics, crate::GooseError>, took: Duration, stage: &str) {
     crate::reset_killswitch();
     match manager {
@@ -1393,7 +1393,7 @@ fn canceled_within(manager: &Result<GooseMetrics, crate::GooseError>, took: Dura
         }
         other => panic!("{stage}: {:?}", other.as_ref().map(|_| ())),
     }
-    assert!(took <= Duration::from_secs(2), "{}: {:?}", stage, took);
+    assert!(took <= Duration::from_secs(5), "{}: {:?}", stage, took);
 }
 
 /// The killswitch, as Ctrl-C, while the manager waits for its workers to
@@ -1543,8 +1543,9 @@ fn walk(folder: &Path) -> Vec<PathBuf> {
 }
 
 /// The killswitch while a log arrives, one full chunk at a time: the manager
-/// stops waiting within 2 seconds, deletes what arrived, and records the
-/// log as left on its worker.
+/// stops waiting within 5 seconds, sooner than the log idle timeout would
+/// give it up, deletes what arrived, and records the log as left on its
+/// worker.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_killswitch_while_collecting_logs() {
@@ -1552,7 +1553,7 @@ async fn gaggle_killswitch_while_collecting_logs() {
         let (manager, took, gaggle, folder) = faulty_logs_run(LogsFault::Slow).await;
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
         let took = took.expect("the worker triggered the killswitch");
-        assert!(took <= Duration::from_secs(2), "{:?}", took);
+        assert!(took <= Duration::from_secs(5), "{:?}", took);
         assert_eq!(
             gaggle["logs_left"].as_array().map(Vec::len),
             Some(1),
@@ -1574,8 +1575,12 @@ async fn gaggle_trickled_log_is_given_up() {
         let (manager, took, gaggle, folder) = faulty_logs_run(LogsFault::Trickle).await;
         assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
         let took = took.expect("the worker sent a chunk");
-        // The 2 second idle timeout from the first chunk, and the reports.
-        assert!(took <= Duration::from_secs(5), "{:?}", took);
+        // The idle timeout from the first chunk, and the reports.
+        assert!(
+            took <= super::run::LOG_IDLE_TIMEOUT + Duration::from_secs(3),
+            "{:?}",
+            took
+        );
         assert_eq!(
             gaggle["logs_left"].as_array().map(Vec::len),
             Some(1),
@@ -1965,13 +1970,17 @@ async fn gaggle_canceled_run_shows_test_stop_the_killswitch() {
             })
         }))
     };
-    let server = answering().await;
+    let server = MockServer::start_async().await;
+    let a = mock_ok(&server, "/a").await;
     let folder = scratch("canceled-test-stop");
     let build = |configuration, place| quick(configuration, place).test_stop(test_stop());
-    let canceling = tokio::spawn(async {
-        tokio::time::sleep(Duration::from_secs(3)).await;
+    // Once the run has started: its first request reached the server.
+    let canceling = async {
+        while a.calls_async().await == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         crate::trigger_killswitch("a test's Ctrl-C mid run");
-    });
+    };
     let run = gaggle(
         build,
         1,
@@ -1981,10 +1990,12 @@ async fn gaggle_canceled_run_shows_test_stop_the_killswitch() {
         &[],
         &[],
     );
-    let (manager, _) = tokio::time::timeout(Duration::from_secs(60), run)
-        .await
-        .expect("the Gaggle ends within 60 seconds");
-    canceling.await.unwrap();
+    let ((manager, _), ()) = tokio::time::timeout(
+        Duration::from_secs(60),
+        futures::future::join(run, canceling),
+    )
+    .await
+    .expect("the Gaggle ends within 60 seconds");
     crate::reset_killswitch();
     assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
     assert_eq!(

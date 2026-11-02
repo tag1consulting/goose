@@ -74,9 +74,10 @@ const RESET_TIMEOUT: Duration = if cfg!(test) {
 /// How long the manager waits for the next full chunk, or the last, of a
 /// worker's logs: a transfer that goes this long without one fails. No
 /// deadline caps a transfer that keeps moving, whatever its size. 60
-/// seconds.
-const LOG_IDLE_TIMEOUT: Duration = if cfg!(test) {
-    Duration::from_secs(2)
+/// seconds, and 6 in unit tests, more than the 5 a canceled collection may
+/// take there, so a cancel and an idle timeout are told apart.
+pub(crate) const LOG_IDLE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(6)
 } else {
     Duration::from_secs(60)
 };
