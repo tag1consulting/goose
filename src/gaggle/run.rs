@@ -529,6 +529,14 @@ impl GooseAttack {
         (limits, health)
     }
 
+    /// Have a worker's dead man's switch stop user task `user` at once, once
+    /// its manager is gone.
+    pub(crate) fn gaggle_watch_user<T>(&self, user: &tokio::task::JoinHandle<T>) {
+        if let Some(link) = self.gaggle_link() {
+            link.watch(user.abort_handle());
+        }
+    }
+
     /// The link to a worker's manager.
     pub(crate) fn gaggle_link(&self) -> Option<&Link> {
         match self.gaggle.role.as_ref() {
@@ -588,7 +596,6 @@ impl GooseAttack {
     /// when its own run starts. A failure shuts every worker down, and once
     /// `test_start` ran, runs `test_stop`.
     pub(crate) async fn gaggle_manager_start(&mut self) -> Result<(), GooseError> {
-        self.attack_mode = AttackMode::Manager;
         // Ctrl-C cancels the waits before the run too.
         crate::util::setup_ctrlc_handler();
         let (host, port) = self.configuration.manager_bind();

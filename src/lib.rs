@@ -46,6 +46,8 @@ pub mod controller;
 mod dashboard;
 #[cfg(feature = "gaggle")]
 mod gaggle;
+#[cfg(not(feature = "gaggle"))]
+mod gaggle_off;
 pub mod goose;
 mod graph;
 pub mod logger;
@@ -1773,7 +1775,6 @@ impl GooseAttack {
         }
 
         // A worker takes every option that shapes the load from its manager.
-        #[cfg(feature = "gaggle")]
         self.configuration.worker_refusals()?;
 
         // Configure GooseConfiguration.
@@ -1818,7 +1819,6 @@ impl GooseAttack {
         }
 
         // A worker joins its manager, and runs the share it is handed.
-        #[cfg(feature = "gaggle")]
         if self.configuration.is_worker() {
             self.gaggle_worker_join().await?;
         }
@@ -1836,15 +1836,11 @@ impl GooseAttack {
         let command_line_client_options = self.gaggle.client_command_line;
         self.build_client_strategy(command_line_client_options)?;
 
-        // With a validated GooseConfiguration, enter a run mode.
-        #[cfg(feature = "gaggle")]
+        // With a validated GooseConfiguration, enter a run mode: a worker
+        // entered its own as it joined.
         if self.configuration.is_manager() {
             self.attack_mode = AttackMode::Manager;
         } else if !self.configuration.is_worker() {
-            self.attack_mode = AttackMode::StandAlone;
-        }
-        #[cfg(not(feature = "gaggle"))]
-        {
             self.attack_mode = AttackMode::StandAlone;
         }
 
@@ -1865,10 +1861,8 @@ impl GooseAttack {
             }
             let prepared = self.prepare_load_test();
             // A worker tells its manager whether its users are ready.
-            #[cfg(feature = "gaggle")]
             self.gaggle_worker_prepared(prepared.as_ref().err());
             // Its answer leaves before it exits.
-            #[cfg(feature = "gaggle")]
             if prepared.is_err() {
                 self.gaggle_worker_exit().await;
             }
@@ -1881,14 +1875,12 @@ impl GooseAttack {
 
         // A manager waits for its workers, prepares them, and starts its own
         // run with theirs.
-        #[cfg(feature = "gaggle")]
         if self.is_gaggle_manager() {
             self.gaggle_manager_start().await?;
         }
 
         self = self.start_attack().await?;
 
-        #[cfg(feature = "gaggle")]
         self.gaggle_shadow_report()?;
 
         if self.metrics.display_metrics {
@@ -2059,7 +2051,6 @@ impl GooseAttack {
         }
 
         // A Gaggle manager runs no users of its own.
-        #[cfg(feature = "gaggle")]
         if self.is_gaggle_manager() {
             return Ok(());
         }
@@ -2837,7 +2828,6 @@ impl GooseAttack {
                 * 1_000.0;
 
             // A Gaggle manager's users run on its workers.
-            #[cfg(feature = "gaggle")]
             if self
                 .gaggle_manager_increase(goose_attack_run_state, increase_rate)
                 .await
@@ -2938,10 +2928,7 @@ impl GooseAttack {
                 ));
 
                 // A Gaggle worker's dead man's switch stops it at once.
-                #[cfg(feature = "gaggle")]
-                if let Some(link) = self.gaggle_link() {
-                    link.watch(user.abort_handle());
-                }
+                self.gaggle_watch_user(&user);
 
                 goose_attack_run_state.users.push(user);
                 self.count_started_user(goose_attack_run_state);
@@ -3044,7 +3031,6 @@ impl GooseAttack {
 
             // A Gaggle manager stops its workers and waits for their final
             // metrics; a worker sends its own.
-            #[cfg(feature = "gaggle")]
             if self.run_in_progress {
                 self.gaggle_end_of_run(goose_attack_run_state).await?;
             }
@@ -3139,7 +3125,6 @@ impl GooseAttack {
             // A Gaggle manager then collects its workers' logs, so a disk the
             // logs fill costs only logs, and writes the reports again to name
             // any log left on a worker.
-            #[cfg(feature = "gaggle")]
             let reports = if ran && self.gaggle_collect_logs().await {
                 let again = self
                     .write_end_of_run(!goose_attack_run_state.shutdown_after_stop)
@@ -3149,7 +3134,6 @@ impl GooseAttack {
                 reports
             };
             // Then its workers shut down.
-            #[cfg(feature = "gaggle")]
             if ran {
                 self.gaggle_shut_down().await;
             }
@@ -3236,7 +3220,6 @@ impl GooseAttack {
                     .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(decrease_rate)));
 
                 // A Gaggle manager's users run on its workers.
-                #[cfg(feature = "gaggle")]
                 if self.gaggle_manager_decrease(goose_attack_run_state) {
                     return Ok(());
                 }
@@ -3861,7 +3844,6 @@ impl GooseAttack {
 
         // If enabled, spawn a logger thread. A Gaggle manager writes no logs
         // of its own: its workers write them, and send them at the end.
-        #[cfg(feature = "gaggle")]
         let (logger_handle, all_threads_logger_tx) = if self.is_gaggle_manager() {
             (None, None)
         } else {
@@ -3869,11 +3851,6 @@ impl GooseAttack {
                 .setup_loggers(&self.defaults, self.output.folder.as_ref())
                 .await?
         };
-        #[cfg(not(feature = "gaggle"))]
-        let (logger_handle, all_threads_logger_tx) = self
-            .configuration
-            .setup_loggers(&self.defaults, self.output.folder.as_ref())
-            .await?;
         goose_attack_run_state.logger_handle = logger_handle;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
 
@@ -3978,7 +3955,6 @@ impl GooseAttack {
         let mut goose_attack_run_state = match self.initialize_attack().await {
             Ok(state) => state,
             Err(e) => {
-                #[cfg(feature = "gaggle")]
                 self.gaggle_manager_failed_to_start().await;
                 return Err(e);
             }
@@ -4001,7 +3977,6 @@ impl GooseAttack {
         let result = self.run_attack(&mut goose_attack_run_state).await;
         // A run that failed before its clock started, as a Gaggle manager
         // whose run folder cannot be made.
-        #[cfg(feature = "gaggle")]
         if result.is_err() && self.series_started.is_none() {
             self.gaggle_manager_failed_to_start().await;
         }
@@ -4037,7 +4012,6 @@ impl GooseAttack {
                 // In the Idle phase the Goose configuration can be changed by a Controller,
                 // and otherwise nothing happens but sleeping an checking for messages.
                 // A Gaggle worker waits for its manager, not a Controller.
-                #[cfg(feature = "gaggle")]
                 AttackPhase::Idle if self.is_gaggle_worker() => {
                     self.gaggle_worker_idle(goose_attack_run_state).await?;
                 }
@@ -4088,7 +4062,6 @@ impl GooseAttack {
                 // By reaching the Shutdown phase, break out of the GooseAttack loop.
                 AttackPhase::Shutdown => {
                     // A Gaggle worker's last messages leave first.
-                    #[cfg(feature = "gaggle")]
                     self.gaggle_worker_exit().await;
                     // Proactively close SSE clients so browsers see `event: closed`
                     // without waiting for the next 1 Hz hub tick / flume disconnect.
@@ -4136,7 +4109,6 @@ impl GooseAttack {
             self.handle_control_requests(goose_attack_run_state).await?;
 
             // A Gaggle manager's workers, or a worker's manager.
-            #[cfg(feature = "gaggle")]
             self.gaggle_tick(goose_attack_run_state).await?;
 
             // Check if the dashboard has requested a snapshot.
