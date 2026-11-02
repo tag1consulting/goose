@@ -538,7 +538,11 @@ fn gaggle_threshold_stops_every_worker() {
             .expect("the manager ends");
         assert!(!status.success());
         let output = manager.output();
-        assert!(output.contains("ThresholdsFailed"), "{}", output);
+        assert!(
+            output.contains("Error: one or more thresholds failed (p95<5ms, observed "),
+            "{}",
+            output
+        );
         assert!(
             ended.duration_since(started) < Duration::from_secs(30),
             "the threshold ends a 60 s run early: {:?}",

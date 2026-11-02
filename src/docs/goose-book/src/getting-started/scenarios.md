@@ -92,7 +92,7 @@ Scenarios:
  - adminuser: ("Admin user")
  - anonymousenglishuser: ("Anonymous English user")
  - anonymousspanishuser: ("Anonymous Spanish user")
-Error: NoScenarios { detail: "No scenarios are enabled." }
+Error: no scenarios defined (No scenarios are enabled.)
 ```
 
 When the load test completes, you can refer to the [Scenario metrics](./metrics.html#scenarios) to confirm which Scenarios were enabled, and which were not.
