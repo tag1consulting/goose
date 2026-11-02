@@ -1698,16 +1698,25 @@ async fn give_up(
     entry
 }
 
+/// Collect every worker's logs into `folder`, as [`GooseAttack::gaggle_collect_logs`]
+/// says. A Ctrl-C from here stops the wait for logs, as does one since
+/// `Stop`. One that canceled the run is set aside meanwhile, so the next is
+/// caught rather than ending the process at once, and put back after: the
+/// killswitch then reads as after any canceled run, logs or not.
 async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     if run.logs.is_empty() {
         return;
     }
-    // A Ctrl-C from here stops the wait for logs, as does one since `Stop`.
-    // One that canceled the run is cleared, so the next is caught rather
-    // than ending the process at once.
-    if run.canceled_at_stop {
-        crate::reset_killswitch();
-    }
+    let aside = if run.canceled_at_stop {
+        set_cancel_aside()
+    } else {
+        None
+    };
+    collect_logs_into(run, folder).await;
+    put_back_cancel(aside);
+}
+
+async fn collect_logs_into(run: &mut ManagerRun, folder: Option<PathBuf>) {
     // Each worker's logs still to come, by the name the manager keeps them
     // under.
     let mut pending: BTreeMap<u32, BTreeMap<String, LogSpec>> = BTreeMap::new();
