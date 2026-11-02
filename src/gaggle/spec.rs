@@ -56,6 +56,10 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) test_plan: Vec<(usize, usize)>,
     /// Its share of `--throttle-requests`, 0 without a throttle.
     pub(crate) throttle_requests: usize,
+    /// Its users ramp, when the manager runs one and every worker has a
+    /// user: it then runs `test_plan` as one process runs a users ramp, so
+    /// a Controller can change its users, rates and run time as it runs.
+    pub(crate) ramp: Option<WorkerRamp>,
     pub(crate) iterations: Option<usize>,
     pub(crate) co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     pub(crate) timeout: Option<String>,
@@ -80,6 +84,54 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) logs: Vec<LogSpec>,
     /// The bytes the load test's worker data hook returned for it.
     pub(crate) custom_data: Vec<u8>,
+}
+
+/// A worker's share of a users ramp: its users, each rate scaled by its
+/// share of the users, and the same times, each as the command line gives
+/// it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WorkerRamp {
+    pub(crate) users: usize,
+    pub(crate) increase_rate: Option<String>,
+    pub(crate) increase_time: Option<String>,
+    pub(crate) decrease_rate: Option<String>,
+    pub(crate) decrease_time: Option<String>,
+    pub(crate) run_time: Option<String>,
+}
+
+impl WorkerRamp {
+    /// Each worker's ramp for a manager configured with `configuration`,
+    /// running `users` each: `None` with a test plan, or when a worker has
+    /// no users, which a users ramp can not start.
+    fn shares(configuration: &GooseConfiguration, users: &[usize]) -> Option<Vec<WorkerRamp>> {
+        if configuration.test_plan.is_some() || configuration.users.is_none() {
+            return None;
+        }
+        if users.contains(&0) {
+            return None;
+        }
+        let rates = |rate: &Option<String>| {
+            rate.as_deref()
+                .and_then(|rate| rate.parse::<f32>().ok())
+                .map(|rate| super::control::rate_shares(rate, users))
+        };
+        let increase = rates(&configuration.increase_rate);
+        let decrease = rates(&configuration.decrease_rate);
+        Some(
+            users
+                .iter()
+                .enumerate()
+                .map(|(worker, &users)| WorkerRamp {
+                    users,
+                    increase_rate: increase.as_ref().map(|rates| rates[worker].to_string()),
+                    increase_time: configuration.increase_time.clone(),
+                    decrease_rate: decrease.as_ref().map(|rates| rates[worker].to_string()),
+                    decrease_time: configuration.decrease_time.clone(),
+                    run_time: configuration.run_time.clone(),
+                })
+                .collect(),
+        )
+    }
 }
 
 /// The most test plan steps a worker runs: a plan of more fails `Prepare`.
@@ -172,7 +224,7 @@ pub(crate) fn peak_users(steps: &[(usize, usize)]) -> usize {
 /// `throttle` split in proportion to `users`, the remainder spread: every
 /// worker with users gets at least 1, and a worker with none gets 0, so the
 /// shares add up to `throttle` whenever any worker has users and `throttle`
-/// is at least the number that do ([`workers_with_users`]). Each share is
+/// is at least the number that do. Each share is
 /// its proportion rounded down, raised to 1; the rest goes one at a time
 /// to the largest remainders, the first worker first among equals; and
 /// what raising shares to 1 put past `throttle` is taken back one at a time
@@ -218,14 +270,6 @@ pub(crate) fn throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
         sum -= 1;
     }
     shares
-}
-
-/// How many of `workers` workers a load test of `steps` hands users to.
-pub(crate) fn workers_with_users(steps: &[(usize, usize)], workers: usize) -> usize {
-    plans(steps, workers)
-        .iter()
-        .filter(|plan| users_started(plan) > 0)
-        .count()
 }
 
 /// The logs the manager's flags ask for, as each worker writes them.
@@ -276,7 +320,13 @@ pub(crate) fn worker_specs(
     // for a plan that goes up, down and up again, the users it starts over
     // the run would count some twice.
     let peaks: Vec<usize> = plans.iter().map(|plan| peak_users(plan)).collect();
-    let throttles = throttle_shares(configuration.throttle_requests(), &peaks);
+    // Every worker gets a share, one with no users too, as a running
+    // throttle can change but not turn on.
+    let throttles = match configuration.throttle_requests() {
+        0 => vec![0; workers],
+        throttle => super::control::live_throttle_shares(throttle, &peaks),
+    };
+    let mut ramps = WorkerRamp::shares(configuration, &users).map(Vec::into_iter);
     let logs = log_specs(configuration);
     let mut offset = 0usize;
     plans
@@ -296,6 +346,7 @@ pub(crate) fn worker_specs(
                 slice: order[start..end].to_vec(),
                 test_plan,
                 throttle_requests: throttles[worker],
+                ramp: ramps.as_mut().and_then(Iterator::next),
                 iterations: configuration.iterations,
                 co_mitigation: configuration.co_mitigation.clone(),
                 timeout: configuration.timeout.clone(),
@@ -335,10 +386,23 @@ impl WorkerRunSpec {
         configuration.run_time = None;
         configuration.decrease_rate = None;
         configuration.decrease_time = None;
-        configuration.test_plan = Some(crate::test_plan::TestPlan {
-            steps: self.test_plan.clone(),
-            current: 0,
-        });
+        match &self.ramp {
+            Some(ramp) => {
+                configuration.users = Some(ramp.users);
+                configuration.increase_rate.clone_from(&ramp.increase_rate);
+                configuration.increase_time.clone_from(&ramp.increase_time);
+                configuration.decrease_rate.clone_from(&ramp.decrease_rate);
+                configuration.decrease_time.clone_from(&ramp.decrease_time);
+                configuration.run_time.clone_from(&ramp.run_time);
+                configuration.test_plan = None;
+            }
+            None => {
+                configuration.test_plan = Some(crate::test_plan::TestPlan {
+                    steps: self.test_plan.clone(),
+                    current: 0,
+                })
+            }
+        }
         configuration.scenarios = (!self.scenarios.is_empty()).then(|| crate::config::Scenarios {
             active: self.scenarios.clone(),
         });
@@ -583,8 +647,6 @@ mod tests {
                 }
             });
         }
-        assert_eq!(workers_with_users(&[(2, 1_000), (0, 0)], 3), 2);
-        assert_eq!(workers_with_users(&[(9, 1_000)], 3), 3);
         // A plan that goes up, down and up again: each worker's share
         // follows the users it runs at its peak, 4, 4 and 3, giving 8, 8
         // and 6, never the users it starts over the run, 7, 6 and 5,

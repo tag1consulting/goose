@@ -292,11 +292,12 @@ impl GooseConfiguration {
             ));
         }
         // Only the manager checks the plan hash.
-        let manager_only: [(&str, bool); 4] = [
+        let manager_only: [(&str, bool); 5] = [
             ("--expect-workers", self.expect_workers.is_some()),
             ("--manager-bind-host", self.manager_bind_host.is_some()),
             ("--manager-bind-port", self.manager_bind_port.is_some()),
             ("--no-hash-check", self.no_hash_check),
+            ("--gaggle-rebalance", self.gaggle_rebalance),
         ];
         let worker_only: [(&str, bool); 2] = [
             ("--manager-host", self.manager_host.is_some()),
@@ -347,13 +348,6 @@ impl GooseConfiguration {
                 }
                 Some(_) => {}
             }
-            if self.no_autostart {
-                return Err(refused(
-                    "--no-autostart",
-                    "set",
-                    "--no-autostart can't be used with --manager yet: a manager starts its workers as soon as they have all connected.",
-                ));
-            }
             let (host, _) = self.manager_bind();
             if !is_loopback_bind(&host) && self.gaggle_token().is_none() {
                 return Err(refused(
@@ -390,8 +384,6 @@ impl GooseConfiguration {
                     ));
                 }
             }
-            // A worker with no users, when there are more workers than
-            // users, takes no share of the throttle.
             let workers = self.expect_workers.unwrap_or(1);
             let plan = crate::test_plan::TestPlan::build(self).ok();
             // What every worker would refuse in its share is refused here,
@@ -418,16 +410,15 @@ impl GooseConfiguration {
                     }
                 }
             }
+            // Every worker takes a share of the throttle, one with no users
+            // too, as a running throttle can change but not turn on.
             let throttle = self.throttle_requests();
-            let busy = plan.map_or(workers, |plan| {
-                crate::gaggle::spec::workers_with_users(&plan.steps, workers)
-            });
-            if throttle > 0 && throttle < busy {
+            if throttle > 0 && throttle < workers {
                 return Err(refused(
                     "--throttle-requests",
                     throttle,
                     format!(
-                        "--throttle-requests {throttle} is fewer than the {busy} workers that run users: each needs at least 1 request per second."
+                        "--throttle-requests {throttle} is fewer than the {workers} workers: each needs at least 1 request per second."
                     ),
                 ));
             }

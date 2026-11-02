@@ -461,7 +461,7 @@ pub(crate) struct ControlOutcome {
     pub target_users: Option<usize>,
     /// The setting at fault in a refusal, when one is: `host`, `users`,
     /// `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`,
-    /// `run_time` or `test_plan`.
+    /// `run_time`, `test_plan` or `throttle`.
     pub field: Option<&'static str>,
     /// The run settings after a dashboard settings command, applied or
     /// not, so the page that sent it has them before the next snapshot.
@@ -688,6 +688,11 @@ pub struct GooseAttack {
     /// every user here.
     #[cfg(feature = "gaggle")]
     user_slice: Option<Vec<usize>>,
+    /// The global ordinal of each user still to start, in the order they
+    /// start, once a Gaggle manager changed this worker's users: its users
+    /// no longer hold one block of ordinals.
+    #[cfg(feature = "gaggle")]
+    user_ordinals: std::collections::VecDeque<usize>,
     /// The hook [`GooseAttack::set_worker_data`] registered.
     worker_data_hook: Option<Arc<WorkerDataHook>>,
     /// What the hook returned for this process, given to every user.
@@ -820,6 +825,8 @@ impl GooseAttack {
             user_offset: 0,
             #[cfg(feature = "gaggle")]
             user_slice: None,
+            #[cfg(feature = "gaggle")]
+            user_ordinals: std::collections::VecDeque::new(),
             worker_data_hook: None,
             worker_data: None,
             #[cfg(feature = "gaggle")]
@@ -875,6 +882,8 @@ impl GooseAttack {
             user_offset: 0,
             #[cfg(feature = "gaggle")]
             user_slice: None,
+            #[cfg(feature = "gaggle")]
+            user_ordinals: std::collections::VecDeque::new(),
             worker_data_hook: None,
             worker_data: None,
             #[cfg(feature = "gaggle")]
@@ -1528,6 +1537,15 @@ impl GooseAttack {
     pub(crate) fn set_user_slice(&mut self, offset: usize, slice: Vec<usize>) {
         self.user_offset = offset;
         self.user_slice = Some(slice);
+        self.user_ordinals.clear();
+    }
+
+    /// Start `users` next, each `(ordinal, scenario)`, in this order: the
+    /// users a Gaggle manager gave this worker while it runs.
+    #[cfg(feature = "gaggle")]
+    pub(crate) fn set_next_users(&mut self, users: &[(usize, usize)]) {
+        self.user_slice = Some(users.iter().map(|&(_, scenario)| scenario).collect());
+        self.user_ordinals = users.iter().map(|&(ordinal, _)| ordinal).collect();
     }
 
     /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
@@ -2867,12 +2885,16 @@ impl GooseAttack {
                 goose_attack_run_state
                     .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(increase_rate)));
 
-                // Remember which task group this user is using.
+                // Remember which task group this user is using: a Gaggle
+                // worker's users take the global ordinals its manager gave.
                 #[cfg(feature = "gaggle")]
-                let first_user = self.user_offset;
+                let ordinal = self
+                    .user_ordinals
+                    .pop_front()
+                    .unwrap_or(self.user_offset + self.metrics.total_users);
                 #[cfg(not(feature = "gaggle"))]
-                let first_user = 0;
-                thread_user.weighted_users_index = first_user + self.metrics.total_users;
+                let ordinal = self.metrics.total_users;
+                thread_user.weighted_users_index = ordinal;
 
                 // Create a per-thread channel allowing parent thread to control child threads.
                 let (parent_sender, thread_receiver): (
@@ -3018,6 +3040,17 @@ impl GooseAttack {
             assert!(self.test_plan.current > 0);
         }
 
+        // A Gaggle worker taken to 0 users by its manager waits for more
+        // users, or for the manager to stop the run: it never ends its own.
+        if goose_attack_run_state.active_users == 0
+            && self.test_plan.current >= self.test_plan.steps.len() - 1
+            && self.is_gaggle_worker()
+            && !goose_attack_run_state.stopping
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            return Ok(());
+        }
+
         // If this is the last step of the load test and there are 0 users, shut down.
         if goose_attack_run_state.active_users == 0
             // Subtract 1 from len() as it starts at 1 while current starts at 0.
@@ -3154,8 +3187,9 @@ impl GooseAttack {
             } else {
                 reports
             };
-            // Then its workers shut down.
-            if ran {
+            // Then its workers shut down, unless the run was stopped to wait
+            // for the next Start, as they do too.
+            if ran && goose_attack_run_state.shutdown_after_stop {
                 self.gaggle_shut_down().await;
             }
             self.run_in_progress = false;
@@ -3404,6 +3438,11 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        // A Gaggle manager starts its workers first, as an autostarted run.
+        #[cfg(feature = "gaggle")]
+        if self.is_gaggle_manager() {
+            self.gaggle_manager_begin().await?;
+        }
         self.reset_run_state(goose_attack_run_state).await?;
         self.metrics
             .history
@@ -3515,6 +3554,38 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         new_users: usize,
     ) -> Result<ControlOutcome, GooseError> {
+        self.control_set_users_over(goose_attack_run_state, new_users, None)
+    }
+
+    /// How long a running users ramp takes to go from `active` users to
+    /// `new_users`, in milliseconds: at the increase rate when adding users,
+    /// and the decrease rate, else the increase rate, when removing them.
+    pub(crate) fn users_ramp_ms(&self, active: usize, new_users: usize) -> usize {
+        let rate = if new_users > active {
+            if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
+                util::parse_rate(Some(increase_rate.to_string()))
+            } else {
+                util::parse_rate(None)
+            }
+        } else if let Some(decrease_rate) = self.configuration.decrease_rate.as_ref() {
+            util::parse_rate(Some(decrease_rate.to_string()))
+        } else if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
+            util::parse_rate(Some(increase_rate.to_string()))
+        } else {
+            util::parse_rate(None)
+        };
+        run_shape::ramp_ms(active.abs_diff(new_users), rate)
+    }
+
+    /// [`Self::control_set_users`], over `ramp_ms` milliseconds when given
+    /// in place of the rates': a Gaggle worker's change takes as long as the
+    /// whole load test's, whatever its own share of it.
+    pub(crate) fn control_set_users_over(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        new_users: usize,
+        ramp_ms: Option<usize>,
+    ) -> Result<ControlOutcome, GooseError> {
         if let Some(refused) = self.refuse_reconfigure(goose_attack_run_state, "users") {
             return Ok(refused.with_field("users"));
         }
@@ -3569,24 +3640,13 @@ impl GooseAttack {
             // Determine how quickly to adjust user count, using
             // increase_rate when adding users and decrease_rate when
             // removing users.
-            let rate = if new_users > goose_attack_run_state.active_users {
-                if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
-                    util::parse_rate(Some(increase_rate.to_string()))
-                } else {
-                    util::parse_rate(None)
-                }
-            } else if let Some(decrease_rate) = self.configuration.decrease_rate.as_ref() {
-                util::parse_rate(Some(decrease_rate.to_string()))
-            } else if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
-                util::parse_rate(Some(increase_rate.to_string()))
-            } else {
-                util::parse_rate(None)
-            };
-            let total_time = run_shape::ramp_ms(user_difference, rate);
+            let total_time = ramp_ms.unwrap_or_else(|| {
+                self.users_ramp_ms(goose_attack_run_state.active_users, new_users)
+            });
 
             // Allocate more users if increasing users (hard Err on failure),
-            // before anything changes.
-            if new_users > goose_attack_run_state.active_users {
+            // before anything changes: a Gaggle manager's run on its workers.
+            if new_users > goose_attack_run_state.active_users && !self.is_gaggle_manager() {
                 let weighted = self.weight_scenario_users(user_difference);
                 match weighted {
                     Ok(weighted) => self.weighted_users = weighted,
@@ -3639,8 +3699,10 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         self.run_shape = None;
         self.test_plan = test_plan;
-        // Reallocate users.
-        self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+        // Reallocate users: a Gaggle manager's run on its workers.
+        if !self.is_gaggle_manager() {
+            self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+        }
         // Insert the current state of the test plan before the new test plan.
         let elapsed = self.step_elapsed() as usize;
         self.test_plan
@@ -4090,8 +4152,10 @@ impl GooseAttack {
                 }
                 // By reaching the Shutdown phase, break out of the GooseAttack loop.
                 AttackPhase::Shutdown => {
-                    // A Gaggle worker's last messages leave first.
+                    // A Gaggle worker's last messages leave first, and a
+                    // manager shutting down from Idle tells its workers.
                     self.gaggle_worker_exit().await;
+                    self.gaggle_shut_down().await;
                     // Proactively close SSE clients so browsers see `event: closed`
                     // without waiting for the next 1 Hz hub tick / flume disconnect.
                     #[cfg(feature = "dashboard")]

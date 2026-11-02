@@ -130,6 +130,10 @@ impl MetricsProcessor {
                 merge.clock = second;
                 false
             }
+            MetricsCommand::GaggleMaxUsers { max_users } => {
+                merge.accumulator.set_max_users(max_users);
+                false
+            }
             // Save report: the merge builds the report heatmap's columns, or
             // stops, from now on.
             MetricsCommand::KeepGraph { keep, now } => {

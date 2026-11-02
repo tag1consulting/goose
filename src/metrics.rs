@@ -444,6 +444,10 @@ pub(crate) enum MetricsCommand {
     /// A Gaggle manager: refuse a delta carrying a second past `second`.
     #[cfg(feature = "gaggle")]
     GaggleClock { second: u64 },
+    /// A Gaggle manager: take user ordinals below `max_users`, as a
+    /// Controller added users.
+    #[cfg(feature = "gaggle")]
+    GaggleMaxUsers { max_users: u64 },
     /// Flush all pending metrics and return the final state for reporting.
     Shutdown {
         duration: usize,
@@ -3810,7 +3814,8 @@ impl MetricsProcessor {
             MetricsCommand::GaggleApply { .. }
             | MetricsCommand::GaggleLost { .. }
             | MetricsCommand::GaggleDone { .. }
-            | MetricsCommand::GaggleClock { .. } => false,
+            | MetricsCommand::GaggleClock { .. }
+            | MetricsCommand::GaggleMaxUsers { .. } => false,
             MetricsCommand::Shutdown {
                 duration,
                 total_users,

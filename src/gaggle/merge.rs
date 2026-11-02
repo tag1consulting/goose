@@ -504,6 +504,12 @@ impl GaggleAccumulator {
         self.limits.max_second = second.min(self.cap_second);
     }
 
+    /// Take user ordinals below `max_users` from now on, never fewer than
+    /// before: the users a Controller added on the workers.
+    pub(crate) fn set_max_users(&mut self, max_users: u64) {
+        self.limits.max_users = self.limits.max_users.max(max_users);
+    }
+
     /// Build whole run columns for the report's heatmap, or not, as Save
     /// report is turned on or off.
     pub(crate) fn set_columns(&mut self, keep: bool) {

@@ -311,7 +311,7 @@ pub(crate) struct RunSettings {
 
 impl RunSettings {
     /// The settings one Controller command sets: 0 clears a time.
-    fn from_command(command: ControllerCommand) -> Self {
+    pub(crate) fn from_command(command: ControllerCommand) -> Self {
         let time = |seconds: usize| Some((seconds > 0).then_some(seconds));
         let mut settings = Self::default();
         match command {
@@ -684,26 +684,23 @@ pub(crate) enum ControlCommand {
     SaveReportNow,
 }
 
-/// The error code a Gaggle manager answers a command that changes the run
-/// with.
-#[cfg(feature = "gaggle")]
-pub(crate) const GAGGLE_UNSUPPORTED: &str = "gaggle_unsupported";
-
 impl ControlCommand {
-    /// Whether the command changes the run, rather than reading it or the
-    /// dashboard's report switches.
+    /// Whether a Gaggle manager sends the command to its workers as their
+    /// shares: every command that changes the run but a Start, which hands
+    /// them their shares as the run begins.
     #[cfg(feature = "gaggle")]
-    fn changes_the_run(&self) -> bool {
+    fn fans_out(&self) -> bool {
         match self {
             Self::Command(command) => !matches!(
                 command,
-                ControllerCommand::Config
+                ControllerCommand::Start
+                    | ControllerCommand::Config
                     | ControllerCommand::ConfigJson
                     | ControllerCommand::Metrics
                     | ControllerCommand::MetricsJson
             ),
             #[cfg(feature = "dashboard")]
-            Self::Settings { .. } => true,
+            Self::Settings { start, .. } => !start,
             #[cfg(feature = "dashboard")]
             Self::Report { .. } | Self::SaveReportNow => false,
         }
@@ -810,6 +807,12 @@ impl GooseAttack {
                 };
             let mut answered = 0;
             while answered < MAX_DRAIN {
+                // A Gaggle manager's change waits for its workers' answers:
+                // what came after it stays queued until then.
+                #[cfg(feature = "gaggle")]
+                if self.gaggle_control_pending() {
+                    break 'drain;
+                }
                 // The dashboard's next request, else in the Controllers' turn
                 // theirs, so no queued Controller command runs ahead of a
                 // dashboard command.
@@ -880,19 +883,14 @@ impl GooseAttack {
             }
             ControlStartBegin::Rejected(outcome) => outcome,
         };
-        // A Gaggle manager answers what it can read; a command that changes
-        // the run is refused until runtime control reaches the workers.
+        // A Gaggle manager applies a change to its own run and sends each
+        // worker its share; a Start, and what reads the run, go on as on one
+        // process.
         #[cfg(feature = "gaggle")]
-        if self.is_gaggle_manager() && command.changes_the_run() {
-            let refused = self.control_outcome(
-                goose_attack_run_state,
-                false,
-                Some(GAGGLE_UNSUPPORTED),
-                "not supported in Gaggle mode yet",
-                None,
-            );
-            let _ = respond.send(ControlReply::Outcome(refused));
-            return Ok(());
+        if self.is_gaggle_manager() && command.fans_out() {
+            return self
+                .gaggle_control(goose_attack_run_state, command, respond)
+                .await;
         }
         // The dashboard's settings commands answer with the settings.
         #[cfg(feature = "dashboard")]
@@ -993,7 +991,7 @@ impl GooseAttack {
     /// applied as settings of its own, so every front end decides alike.
     /// Hard error: `weight_scenario_users` when a test plan replaces a
     /// running test's.
-    fn control_settings(
+    pub(crate) fn control_settings(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
         settings: RunSettings,
@@ -1369,9 +1367,10 @@ impl GooseAttack {
             return Ok(());
         }
         // The throttle thread reads its rate each tick.
-        if let (Some(Some(requests)), Some(rate)) =
-            (settings.throttle, goose_attack_run_state.throttle_rate.as_ref())
-        {
+        if let (Some(Some(requests)), Some(rate)) = (
+            settings.throttle,
+            goose_attack_run_state.throttle_rate.as_ref(),
+        ) {
             rate.store(requests, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(Some(plan)) = settings.test_plan {
@@ -1426,7 +1425,7 @@ impl GooseAttack {
 
     /// Shut the load test down: from Idle at once, as Ctrl-C does there,
     /// otherwise by canceling the run. Nothing to do once shutting down.
-    async fn control_shutdown(
+    pub(crate) async fn control_shutdown(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<ControlOutcome, GooseError> {

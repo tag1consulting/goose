@@ -166,6 +166,12 @@ pub(crate) enum Event {
         delta: Box<GaggleDelta>,
         bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
+    /// Its answer to `Control` `control`: `None` when it applied the change.
+    ControlAck {
+        id: u32,
+        control: u64,
+        error: Option<String>,
+    },
     /// Its users stopped: its final delta and `Stopped` follow.
     UsersStopped { id: u32 },
     /// Its users stopped, and its final delta was sent first.
@@ -284,6 +290,7 @@ pub(crate) fn message_kind(message: &ManagerMessage) -> &'static str {
         Some(ToWorker::Stop(_)) => "Stop",
         Some(ToWorker::SendLogs(_)) => "SendLogs",
         Some(ToWorker::Shutdown(_)) => "Shutdown",
+        Some(ToWorker::Control(_)) => "Control",
         None => "an empty message",
     }
 }
@@ -942,6 +949,11 @@ async fn read_worker(
             }),
             Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta),
             Some(FromWorker::UsersStopped(_)) => Arrived::Event(Event::UsersStopped { id }),
+            Some(FromWorker::ControlAck(ack)) => Arrived::Event(Event::ControlAck {
+                id,
+                control: ack.id,
+                error: ack.error,
+            }),
             Some(FromWorker::Stopped(stopped)) => Arrived::Event(Event::Stopped { id, stopped }),
             Some(FromWorker::LogChunk(chunk)) => Arrived::Event(Event::Log { id, chunk }),
         };

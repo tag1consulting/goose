@@ -2,7 +2,7 @@
 /// What a worker sends.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WorkerMessage {
-    #[prost(oneof = "worker_message::Message", tags = "1, 2, 3, 4, 5, 6, 7")]
+    #[prost(oneof = "worker_message::Message", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub message: ::core::option::Option<worker_message::Message>,
 }
 /// Nested message and enum types in `WorkerMessage`.
@@ -24,6 +24,8 @@ pub mod worker_message {
         LogChunk(super::LogChunk),
         #[prost(message, tag = "7")]
         UsersStopped(super::UsersStopped),
+        #[prost(message, tag = "8")]
+        ControlAck(super::ControlAck),
     }
 }
 /// The first message on a stream. The shared token is not in it: it travels
@@ -126,6 +128,16 @@ pub mod stopped {
 /// `Stopped` follow.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UsersStopped {}
+/// A worker's answer to `Control`, once it applied the change or refused it.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ControlAck {
+    /// The `Control` it answers.
+    #[prost(uint64, tag = "1")]
+    pub id: u64,
+    /// Empty when the change was applied; otherwise why it was refused.
+    #[prost(string, optional, tag = "2")]
+    pub error: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogChunk {
     /// The log's file name, with no folder.
@@ -151,7 +163,7 @@ pub struct LogChunk {
 /// What a manager sends.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ManagerMessage {
-    #[prost(oneof = "manager_message::Message", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "manager_message::Message", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10")]
     pub message: ::core::option::Option<manager_message::Message>,
 }
 /// Nested message and enum types in `ManagerMessage`.
@@ -176,6 +188,8 @@ pub mod manager_message {
         SendLogs(super::SendLogs),
         #[prost(message, tag = "9")]
         Shutdown(super::Shutdown),
+        #[prost(message, tag = "10")]
+        Control(super::Control),
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -213,6 +227,16 @@ pub struct Stop {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SendLogs {}
+/// A runtime change from a Controller or the dashboard: the worker applies its
+/// share and answers with a `ControlAck` of the same id.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Control {
+    #[prost(uint64, tag = "1")]
+    pub id: u64,
+    /// A postcard encoded worker control.
+    #[prost(bytes = "vec", tag = "2")]
+    pub command: ::prost::alloc::vec::Vec<u8>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Shutdown {}
 /// Generated client implementations.

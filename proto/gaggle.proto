@@ -29,6 +29,7 @@ message WorkerMessage {
     Stopped stopped = 5;
     LogChunk log_chunk = 6;
     UsersStopped users_stopped = 7;
+    ControlAck control_ack = 8;
   }
 }
 
@@ -82,6 +83,14 @@ message Stopped {
 // `Stopped` follow.
 message UsersStopped {}
 
+// A worker's answer to `Control`, once it applied the change or refused it.
+message ControlAck {
+  // The `Control` it answers.
+  uint64 id = 1;
+  // Empty when the change was applied; otherwise why it was refused.
+  optional string error = 2;
+}
+
 message LogChunk {
   // The log's file name, with no folder.
   string file = 1;
@@ -110,6 +119,7 @@ message ManagerMessage {
     Stop stop = 7;
     SendLogs send_logs = 8;
     Shutdown shutdown = 9;
+    Control control = 10;
   }
 }
 
@@ -141,5 +151,13 @@ message Stop {
 }
 
 message SendLogs {}
+
+// A runtime change from a Controller or the dashboard: the worker applies its
+// share and answers with a `ControlAck` of the same id.
+message Control {
+  uint64 id = 1;
+  // A postcard encoded worker control.
+  bytes command = 2;
+}
 
 message Shutdown {}
