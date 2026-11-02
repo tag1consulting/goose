@@ -6,7 +6,8 @@
 //! is the only test in its file: each integration test file runs in its own
 //! process.
 
-#![cfg(feature = "dashboard")]
+// Unix only: the working directory is made read only with Unix permissions.
+#![cfg(all(unix, feature = "dashboard"))]
 
 use httpmock::{Method::GET, MockServer};
 use std::os::unix::fs::PermissionsExt;

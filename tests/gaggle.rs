@@ -3,7 +3,8 @@
 //! with processes killed, frozen or interrupted mid run, and one run from
 //! end to end. Everything that needs no process of its own is tested in
 //! the library, in `src/gaggle/run_tests.rs`.
-#![cfg(feature = "gaggle")]
+//! Unix only: the processes are signalled with `nix`.
+#![cfg(all(unix, feature = "gaggle"))]
 
 use httpmock::{Method::GET, Method::POST, MockServer};
 use std::path::{Path, PathBuf};

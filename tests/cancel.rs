@@ -1,3 +1,6 @@
+//! Unix only: the tests signal their own process with `nix`.
+#![cfg(unix)]
+
 /// Validate that Goose properly shuts down when it receives SIGINT (control-c).
 use httpmock::{Method::GET, Mock, MockServer};
 use nix::sys::signal::{kill, SIGINT};
