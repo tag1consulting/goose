@@ -1264,8 +1264,10 @@ async fn gaggle_manager_failures_run_test_stop_once() {
                     .test_stop(get("/stop"))
             };
             let mut manager_args = vec!["--users", "2", "--run-time", "2"];
-            if let Some(report) = report {
-                manager_args.extend(["--report-file", report]);
+            // One argument, so the run gets no folder that would hold nothing.
+            let report = report.map(|report| format!("--report-file={report}"));
+            if let Some(report) = report.as_deref() {
+                manager_args.push(report);
             }
             let fault = TestFaults {
                 prepare: faults,
