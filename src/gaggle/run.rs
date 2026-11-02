@@ -14,7 +14,7 @@
 //! `tests/gaggle.rs` checks it from the command line.
 
 use super::delta::DeltaLimits;
-use super::link::{Link, LinkEvent, LinkSettings};
+use super::link::{Link, LinkEvent, LinkSettings, LOG_CHUNK};
 use super::manager::{Event, Manager};
 use super::merge::MergeHealth;
 use super::proto::{
@@ -55,14 +55,18 @@ const RESET_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const RESET_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// How long the manager waits for the next chunk of a worker's logs: a
-/// transfer that goes this long with none fails. No deadline caps a
-/// transfer that keeps moving, whatever its size.
+/// How long the manager waits for the next full chunk, or the last, of a
+/// worker's logs: a transfer that goes this long without one fails. No
+/// deadline caps a transfer that keeps moving, whatever its size.
 #[cfg(not(test))]
 const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Shorter in unit tests, as [`FINAL_TIMEOUT`].
 #[cfg(test)]
 const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How often the manager's waits before and after its run look at the
+/// killswitch.
+const KILLSWITCH_POLL: Duration = Duration::from_millis(100);
 
 /// How far past its own series clock the manager takes a worker's second:
 /// the workers' clocks start within milliseconds of its own, and a delta is
@@ -124,7 +128,6 @@ pub(crate) static LOG_FAULT_AT: std::sync::Mutex<Option<std::time::Instant>> =
 /// Send `files` as `fault` says, for 30 seconds, in the background.
 #[cfg(test)]
 fn send_faulty_logs(fault: LogsFault, outbox: Arc<super::link::Outbox>, files: Vec<String>) {
-    use super::link::LOG_CHUNK;
     use super::proto::LogChunk;
     let (size, every) = match fault {
         LogsFault::Slow => (LOG_CHUNK, Duration::from_millis(250)),
@@ -324,6 +327,35 @@ fn gaggle_error(detail: String) -> GooseError {
     GooseError::Gaggle { detail }
 }
 
+/// The error that ends a manager canceled `while`, once the killswitch is
+/// triggered (Ctrl-C).
+fn canceled(while_: &str) -> Option<GooseError> {
+    crate::killswitch_reason()
+        .map(|reason| gaggle_error(format!("canceled while {while_}: {reason}")))
+}
+
+/// The manager's next event before `deadline`, `None` at the deadline, or
+/// the canceled error once the killswitch is triggered: it is checked every
+/// [`KILLSWITCH_POLL`].
+async fn next_event_or_canceled(
+    manager: &Manager,
+    deadline: Instant,
+    while_: &str,
+) -> Result<Option<Event>, GooseError> {
+    loop {
+        if let Some(error) = canceled(while_) {
+            return Err(error);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(None);
+        }
+        if let Some(event) = manager.next_event(deadline.min(now + KILLSWITCH_POLL)).await {
+            return Ok(Some(event));
+        }
+    }
+}
+
 impl GooseAttack {
     /// A manager's step of a ramp up: its users run on its workers, so it
     /// counts them as its plan starts them, to keep the run's clock. Whether
@@ -434,6 +466,8 @@ impl GooseAttack {
     /// `test_start` ran, runs `test_stop`.
     pub(crate) async fn gaggle_manager_start(&mut self) -> Result<(), GooseError> {
         self.attack_mode = AttackMode::Manager;
+        // Ctrl-C cancels the waits before the run too.
+        crate::util::setup_ctrlc_handler();
         let (host, port) = self.configuration.manager_bind();
         let expected = self.configuration.expect_workers.unwrap_or(1);
         let connect_timeout = self.configuration.gaggle_connect_timeout();
@@ -455,7 +489,11 @@ impl GooseAttack {
         let deadline = Instant::now() + connect_timeout;
         let mut joined = 0;
         while joined < expected {
-            match manager.next_event(deadline).await {
+            let event = match next_event_or_canceled(&manager, deadline, "workers joined").await {
+                Ok(event) => event,
+                Err(e) => return Err(fail(&mut manager, e).await),
+            };
+            match event {
                 Some(Event::Joined) => {
                     joined += 1;
                     #[cfg(test)]
@@ -505,14 +543,6 @@ impl GooseAttack {
             }
         };
 
-        let start = tokio::time::Instant::now() + START_DELAY;
-        manager.broadcast(ToWorker::StartAt(StartAt {
-            delay_ms: START_DELAY.as_millis() as u64,
-        }));
-        info!(
-            "gaggle: every worker is ready; starting in {} seconds",
-            START_DELAY.as_secs()
-        );
         self.gaggle.role = Some(GaggleRole::Manager(Box::new(ManagerRun {
             manager,
             workers,
@@ -523,7 +553,6 @@ impl GooseAttack {
             ending: false,
             health: MergeHealth::default(),
         })));
-        tokio::time::sleep_until(start).await;
         info!(
             "gaggle: starting at {}",
             chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
@@ -531,8 +560,9 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Hand each worker its share and custom data, and wait for each to
-    /// prepare: the manager's workers, as it keeps them for the run.
+    /// Hand each worker its share and custom data, wait for each to prepare,
+    /// then tell all of them to start in [`START_DELAY`] and wait for that
+    /// instant: the manager's workers, as it keeps them for the run.
     async fn gaggle_prepare_workers(
         &mut self,
         manager: &Manager,
@@ -581,7 +611,7 @@ impl GooseAttack {
         let deadline = Instant::now() + PREPARE_TIMEOUT;
         let mut ready = BTreeSet::new();
         while ready.len() < expected {
-            match manager.next_event(deadline).await {
+            match next_event_or_canceled(manager, deadline, "workers prepared").await? {
                 Some(Event::PrepareAck { id, error: None }) => {
                     ready.insert(id);
                 }
@@ -607,6 +637,23 @@ impl GooseAttack {
                     )))
                 }
             }
+        }
+
+        let start = tokio::time::Instant::now() + START_DELAY;
+        manager.broadcast(ToWorker::StartAt(StartAt {
+            delay_ms: START_DELAY.as_millis() as u64,
+        }));
+        info!(
+            "gaggle: every worker is ready; starting in {} seconds",
+            START_DELAY.as_secs()
+        );
+        // The events that come meanwhile wait for the run.
+        while tokio::time::Instant::now() < start {
+            if let Some(error) = canceled("workers waited to start") {
+                return Err(error);
+            }
+            tokio::time::sleep_until(start.min(tokio::time::Instant::now() + KILLSWITCH_POLL))
+                .await;
         }
         Ok(workers)
     }
@@ -1228,8 +1275,8 @@ impl GooseAttack {
     /// The manager, once its workers stopped and before the reports: ask
     /// every worker for its logs and keep them in `workers/<name>/` in the
     /// run's folder. A worker whose transfers move nothing for
-    /// [`LOG_IDLE_TIMEOUT`] gives them up: a log not whole then stays on its
-    /// worker, and the run record says so.
+    /// [`LOG_IDLE_TIMEOUT`] gives them up, as Ctrl-C gives up every one: a
+    /// log not whole then stays on its worker, and the run record says so.
     pub(crate) async fn gaggle_collect_logs(&mut self) {
         let Some(mut role) = self.gaggle.role.take() else {
             return;
@@ -1339,6 +1386,10 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     if run.logs.is_empty() {
         return;
     }
+    // The run is over: a Ctrl-C from here stops the wait for logs. One that
+    // canceled the run is cleared, so the next is caught here rather than
+    // ending the process at once.
+    crate::reset_killswitch();
     let left = |worker: &WorkerEntry, log: &LogSpec| GaggleLogLeft {
         worker: worker.name.clone(),
         path: match &worker.run_folder {
@@ -1378,19 +1429,35 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     let mut heard: BTreeMap<u32, Instant> = pending.keys().map(|&id| (id, asked)).collect();
     let mut open: BTreeMap<(u32, String), Incoming> = BTreeMap::new();
     while pending.values().any(|files| !files.is_empty()) {
+        if crate::is_killswitch_triggered() {
+            warn!("gaggle: canceled while the workers sent their logs; every log not yet whole stays on its worker");
+            for (id, files) in std::mem::take(&mut pending) {
+                for (file, log) in files {
+                    if let Some(incoming) = open.remove(&(id, file)) {
+                        incoming.abandon().await;
+                    }
+                    run.logs_left.push(left(&run.workers[id as usize], &log));
+                }
+            }
+            return;
+        }
         let deadline = pending
             .iter()
             .filter(|(_, files)| !files.is_empty())
             .filter_map(|(id, _)| heard.get(id))
             .min()
             .map_or(asked, |&last| last + LOG_IDLE_TIMEOUT);
-        let Some(event) = run.manager.next_event(deadline).await else {
+        let wake = deadline.min(Instant::now() + KILLSWITCH_POLL);
+        let Some(event) = run.manager.next_event(wake).await else {
             // Every worker that sent nothing for the idle timeout: its logs
             // still to come stay on it.
             let now = Instant::now();
+            if now < wake {
+                // No event, and no wake yet: the event queue closed.
+                tokio::time::sleep_until(tokio::time::Instant::from_std(wake)).await;
+                continue;
+            }
             if now < deadline {
-                // No event, and no worker idle yet: the event queue closed.
-                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
                 continue;
             }
             for (&id, files) in pending.iter_mut() {
@@ -1485,9 +1552,10 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     && incoming.file.write_all(&chunk.data).await.is_ok();
                 if ok {
                     incoming.written += chunk.data.len() as u64;
-                    // Only progress keeps a transfer alive: an empty chunk
-                    // that is not the last, which no worker sends, does not.
-                    if !chunk.data.is_empty() || chunk.last {
+                    // Only progress keeps a transfer alive: a worker sends
+                    // full chunks and then the last, so a shorter chunk that
+                    // is not the last, as a trickle of small ones, does not.
+                    if chunk.data.len() >= LOG_CHUNK || chunk.last {
                         heard.insert(id, Instant::now());
                     }
                 }
