@@ -1121,7 +1121,8 @@ impl GooseAttack {
                 // No final metrics came, nor will: lost, whenever it says so.
                 // A reason this manager does not know, or none, is taken as
                 // the same, never as a stop.
-                let reason = match Reason::try_from(stopped.reason) {
+                let reason = match <Reason as std::convert::TryFrom<i32>>::try_from(stopped.reason)
+                {
                     Ok(Reason::Failed) => {
                         let why = format!("it could not finish its run: {}", stopped.canceled);
                         self.lose_worker(goose_attack_run_state, run, id, why);
@@ -2317,6 +2318,7 @@ mod tests {
             log_files: Vec::new(),
             run_folder: None,
             skip_reset: false,
+            stop_reason_sent: false,
         })));
         (attack, run_state)
     }
