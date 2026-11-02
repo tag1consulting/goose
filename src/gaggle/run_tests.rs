@@ -2297,3 +2297,36 @@ async fn gaggle_delta_past_the_message_limit() {
     let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
     assert!(reason.contains("bytes, more than the"), "{}", gaggle);
 }
+
+/// No environment variable turns a worker's faults on: one with
+/// `GOOSE_GAGGLE_TEST_SKIP_RESET` set, as a cluster's test harness once set
+/// it, still takes its manager's metrics reset, so its metrics are merged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_environment_turns_on_no_fault() {
+    let server = answering().await;
+    let folder = scratch("no-environment-fault");
+    std::env::set_var("GOOSE_GAGGLE_TEST_SKIP_RESET", "1");
+    let run = gaggle(
+        quick,
+        2,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "2",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "3",
+            "--report-file",
+        ],
+        &[],
+        &[],
+    );
+    let ended = tokio::time::timeout(Duration::from_secs(60), run).await;
+    std::env::remove_var("GOOSE_GAGGLE_TEST_SKIP_RESET");
+    clean(ended.expect("the Gaggle ends within 60 seconds"));
+    let (gaggle, _) = record(&folder);
+    assert_eq!(gaggle["degraded"], false, "{gaggle}");
+}
