@@ -51,6 +51,11 @@ fn start_instant(delay_ms: u64) -> Result<tokio::time::Instant, String> {
 /// A log chunk's size.
 pub(crate) const LOG_CHUNK: usize = 1 << 20;
 
+/// The largest encoded delta a worker sends: [`MAX_MESSAGE`] less room for
+/// the message around it, so tonic never refuses to encode one, which
+/// would reset the stream.
+const MAX_DELTA: usize = MAX_MESSAGE - (1 << 10);
+
 /// The most of the manager's messages the worker's reader queues for its
 /// main loop: past it, or past [`EVENT_BYTES`], the reader waits, reading
 /// nothing more, so HTTP/2 flow control holds the manager back.
@@ -398,6 +403,15 @@ impl Outbox {
                         let encoded = match self.unencodable.load(Ordering::Relaxed) {
                             true => Err(postcard::Error::SerializeBufferFull),
                             false => encoded,
+                        };
+                        // Past the message limit is as unencodable.
+                        let encoded = match encoded {
+                            Ok(bytes) if bytes.len() > MAX_DELTA => Err(format!(
+                                "it is {} bytes, more than the {MAX_DELTA} bytes a message carries",
+                                bytes.len()
+                            )),
+                            Ok(bytes) => Ok(bytes),
+                            Err(e) => Err(e.to_string()),
                         };
                         match encoded {
                             Ok(bytes) => ToManager::Metrics(Metrics { delta: bytes }),
