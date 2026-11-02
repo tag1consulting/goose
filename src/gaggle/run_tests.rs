@@ -1302,6 +1302,89 @@ async fn gaggle_prepare_timeout_runs_test_stop() {
     manager_fails(PrepareFault::Stall, false, None, true).await;
 }
 
+/// A manager given `more` past what a worker runs, worker 0's users or the
+/// test plan's steps, is refused with `message` before it listens: two
+/// workers would join one that listened, and neither test_start nor any
+/// worker's user runs.
+async fn manager_past_a_worker_bound(more: &[&str], message: &str) {
+    let test = async {
+        no_token_from_the_environment();
+        let server = MockServer::start_async().await;
+        let (start, a) = (mock_ok(&server, "/start").await, mock_ok(&server, "/a").await);
+        let host = server.base_url();
+        let mut args = vec![
+            "--manager",
+            "--expect-workers",
+            "2",
+            "--manager-bind-port",
+            "0",
+            "--no-telnet",
+            "--quiet",
+            "--host",
+            &host,
+        ];
+        args.extend_from_slice(more);
+        let (bound, address) = tokio::sync::oneshot::channel();
+        let manager = tokio::spawn(
+            load_test(configuration(&args))
+                .report_manager_address(bound)
+                .execute(),
+        );
+        // A manager that listens is past the check: its workers join.
+        let mut workers = Vec::new();
+        if let Ok(address) = address.await {
+            let port = address.port().to_string();
+            for _ in 0..2 {
+                let args = [
+                    "--worker",
+                    "--manager-host",
+                    "127.0.0.1",
+                    "--manager-port",
+                    &port,
+                    "--quiet",
+                ];
+                workers.push(tokio::spawn(load_test(configuration(&args)).execute()));
+            }
+        }
+        let refused = manager.await.expect("the manager task ends");
+        for worker in workers {
+            let _ = worker.await;
+        }
+        match refused {
+            Err(crate::GooseError::InvalidOption { detail, .. }) => {
+                assert!(detail.contains(message), "{}", detail)
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert_eq!(start.calls_async().await, 0, "test_start");
+        assert_eq!(a.calls_async().await, 0, "no user ran");
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_manager_refuses_more_users_than_a_worker_runs() {
+    manager_past_a_worker_bound(
+        &["--users", "2000001"],
+        "gives worker 0 1000001 users, more than the 1000000 users a worker runs",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_manager_refuses_more_plan_steps_than_a_worker_runs() {
+    let plan = vec!["1,1"; 100_001].join(";");
+    manager_past_a_worker_bound(
+        &["--test-plan", &plan],
+        "100001 test plan steps, more than the 100000 steps a worker runs",
+    )
+    .await;
+}
+
 /// The report file is checked before test_start, so neither it nor
 /// test_stop runs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

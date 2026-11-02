@@ -441,6 +441,11 @@ mod tests {
         }
     }
 
+    /// A `--test-plan` of `steps` steps of 1 user for 1 second.
+    fn plan_of(steps: usize) -> String {
+        vec!["1,1"; steps].join(";")
+    }
+
     /// Every refused combination, with its message. Serial, with no
     /// token from the environment, which a manager or worker reads.
     #[test]
@@ -546,7 +551,12 @@ mod tests {
             ),
             (
                 with(&["--no-hash-check"], &[]),
-                "--no-hash-check needs --manager or --worker",
+                "--no-hash-check needs --manager.",
+            ),
+            // Only the manager checks the plan hash.
+            (
+                with(&worker, &["--no-hash-check"]),
+                "--no-hash-check needs --manager.",
             ),
             (
                 with(
@@ -582,6 +592,17 @@ mod tests {
             (
                 with(&manager, &["--gaggle-token", "t\u{e9}"]),
                 "--gaggle-token must be printable ASCII",
+            ),
+            // What every worker would refuse in its share: worker 0, the
+            // largest, past the users a worker runs, or a plan past the
+            // steps.
+            (
+                with(&manager, &["--users", "2000001"]),
+                "gives worker 0 1000001 users, more than the 1000000 users a worker runs",
+            ),
+            (
+                with(&manager, &["--test-plan", &plan_of(100_001)]),
+                "100001 test plan steps, more than the 100000 steps a worker runs",
             ),
         ];
         for (args, message) in cases {
@@ -686,6 +707,18 @@ mod tests {
         ]);
         fewer.configure(&GooseDefaults::default()).unwrap();
         fewer.validate().unwrap();
+        // A worker's share at each size bound is taken.
+        for more in [
+            vec!["--users".to_string(), "2000000".to_string()],
+            vec!["--test-plan".to_string(), plan_of(100_000)],
+        ] {
+            let more: Vec<&str> = more.iter().map(String::as_str).collect();
+            let args = with(&manager, &more);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let mut at_bound = parse(&args);
+            at_bound.configure(&GooseDefaults::default()).unwrap();
+            at_bound.validate().unwrap();
+        }
         // What a worker keeps.
         let mut kept = parse(
             &with(&worker, &["--output-dir", "o", "-v"])
