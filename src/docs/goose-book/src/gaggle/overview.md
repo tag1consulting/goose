@@ -22,7 +22,9 @@ Thresholds are judged on the merged metrics, by the manager, as a run of one pro
 - One metrics reset when every user has started, across the whole Gaggle.
 - `test_start` and `test_stop` run once, on the manager.
 - [Custom data for each worker](worker.md#custom-data-for-each-worker), such as its share of a pool of accounts.
-- A lost worker does not stop the run: the run goes on with the others, and its reports say it is degraded. So does a worker whose metrics are not all in the results, as one that missed the metrics reset. A worker that loses its manager stops all of its load within seconds.
+- A lost worker does not stop the run: the run goes on with the others, and its reports say it is degraded. So does a worker whose metrics are not all in the results, as one that missed the metrics reset; its users are left out of the users graph too. A worker that loses its manager stops all of its load within seconds.
+- Ctrl-C on the manager at any stage: while the workers join or prepare, during the run, or while their logs arrive. Every worker is told to stop, `test_stop` runs if `test_start` did, and a log not yet whole stays on its worker.
+- The manager's graphs show a second once no worker can still add to it: a worker's rows reach back its request timeout and a minute, so the live dashboard's graphs, and a report saved while the run goes on, trail the run by about two minutes with the default `--timeout`. The final reports cover the whole run.
 - Once every user has started, a Gaggle runs the same scenario mix one process would. During a ramp the order users start in differs, as each worker starts its own share at its own pace.
 
 ## What comes next
@@ -30,6 +32,10 @@ Thresholds are judged on the merged metrics, by the manager, as a run of one pro
 - Runtime control: the manager's Controllers and dashboard can read the run but not yet change it. Starting, stopping and changing users, rates, the test plan, the throttle or the host while a Gaggle runs is refused with `not supported in Gaggle mode yet`, and `--no-autostart` can't be used with `--manager`. Ctrl-C on the manager stops the whole Gaggle.
 - Per worker tables in the reports, and a Gaggle view on the dashboard.
 - TLS between the manager and its workers, workers joining a running Gaggle, and workers reconnecting. Until TLS arrives the token, and all Gaggle traffic, cross the network unencrypted: run a Gaggle on a network you trust, and give it a `--gaggle-token`.
+
+## Trust
+
+The token authenticates workers to the manager, not the manager to its workers. Until TLS arrives, whoever answers at the manager's address, or sits on the path between them, controls the workers' load, its target included, and sees all their traffic: run Gaggle only on a network you trust.
 
 ## An example on one machine
 
@@ -53,10 +59,11 @@ The run starts two seconds after both workers are ready. When it ends, the manag
 
 1. The manager listens on `--manager-bind-host` and `--manager-bind-port`, and waits for `--expect-workers` workers, at most `--gaggle-connect-timeout`.
 2. Each worker connects, retrying with backoff for up to `--gaggle-connect-timeout`. The manager turns away a worker of another Goose version or protocol version, a worker with another token, and, unless `--no-hash-check`, a worker whose load test differs.
-3. Once every worker has joined, the manager runs `test_start`, and hands each worker its share: its users, numbered as one process would number them, its part of each test plan step, its part of the throttle, its custom data, and the metrics and log settings.
+3. Once every worker has joined, the manager checks it can create its `--report-file` reports, runs `test_start`, and hands each worker its share: its users, numbered as one process would number them, its part of each test plan step, its part of the throttle, its custom data, and the metrics and log settings.
 4. Each worker builds its users and says it is ready. The manager tells every worker to start two seconds later, and starts its own clock at the same instant.
 5. Every second each worker sends what it measured since the last second. The manager merges it, judges the thresholds on the merge, and serves its dashboard from it. When every user has started, the manager resets the metrics on every worker at once.
-6. At the end of the run, the manager tells every worker to stop, and waits up to 30 seconds for each worker's final metrics. It runs `test_stop`, collects the workers' logs, writes its reports and tells the workers to exit.
+6. At the end of the run, the manager tells every worker to stop. A user stops once the transaction it is in ends, so the manager waits up to the request timeout (`--timeout`, 60 seconds by default) and 30 seconds for each worker to say its users stopped, then up to 30 seconds more for its final metrics; a worker past either is lost. It runs `test_stop` and writes its reports, then collects the workers' logs, writing the reports again to name any log left on its worker, and tells the workers to exit.
+7. Any failure after `test_start`, as a worker that cannot prepare, runs `test_stop` once before the manager exits with the error.
 
 ## Load testing at scale
 
