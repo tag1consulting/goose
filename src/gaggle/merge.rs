@@ -267,8 +267,10 @@ impl GaggleAccumulator {
         // hostile worker could ask for it every second. The rows merge at
         // once either way; a build that waits leaves them to the next from
         // nothing, which a forced read or the run's end makes
-        // ([`Self::settle`]).
-        if !matches!(taken, Taken::Ignored) {
+        // ([`Self::settle`]). A worker's first delta, its final one or a new
+        // epoch builds every figure again anyway, as an honest final holds
+        // rows for seconds long built.
+        if known && matches!(taken, Taken::Added) {
             let earliest = delta.graph.seconds().min();
             if let (Some(built), Some(earliest)) = (merged.built.as_ref(), earliest) {
                 if earliest < built.before {
@@ -534,6 +536,15 @@ impl GaggleAccumulator {
     /// Gaps and repeats left out of [`Self::gaps`] past [`MAX_GAPS_KEPT`].
     pub(crate) fn gaps_dropped(&self) -> u64 {
         self.gaps_dropped
+    }
+
+    /// The second of `worker`'s delta whose late row last built the graph
+    /// data again (tests).
+    #[cfg(test)]
+    pub(crate) fn late_rebuilt(&self, worker: u32) -> Option<Second> {
+        self.workers
+            .get(&worker)
+            .and_then(|total| total.late_rebuilt)
     }
 
     /// Repeats of deltas from `worker` already taken, ignored (tests).
