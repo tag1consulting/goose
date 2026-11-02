@@ -761,13 +761,15 @@ async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::i
                     data: Vec::new(),
                     last: true,
                     error: None,
-                    size: None,
+                    size: Some(0),
                 })
                 .await;
             return Ok(());
         }
         Err(e) => return Err(e),
     };
+    // The log is closed: its size now is what the manager may take.
+    let mut size = Some(reader.metadata().await?.len());
     let mut offset = 0u64;
     let mut data = vec![0u8; LOG_CHUNK];
     let mut filled = 0;
@@ -791,7 +793,7 @@ async fn send_log(outbox: &Outbox, file: &str, path: &std::path::Path) -> std::i
                     data: chunk,
                     last: end,
                     error: None,
-                    size: None,
+                    size: size.take(),
                 })
                 .await;
             offset += filled as u64;

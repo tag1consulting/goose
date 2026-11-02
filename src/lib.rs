@@ -3131,17 +3131,23 @@ impl GooseAttack {
             // Write the --report-file reports and Save report's, only when a
             // run happened since the last time (not on a shutdown from Idle).
             let ran = self.run_in_progress;
-            // A Gaggle manager collects its workers' logs first, so the
-            // reports can name any left on a worker.
-            #[cfg(feature = "gaggle")]
-            if ran {
-                self.gaggle_collect_logs().await;
-            }
             let reports = if ran {
                 self.write_end_of_run(!goose_attack_run_state.shutdown_after_stop)
                     .await
             } else {
                 Ok(())
+            };
+            // A Gaggle manager then collects its workers' logs, so a disk the
+            // logs fill costs only logs, and writes the reports again to name
+            // any log left on a worker.
+            #[cfg(feature = "gaggle")]
+            let reports = if ran && self.gaggle_collect_logs().await {
+                let again = self
+                    .write_end_of_run(!goose_attack_run_state.shutdown_after_stop)
+                    .await;
+                reports.and(again)
+            } else {
+                reports
             };
             // Then its workers shut down.
             #[cfg(feature = "gaggle")]

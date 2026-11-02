@@ -1329,15 +1329,18 @@ impl GooseAttack {
         }
     }
 
-    /// The manager, once its workers stopped and before the reports: ask
-    /// every worker for its logs and keep them in `workers/<name>/` in the
+    /// The manager, once its workers stopped and its reports are written:
+    /// ask every worker for its logs and keep them in `workers/<name>/` in the
     /// run's folder. A worker whose transfers move nothing for
     /// [`LOG_IDLE_TIMEOUT`] gives them up, as Ctrl-C gives up every one: a
     /// log not whole then stays on its worker, and the run record says so.
-    pub(crate) async fn gaggle_collect_logs(&mut self) {
+    /// A log past the size its worker announced is refused the same way.
+    /// Whether any log was left on a worker, which the reports then name.
+    pub(crate) async fn gaggle_collect_logs(&mut self) -> bool {
         let Some(mut role) = self.gaggle.role.take() else {
-            return;
+            return false;
         };
+        let mut left = false;
         if let GaggleRole::Manager(run) = &mut role {
             let folder = self
                 .output
@@ -1345,8 +1348,10 @@ impl GooseAttack {
                 .as_ref()
                 .map(|folder| folder.path.clone());
             collect_logs(run, folder).await;
+            left = !run.logs_left.is_empty();
         }
         self.gaggle.role = Some(role);
+        left
     }
 
     /// The manager, after its reports: tell every worker to shut down.
@@ -1426,6 +1431,8 @@ fn last_merged(health: &MergeHealth, id: u32) -> u64 {
 /// its real name.
 struct Incoming {
     file: tokio::fs::File,
+    /// The size its worker announced, which it may not pass.
+    size: u64,
     written: u64,
     part: PathBuf,
     path: PathBuf,
@@ -1485,6 +1492,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     let asked = Instant::now();
     let mut heard: BTreeMap<u32, Instant> = pending.keys().map(|&id| (id, asked)).collect();
     let mut open: BTreeMap<(u32, String), Incoming> = BTreeMap::new();
+    // The bytes every log so far was announced as, across workers.
+    let mut announced = 0u64;
     while pending.values().any(|files| !files.is_empty()) {
         if crate::is_killswitch_triggered() {
             warn!("gaggle: canceled while the workers sent their logs; every log not yet whole stays on its worker");
@@ -1579,10 +1588,17 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     .await;
                     match created {
                         Ok(file) => {
+                            let size = chunk.size.unwrap_or(0);
+                            announced = announced.saturating_add(size);
+                            info!(
+                                "gaggle: worker {name}'s {} is {size} bytes; {announced} bytes of logs announced so far",
+                                chunk.file
+                            );
                             open.insert(
                                 key.clone(),
                                 Incoming {
                                     file,
+                                    size,
                                     written: 0,
                                     part,
                                     path,
@@ -1604,6 +1620,20 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                 let Some(incoming) = open.get_mut(&key) else {
                     continue;
                 };
+                let past = incoming.written.saturating_add(chunk.data.len() as u64);
+                if past > incoming.size {
+                    warn!(
+                        "gaggle: worker {id}'s {} passed the {} bytes it was announced as; it stays on the worker",
+                        chunk.file, incoming.size
+                    );
+                    if let Some(incoming) = open.remove(&key) {
+                        incoming.abandon().await;
+                    }
+                    if let Some(log) = files.remove(&chunk.file) {
+                        run.logs_left.push(left(&run.workers[id as usize], &log));
+                    }
+                    continue;
+                }
                 use tokio::io::AsyncWriteExt;
                 let mut ok = chunk.offset == incoming.written
                     && incoming.file.write_all(&chunk.data).await.is_ok();
