@@ -4829,7 +4829,18 @@ impl GooseAttack {
             }
         };
         let path = PathBuf::from(report);
-        let file = File::create(&path)
+        // A Gaggle manager writes its reports again once its workers' logs
+        // are in, perhaps as they fill the disk: each goes to a part file
+        // renamed over the report once whole, so a failed write keeps the
+        // report the first wrote.
+        let target = match source {
+            Some(_) if self.is_gaggle_manager() => path.with_file_name(format!(
+                "{}.part",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )),
+            _ => path.clone(),
+        };
+        let file = File::create(&target)
             .await
             .map_err(|err| report_io_error(report, err))?;
         let Some(source) = source else {
@@ -4837,6 +4848,10 @@ impl GooseAttack {
         };
         #[cfg(all(test, feature = "gaggle"))]
         if crate::gaggle::run::DISK_FULL.load(std::sync::atomic::Ordering::Relaxed) {
+            drop(file);
+            if target != path {
+                let _ = tokio::fs::remove_file(&target).await;
+            }
             return Err(report_io_error(
                 report,
                 std::io::Error::other("no space left on device"),
@@ -4867,7 +4882,7 @@ impl GooseAttack {
                             // Dropping a gzip writer writes an empty member,
                             // so the file goes by name: Goose created it above.
                             drop(out);
-                            let _ = tokio::fs::remove_file(&path).await;
+                            let _ = tokio::fs::remove_file(&target).await;
                             return Err(e);
                         }
                     },
@@ -4878,7 +4893,19 @@ impl GooseAttack {
         };
         // Finish the file, gzip trailer and all, here: an error on drop would be
         // lost.
-        written.and_then(|()| out.finish().map_err(|err| report_io_error(report, err)))?;
+        let finished =
+            written.and_then(|()| out.finish().map_err(|err| report_io_error(report, err)));
+        if target != path {
+            if let Err(e) = finished {
+                let _ = tokio::fs::remove_file(&target).await;
+                return Err(e);
+            }
+            tokio::fs::rename(&target, &path)
+                .await
+                .map_err(|err| report_io_error(report, err))?;
+        } else {
+            finished?;
+        }
         info!("{kind} report file written to: {report}");
         Ok(())
     }
