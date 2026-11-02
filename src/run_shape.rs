@@ -300,6 +300,7 @@ impl RunShape {
     }
 
     /// Whether the run holds until stopped, with no end of its own.
+    #[cfg(feature = "gaggle")]
     pub(crate) fn holds_until_stopped(&self) -> bool {
         matches!(self.hold, Hold::UntilStopped { .. })
     }
