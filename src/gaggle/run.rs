@@ -117,6 +117,14 @@ pub(crate) struct TestFaults {
     /// Trigger the killswitch, as Ctrl-C on the manager, as `Stop` arrives,
     /// at [`LOG_FAULT_AT`].
     pub(crate) cancel_on_stop: bool,
+    /// Never say its users stopped, nor send its final metrics: wait to be
+    /// shut down.
+    pub(crate) withhold_final: bool,
+    /// A second into the run, say it stopped for this reason, as sent, and
+    /// run on.
+    pub(crate) stop_reason: Option<i32>,
+    /// The metrics processor gets the final metrics command this late.
+    pub(crate) final_after: Option<Duration>,
 }
 
 /// What a worker sends in place of its logs, in unit tests.
@@ -320,6 +328,9 @@ pub(crate) struct WorkerRun {
     run_folder: Option<PathBuf>,
     /// Ignore the manager's metrics reset ([`TEST_SKIP_RESET_ENV`]).
     skip_reset: bool,
+    /// Its [`TestFaults::stop_reason`] was sent (unit tests).
+    #[cfg(test)]
+    stop_reason_sent: bool,
 }
 
 impl WorkerEntry {
@@ -882,6 +893,8 @@ impl GooseAttack {
             log_files: Vec::new(),
             run_folder: None,
             skip_reset,
+            #[cfg(test)]
+            stop_reason_sent: false,
         })));
         Ok(())
     }
@@ -1130,6 +1143,17 @@ impl GooseAttack {
                 detail: "ended mid run on purpose".to_string(),
             });
         }
+        #[cfg(test)]
+        if let Some(reason) = self.gaggle.test_faults.stop_reason {
+            if running && !run.stop_reason_sent && self.series_elapsed_secs() >= 1 {
+                run.stop_reason_sent = true;
+                run.link.stopped(Stopped {
+                    reason,
+                    canceled: "on purpose".to_string(),
+                    run_folder: String::new(),
+                });
+            }
+        }
         if running && self.series_started.is_some() {
             let now = self.series_elapsed_secs();
             if run.tick_second != Some(now) {
@@ -1373,6 +1397,20 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut WorkerRun,
     ) -> Result<(), GooseError> {
+        // A unit test's fault: users that never stop, as far as the manager
+        // hears.
+        #[cfg(test)]
+        if self.gaggle.test_faults.withhold_final {
+            loop {
+                if let Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) =
+                    run.link.next_event(Duration::from_secs(1)).await
+                {
+                    return Err(GooseError::Gaggle {
+                        detail: "withheld its final metrics on purpose".to_string(),
+                    });
+                }
+            }
+        }
         // Its final metrics follow at once: the manager waits for them from
         // now.
         run.link.users_stopped();
@@ -1397,7 +1435,27 @@ impl GooseAttack {
             let _ = answered(done, FINAL_TIMEOUT).await;
             return Err(worker_failed(&run.link, no_final()).await);
         }
-        let sent = goose_attack_run_state.metrics_cmd_tx.send(command).is_ok();
+        // A unit test's fault: a processor that takes the command late.
+        #[cfg(test)]
+        let command = match self.gaggle.test_faults.final_after {
+            Some(delay) => {
+                let metrics = goose_attack_run_state.metrics_cmd_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(delay).await;
+                    let _ = metrics.send(command);
+                });
+                None
+            }
+            None => Some(command),
+        };
+        #[cfg(not(test))]
+        let command = Some(command);
+        let sent = command.is_none_or(|command| {
+            goose_attack_run_state
+                .metrics_cmd_tx
+                .send(command)
+                .is_ok()
+        });
         if sent && !answered(done, FINAL_TIMEOUT).await {
             return Err(worker_failed(&run.link, no_final()).await);
         }

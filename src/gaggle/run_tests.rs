@@ -2057,3 +2057,199 @@ async fn gaggle_killswitch_after_stop_leaves_the_logs() {
         .await
         .expect("within 60 seconds");
 }
+
+/// A Ctrl-C while the manager waits for its workers' final metrics, one
+/// worker never saying its users stopped: the manager ends within 5 seconds
+/// of it, where it would wait the request timeout and more, and still runs
+/// test_stop once, writes its report and records that worker lost, canceled.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_killswitch_during_the_final_wait() {
+    let test = async {
+        let server = MockServer::start_async().await;
+        let (_a, stop) = (
+            mock_ok(&server, "/a").await,
+            mock_ok(&server, "/stop").await,
+        );
+        let folder = scratch("cancel-final-wait");
+        *LOG_FAULT_AT.lock().unwrap() = None;
+        let faults = [
+            TestFaults::default(),
+            TestFaults {
+                withhold_final: true,
+                cancel_on_stop: true,
+                ..Default::default()
+            },
+        ];
+        let build = |configuration, place| quick(configuration, place).test_stop(get("/stop"));
+        let ((manager, ended), _) = gaggle_timed(
+            build,
+            2,
+            server.base_url(),
+            &folder,
+            &[
+                "--users",
+                "2",
+                "--increase-rate",
+                "10",
+                "--run-time",
+                "2",
+                "--report-file",
+            ],
+            &[],
+            &faults,
+        )
+        .await;
+        crate::reset_killswitch();
+        let canceled = LOG_FAULT_AT
+            .lock()
+            .unwrap()
+            .expect("the withholding worker saw Stop");
+        let took = ended.saturating_duration_since(canceled);
+        assert!(took <= Duration::from_secs(5), "{:?}", took);
+        assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        assert_eq!(stop.calls_async().await, 1, "test_stop");
+        let (gaggle, _) = record(&folder);
+        let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+        assert_eq!(lost.len(), 1, "{gaggle}");
+        let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
+        assert!(reason.contains("canceled"), "{}", gaggle);
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
+}
+
+/// Workers that say, a second into the run, they stopped for a reason the
+/// manager does not know, 0 (unspecified) or one past those it knows: each
+/// is lost, its reason's value named, and the run ends as every worker is
+/// lost, long before its 30 seconds, degraded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_unknown_stop_reasons_lose_the_workers() {
+    let server = answering().await;
+    let folder = scratch("unknown-stop-reasons");
+    let faults = [0, 99].map(|reason| TestFaults {
+        stop_reason: Some(reason),
+        ..Default::default()
+    });
+    let started = std::time::Instant::now();
+    let run = gaggle(
+        quick,
+        2,
+        server.base_url(),
+        &folder,
+        &[
+            "--users",
+            "2",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "30",
+            "--report-file",
+        ],
+        &[],
+        &faults,
+    );
+    let _ = tokio::time::timeout(Duration::from_secs(90), run)
+        .await
+        .expect("the Gaggle ends within 90 seconds");
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "{:?}",
+        started.elapsed()
+    );
+    let (gaggle, _) = record(&folder);
+    assert_eq!(gaggle["degraded"], true, "{gaggle}");
+    let mut reasons: Vec<String> = gaggle["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|worker| {
+            assert_eq!(worker["state"], "lost", "{}", gaggle);
+            worker["lost_reason"].as_str().unwrap_or_default().to_string()
+        })
+        .collect();
+    reasons.sort();
+    assert!(reasons[0].contains("an unknown reason, 0"), "{:?}", reasons);
+    assert!(reasons[1].contains("an unknown reason, 99"), "{:?}", reasons);
+}
+
+/// A load test whose user triggers the killswitch, as Ctrl-C, after its
+/// first GET /a.
+fn canceling(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack {
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(
+            Scenario::new("A").register_transaction(Transaction::new(Arc::new(|user| {
+                Box::pin(async move {
+                    let _ = user.get("/a").await;
+                    crate::trigger_killswitch("a test's Ctrl-C mid run");
+                    Ok(())
+                })
+            }))),
+        )
+}
+
+/// After a run canceled mid run, the killswitch reads the same whether the
+/// manager collected its workers' logs or not, and as after a canceled run
+/// of one process.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_killswitch_after_a_canceled_run_reads_as_one_process() {
+    let test = async {
+        let server = answering().await;
+        let mut after = Vec::new();
+        for logs in [false, true] {
+            let folder = scratch("canceled-killswitch");
+            let mut args = vec!["--users", "1", "--run-time", "30", "--report-file"];
+            if logs {
+                args.push("--request-log");
+            }
+            let _ = gaggle(canceling, 1, server.base_url(), &folder, &args, &[], &[]).await;
+            after.push(crate::is_killswitch_triggered());
+            crate::reset_killswitch();
+        }
+        let host = server.base_url();
+        let one = canceling(
+            configuration(&[
+                "--users",
+                "1",
+                "--run-time",
+                "30",
+                "--no-telnet",
+                "--quiet",
+                "--host",
+                &host,
+            ]),
+            None,
+        )
+        .execute()
+        .await;
+        assert!(one.is_ok(), "{:?}", one.map(|_| ()));
+        let single = crate::is_killswitch_triggered();
+        crate::reset_killswitch();
+        assert_eq!(after, [single, single], "without and with logs, then one process");
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
+}
+
+/// A worker whose metrics processor takes its final metrics command 2.5
+/// seconds late, past the worker's own bound and inside the manager's 3
+/// seconds (25 of 30 seconds outside unit tests): the worker says it failed
+/// before the manager gives up on it, so its loss names the real cause.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_late_final_handover_names_the_processor() {
+    worker_fails_a_phase(
+        TestFaults {
+            final_after: Some(Duration::from_millis(2500)),
+            ..Default::default()
+        },
+        "did not hand over",
+        None,
+    )
+    .await;
+}
