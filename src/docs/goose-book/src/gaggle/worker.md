@@ -22,7 +22,7 @@ A worker that can't reach its manager tries again after 1, 2, 4 and 8 seconds, t
 
 ## When the manager is lost
 
-Load never outlives its manager. If nothing comes from the manager for `--gaggle-heartbeat-timeout` (10 seconds by default), or the connection closes without the manager telling the worker to exit, the worker stops every user at once, logs why, and exits with an error within the heartbeat timeout plus 5 seconds. The manager and every worker send each other a heartbeat every 2 seconds, whatever else they are doing.
+Load never outlives its manager. If nothing comes from the manager for `--gaggle-heartbeat-timeout` (10 seconds by default), or the connection closes without the manager telling the worker to exit, the worker stops every user at once, logs why, and exits with an error within the heartbeat timeout plus 5 seconds; until its share arrives, when no user runs yet, it waits up to 120 seconds. The manager and every worker send each other a heartbeat every 2 seconds, whatever else they are doing.
 
 Ctrl-C on a worker stops its users, sends the manager its final metrics, and exits; the manager marks it lost and carries on with the others.
 

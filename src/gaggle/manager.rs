@@ -973,6 +973,28 @@ async fn read_worker(
                     let holds = delta.decoded_bytes().max(encoded).min(EVENT_BYTES as usize);
                     if let Some(rest) = permit.num_permits().checked_sub(holds) {
                         drop(permit.split(rest));
+                    } else {
+                        // Past the reserve, as many tiny entries can be: the
+                        // rest now, or the whole of it once the reserve is
+                        // given back, never holding part while it waits.
+                        let more = (holds - permit.num_permits()) as u32;
+                        match shared.event_bytes.clone().try_acquire_many_owned(more) {
+                            Ok(extra) => permit.merge(extra),
+                            Err(_) => {
+                                drop(permit);
+                                let whole = held(
+                                    shared.event_bytes.clone().acquire_many_owned(holds as u32),
+                                    &worker,
+                                    &shared,
+                                    &heard,
+                                )
+                                .await;
+                                let Some(Ok(whole)) = whole else {
+                                    break;
+                                };
+                                permit = whole;
+                            }
+                        }
                     }
                     let event = Event::Delta {
                         id,
