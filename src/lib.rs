@@ -1896,7 +1896,7 @@ impl GooseAttack {
                 "printing final metrics after {} seconds...",
                 self.metrics.duration
             );
-            print!("{}", self.metrics);
+            self.metrics.print(false);
         }
 
         // Every report is written: fail the run when a threshold failed.
@@ -3175,7 +3175,7 @@ impl GooseAttack {
                         "printing final metrics after {} seconds...",
                         self.metrics.duration
                     );
-                    print!("{}", self.metrics);
+                    self.metrics.print(false);
                 }
                 return Err(e);
             }
@@ -3193,7 +3193,7 @@ impl GooseAttack {
             } else {
                 // Print metrics, if enabled.
                 if self.metrics.display_metrics {
-                    println!("{}", self.metrics);
+                    self.metrics.print(true);
                 }
                 #[cfg(feature = "dashboard")]
                 if wait_for_dashboard {
