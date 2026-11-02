@@ -1,6 +1,6 @@
 //! A manager and two workers in one process, against a mock server.
 
-use super::run::TestFaults;
+use super::run::{PrepareFault, TestFaults};
 use crate::config::GooseConfiguration;
 use crate::goose::{Scenario, Transaction};
 use crate::metrics::GooseMetrics;
@@ -1184,4 +1184,84 @@ async fn gaggle_test_plan_and_throttle_across_workers() {
         started.elapsed()
     );
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A manager that fails after its workers joined: one whose report file
+/// cannot be created fails before test_start, and starts no user; one that
+/// fails once test_start ran, as when its worker data hook fails or a
+/// worker refuses, loses or never answers its Prepare, runs test_stop once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_manager_failures_run_test_stop_once() {
+    let test = async {
+        for (case, faults, too_much_data, report, test_start_runs) in [
+            ("worker data hook", PrepareFault::None, true, None, true),
+            ("prepare error", PrepareFault::Refuse, false, None, true),
+            ("lost preparing", PrepareFault::Vanish, false, None, true),
+            ("prepare timeout", PrepareFault::Stall, false, None, true),
+            (
+                "report file",
+                PrepareFault::None,
+                false,
+                Some("/nonexistent-goose-folder/report.html"),
+                false,
+            ),
+        ] {
+            let server = MockServer::start_async().await;
+            let mock = |path: &'static str| {
+                let server = &server;
+                async move {
+                    server
+                        .mock_async(|when, then| {
+                            when.method(GET).path(path);
+                            then.status(200).body("ok");
+                        })
+                        .await
+                }
+            };
+            let (start, stop, a) = (mock("/start").await, mock("/stop").await, mock("/a").await);
+            let folder = scratch("manager-failures");
+            let build = |configuration, place: Option<usize>| {
+                let bytes = if too_much_data && place.is_none() {
+                    crate::MAX_WORKER_DATA + 1
+                } else {
+                    0
+                };
+                with_worker_data(configuration, bytes)
+                    .test_start(get("/start"))
+                    .test_stop(get("/stop"))
+            };
+            let mut manager_args = vec!["--users", "2", "--run-time", "2"];
+            if let Some(report) = report {
+                manager_args.extend(["--report-file", report]);
+            }
+            let fault = TestFaults {
+                prepare: faults,
+                ..Default::default()
+            };
+            let (manager, workers) = gaggle(
+                build,
+                2,
+                server.base_url(),
+                &folder,
+                &manager_args,
+                &[],
+                &[TestFaults::default(), fault],
+            )
+            .await;
+            assert!(manager.is_err(), "{case}: the manager fails");
+            assert!(
+                workers.iter().all(Result::is_err),
+                "{case}: every worker fails"
+            );
+            let runs = usize::from(test_start_runs);
+            assert_eq!(start.calls_async().await, runs, "{case}: test_start");
+            assert_eq!(stop.calls_async().await, runs, "{case}: test_stop");
+            assert_eq!(a.calls_async().await, 0, "{case}: no user ran");
+            let _ = std::fs::remove_dir_all(&folder);
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
 }

@@ -34,7 +34,11 @@ use std::time::{Duration, Instant};
 const START_DELAY: Duration = Duration::from_secs(2);
 
 /// How long the manager waits for every worker's answer to `Prepare`.
+#[cfg(not(test))]
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Shorter in unit tests, as [`FINAL_TIMEOUT`].
+#[cfg(test)]
+const PREPARE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long the manager waits for every worker's final metrics after `Stop`.
 #[cfg(not(test))]
@@ -89,6 +93,23 @@ pub(crate) struct TestFaults {
     pub(crate) silent_reset: bool,
     /// The dead man's switch's last resort ends the process for real.
     pub(crate) exit_for_real: bool,
+    /// What the worker does with its `Prepare`.
+    pub(crate) prepare: PrepareFault,
+}
+
+/// What a worker does wrong with its `Prepare`, in unit tests.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum PrepareFault {
+    /// Nothing: it prepares.
+    #[default]
+    None,
+    /// Answer with an error.
+    Refuse,
+    /// Go away without an answer.
+    Vanish,
+    /// Never answer, and wait to be shut down.
+    Stall,
 }
 
 /// What a [`GooseAttack`] keeps for a Gaggle.
@@ -564,6 +585,25 @@ impl GooseAttack {
         let decoded = WorkerRunSpec::decode(&bytes)
             .map_err(|e| format!("could not read the run spec: {e}"))
             .and_then(|spec| spec.validate(self.scenarios.len()).map(|()| spec));
+        #[cfg(test)]
+        let decoded = match self.gaggle.test_faults.prepare {
+            PrepareFault::None => decoded,
+            PrepareFault::Refuse => Err("refused on purpose".to_string()),
+            PrepareFault::Vanish => {
+                return Err(GooseError::Gaggle {
+                    detail: "went away on purpose".to_string(),
+                })
+            }
+            PrepareFault::Stall => loop {
+                if let Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) =
+                    link.next_event(Duration::from_secs(1)).await
+                {
+                    return Err(GooseError::Gaggle {
+                        detail: "stalled on purpose".to_string(),
+                    });
+                }
+            },
+        };
         let mut spec = match decoded {
             Ok(spec) => spec,
             Err(detail) => {
