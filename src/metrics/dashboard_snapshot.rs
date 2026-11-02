@@ -134,7 +134,9 @@ pub(crate) struct SnapshotSettings {
     /// step's duration in whole seconds.
     pub test_plan: Option<String>,
     /// The most requests per second all users make together, `null` without
-    /// a throttle. A running load test changes only its rate.
+    /// a throttle. A running load test changes only its rate. Added in 0.20:
+    /// optional in the types, so a snapshot shaped before it still checks.
+    #[cfg_attr(test, ts(optional = nullable))]
     pub throttle: Option<u64>,
     /// Seconds until the hold ends once it has a fixed end, 0 while a ramp
     /// runs past it. `null` in Idle, during the first ramp up, once the
