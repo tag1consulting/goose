@@ -1534,7 +1534,11 @@ async fn gaggle_slow_stop_keeps_every_final() {
             when.method(GET).path("/a");
             then.status(200)
                 .body("ok")
-                .delay(super::run::FINAL_TIMEOUT + Duration::from_secs(5));
+                // Past the merge's clock slack too, so the final delta
+                // carries seconds past the clock the run ended on.
+                .delay(
+                    super::run::FINAL_TIMEOUT + Duration::from_secs(super::run::CLOCK_SLACK + 3),
+                );
         })
         .await;
     let folder = scratch("slow-stop");
@@ -1551,7 +1555,7 @@ async fn gaggle_slow_stop_keeps_every_final() {
             "--run-time",
             "2",
             "--timeout",
-            "10",
+            "20",
             "--report-file",
         ],
         &[],
