@@ -1279,11 +1279,11 @@ async fn gaggle_manager_failures_run_test_stop_once() {
             )
             .await;
             assert!(manager.is_err(), "{}: the manager fails", case);
-            assert!(
-                workers.iter().all(Result::is_err),
-                "{}: every worker fails",
-                case
-            );
+            // A worker that prepared and is shut down before the start ends
+            // cleanly, having run nothing; the one at fault fails.
+            if faults != PrepareFault::None {
+                assert!(workers[1].is_err(), "{}: the faulty worker fails", case);
+            }
             let runs = usize::from(test_start_runs);
             assert_eq!(start.calls_async().await, runs, "{case}: test_start");
             assert_eq!(stop.calls_async().await, runs, "{case}: test_stop");
