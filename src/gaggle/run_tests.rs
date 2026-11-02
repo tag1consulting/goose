@@ -1847,3 +1847,70 @@ async fn gaggle_full_disk_keeps_the_first_reports() {
     let html = std::fs::read_to_string(&report).unwrap();
     assert!(html.trim_end().ends_with("</html>"), "{} bytes", html.len());
 }
+
+/// A manager that fails once its workers were told to start, but before its
+/// own run, as when its dashboard cannot listen, still runs test_stop once
+/// and shuts its workers down, which end without waiting out their switch.
+#[cfg(feature = "dashboard")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_manager_failing_to_start_its_run_runs_test_stop() {
+    let test = async {
+        let server = MockServer::start_async().await;
+        let mock = |path: &'static str| {
+            let server = &server;
+            async move {
+                server
+                    .mock_async(|when, then| {
+                        when.method(GET).path(path);
+                        then.status(200).body("ok");
+                    })
+                    .await
+            }
+        };
+        let (start, stop, _a) = (mock("/start").await, mock("/stop").await, mock("/a").await);
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = taken.local_addr().unwrap().port().to_string();
+        let folder = scratch("dashboard-taken");
+        let build = |configuration, place| {
+            quick(configuration, place)
+                .test_start(get("/start"))
+                .test_stop(get("/stop"))
+        };
+        let started = std::time::Instant::now();
+        let (manager, workers) = gaggle(
+            build,
+            2,
+            server.base_url(),
+            &folder,
+            &[
+                "--users",
+                "2",
+                "--run-time",
+                "30",
+                "--dashboard",
+                "--dashboard-host",
+                "127.0.0.1",
+                "--dashboard-port",
+                &port,
+            ],
+            &[],
+            &[],
+        )
+        .await;
+        assert!(manager.is_err(), "the dashboard cannot listen");
+        drop(workers);
+        assert_eq!(start.calls_async().await, 1, "test_start");
+        assert_eq!(stop.calls_async().await, 1, "test_stop");
+        // Told to shut down: not the heartbeat timeout, nor the run time.
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "{:?}",
+            started.elapsed()
+        );
+        drop(taken);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}
