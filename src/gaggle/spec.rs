@@ -635,6 +635,57 @@ mod tests {
         assert!(why.contains("0 users and scenarios for 2"), "{}", why);
     }
 
+    /// A spec past a size bound is refused, naming it, and one at each
+    /// bound is not: its users, its test plan's steps, a log asked for
+    /// twice, and its custom data.
+    #[test]
+    fn a_spec_past_a_size_bound_is_refused() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--host", "http://h", "--debug-log"]).unwrap();
+        let spec = worker_specs(
+            &configuration,
+            CommandLineClientOptions::default(),
+            &[(4, 1_000), (0, 0)],
+            &[0, 1, 0, 1],
+            2,
+            true,
+        )
+        .remove(0);
+        let refused = |spec: &WorkerRunSpec, named: &str| {
+            let why = spec.validate(2).unwrap_err();
+            assert!(why.contains(named), "{}", why);
+        };
+        let max_users = crate::gaggle::delta::DeltaLimits::default().max_users as usize;
+        let users = |users: usize| {
+            let mut spec = spec.clone();
+            spec.users = users;
+            spec.slice = vec![0; users];
+            spec
+        };
+        assert_eq!(users(max_users).validate(2), Ok(()));
+        refused(&users(max_users + 1), "more than the 1000000 users");
+        let steps = |steps: usize| {
+            let mut spec = spec.clone();
+            spec.test_plan = vec![(0, 1); steps];
+            spec
+        };
+        assert_eq!(steps(100_000).validate(2), Ok(()));
+        refused(&steps(100_001), "more than the 100000 steps");
+        let mut twice = spec.clone();
+        twice.logs.push(twice.logs[0].clone());
+        refused(&twice, "the debug log twice");
+        let data = |bytes: usize| {
+            let mut spec = spec.clone();
+            spec.custom_data = vec![0; bytes];
+            spec
+        };
+        assert_eq!(data(crate::MAX_WORKER_DATA).validate(2), Ok(()));
+        refused(
+            &data(crate::MAX_WORKER_DATA + 1),
+            &format!("more than the {} bytes", crate::MAX_WORKER_DATA),
+        );
+    }
+
     /// A spec configures every option it carries, so a worker runs exactly
     /// its share.
     #[test]
