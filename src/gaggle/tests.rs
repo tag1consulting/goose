@@ -3247,6 +3247,26 @@ mod built_as_it_goes {
         refreshes[refreshes.len() / 2]
     }
 
+    /// Not a test: what the manager holds for one worker over a run, as
+    /// [`GaggleDelta::decoded_bytes`] counts its total, per request name per
+    /// second, an hour into a run of 30 names. Run it with
+    /// `cargo test --release --features gaggle --lib manager_memory_per_worker -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn manager_memory_per_worker() {
+        const NAMES: usize = 30;
+        const SECONDS: u64 = 3_600;
+        let mut accumulator = lagged(120);
+        accumulator
+            .apply(0, second(0, 1, SECONDS, 0..SECONDS, NAMES))
+            .unwrap();
+        let total = second(0, 1, SECONDS, 0..SECONDS, NAMES).decoded_bytes();
+        eprintln!(
+            "one worker, {NAMES} names, {SECONDS} s: {total} bytes, {:.0} bytes per name per second",
+            total as f64 / (NAMES as f64 * SECONDS as f64)
+        );
+    }
+
     /// Not a test: how long one refresh of a long run's merge takes, an
     /// hour and four hours in, late rows among each second's, without and
     /// with coordinated omission stalls. Run it with
