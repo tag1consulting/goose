@@ -946,7 +946,8 @@ async fn read_worker(
             Some(FromWorker::LogChunk(chunk)) => Arrived::Event(Event::Log { id, chunk }),
         };
         // Its share of the byte budget first, before a delta is decoded, so
-        // no reader holds a decoded delta outside the budget: for a delta, as
+        // a reader holds a decoded delta outside the budget only while it
+        // waits for more than its reserve: for a delta, as
         // much as it may decode to, and once decoded what it holds.
         let reserve = match &arrived {
             Arrived::Delta(_) => encoded.saturating_mul(DECODED_PER_ENCODED),

@@ -154,7 +154,8 @@ impl TestFaults {
 }
 
 /// Armed by a test: the manager's processor holds its first threshold check
-/// with requests to judge until the manager is stopping, and 300 ms more.
+/// with requests to judge until the manager is stopping, or 20 seconds at
+/// most, and 300 ms more, blocking the thread it runs on meanwhile.
 pub(crate) static HOLD_THRESHOLD_CHECK: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
