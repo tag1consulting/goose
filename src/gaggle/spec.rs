@@ -382,7 +382,7 @@ impl WorkerRunSpec {
         for log in &self.logs {
             // Of a kind `validate` checked.
             if let Some((path, format)) =
-                configuration.logs_mut().into_iter().nth(log.kind as usize)
+                IntoIterator::into_iter(configuration.logs_mut()).nth(log.kind as usize)
             {
                 *path = Some(RUN_FOLDER.to_string());
                 format.clone_from(&log.format);
