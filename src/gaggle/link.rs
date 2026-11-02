@@ -1463,7 +1463,6 @@ mod tests {
     /// fires.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_stops_users_while_the_main_loop_is_held() {
-        use super::super::manager::Manager;
         let test = async {
             let manager = test_manager(1, Duration::from_secs(10)).await;
             let link = Link::connect(LinkSettings {
@@ -1568,7 +1567,7 @@ mod tests {
     /// KB/s, 13 seconds for the log.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_log_crosses_a_slow_link_at_the_window_rate() {
-        use super::super::manager::{Event, Manager};
+        use super::super::manager::Event;
         let test = async {
             let manager = test_manager(2, Duration::from_secs(30)).await;
             let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(50)).await;
@@ -1662,7 +1661,7 @@ mod tests {
     /// shut the worker down, never as soon as the queue is empty.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn flush_waits_for_the_last_message_to_arrive() {
-        use super::super::manager::{Event, Manager};
+        use super::super::manager::Event;
         let test = async {
             let manager = Arc::new(test_manager(1, Duration::from_secs(30)).await);
             let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(200)).await;

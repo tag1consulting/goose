@@ -129,7 +129,7 @@ pub(crate) fn peak_users(steps: &[(usize, usize)]) -> usize {
 /// to the largest remainders, the first worker first among equals; and
 /// what raising shares to 1 put past `throttle` is taken back one at a time
 /// from the largest share, the last worker first among equals, never below
-/// 1. So beside many workers of one user, a large worker gives up what
+/// one. So beside many workers of one user, a large worker gives up what
 /// their floors cost it, and starves none of them.
 pub(crate) fn throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
     let workers = users.len();
