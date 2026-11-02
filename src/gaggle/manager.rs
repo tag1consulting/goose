@@ -491,6 +491,8 @@ impl Gaggle for GaggleService {
             }))) => hello,
             _ => {
                 warn!("gaggle: a connection from {peer} did not say Hello; closed");
+                #[cfg(test)]
+                tests::refused_warned();
                 return Err(tonic::Status::invalid_argument("expected Hello"));
             }
         };
@@ -687,6 +689,8 @@ fn counted(
                         "gaggle: a connection from {} closed: the manager holds all the connections it allows",
                         peer_name(addr)
                     );
+                    #[cfg(test)]
+                    tests::refused_warned();
                     None
                 }
             }
@@ -1233,6 +1237,47 @@ mod tests {
         if let Ok(mut warned) = WARNED.lock() {
             warned.push(warning.to_string());
         }
+    }
+
+    /// The warnings refused connections logged, by every manager.
+    static REFUSED_WARNINGS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    /// Count a warning a refused connection logged.
+    pub(super) fn refused_warned() {
+        REFUSED_WARNINGS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A thousand connections refused past those the manager allows log at
+    /// most one warning: no client floods the manager's log. Managers of
+    /// other tests may warn meanwhile, each at most once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refused_connections_do_not_flood_the_log() {
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let before = REFUSED_WARNINGS.load(Ordering::Relaxed);
+            // Every connection the manager allows, held open, saying
+            // nothing, until their deadline.
+            let mut held = Vec::new();
+            for _ in 0..1 + SPARE_CONNECTIONS {
+                held.push(
+                    tokio::net::TcpStream::connect(manager.local_addr)
+                        .await
+                        .unwrap(),
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            for _ in 0..1_000 {
+                drop(tokio::net::TcpStream::connect(manager.local_addr).await);
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let warned = REFUSED_WARNINGS.load(Ordering::Relaxed) - before;
+            assert!(warned <= 5, "{} warnings for 1,000 refusals", warned);
+            drop(held);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
     }
 
     /// A connection on which no worker is admitted is closed at its
