@@ -30,40 +30,50 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// How long after `StartAt` every process starts.
-const START_DELAY: Duration = Duration::from_secs(2);
+// Each deadline below is shorter in unit tests, which wait it out; the
+// process tests run the examples, built without `cfg(test)`, so with the
+// real deadlines.
 
-/// How long the manager waits for every worker's answer to `Prepare`.
-#[cfg(not(test))]
-const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
-/// Shorter in unit tests, as [`FINAL_TIMEOUT`].
-#[cfg(test)]
-const PREPARE_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long after `StartAt` every process starts: 2 seconds.
+const START_DELAY: Duration = if cfg!(test) {
+    Duration::from_millis(300)
+} else {
+    Duration::from_secs(2)
+};
+
+/// How long the manager waits for every worker's answer to `Prepare`: 120
+/// seconds.
+const PREPARE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(3)
+} else {
+    Duration::from_secs(120)
+};
 
 /// How long the manager waits for a worker's final metrics once its users
-/// stopped, and a worker for its metrics processor to hand them over.
-#[cfg(not(test))]
-const FINAL_TIMEOUT: Duration = Duration::from_secs(30);
-/// Shorter in unit tests, which wait it out; the process tests run the
-/// examples, built without `cfg(test)`, so with the real deadlines.
-#[cfg(test)]
-pub(crate) const FINAL_TIMEOUT: Duration = Duration::from_secs(3);
+/// stopped, and a worker for its metrics processor to hand them over: 30
+/// seconds.
+pub(crate) const FINAL_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(3)
+} else {
+    Duration::from_secs(30)
+};
 
-/// How long a worker waits for its metrics processor to reset.
-#[cfg(not(test))]
-const RESET_TIMEOUT: Duration = Duration::from_secs(10);
-/// Shorter in unit tests, as [`FINAL_TIMEOUT`].
-#[cfg(test)]
-const RESET_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a worker waits for its metrics processor to reset: 10 seconds.
+const RESET_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_secs(10)
+};
 
 /// How long the manager waits for the next full chunk, or the last, of a
 /// worker's logs: a transfer that goes this long without one fails. No
-/// deadline caps a transfer that keeps moving, whatever its size.
-#[cfg(not(test))]
-const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-/// Shorter in unit tests, as [`FINAL_TIMEOUT`].
-#[cfg(test)]
-const LOG_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+/// deadline caps a transfer that keeps moving, whatever its size. 60
+/// seconds.
+const LOG_IDLE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_secs(60)
+};
 
 /// How often the manager's waits before and after its run look at the
 /// killswitch.
@@ -735,8 +745,6 @@ impl GooseAttack {
             heartbeat_timeout: self.configuration.gaggle_heartbeat_timeout(),
             hello,
             token: self.configuration.gaggle_token().map(str::to_string),
-            #[cfg(test)]
-            exit_for_real: false,
         })
         .await?;
         #[cfg(test)]
@@ -2048,7 +2056,6 @@ mod tests {
             heartbeat_timeout: Duration::from_secs(30),
             hello: LinkSettings::hello(7, "idle".to_string()),
             token: None,
-            exit_for_real: false,
         })
         .await
         .unwrap();

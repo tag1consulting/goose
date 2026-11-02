@@ -46,13 +46,14 @@ pub(crate) const MAX_MESSAGE: usize = 64 << 20;
 pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 
 /// How long a new connection has to say `Hello`, and to have a worker
-/// admitted on it before it is closed.
-#[cfg(not(test))]
-const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
-/// Shorter in unit tests, which wait it out; the process tests run the
-/// examples, built without `cfg(test)`, so with the real deadline.
-#[cfg(test)]
-const HELLO_TIMEOUT: Duration = Duration::from_secs(2);
+/// admitted on it before it is closed: 10 seconds, and 2 in unit tests,
+/// which wait it out; the process tests run the examples, built without
+/// `cfg(test)`, so with the real deadline.
+const HELLO_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_secs(10)
+};
 
 /// The largest first message, `Hello`, the manager reads.
 pub(crate) const MAX_HELLO: usize = 64 << 10;

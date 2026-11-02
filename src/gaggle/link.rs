@@ -484,10 +484,6 @@ pub(crate) struct LinkSettings {
     pub(crate) hello: Hello,
     /// The token, sent in the request's metadata.
     pub(crate) token: Option<String>,
-    /// The switch's last resort ends the process for real, rather than
-    /// record that it would have (unit tests).
-    #[cfg(test)]
-    pub(crate) exit_for_real: bool,
 }
 
 impl LinkSettings {
@@ -679,9 +675,6 @@ impl Link {
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
             forced: link.forced.clone(),
-            // A unit test's worker never ends the test binary, unless told.
-            #[cfg(test)]
-            record_exit: !settings.exit_for_real,
         };
         tokio::spawn(read_manager(
             inbound,
@@ -908,12 +901,14 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 }
 
 /// How long after the switch fires, or `Shutdown` finds users running, a
-/// worker whose `execute()` has not returned ends its process.
-#[cfg(not(test))]
-const LAST_RESORT_AFTER: Duration = Duration::from_secs(2);
-/// Shorter in unit tests, which wait it out.
-#[cfg(test)]
-const LAST_RESORT_AFTER: Duration = Duration::from_millis(200);
+/// worker whose `execute()` has not returned ends its process: 2 seconds,
+/// and 200 ms in unit tests, which wait it out and where it only records
+/// that it would have.
+const LAST_RESORT_AFTER: Duration = if cfg!(test) {
+    Duration::from_millis(200)
+} else {
+    Duration::from_secs(2)
+};
 
 /// Stop users at once, every one or, with `running_only`, those not yet
 /// finished, and any started later: `stopped` is set before `users` is
@@ -949,12 +944,9 @@ struct Switch {
     outbox: Arc<Outbox>,
     heartbeat_timeout: Duration,
     done: Arc<AtomicBool>,
-    /// Set when the last resort ends the process.
+    /// Set when the last resort ends the process, or in unit tests would
+    /// have.
     forced: Arc<AtomicBool>,
-    /// The last resort records that it would have ended the process, in
-    /// `forced`, instead of ending it (unit tests).
-    #[cfg(test)]
-    record_exit: bool,
 }
 
 impl Switch {
@@ -992,25 +984,13 @@ impl Switch {
     fn last_resort(&self, message: &'static str) {
         let done = self.done.clone();
         let forced = self.forced.clone();
-        #[cfg(test)]
-        let record_exit = self.record_exit;
-        // A unit test that lets the last resort end the test binary waits
-        // the real 2 seconds: 200 ms is within a loaded machine's stall.
-        #[cfg(test)]
-        let after = if record_exit {
-            LAST_RESORT_AFTER
-        } else {
-            Duration::from_secs(2)
-        };
-        #[cfg(not(test))]
-        let after = LAST_RESORT_AFTER;
         std::thread::spawn(move || {
-            std::thread::sleep(after);
+            std::thread::sleep(LAST_RESORT_AFTER);
             if !done.load(Ordering::Relaxed) {
                 eprintln!("{message}");
                 forced.store(true, Ordering::Relaxed);
-                #[cfg(test)]
-                if record_exit {
+                // A unit test's worker never ends the test binary.
+                if cfg!(test) {
                     return;
                 }
                 std::process::exit(1);
@@ -1346,7 +1326,6 @@ mod tests {
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(true)),
             forced: Arc::new(AtomicBool::new(false)),
-            record_exit: true,
         };
         (switch, received, outbox)
     }
@@ -1477,7 +1456,6 @@ mod tests {
                 heartbeat_timeout: Duration::from_secs(10),
                 hello: LinkSettings::hello(7, "held".to_string()),
                 token: None,
-                exit_for_real: false,
             })
             .await
             .unwrap();
@@ -1586,7 +1564,6 @@ mod tests {
                 heartbeat_timeout: Duration::from_secs(30),
                 hello: LinkSettings::hello(7, "far".to_string()),
                 token: None,
-                exit_for_real: false,
             })
             .await
             .unwrap();
@@ -1642,7 +1619,6 @@ mod tests {
                 heartbeat_timeout: Duration::from_secs(30),
                 hello: LinkSettings::hello(7, "failing".to_string()),
                 token: None,
-                exit_for_real: false,
             })
             .await
             .unwrap();
@@ -1712,7 +1688,6 @@ mod tests {
                 heartbeat_timeout: Duration::from_secs(10),
                 hello: LinkSettings::hello(7, "stalled".to_string()),
                 token: None,
-                exit_for_real: false,
             }),
         )
         .await
@@ -1754,7 +1729,6 @@ mod tests {
             heartbeat_timeout,
             hello: LinkSettings::hello(7, "flooded".to_string()),
             token: None,
-            exit_for_real: false,
         })
         .await
         .unwrap();
