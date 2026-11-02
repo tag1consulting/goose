@@ -31,6 +31,8 @@ pub(crate) mod spec;
 pub(crate) mod worker;
 
 #[cfg(test)]
+mod faults;
+#[cfg(test)]
 mod run_tests;
 #[cfg(test)]
 mod tests;

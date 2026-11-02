@@ -8,7 +8,7 @@
 //! manager sends.
 
 use super::delta::DeltaLimits;
-use super::link::{Link, LinkEvent, LinkSettings, LOG_CHUNK};
+use super::link::{Link, LinkEvent, LinkSettings};
 use super::manager::{Event, Manager};
 use super::merge::MergeHealth;
 use super::proto::{
@@ -23,6 +23,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+use super::faults::{send_faulty_logs, UNASKED};
+#[cfg(test)]
+pub(crate) use super::faults::{
+    LogsFault, PrepareFault, TestFaults, DISK_FULL, DISK_FULL_AFTER_LOGS, FAIL_LOG_WRITES,
+    LOG_FAULT_AT,
+};
 
 // Each deadline below is shorter in unit tests, which wait it out; the
 // process tests run the examples, built without `cfg(test)`, so with the
@@ -90,162 +98,6 @@ const KILLSWITCH_POLL: Duration = Duration::from_millis(100);
 /// the workers' clocks start within milliseconds of its own, and a delta is
 /// stamped up to a second late.
 pub(crate) const CLOCK_SLACK: u64 = 10;
-
-/// What a worker does wrong on purpose, in unit tests.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct TestFaults {
-    /// Ignore the manager's metrics reset.
-    pub(crate) skip_reset: bool,
-    /// Send a first delta the manager refuses.
-    pub(crate) refused_delta: bool,
-    /// Send only deltas the manager refuses from this sequence number on,
-    /// 0 for none.
-    pub(crate) refuse_from: u64,
-    /// The metrics processor never sends the final metrics.
-    pub(crate) silent_final: bool,
-    /// The metrics processor never answers a reset.
-    pub(crate) silent_reset: bool,
-    /// What the worker does with its `Prepare`.
-    pub(crate) prepare: PrepareFault,
-    /// What the worker sends when asked for its logs.
-    pub(crate) logs: LogsFault,
-    /// End with an error a second into the run, its link dropped.
-    pub(crate) exit_mid_run: bool,
-    /// Send a final delta the manager refuses, and stop as told.
-    pub(crate) refused_final: bool,
-    /// Trigger the killswitch, as Ctrl-C on the manager, as `Stop` arrives,
-    /// at [`LOG_FAULT_AT`].
-    pub(crate) cancel_on_stop: bool,
-    /// Never say its users stopped, nor send its final metrics: wait to be
-    /// shut down. With `cancel_on_stop`, the killswitch is triggered a
-    /// second after `Stop` arrives.
-    pub(crate) withhold_final: bool,
-    /// A second into the run, say it stopped for this reason, as sent, and
-    /// run on.
-    pub(crate) stop_reason: Option<i32>,
-    /// The metrics processor gets the final metrics command this late.
-    pub(crate) final_after: Option<Duration>,
-    /// Make the delta of this sequence number larger than a message may
-    /// be, 0 for none.
-    pub(crate) oversize_delta: u64,
-    /// Make the final delta larger than a message may be.
-    pub(crate) oversize_final: bool,
-}
-
-/// What a worker sends in place of its logs, in unit tests.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) enum LogsFault {
-    /// Nothing wrong: its logs.
-    #[default]
-    None,
-    /// A full chunk of each log every 250 ms, never the last, its main loop
-    /// held for 10 seconds; the killswitch is triggered after the second
-    /// chunk, at [`LOG_FAULT_AT`].
-    Slow,
-    /// 10 bytes of each log every 500 ms, never the last; the first at
-    /// [`LOG_FAULT_AT`].
-    Trickle,
-    /// Each log in one chunk of 20 bytes, announced as 10.
-    Oversize,
-}
-
-/// The manager fails every write of a worker's log, as on a full disk (unit
-/// tests).
-#[cfg(test)]
-pub(crate) static FAIL_LOG_WRITES: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// With [`FAIL_LOG_WRITES`], the first failed log write fills the disk:
-/// [`DISK_FULL`] is set (unit tests).
-#[cfg(test)]
-pub(crate) static DISK_FULL_AFTER_LOGS: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Every report write fails, as on a full disk (unit tests).
-#[cfg(test)]
-pub(crate) static DISK_FULL: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Every log a worker sent that the manager warned it did not ask for, by
-/// name (unit tests).
-#[cfg(test)]
-static UNASKED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-
-/// When a worker's [`LogsFault`] triggered the killswitch or sent its first
-/// chunk (unit tests).
-#[cfg(test)]
-pub(crate) static LOG_FAULT_AT: std::sync::Mutex<Option<std::time::Instant>> =
-    std::sync::Mutex::new(None);
-
-/// Send `files` as `fault` says, for 30 seconds, in the background.
-#[cfg(test)]
-fn send_faulty_logs(fault: LogsFault, outbox: Arc<super::link::Outbox>, files: Vec<String>) {
-    use super::proto::LogChunk;
-    let (size, every) = match fault {
-        LogsFault::Slow => (LOG_CHUNK, Duration::from_millis(250)),
-        _ => (10, Duration::from_millis(500)),
-    };
-    tokio::spawn(async move {
-        if fault == LogsFault::Oversize {
-            for file in files {
-                outbox
-                    .push_chunk(LogChunk {
-                        file,
-                        offset: 0,
-                        data: vec![b'x'; 20],
-                        last: true,
-                        error: None,
-                        size: Some(10),
-                    })
-                    .await;
-            }
-            return;
-        }
-        for n in 0..(30_000 / every.as_millis() as u64) {
-            for file in &files {
-                outbox
-                    .push_chunk(LogChunk {
-                        file: file.clone(),
-                        offset: n * size as u64,
-                        data: vec![b'x'; size],
-                        last: false,
-                        error: None,
-                        // Larger than any it sends.
-                        size: Some(u64::MAX),
-                    })
-                    .await;
-            }
-            let mark = match fault {
-                LogsFault::Slow => n == 1,
-                _ => n == 0,
-            };
-            if mark {
-                *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
-                if fault == LogsFault::Slow {
-                    crate::trigger_killswitch("a test's Ctrl-C while logs arrive");
-                }
-            }
-            tokio::time::sleep(every).await;
-        }
-    });
-}
-
-/// What a worker does wrong with its `Prepare`, in unit tests.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) enum PrepareFault {
-    /// Nothing: it prepares.
-    #[default]
-    None,
-    /// Answer with an error.
-    Refuse,
-    /// Go away without an answer.
-    Vanish,
-    /// Never answer, and wait to be shut down.
-    Stall,
-}
 
 /// What a [`GooseAttack`] keeps for a Gaggle.
 #[derive(Default)]
@@ -849,18 +701,7 @@ impl GooseAttack {
             .map_err(|e| format!("could not read the run spec: {e}"))
             .and_then(|spec| spec.validate(self.scenarios.len()).map(|()| spec));
         #[cfg(test)]
-        let decoded = match self.gaggle.test_faults.prepare {
-            PrepareFault::None => decoded,
-            PrepareFault::Refuse => Err("refused on purpose".to_string()),
-            PrepareFault::Vanish => return Err(gaggle_error("went away on purpose".to_string())),
-            PrepareFault::Stall => loop {
-                if let Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) =
-                    link.next_event(Duration::from_secs(1)).await
-                {
-                    return Err(gaggle_error("stalled on purpose".to_string()));
-                }
-            },
-        };
+        let decoded = self.gaggle.test_faults.on_prepare(&link, decoded).await?;
         let mut spec = match decoded {
             Ok(spec) => spec,
             Err(detail) => {
@@ -883,31 +724,7 @@ impl GooseAttack {
         #[cfg(test)]
         let skip_reset = self.gaggle.test_faults.skip_reset;
         #[cfg(test)]
-        if self.gaggle.test_faults.refused_delta {
-            link.outbox
-                .corrupt_next
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        #[cfg(test)]
-        link.outbox.corrupt_final.store(
-            self.gaggle.test_faults.refused_final,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        #[cfg(test)]
-        link.outbox.corrupt_from.store(
-            self.gaggle.test_faults.refuse_from,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        #[cfg(test)]
-        link.outbox.oversize_seq.store(
-            self.gaggle.test_faults.oversize_delta,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        #[cfg(test)]
-        link.outbox.oversize_final.store(
-            self.gaggle.test_faults.oversize_final,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        self.gaggle.test_faults.arm(&link.outbox);
         self.gaggle.role = Some(GaggleRole::Worker(Box::new(WorkerRun {
             link,
             spec,
@@ -1181,15 +998,10 @@ impl GooseAttack {
             return Err(gaggle_error("ended mid run on purpose".to_string()));
         }
         #[cfg(test)]
-        if let Some(reason) = self.gaggle.test_faults.stop_reason {
-            if running && !run.stop_reason_sent && self.series_elapsed_secs() >= 1 {
-                run.stop_reason_sent = true;
-                run.link.stopped(Stopped {
-                    reason,
-                    canceled: "on purpose".to_string(),
-                    run_folder: String::new(),
-                });
-            }
+        if running && self.series_elapsed_secs() >= 1 {
+            self.gaggle
+                .test_faults
+                .stop_once(&run.link, &mut run.stop_reason_sent);
         }
         if running && self.series_started.is_some() {
             let now = self.series_elapsed_secs();
@@ -1457,26 +1269,8 @@ impl GooseAttack {
         // A unit test's fault: users that never stop, as far as the manager
         // hears.
         #[cfg(test)]
-        if self.gaggle.test_faults.withhold_final {
-            loop {
-                match run.link.next_event(Duration::from_secs(1)).await {
-                    Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) => {
-                        return Err(gaggle_error(
-                            "withheld its final metrics on purpose".to_string(),
-                        ))
-                    }
-                    // A second later, once any other worker's final metrics
-                    // merged.
-                    Some(LinkEvent::Stop(_)) if self.gaggle.test_faults.cancel_on_stop => {
-                        tokio::spawn(async {
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                            *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
-                            crate::trigger_killswitch("a test's Ctrl-C as the run stops");
-                        });
-                    }
-                    _ => {}
-                }
-            }
+        if let Some(error) = self.gaggle.test_faults.withhold_final(&run.link).await {
+            return Err(error);
         }
         // Its final metrics follow at once: the manager waits for them from
         // now.
@@ -1504,17 +1298,10 @@ impl GooseAttack {
         }
         // A unit test's fault: a processor that takes the command late.
         #[cfg(test)]
-        let command = match self.gaggle.test_faults.final_after {
-            Some(delay) => {
-                let metrics = goose_attack_run_state.metrics_cmd_tx.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(delay).await;
-                    let _ = metrics.send(command);
-                });
-                None
-            }
-            None => Some(command),
-        };
+        let command = self
+            .gaggle
+            .test_faults
+            .late_final(&goose_attack_run_state.metrics_cmd_tx, command);
         #[cfg(not(test))]
         let command = Some(command);
         let sent = command
