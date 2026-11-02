@@ -1115,6 +1115,7 @@ async fn heartbeat_manager(
 mod tests {
     use super::*;
     use crate::gaggle::delta::DeltaKind;
+    use crate::gaggle::manager::handshake_tests::test_manager;
 
     fn delta(seq: u64) -> GaggleDelta {
         let mut delta = GaggleDelta::new(0, seq, 1, DeltaKind::Delta);
@@ -1447,9 +1448,7 @@ mod tests {
     async fn shutdown_stops_users_while_the_main_loop_is_held() {
         use super::super::manager::Manager;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(10)).await;
             let link = Link::connect(LinkSettings {
                 address: manager.local_addr.to_string(),
                 connect_timeout: Duration::from_secs(10),
@@ -1554,9 +1553,7 @@ mod tests {
     async fn a_log_crosses_a_slow_link_at_the_window_rate() {
         use super::super::manager::{Event, Manager};
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 2, None, 7, true, Duration::from_secs(30))
-                .await
-                .unwrap();
+            let manager = test_manager(2, Duration::from_secs(30)).await;
             let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(50)).await;
             let link = Link::connect(LinkSettings {
                 address: proxy.to_string(),
@@ -1607,11 +1604,7 @@ mod tests {
     async fn flush_waits_for_the_last_message_to_arrive() {
         use super::super::manager::{Event, Manager};
         let test = async {
-            let manager = Arc::new(
-                Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
-                    .await
-                    .unwrap(),
-            );
+            let manager = Arc::new(test_manager(1, Duration::from_secs(30)).await);
             let proxy = delaying_proxy(manager.local_addr, Duration::from_millis(200)).await;
             let link = Link::connect(LinkSettings {
                 address: proxy.to_string(),
@@ -1712,17 +1705,7 @@ mod tests {
         flood: Duration,
     ) -> (Link, super::super::manager::Manager) {
         use super::super::proto::{manager_message::Message as ToWorker, Prepare};
-        let manager = super::super::manager::Manager::start(
-            "127.0.0.1",
-            0,
-            1,
-            None,
-            7,
-            true,
-            heartbeat_timeout,
-        )
-        .await
-        .unwrap();
+        let manager = test_manager(1, heartbeat_timeout).await;
         let link = Link::connect(LinkSettings {
             address: manager.local_addr.to_string(),
             connect_timeout: Duration::from_secs(10),

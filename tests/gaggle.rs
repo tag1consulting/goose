@@ -16,6 +16,10 @@ use std::time::{Duration, Instant};
 /// heartbeats, which go every 2 seconds.
 const HEARTBEAT: u64 = 6;
 
+/// `--gaggle-heartbeat-timeout` for [`HEARTBEAT`].
+static HEARTBEAT_TIMEOUT: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{HEARTBEAT}s"));
+
 /// An example binary, built by `cargo test` beside this test.
 fn example(name: &str) -> PathBuf {
     let deps = std::env::current_exe().unwrap();
@@ -230,7 +234,7 @@ fn manager_args<'a>(host: &'a str, workers: &'a str, extra: &[&'a str]) -> Vec<&
         host,
         "--no-telnet",
         "--gaggle-heartbeat-timeout",
-        "6s",
+        HEARTBEAT_TIMEOUT.as_str(),
         "--gaggle-connect-timeout",
         "20s",
     ];
@@ -247,7 +251,7 @@ fn worker_args<'a>(port: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
         "--manager-port",
         port,
         "--gaggle-heartbeat-timeout",
-        "6s",
+        HEARTBEAT_TIMEOUT.as_str(),
         "--gaggle-connect-timeout",
         "20s",
     ];
@@ -293,106 +297,102 @@ fn freeze(pid: u32) {
 
 /// A worker killed, or frozen, mid run.
 fn worker_lost_mid_run(frozen: bool) {
-    {
-        let server = MockServer::start();
-        let index = mock_simple(&server, Duration::ZERO);
-        let folder = scratch("worker-killed");
-        let host = server.base_url();
-        let manager_folder = folder.join("manager").display().to_string();
-        let simple = example("simple");
-        let mut manager = Process::start(
-            &simple,
-            "manager",
-            &folder,
-            &manager_args(
-                &host,
-                "2",
-                &[
-                    "--users",
-                    "40",
-                    "--increase-rate",
-                    "40",
-                    "--run-time",
-                    "8s",
-                    "--report-file",
-                    "--output-dir",
-                    &manager_folder,
-                    "--gaggle-token",
-                    "tok-b21-secret",
-                ],
-            ),
-        );
-        let token = ["--gaggle-token", "tok-b21-secret"];
-        let port = manager.port();
-        let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
-        let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
-        until_load(|| index.calls(), Duration::from_secs(30));
-        std::thread::sleep(Duration::from_secs(1));
-        let killed = chrono::Utc::now();
-        if frozen {
-            freeze(second.child.id());
-        } else {
-            second.kill();
-        }
+    let server = MockServer::start();
+    let index = mock_simple(&server, Duration::ZERO);
+    let folder = scratch("worker-killed");
+    let host = server.base_url();
+    let manager_folder = folder.join("manager").display().to_string();
+    let simple = example("simple");
+    let mut manager = Process::start(
+        &simple,
+        "manager",
+        &folder,
+        &manager_args(
+            &host,
+            "2",
+            &[
+                "--users",
+                "40",
+                "--increase-rate",
+                "40",
+                "--run-time",
+                "8s",
+                "--report-file",
+                "--output-dir",
+                &manager_folder,
+                "--gaggle-token",
+                "tok-worker-lost-3c8e",
+            ],
+        ),
+    );
+    let token = ["--gaggle-token", "tok-worker-lost-3c8e"];
+    let port = manager.port();
+    let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
+    let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
+    until_load(|| index.calls(), Duration::from_secs(30));
+    std::thread::sleep(Duration::from_secs(1));
+    let killed = chrono::Utc::now();
+    if frozen {
+        freeze(second.child.id());
+    } else {
+        second.kill();
+    }
 
-        let (status, _) = manager
-            .wait(Duration::from_secs(60))
-            .expect("the manager finishes");
-        assert!(status.success(), "{}", manager.output());
-        let (status, _) = first
-            .wait(Duration::from_secs(10))
-            .expect("the other worker exits");
-        assert!(status.success(), "{}", first.output());
+    let (status, _) = manager
+        .wait(Duration::from_secs(60))
+        .expect("the manager finishes");
+    assert!(status.success(), "{}", manager.output());
+    let (status, _) = first
+        .wait(Duration::from_secs(10))
+        .expect("the other worker exits");
+    assert!(status.success(), "{}", first.output());
 
-        let report = std::fs::read_to_string(folder.join("manager/report.json")).unwrap();
-        let report: serde_json::Value = serde_json::from_str(&report).unwrap();
-        let gaggle = &report["gaggle"];
-        assert_eq!(gaggle["degraded"], true, "{}", gaggle);
-        let workers = gaggle["workers"].as_array().unwrap();
-        let lost: Vec<&serde_json::Value> = workers
+    let report = std::fs::read_to_string(folder.join("manager/report.json")).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report).unwrap();
+    let gaggle = &report["gaggle"];
+    assert_eq!(gaggle["degraded"], true, "{}", gaggle);
+    let workers = gaggle["workers"].as_array().unwrap();
+    let lost: Vec<&serde_json::Value> = workers
+        .iter()
+        .filter(|worker| worker["state"] == "lost")
+        .collect();
+    assert_eq!(lost.len(), 1, "one lost worker: {}", gaggle);
+    let lost = lost[0];
+    assert_eq!(lost["name"], second.name.as_str());
+    assert!(
+        workers
             .iter()
-            .filter(|worker| worker["state"] == "lost")
-            .collect();
-        assert_eq!(lost.len(), 1, "one lost worker: {}", gaggle);
-        let lost = lost[0];
-        assert_eq!(lost["name"], second.name.as_str());
-        assert!(
-            workers
-                .iter()
-                .any(|worker| worker["name"] == "first" && worker["state"] == "finished"),
-            "{}",
-            gaggle
-        );
-        // A frozen worker's connection stays open: only its silence finds it.
-        if frozen {
-            let reason = lost["lost_reason"].as_str().unwrap_or_default();
-            assert!(reason.starts_with("nothing from it"), "{}", gaggle);
-        }
-        let lost_at =
-            chrono::DateTime::parse_from_rfc3339(lost["lost_at"].as_str().unwrap()).unwrap();
-        // `lost_at` is to the second.
-        let after = lost_at.timestamp() - killed.timestamp();
-        assert!(
-            // The heartbeat timeout, and 5 seconds of slack for a slow
-            // machine; lost_at and killed are each truncated to the second.
-            after <= HEARTBEAT as i64 + 5,
-            "lost {} s after the kill: {}",
-            after,
-            gaggle
-        );
-        let html = std::fs::read_to_string(folder.join("manager/report.html")).unwrap();
-        assert!(html.contains("Degraded"), "the HTML report says degraded");
-        // The token is in no report, nor in any log line.
-        for text in [
-            report.to_string(),
-            html,
-            manager.output(),
-            first.output(),
-            second.output(),
-        ] {
-            assert!(!text.contains("tok-b21-secret"));
-        }
-        let _ = std::fs::remove_dir_all(&folder);
+            .any(|worker| worker["name"] == "first" && worker["state"] == "finished"),
+        "{}",
+        gaggle
+    );
+    // A frozen worker's connection stays open: only its silence finds it.
+    if frozen {
+        let reason = lost["lost_reason"].as_str().unwrap_or_default();
+        assert!(reason.starts_with("nothing from it"), "{}", gaggle);
+    }
+    let lost_at = chrono::DateTime::parse_from_rfc3339(lost["lost_at"].as_str().unwrap()).unwrap();
+    // `lost_at` is to the second.
+    let after = lost_at.timestamp() - killed.timestamp();
+    assert!(
+        // The heartbeat timeout, and 5 seconds of slack for a slow
+        // machine; lost_at and killed are each truncated to the second.
+        after <= HEARTBEAT as i64 + 5,
+        "lost {} s after the kill: {}",
+        after,
+        gaggle
+    );
+    let html = std::fs::read_to_string(folder.join("manager/report.html")).unwrap();
+    assert!(html.contains("Degraded"), "the HTML report says degraded");
+    // The token is in no report, nor in any log line.
+    for text in [
+        report.to_string(),
+        html,
+        manager.output(),
+        first.output(),
+        second.output(),
+    ] {
+        assert!(!text.contains("tok-worker-lost-3c8e"));
     }
 }
 
@@ -415,66 +415,63 @@ fn gaggle_manager_frozen_mid_run() {
 
 /// The manager killed, or frozen, mid run.
 fn manager_lost_mid_run(frozen: bool) {
-    {
-        let server = MockServer::start();
-        let index = mock_simple(&server, Duration::ZERO);
-        let folder = scratch("manager-killed");
-        let host = server.base_url();
-        let simple = example("simple");
-        let mut manager = Process::start(
-            &simple,
-            "manager",
-            &folder,
-            &manager_args(
-                &host,
-                "2",
-                &[
-                    "--users",
-                    "100",
-                    "--increase-rate",
-                    "100",
-                    "--run-time",
-                    "60s",
-                ],
-            ),
+    let server = MockServer::start();
+    let index = mock_simple(&server, Duration::ZERO);
+    let folder = scratch("manager-killed");
+    let host = server.base_url();
+    let simple = example("simple");
+    let mut manager = Process::start(
+        &simple,
+        "manager",
+        &folder,
+        &manager_args(
+            &host,
+            "2",
+            &[
+                "--users",
+                "100",
+                "--increase-rate",
+                "100",
+                "--run-time",
+                "60s",
+            ],
+        ),
+    );
+    let port = manager.port();
+    let mut workers = [
+        Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
+        Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
+    ];
+    until_load(|| index.calls(), Duration::from_secs(30));
+    std::thread::sleep(Duration::from_secs(1));
+    let killed = if frozen {
+        freeze(manager.child.id());
+        Instant::now()
+    } else {
+        manager.kill()
+    };
+    let bound = Duration::from_secs(HEARTBEAT + 5);
+    for worker in workers.iter_mut() {
+        let (status, exited) = worker
+            .wait(bound + Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("{} did not exit: {}", worker.name, worker.output()));
+        assert!(!status.success(), "{} exits with an error", worker.name);
+        assert!(
+            exited.duration_since(killed) <= bound,
+            "{} exited {:?} after the manager was killed",
+            worker.name,
+            exited.duration_since(killed)
         );
-        let port = manager.port();
-        let mut workers = [
-            Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
-            Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
-        ];
-        until_load(|| index.calls(), Duration::from_secs(30));
-        std::thread::sleep(Duration::from_secs(1));
-        let killed = if frozen {
-            freeze(manager.child.id());
-            Instant::now()
-        } else {
-            manager.kill()
-        };
-        let bound = Duration::from_secs(HEARTBEAT + 5);
-        for worker in workers.iter_mut() {
-            let (status, exited) = worker
-                .wait(bound + Duration::from_secs(5))
-                .unwrap_or_else(|| panic!("{} did not exit: {}", worker.name, worker.output()));
-            assert!(!status.success(), "{} exits with an error", worker.name);
-            assert!(
-                exited.duration_since(killed) <= bound,
-                "{} exited {:?} after the manager was killed",
-                worker.name,
-                exited.duration_since(killed)
-            );
-            let output = worker.output();
-            assert!(!output.contains("panicked"), "{}", output);
-            // The switch stopped it, not its last resort.
-            assert!(output.contains("lost the manager"), "{}", output);
-            assert!(!output.contains("exiting now"), "{}", output);
-            if frozen {
-                assert!(output.contains("nothing from it"), "{}", output);
-            }
+        let output = worker.output();
+        assert!(!output.contains("panicked"), "{}", output);
+        // The switch stopped it, not its last resort.
+        assert!(output.contains("lost the manager"), "{}", output);
+        assert!(!output.contains("exiting now"), "{}", output);
+        if frozen {
+            assert!(output.contains("nothing from it"), "{}", output);
         }
-        let _ = manager.kill();
-        let _ = std::fs::remove_dir_all(&folder);
     }
+    let _ = manager.kill();
 }
 
 /// A threshold that fails on the merged metrics stops every worker,
@@ -532,7 +529,6 @@ fn gaggle_threshold_stops_every_worker() {
                 .expect("the worker exits");
             assert!(status.success(), "{}: {}", worker.name, worker.output());
         }
-        let _ = std::fs::remove_dir_all(&folder);
     });
 }
 
@@ -721,7 +717,6 @@ fn gaggle_manager_interrupted() {
             assert_eq!(worker["state"], "finished", "{}", gaggle);
         }
         assert!(folder.join("manager/report.html").is_file());
-        let _ = std::fs::remove_dir_all(&folder);
     });
 }
 
@@ -799,7 +794,6 @@ fn gaggle_worker_interrupted() {
             "{}",
             gaggle
         );
-        let _ = std::fs::remove_dir_all(&folder);
     });
 }
 

@@ -1752,6 +1752,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
 mod tests {
     use super::*;
     use crate::gaggle::delta::{DeltaError, DeltaKind, GaggleDelta, ScenarioPart};
+    use crate::gaggle::manager::handshake_tests::test_manager;
 
     /// A manager's merge takes the run's users and workers as its limits:
     /// a user ordinal equal to the run's user count, or a worker id equal to
@@ -1833,9 +1834,7 @@ mod tests {
         tonic::Streaming<crate::gaggle::proto::ManagerMessage>,
     ) {
         use crate::gaggle::manager::handshake_tests::{channel, hello, open};
-        let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
-            .await
-            .unwrap();
+        let manager = test_manager(1, Duration::from_secs(10)).await;
         let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
         let mut inbound = inbound.unwrap();
         let welcome = inbound.message().await.unwrap().unwrap();
@@ -2106,9 +2105,7 @@ mod tests {
     #[serial_test::serial]
     async fn a_stop_before_the_start_never_starts() {
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(30)).await;
             let (mut attack, mut run_state) = idle_worker(&manager).await;
             manager.send(
                 0,
@@ -2147,9 +2144,7 @@ mod tests {
     #[serial_test::serial]
     async fn a_reset_before_the_start_is_made_after_it() {
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(30)).await;
             let (mut attack, mut run_state) = idle_worker(&manager).await;
             let metrics_epoch = run_state.metrics_epoch.clone();
             let epoch = || metrics_epoch.load(std::sync::atomic::Ordering::Relaxed);
@@ -2327,9 +2322,7 @@ mod tests {
     #[tokio::test]
     async fn gaggle_finished_worker_without_its_final_degrades_the_run() {
         async fn record(final_merged: bool) -> GaggleRecord {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(10)).await;
             let health = MergeHealth::default();
             health.lock().unwrap().insert(
                 0,

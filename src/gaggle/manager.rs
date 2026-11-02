@@ -1206,6 +1206,7 @@ impl Drop for Manager {
 
 #[cfg(test)]
 mod tests {
+    use super::handshake_tests::test_manager;
     use super::*;
 
     /// Every warning a dropped message logged.
@@ -1284,9 +1285,7 @@ mod tests {
     /// Worker names that differ only in case get folders of their own.
     #[tokio::test]
     async fn worker_names_are_unique_ignoring_case() {
-        let manager = Manager::start("127.0.0.1", 0, 5, None, 7, true, Duration::from_secs(10))
-            .await
-            .unwrap();
+        let manager = test_manager(5, Duration::from_secs(10)).await;
         let (tx, _) = mpsc::channel(1);
         for name in ["Pod-A", "pod-a", "POD-A"] {
             assert!(manager.shared.admit(name, tx.clone()).is_ok());
@@ -1332,9 +1331,7 @@ mod tests {
     /// worker each for its own reason.
     #[tokio::test]
     async fn admit_names_why_it_refuses() {
-        let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
-            .await
-            .unwrap();
+        let manager = test_manager(1, Duration::from_secs(10)).await;
         let (tx, _) = mpsc::channel(1);
         assert!(manager.shared.admit("a", tx.clone()).is_ok());
         let full = manager.shared.admit("b", tx.clone()).err().unwrap();
@@ -1433,6 +1430,15 @@ mod tests {
 pub(crate) mod handshake_tests {
     use super::super::proto::gaggle_client::GaggleClient;
     use super::*;
+
+    /// A manager on a port the system picks, for `expected` workers of plan
+    /// hash 7, with no token, checking the plan hash, and a heartbeat
+    /// timeout of `heartbeat`.
+    pub(crate) async fn test_manager(expected: usize, heartbeat: Duration) -> Manager {
+        Manager::start("127.0.0.1", 0, expected, None, 7, true, heartbeat)
+            .await
+            .unwrap()
+    }
 
     /// A channel to `manager`.
     pub(crate) async fn channel(manager: &Manager) -> tonic::transport::Channel {
@@ -1536,9 +1542,7 @@ pub(crate) mod handshake_tests {
     #[tokio::test]
     async fn gaggle_loses_a_silent_worker() {
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(1))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(1)).await;
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let mut inbound = inbound.unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -1575,9 +1579,7 @@ pub(crate) mod handshake_tests {
     #[tokio::test]
     async fn shut_down_closes_the_stream() {
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(10)).await;
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let mut inbound = inbound.unwrap();
             let reading = || manager.shared.test.reading.load(Ordering::Relaxed);
@@ -1622,9 +1624,7 @@ pub(crate) mod handshake_tests {
         use super::super::delta::{DeltaKind, GaggleDelta};
         use super::super::proto::Metrics;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(10)).await;
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let inbound = inbound.unwrap();
             let last = GaggleDelta::new(0, 1, 0, DeltaKind::Final);
@@ -1779,9 +1779,7 @@ pub(crate) mod handshake_tests {
         use super::super::delta::{DeltaKind, GaggleDelta};
         use super::super::proto::Metrics;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(30)).await;
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let _inbound = inbound.unwrap();
             let free = || manager.shared.event_bytes.available_permits();
@@ -1819,9 +1817,7 @@ pub(crate) mod handshake_tests {
     async fn a_worker_held_by_a_full_queue_is_not_lost() {
         use super::super::proto::LogChunk;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(1))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(1)).await;
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let _inbound = inbound.unwrap();
             const CHUNKS: u64 = 2 * EVENT_QUEUE as u64;
@@ -1873,9 +1869,7 @@ pub(crate) mod handshake_tests {
     async fn gaggle_event_queue_is_bounded() {
         use super::super::proto::LogChunk;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(30)).await;
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
             let _inbound = inbound.unwrap();
             const CHUNKS: u64 = 4 * EVENT_QUEUE as u64;
@@ -1928,9 +1922,7 @@ pub(crate) mod handshake_tests {
     async fn gaggle_event_queue_is_bounded_by_bytes() {
         use super::super::proto::LogChunk;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(30)).await;
             // A budget of 1 MiB, for the test: 4 chunks of 256 KiB fill it.
             manager
                 .shared
@@ -2029,9 +2021,7 @@ pub(crate) mod handshake_tests {
     #[tokio::test]
     async fn gaggle_refuses_a_hello_past_its_limit() {
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(10)).await;
             let large = Hello {
                 worker_name: "w".repeat(1 << 20),
                 ..hello()
@@ -2055,9 +2045,7 @@ pub(crate) mod handshake_tests {
     #[tokio::test]
     async fn gaggle_serves_one_stream_per_connection() {
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 2, None, 7, true, Duration::from_secs(10))
-                .await
-                .unwrap();
+            let manager = test_manager(2, Duration::from_secs(10)).await;
             let channel = channel(&manager).await;
             let (first_tx, first) = open(channel.clone(), hello(), None).await;
             let mut first = first.unwrap();
@@ -2083,9 +2071,7 @@ pub(crate) mod handshake_tests {
     #[tokio::test]
     async fn a_worker_admitted_at_its_deadline_is_kept() {
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(60))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(60)).await;
             manager
                 .shared
                 .test
@@ -2134,9 +2120,7 @@ pub(crate) mod handshake_tests {
     async fn a_connection_refused_when_full_still_closes_at_its_deadline() {
         use tokio::io::AsyncReadExt;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(60))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(60)).await;
             assert_eq!(answer(&manager, hello(), None).await, Ok(0));
             // The admitted worker's connection closes with its client.
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -2196,9 +2180,7 @@ pub(crate) mod handshake_tests {
     async fn gaggle_holds_a_bounded_number_of_connections() {
         use tokio::io::AsyncReadExt;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
-                .await
-                .unwrap();
+            let manager = test_manager(1, Duration::from_secs(30)).await;
             let mut held = Vec::new();
             for _ in 0..1 + SPARE_CONNECTIONS {
                 held.push(

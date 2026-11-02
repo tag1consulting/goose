@@ -75,15 +75,33 @@ fn configuration(args: &[&str]) -> GooseConfiguration {
     GooseConfiguration::parse_args_default(args).unwrap()
 }
 
+/// A fresh folder for a test's runs, removed once dropped, however the test
+/// ends.
+struct Scratch(PathBuf);
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A fresh folder for this test's runs.
-fn scratch(name: &str) -> PathBuf {
+fn scratch(name: &str) -> Scratch {
     let folder = std::env::temp_dir().join(format!(
         "goose-gaggle-{name}-{}-{}",
         std::process::id(),
         chrono::Utc::now().timestamp_micros()
     ));
     std::fs::create_dir_all(&folder).unwrap();
-    folder
+    Scratch(folder)
 }
 
 /// The lines in `file`.
@@ -260,7 +278,7 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
         mock("/stop").await,
     );
     let (data0, data1) = (mock("/data/w0").await, mock("/data/w1").await);
-    let folder = scratch("b1");
+    let folder = scratch("two-workers");
     let host = server.base_url();
     let run = gaggle(
         standard,
@@ -360,7 +378,6 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     let gaggle = &report["gaggle"];
     assert_eq!(gaggle["degraded"], false, "{gaggle}");
     assert_eq!(gaggle["workers"].as_array().map(Vec::len), Some(2));
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// More workers than users, with --iterations: the worker holding none is
@@ -372,11 +389,6 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
     let folder = scratch("no-users");
     // Users that wait for no metrics reset, which never comes under
     // --iterations.
-    let quick = |configuration, _| {
-        GooseAttack::initialize_with_config(configuration)
-            .unwrap()
-            .register_scenario(Scenario::new("A").register_transaction(get("/a")))
-    };
     let run = gaggle(
         quick,
         3,
@@ -403,7 +415,6 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
     // No reset under --iterations: every delta of the start's epoch merged.
     let (gaggle, _) = record(&folder);
     assert_eq!(gaggle["degraded"], false, "{gaggle}");
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// A manager that goes away before the run, its task dropped mid wait:
@@ -584,7 +595,6 @@ async fn gaggle_stale_and_refused_workers_degrade_the_run() {
             name
         );
     }
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// A worker whose metrics processor never hands over its final metrics, or
@@ -645,7 +655,6 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str, expected_last_seq
     if let Some(seq) = expected_last_seq {
         assert_eq!(lost[0]["last_seq"], seq, "{}", gaggle);
     }
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -690,7 +699,6 @@ async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClie
     let mut args = vec!["--users", "1", "--run-time", "1"];
     args.extend_from_slice(manager_args);
     clean(gaggle(build, 1, server.base_url(), &folder, &args, &[], &[]).await);
-    let _ = std::fs::remove_dir_all(&folder);
     reported.await.expect("the worker builds its clients")
 }
 
@@ -781,7 +789,6 @@ async fn gaggle_collected_logs_match_their_names() {
                 &text[..text.len().min(80)]
             );
         }
-        let _ = std::fs::remove_dir_all(&folder);
     }
 }
 
@@ -821,7 +828,6 @@ async fn gaggle_worker_writes_no_log_set_in_code() {
             .expect("the Gaggle ends within 30 seconds"),
     );
     assert!(!Path::new(&in_code).exists(), "a worker wrote {}", in_code);
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// A manager listening on every address, which needs a token, admits the
@@ -858,7 +864,6 @@ async fn gaggle_non_loopback_manager_with_a_token_admits_its_workers() {
             .expect("the Gaggle ends within 30 seconds"),
     );
     assert_eq!(metrics.total_users, 2);
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// A load test of one scenario, GET /a, whose worker data hook returns
@@ -893,7 +898,6 @@ async fn worker_data_run(
         &[],
     )
     .await;
-    let _ = std::fs::remove_dir_all(&folder);
     (manager, workers.remove(0))
 }
 
@@ -1066,7 +1070,6 @@ async fn gaggle_handshake_refusals() {
                 other => panic!("{}: {:?}", case, other.map(|_| ())),
             }
         }
-        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await
@@ -1162,7 +1165,6 @@ async fn gaggle_without_metrics_exits_cleanly() {
         started.elapsed()
     );
     assert!(a.calls_async().await > 0);
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// Two workers running a test plan that goes up, down and up again, under
@@ -1215,7 +1217,6 @@ async fn gaggle_test_plan_and_throttle_across_workers() {
         requests,
         started.elapsed()
     );
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// A manager that fails after its workers joined, as `fault` on worker 1,
@@ -1286,7 +1287,6 @@ async fn manager_fails(
         assert_eq!(start.calls_async().await, runs, "test_start");
         assert_eq!(stop.calls_async().await, runs, "test_stop");
         assert_eq!(a.calls_async().await, 0, "no user ran");
-        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await
@@ -1437,14 +1437,14 @@ async fn gaggle_killswitch_while_joining_and_preparing() {
 
 /// A run whose one worker sends its request log as `fault` says: the
 /// manager's result, when it ended against [`LOG_FAULT_AT`] if the fault
-/// set it, its run record, and the run's folder, for the caller to remove.
+/// set it, its run record, and the run's folder.
 async fn faulty_logs_run(
     fault: LogsFault,
 ) -> (
     Result<GooseMetrics, crate::GooseError>,
     Option<Duration>,
     serde_json::Value,
-    PathBuf,
+    Scratch,
 ) {
     let server = answering().await;
     let folder = scratch("faulty-logs");
@@ -1517,7 +1517,6 @@ async fn gaggle_killswitch_while_collecting_logs() {
             "{gaggle}"
         );
         assert_eq!(parts(&folder), Vec::<PathBuf>::new());
-        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(90), test)
         .await
@@ -1541,7 +1540,6 @@ async fn gaggle_trickled_log_is_given_up() {
             "{gaggle}"
         );
         assert_eq!(parts(&folder), Vec::<PathBuf>::new());
-        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(90), test)
         .await
@@ -1595,7 +1593,6 @@ async fn gaggle_slow_stop_keeps_every_final() {
         assert_eq!(worker["state"], "finished", "{gaggle}");
         assert!(worker.get("final_missing").is_none(), "{}", gaggle);
     }
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// A log that grows past the size its worker announced is cut off: nothing
@@ -1614,7 +1611,6 @@ async fn gaggle_log_past_its_announced_size_is_cut_off() {
         );
         let collected: Vec<PathBuf> = walk(&folder.join("manager").join("workers"));
         assert_eq!(collected, Vec::<PathBuf>::new());
-        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await
@@ -1642,7 +1638,6 @@ async fn gaggle_log_write_failure_leaves_the_reports_whole() {
             html.contains("Logs left on their workers"),
             "the HTML report names it"
         );
-        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await
@@ -1669,7 +1664,6 @@ async fn gaggle_reports_are_written_before_the_logs() {
             report <= modified(&logs[0]),
             "the report came after the log"
         );
-        let _ = std::fs::remove_dir_all(&folder);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await
@@ -1742,5 +1736,4 @@ async fn gaggle_every_worker_lost_ends_the_run() {
     let (lost, others) = split_workers(gaggle, |worker| worker["state"] == "lost");
     assert_eq!((lost.len(), others.len()), (2, 0), "{}", gaggle);
     assert_eq!(stop.calls_async().await, 1);
-    let _ = std::fs::remove_dir_all(&folder);
 }
