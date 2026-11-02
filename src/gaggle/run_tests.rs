@@ -1218,87 +1218,117 @@ async fn gaggle_test_plan_and_throttle_across_workers() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// A manager that fails after its workers joined: one whose report file
-/// cannot be created fails before test_start, and starts no user; one that
-/// fails once test_start ran, as when its worker data hook fails or a
-/// worker refuses, loses or never answers its Prepare, runs test_stop once.
+/// A manager that fails after its workers joined, as `fault` on worker 1,
+/// `too_much_data` from the worker data hook or an uncreatable `report`
+/// file make it: one that fails before test_start runs neither it nor
+/// test_stop, one that fails after runs test_stop once, and no user runs.
+async fn manager_fails(
+    fault: PrepareFault,
+    too_much_data: bool,
+    report: Option<&str>,
+    test_start_runs: bool,
+) {
+    let test = async {
+        let server = MockServer::start_async().await;
+        let mock = |path: &'static str| {
+            let server = &server;
+            async move {
+                server
+                    .mock_async(|when, then| {
+                        when.method(GET).path(path);
+                        then.status(200).body("ok");
+                    })
+                    .await
+            }
+        };
+        let (start, stop, a) = (mock("/start").await, mock("/stop").await, mock("/a").await);
+        let folder = scratch("manager-failures");
+        let build = |configuration, place: Option<usize>| {
+            let bytes = if too_much_data && place.is_none() {
+                crate::MAX_WORKER_DATA + 1
+            } else {
+                0
+            };
+            with_worker_data(configuration, bytes)
+                .test_start(get("/start"))
+                .test_stop(get("/stop"))
+        };
+        let mut manager_args = vec!["--users", "2", "--run-time", "2"];
+        // One argument, so the run gets no folder that would hold nothing.
+        let report = report.map(|report| format!("--report-file={report}"));
+        if let Some(report) = report.as_deref() {
+            manager_args.push(report);
+        }
+        let faults = [
+            TestFaults::default(),
+            TestFaults {
+                prepare: fault,
+                ..Default::default()
+            },
+        ];
+        let (manager, workers) = gaggle(
+            build,
+            2,
+            server.base_url(),
+            &folder,
+            &manager_args,
+            &[],
+            &faults,
+        )
+        .await;
+        assert!(manager.is_err(), "the manager fails");
+        // A worker that prepared and is shut down before the start ends
+        // cleanly, having run nothing; the one at fault fails.
+        if fault != PrepareFault::None {
+            assert!(workers[1].is_err(), "the faulty worker fails");
+        }
+        let runs = usize::from(test_start_runs);
+        assert_eq!(start.calls_async().await, runs, "test_start");
+        assert_eq!(stop.calls_async().await, runs, "test_stop");
+        assert_eq!(a.calls_async().await, 0, "no user ran");
+        let _ = std::fs::remove_dir_all(&folder);
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
-async fn gaggle_manager_failures_run_test_stop_once() {
-    let test = async {
-        for (case, faults, too_much_data, report, test_start_runs) in [
-            ("worker data hook", PrepareFault::None, true, None, true),
-            ("prepare error", PrepareFault::Refuse, false, None, true),
-            ("lost preparing", PrepareFault::Vanish, false, None, true),
-            ("prepare timeout", PrepareFault::Stall, false, None, true),
-            (
-                "report file",
-                PrepareFault::None,
-                false,
-                Some("/nonexistent-goose-folder/report.html"),
-                false,
-            ),
-        ] {
-            let server = MockServer::start_async().await;
-            let mock = |path: &'static str| {
-                let server = &server;
-                async move {
-                    server
-                        .mock_async(|when, then| {
-                            when.method(GET).path(path);
-                            then.status(200).body("ok");
-                        })
-                        .await
-                }
-            };
-            let (start, stop, a) = (mock("/start").await, mock("/stop").await, mock("/a").await);
-            let folder = scratch("manager-failures");
-            let build = |configuration, place: Option<usize>| {
-                let bytes = if too_much_data && place.is_none() {
-                    crate::MAX_WORKER_DATA + 1
-                } else {
-                    0
-                };
-                with_worker_data(configuration, bytes)
-                    .test_start(get("/start"))
-                    .test_stop(get("/stop"))
-            };
-            let mut manager_args = vec!["--users", "2", "--run-time", "2"];
-            // One argument, so the run gets no folder that would hold nothing.
-            let report = report.map(|report| format!("--report-file={report}"));
-            if let Some(report) = report.as_deref() {
-                manager_args.push(report);
-            }
-            let fault = TestFaults {
-                prepare: faults,
-                ..Default::default()
-            };
-            let (manager, workers) = gaggle(
-                build,
-                2,
-                server.base_url(),
-                &folder,
-                &manager_args,
-                &[],
-                &[TestFaults::default(), fault],
-            )
-            .await;
-            assert!(manager.is_err(), "{}: the manager fails", case);
-            // A worker that prepared and is shut down before the start ends
-            // cleanly, having run nothing; the one at fault fails.
-            if faults != PrepareFault::None {
-                assert!(workers[1].is_err(), "{}: the faulty worker fails", case);
-            }
-            let runs = usize::from(test_start_runs);
-            assert_eq!(start.calls_async().await, runs, "{case}: test_start");
-            assert_eq!(stop.calls_async().await, runs, "{case}: test_stop");
-            assert_eq!(a.calls_async().await, 0, "{case}: no user ran");
-            let _ = std::fs::remove_dir_all(&folder);
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(120), test)
-        .await
-        .expect("within 120 seconds");
+async fn gaggle_worker_data_hook_failure_runs_test_stop() {
+    manager_fails(PrepareFault::None, true, None, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_prepare_error_runs_test_stop() {
+    manager_fails(PrepareFault::Refuse, false, None, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_lost_preparing_runs_test_stop() {
+    manager_fails(PrepareFault::Vanish, false, None, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_prepare_timeout_runs_test_stop() {
+    manager_fails(PrepareFault::Stall, false, None, true).await;
+}
+
+/// The report file is checked before test_start, so neither it nor
+/// test_stop runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_uncreatable_report_file_runs_neither_hook() {
+    manager_fails(
+        PrepareFault::None,
+        false,
+        Some("/nonexistent-goose-folder/report.html"),
+        false,
+    )
+    .await;
 }
 
 /// The manager of a run that a killswitch cancels part way: it ends within
