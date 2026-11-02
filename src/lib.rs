@@ -1170,7 +1170,7 @@ impl GooseAttack {
         if !cfg!(feature = "cookies") {
             return Err(GooseError::FeatureNotEnabled {
                 feature: "cookies".to_string(),
-                detail: "`set_client_builder_with_cookies` needs the `cookies` feature to give each user a cookie jar (rebuild with `--features cookies`), or use `set_client_builder_without_cookies`".to_string(),
+                detail: "rebuild with `--features cookies` for a cookie jar per user, or use `set_client_builder_without_cookies`".to_string(),
             });
         }
         self.client_builder = Some(builder.into_settings());

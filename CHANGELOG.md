@@ -2,7 +2,7 @@
 
 ## 0.19.1-dev
 
- - [#798](https://github.com/tag1consulting/goose/pull/798) **behavior change**: a `main` that returns a `GooseError` ends with one readable line, such as `Error: one or more thresholds failed (p95<500ms, observed 812ms)`, where it printed the derived `Debug` dump of the error; `GooseError`'s `{:?}` is now its `Display` text without `GooseError: `, with the option, value, host, feature and detail `Display` leaves out, and `{:#?}` still prints the structure field for field; `Display` and the variants are unchanged
+ - [#798](https://github.com/tag1consulting/goose/pull/798) **behavior change**: a `main` that returns a `GooseError` ends with one readable line, such as `Error: one or more thresholds failed (p95<500ms, observed 812ms)`, where it printed the derived `Debug` dump of the error; `GooseError`'s `{:?}` is now its `Display` text without `GooseError: `, with the option, value, host, feature and detail `Display` leaves out, and `{:#?}` still prints the structure field for field; `Display` and the variants are unchanged; the `dashboard` and `cookies` `FeatureNotEnabled` details are shortened to what to rebuild with, so the line no longer names the feature twice
  - [#794](https://github.com/tag1consulting/goose/pull/794) `examples/umami` runs against a stock Drupal 11.4 Umami site, with CSS and JS aggregation on or off; it targets 11.4 only
     o the contact form and search transactions are removed: 11.4's Umami installs neither the contact module nor node search, so they only got 404s
     o the mushroom article is requested at its 11.4 alias, `the-umami-guide-to-our-favorite-mushrooms`, not `favourite`
