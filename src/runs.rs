@@ -122,12 +122,9 @@ fn is_zero(n: &u64) -> bool {
 }
 
 /// Where a Gaggle worker stood when the manager wrote its run record.
-/// Non exhaustive for when the run record types are made public: adding a
-/// state then breaks no `match` outside Goose.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub(crate) enum WorkerState {
+pub(crate) enum GaggleWorkerState {
     /// It had not stopped.
     #[default]
     Running,
@@ -147,7 +144,7 @@ pub(crate) struct GaggleWorkerRecord {
     /// The users it started over the run.
     pub users: usize,
     /// Where it stood when the record was written.
-    pub state: WorkerState,
+    pub state: GaggleWorkerState,
     /// When it was lost, RFC 3339, UTC.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lost_at: Option<String>,
@@ -204,7 +201,7 @@ impl GaggleWorkerRecord {
     /// Whether the results undercount this worker.
     #[cfg(feature = "gaggle")]
     pub(crate) fn degraded(&self) -> bool {
-        self.state == WorkerState::Lost || !self.shortfall().is_empty()
+        self.state == GaggleWorkerState::Lost || !self.shortfall().is_empty()
     }
 }
 
@@ -223,7 +220,7 @@ impl GaggleRecord {
         let lost: Vec<String> = self
             .workers
             .iter()
-            .filter(|worker| worker.state == WorkerState::Lost)
+            .filter(|worker| worker.state == GaggleWorkerState::Lost)
             .map(|worker| match &worker.lost_reason {
                 Some(reason) => format!("{} ({reason})", worker.name),
                 None => worker.name.clone(),
@@ -1748,14 +1745,14 @@ mod tests {
     fn gaggle_worker_states_read_and_write_as_before() {
         let written = r#"{"workers":[{"id":0,"name":"a","users":2,"state":"finished"},{"id":1,"name":"b","users":2,"state":"users_exited"},{"id":2,"name":"c","users":1,"state":"lost","lost_at":"2026-10-30T10:00:00Z","lost_reason":"nothing from it for 10 seconds","last_seq":4},{"id":3,"name":"d","users":0,"state":"running"}],"degraded":true}"#;
         let record: GaggleRecord = serde_json::from_str(written).unwrap();
-        let states: Vec<WorkerState> = record.workers.iter().map(|w| w.state).collect();
+        let states: Vec<GaggleWorkerState> = record.workers.iter().map(|w| w.state).collect();
         assert_eq!(
             states,
             [
-                WorkerState::Finished,
-                WorkerState::UsersExited,
-                WorkerState::Lost,
-                WorkerState::Running
+                GaggleWorkerState::Finished,
+                GaggleWorkerState::UsersExited,
+                GaggleWorkerState::Lost,
+                GaggleWorkerState::Running
             ]
         );
         assert_eq!(serde_json::to_string(&record).unwrap(), written);

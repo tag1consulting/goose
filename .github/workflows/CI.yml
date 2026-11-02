@@ -128,6 +128,13 @@ jobs:
       with:
         toolchain: stable
     
+    # The generator's own target folder, so the check below is not a cold build.
+    - name: ⚡ Cache the Gaggle protocol generator
+      if: ${{ matrix.features == 'gaggle' }}
+      uses: Swatinem/rust-cache@v1.3.0
+      with:
+        working-directory: proto/gen
+
     # The checked in Gaggle protocol code is what proto/gaggle.proto generates.
     # The generator is its own package with a committed Cargo.lock, so no Goose
     # build compiles it and a new generator release cannot change its output.

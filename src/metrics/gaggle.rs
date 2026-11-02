@@ -10,7 +10,7 @@ pub(crate) struct ManagerMerge {
     clock: u64,
     /// The clock second the merge was last built in: a live read builds it
     /// at most once a second, as the workers' deltas arrive once a second.
-    built: Option<u64>,
+    built_at: Option<u64>,
     /// What the merge did with each worker's deltas, for the run record.
     health: crate::gaggle::merge::MergeHealth,
 }
@@ -80,7 +80,7 @@ impl MetricsProcessor {
             accumulator,
             dirty: true,
             clock: 0,
-            built: None,
+            built_at: None,
             health,
         }));
     }
@@ -130,7 +130,7 @@ impl MetricsProcessor {
             MetricsCommand::KeepGraph { keep, now } => {
                 merge.accumulator.set_columns(keep);
                 merge.dirty = true;
-                merge.built = None;
+                merge.built_at = None;
                 self.dispatch_command(MetricsCommand::KeepGraph { keep, now })
             }
             // Recorded on state the merge replaces, and read from it later.
@@ -161,7 +161,7 @@ impl MetricsProcessor {
                     if let Some(merge) = self.gaggle_merge.as_mut() {
                         merge.accumulator.set_epoch(epoch);
                         merge.dirty = true;
-                        merge.built = None;
+                        merge.built_at = None;
                     }
                 }
                 done
@@ -176,11 +176,11 @@ impl MetricsProcessor {
         let Some(merge) = self.gaggle_merge.as_mut() else {
             return;
         };
-        if !merge.dirty || (!force && merge.built == Some(merge.clock)) {
+        if !merge.dirty || (!force && merge.built_at == Some(merge.clock)) {
             return;
         }
         merge.dirty = false;
-        merge.built = Some(merge.clock);
+        merge.built_at = Some(merge.clock);
         // The merge extends the graph data it built last, handed back.
         let graph = std::mem::replace(&mut self.graph_data, GraphData::new());
         let (merged, graph, excluded) = merge.accumulator.merged_and_excluded(graph);

@@ -360,37 +360,35 @@ impl GraphData {
                 None => rows.range(from..),
             }
         }
-        let graph_data = self;
         // The users series is kept whether or not per second graphs are.
         for (&second, &users) in range(users, from, to) {
-            graph_data.record_users_per_second(users as usize, second as usize);
+            self.record_users_per_second(users as usize, second as usize);
         }
         if !settings.records {
             return;
         }
         for (key, rows) in &part.requests {
             for (&second, &count) in range(rows, from, to) {
-                graph_data
-                    .requests_per_second
+                self.requests_per_second
                     .increment(key, second as usize, series_count(count));
             }
         }
         for (key, rows) in &part.errors {
             for (&second, &count) in range(rows, from, to) {
-                graph_data.errors_per_second.increment(
+                self.errors_per_second.increment(
                     key,
                     second as usize,
                     series_count(count.max(0) as u64),
                 );
             }
         }
-        let origin = graph_data.users_per_second.origin;
+        let origin = self.users_per_second.origin;
         for (key, rows) in &part.averages {
             for (&second, average) in range(rows, from, to) {
                 if average.count == 0 {
                     continue;
                 }
-                let series = graph_data
+                let series = self
                     .average_response_time_per_second
                     .entry(key.clone())
                     .or_insert_with(|| TimeSeries::with_origin(origin));
@@ -404,12 +402,12 @@ impl GraphData {
             }
         }
         for (&second, &count) in range(&part.transactions, from, to) {
-            graph_data.record_transactions_per_second_batch(second as usize, count as usize);
+            self.record_transactions_per_second_batch(second as usize, count as usize);
         }
         for (&second, &count) in range(&part.scenarios, from, to) {
-            graph_data.record_scenarios_per_second_batch(second as usize, count as usize);
+            self.record_scenarios_per_second_batch(second as usize, count as usize);
         }
-        if let Some(latency) = graph_data.latency.as_mut() {
+        if let Some(latency) = self.latency.as_mut() {
             // Measured times first, each second in order and by name
             // within it, so names are admitted to rings as a single
             // process admits names first seen in that order. Synthetic

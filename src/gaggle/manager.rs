@@ -287,6 +287,8 @@ struct TestHooks {
 /// either's length; no token is the empty one.
 type TokenDigest = [u8; 20];
 
+/// `token`'s digest. SHA-1 only for fixed length digests, so the constant
+/// time compare leaks no length; no secrecy rests on the hash.
 fn token_digest(token: &str) -> TokenDigest {
     use sha1::Digest;
     sha1::Sha1::digest(token.as_bytes()).into()
