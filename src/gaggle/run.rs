@@ -50,13 +50,25 @@ const PREPARE_TIMEOUT: Duration = if cfg!(test) {
 };
 
 /// How long the manager waits for a worker's final metrics once its users
-/// stopped, and a worker for its metrics processor to hand them over: 30
-/// seconds.
+/// stopped: 30 seconds.
 pub(crate) const FINAL_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(3)
 } else {
     Duration::from_secs(30)
 };
+
+/// How long a worker waits for its metrics processor to hand over its final
+/// metrics: 20 seconds, well inside the manager's [`FINAL_TIMEOUT`], so a
+/// worker whose processor is late says so, and is lost for that, before the
+/// manager gives up waiting.
+const WORKER_FINAL_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_secs(20)
+};
+
+// The worker's bound is at most two thirds of the manager's.
+const _: () = assert!(WORKER_FINAL_TIMEOUT.as_millis() * 3 <= FINAL_TIMEOUT.as_millis() * 2);
 
 /// How long a worker waits for its metrics processor to reset: 10 seconds.
 const RESET_TIMEOUT: Duration = if cfg!(test) {
@@ -1447,7 +1459,7 @@ impl GooseAttack {
     /// A worker whose users stopped: say so, send its final metrics, then
     /// `Stopped`.
     /// One whose metrics processor does not hand over the final metrics
-    /// within [`FINAL_TIMEOUT`], as long as the manager waits for them,
+    /// within [`WORKER_FINAL_TIMEOUT`], inside the manager's wait for them,
     /// fails.
     async fn worker_stopped(
         &mut self,
@@ -1481,7 +1493,7 @@ impl GooseAttack {
         let no_final = || {
             format!(
                 "the metrics processor did not hand over the final metrics within {} seconds",
-                FINAL_TIMEOUT.as_secs()
+                WORKER_FINAL_TIMEOUT.as_secs()
             )
         };
         // A unit test's fault: a processor that never answers. The command
@@ -1489,7 +1501,7 @@ impl GooseAttack {
         #[cfg(test)]
         if self.gaggle.test_faults.silent_final {
             let _unsent = command;
-            let _ = answered(done, FINAL_TIMEOUT).await;
+            let _ = answered(done, WORKER_FINAL_TIMEOUT).await;
             return Err(worker_failed(&run.link, no_final()).await);
         }
         // A unit test's fault: a processor that takes the command late.
@@ -1513,7 +1525,7 @@ impl GooseAttack {
                 .send(command)
                 .is_ok()
         });
-        if sent && !answered(done, FINAL_TIMEOUT).await {
+        if sent && !answered(done, WORKER_FINAL_TIMEOUT).await {
             return Err(worker_failed(&run.link, no_final()).await);
         }
         let (reason, canceled) = match &self.ended_by {
