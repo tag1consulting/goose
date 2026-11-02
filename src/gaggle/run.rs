@@ -1319,6 +1319,17 @@ impl GooseAttack {
         // stopped, and FINAL_TIMEOUT from then for its final metrics.
         let users_bound = self.configuration.request_timeout() + FINAL_TIMEOUT;
         let stop = Instant::now();
+        // The merge refuses a delta past its clock, which the main loop, held
+        // here, no longer moves: a final may carry seconds up to the end of
+        // this wait.
+        if self.series_started.is_some() {
+            let last = self.series_elapsed_secs() as u64 + (users_bound + FINAL_TIMEOUT).as_secs();
+            let _ = goose_attack_run_state
+                .metrics_cmd_tx
+                .send(MetricsCommand::GaggleClock {
+                    second: last + CLOCK_SLACK,
+                });
+        }
         let deadline = |worker: &WorkerEntry| match worker.users_stopped {
             Some(at) => at.max(stop) + FINAL_TIMEOUT,
             None => stop + users_bound,
