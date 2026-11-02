@@ -111,24 +111,12 @@ struct Process {
 
 impl Process {
     fn start(binary: &Path, name: &str, folder: &Path, args: &[&str]) -> Process {
-        Process::start_with(binary, name, folder, args, &[])
-    }
-
-    /// [`Process::start`], with `env` set too.
-    fn start_with(
-        binary: &Path,
-        name: &str,
-        folder: &Path,
-        args: &[&str],
-        env: &[(&str, &str)],
-    ) -> Process {
         let output = folder.join(format!("{name}.out"));
         let file = std::fs::File::create(&output).unwrap();
         let child = Command::new(binary)
             .args(args)
             .env("HOSTNAME", name)
             .env_remove("GOOSE_GAGGLE_TOKEN")
-            .envs(env.iter().copied())
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
             .spawn()
@@ -798,11 +786,11 @@ fn gaggle_worker_interrupted() {
 }
 
 /// One run from the command line to its end: a manager and two workers of
-/// the `simple` example, each exiting 0, the manager's reports written. One
-/// worker is set to ignore the manager's metrics reset with
-/// `GOOSE_GAGGLE_TEST_SKIP_RESET`, the fault switch for runs on a cluster:
-/// the run is degraded, and its record names that worker, left out for the
-/// reset it missed, and the other merged.
+/// the `simple` example, each exiting 0, the manager's reports written, and
+/// both workers merged. A worker left out for a metrics reset it missed is
+/// tested in the library (`gaggle_stale_and_refused_workers_degrade_the_run`),
+/// and a degraded run through this binary by the killed, frozen and
+/// interrupted workers here.
 #[test]
 #[serial_test::serial]
 fn gaggle_run_from_the_command_line() {
@@ -835,14 +823,8 @@ fn gaggle_run_from_the_command_line() {
         );
         let port = manager.port();
         let mut workers = [
-            Process::start(&simple, "merged", &folder, &worker_args(&port, &[])),
-            Process::start_with(
-                &simple,
-                "stale",
-                &folder,
-                &worker_args(&port, &[]),
-                &[("GOOSE_GAGGLE_TEST_SKIP_RESET", "1")],
-            ),
+            Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
+            Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
         ];
         let (status, _) = manager
             .wait(Duration::from_secs(60))
@@ -857,22 +839,12 @@ fn gaggle_run_from_the_command_line() {
         assert!(index.calls() > 0);
         assert!(folder.join("manager/report.html").is_file());
         let gaggle = &manager_record(&folder)["gaggle"];
-        assert_eq!(gaggle["degraded"], true, "{}", gaggle);
+        assert_eq!(gaggle["degraded"], false, "{}", gaggle);
         let workers = gaggle["workers"].as_array().unwrap();
-        let named = |name: &str| {
-            workers
-                .iter()
-                .find(|worker| worker["name"] == name)
-                .unwrap_or_else(|| panic!("{} in {}", name, gaggle))
-        };
-        let stale = named("stale");
-        let reason = stale["excluded_reason"].as_str().unwrap_or_default();
-        assert!(reason.contains("missed a metrics reset"), "{}", gaggle);
-        assert_eq!(stale["state"], "finished", "{}", gaggle);
-        assert!(
-            named("merged").get("excluded_reason").is_none(),
-            "{}",
-            gaggle
-        );
+        assert_eq!(workers.len(), 2, "{}", gaggle);
+        for worker in workers {
+            assert_eq!(worker["state"], "finished", "{}", gaggle);
+            assert!(worker.get("excluded_reason").is_none(), "{}", gaggle);
+        }
     });
 }

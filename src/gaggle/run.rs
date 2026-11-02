@@ -6,12 +6,6 @@
 //! `GooseAttack` that waits idle, as with `--no-autostart`, until its manager
 //! says when to start the share it was handed, and is then driven by what the
 //! manager sends.
-//!
-//! One fault can be injected from outside, for runs on a cluster: a worker
-//! started with `GOOSE_GAGGLE_TEST_SKIP_RESET` set ignores its manager's
-//! metrics reset, so its metrics stay on an older epoch, the manager leaves
-//! them out of the results, and the run is degraded, naming that worker.
-//! `tests/gaggle.rs` checks it from the command line.
 
 use super::delta::DeltaLimits;
 use super::link::{Link, LinkEvent, LinkSettings, LOG_CHUNK};
@@ -95,13 +89,6 @@ const KILLSWITCH_POLL: Duration = Duration::from_millis(100);
 /// the workers' clocks start within milliseconds of its own, and a delta is
 /// stamped up to a second late.
 pub(crate) const CLOCK_SLACK: u64 = 10;
-
-/// The fault injection switch for runs across processes, on a cluster or in
-/// Goose's own tests: a worker with this environment variable set ignores
-/// its manager's metrics reset, so its metrics stay on an older epoch than
-/// the run's, which the manager then leaves out of the results, degrading
-/// the run.
-const TEST_SKIP_RESET_ENV: &str = "GOOSE_GAGGLE_TEST_SKIP_RESET";
 
 /// What a worker does wrong on purpose, in unit tests.
 #[cfg(test)]
@@ -345,7 +332,8 @@ pub(crate) struct WorkerRun {
     /// Each log, as the manager names it, and where it is here.
     log_files: Vec<(String, PathBuf)>,
     run_folder: Option<PathBuf>,
-    /// Ignore the manager's metrics reset ([`TEST_SKIP_RESET_ENV`]).
+    /// Ignore the manager's metrics reset (unit tests).
+    #[cfg(test)]
     skip_reset: bool,
     /// Its [`TestFaults::stop_reason`] was sent (unit tests).
     #[cfg(test)]
@@ -906,9 +894,8 @@ impl GooseAttack {
         self.gaggle.client_command_line = spec.client_command_line;
         self.set_user_slice(spec.user_offset, spec.slice.clone());
         self.worker_data = Some(Arc::from(std::mem::take(&mut spec.custom_data)));
-        let skip_reset = std::env::var_os(TEST_SKIP_RESET_ENV).is_some();
         #[cfg(test)]
-        let skip_reset = skip_reset || self.gaggle.test_faults.skip_reset;
+        let skip_reset = self.gaggle.test_faults.skip_reset;
         #[cfg(test)]
         if self.gaggle.test_faults.refused_delta {
             link.outbox
@@ -944,6 +931,7 @@ impl GooseAttack {
             tick_second: None,
             log_files: Vec::new(),
             run_folder: None,
+            #[cfg(test)]
             skip_reset,
             #[cfg(test)]
             stop_reason_sent: false,
@@ -1235,8 +1223,9 @@ impl GooseAttack {
             match event {
                 LinkEvent::Prepare(_) => warn!("gaggle: a second Prepare ignored"),
                 LinkEvent::StartAt(at) => run.start_at = Some(at),
+                #[cfg(test)]
                 LinkEvent::ResetMetrics(epoch) if run.skip_reset => {
-                    warn!("gaggle: metrics reset to epoch {epoch} ignored ({TEST_SKIP_RESET_ENV})");
+                    warn!("gaggle: metrics reset to epoch {epoch} ignored on purpose");
                 }
                 LinkEvent::ResetMetrics(epoch) if !running => {
                     // Before the start, as when the ramp ends in the
