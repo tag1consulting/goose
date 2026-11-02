@@ -59,8 +59,9 @@ pub(crate) const MAX_HELLO: usize = 64 << 10;
 
 /// The most data the manager holds sent but not yet read, across every
 /// connection it allows: each connection's HTTP/2 stream and connection
-/// windows are a share of it (see [`window`]). The 64 KiB floor takes it
-/// past this only with more than 2,044 workers, to 128.25 MiB at 2,048.
+/// window, and its [`MAX_HEADERS`], are a share of it (see [`window`]). The
+/// 64 KiB floor takes it past this only with more than 1,634 workers, to
+/// 160.3 MiB at 2,048.
 const UNREAD_BUDGET: u64 = 128 << 20;
 
 /// The smallest window a connection gets, HTTP/2's default.
@@ -71,15 +72,18 @@ const MAX_WINDOW: u64 = 1 << 20;
 
 /// Each connection's HTTP/2 stream and connection window, when the manager
 /// expects `expected` workers: [`UNREAD_BUDGET`] split between the
-/// connections it allows, `expected + SPARE_CONNECTIONS`, from 64 KiB to 1
-/// MiB. A worker moves at most one window each round trip: at 100 ms, 1 MiB
-/// is about 10 MB/s, for 2 workers or 124, and the 64 KiB that 2,048 get
-/// about 650 KB/s each, 1.3 GB/s for all of them. The windows are fixed for
-/// the run, never grown with the link's bandwidth, so the budget holds
+/// connections it allows, `expected + SPARE_CONNECTIONS`, less the
+/// [`MAX_HEADERS`] each may also hold, from 64 KiB to 1 MiB. Windows and
+/// headers together hold 6.1 MiB for 2 workers, the budget for 124, and
+/// 160.3 MiB for 2,048, where the floor applies. A worker moves at most one
+/// window each round trip: at 100 ms, 1 MiB is about 10 MB/s, for 2
+/// workers, the 1,008 KiB 124 get a little less, and the 64 KiB that 2,048
+/// get about 650 KB/s each, 1.3 GB/s for all of them. The windows are fixed
+/// for the run, never grown with the link's bandwidth, so the budget holds
 /// whatever a worker sends.
 fn window(expected: usize) -> u32 {
     let connections = (expected as u64).saturating_add(SPARE_CONNECTIONS as u64);
-    let share = UNREAD_BUDGET / connections.max(1);
+    let share = (UNREAD_BUDGET / connections.max(1)).saturating_sub(u64::from(MAX_HEADERS));
     share.clamp(MIN_WINDOW, MAX_WINDOW) as u32
 }
 
