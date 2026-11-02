@@ -120,6 +120,36 @@ pub(crate) const AUTHORIZATION: &str = "authorization";
 /// sent none, or one of any other length or value.
 const WRONG_TOKEN: &str = "token: the worker's --gaggle-token is not the manager's";
 
+/// When a worker was last heard from, as milliseconds since its stream
+/// opened: read and written without a lock, so no thread's panic can leave
+/// it unreadable.
+struct Heard {
+    since: Instant,
+    at_ms: std::sync::atomic::AtomicU64,
+}
+
+impl Heard {
+    fn new() -> Self {
+        Heard {
+            since: Instant::now(),
+            at_ms: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// The worker was heard from now.
+    fn now(&self) {
+        self.at_ms
+            .store(self.since.elapsed().as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// How long since the worker was last heard from.
+    fn silent(&self) -> Duration {
+        self.since
+            .elapsed()
+            .saturating_sub(Duration::from_millis(self.at_ms.load(Ordering::Relaxed)))
+    }
+}
+
 /// What a worker's stream tells the manager's main loop.
 #[derive(Debug)]
 pub(crate) enum Event {
@@ -153,7 +183,7 @@ type Outbound = mpsc::Sender<Result<ManagerMessage, tonic::Status>>;
 /// One admitted worker, as the manager's main loop and the worker's
 /// heartbeat task see it.
 #[derive(Clone)]
-pub(crate) struct Joined {
+pub(crate) struct WorkerHandle {
     pub(crate) id: u32,
     /// Its name, unique in this Gaggle, safe as a folder name.
     pub(crate) name: String,
@@ -168,7 +198,7 @@ pub(crate) struct Joined {
     closing: Arc<tokio::sync::Notify>,
 }
 
-impl Joined {
+impl WorkerHandle {
     /// Send `message` to the worker, unless it is closed; never waits. A
     /// message that finds the queue full or closed is dropped, with a
     /// warning naming it and the worker, which is the error.
@@ -218,6 +248,8 @@ impl Joined {
 struct Responses {
     queued: ReceiverStream<Result<ManagerMessage, tonic::Status>>,
     ended: Arc<AtomicBool>,
+    /// Woken as it ends.
+    ending: Arc<tokio::sync::Notify>,
 }
 
 impl tokio_stream::Stream for Responses {
@@ -228,6 +260,7 @@ impl tokio_stream::Stream for Responses {
         let next = Pin::new(&mut this.queued).poll_next(cx);
         if let Poll::Ready(None) = next {
             this.ended.store(true, Ordering::Relaxed);
+            this.ending.notify_waiters();
         }
         next
     }
@@ -259,11 +292,13 @@ struct Shared {
     expected: usize,
     /// Each worker admitted, at its id: `joined` never shrinks while the
     /// manager runs, so an id is its worker's index.
-    joined: Mutex<Vec<Joined>>,
+    joined: Mutex<Vec<WorkerHandle>>,
     events: flume::Sender<Queued>,
     /// What is left of [`EVENT_BYTES`].
     event_bytes: Arc<tokio::sync::Semaphore>,
     refusals: Arc<Refusals>,
+    /// Woken as each worker's response stream ends.
+    streams_ending: Arc<tokio::sync::Notify>,
     plan_hash: u64,
     hash_check: bool,
     heartbeat_timeout: Duration,
@@ -419,7 +454,7 @@ impl Shared {
     /// longer be trusted, a thread having panicked while it held it. Names
     /// are unique ignoring case, as folders on a case insensitive file
     /// system are: one taken already gets the worker's id appended.
-    fn admit(&self, name: &str, outbound: Outbound) -> Result<Joined, String> {
+    fn admit(&self, name: &str, outbound: Outbound) -> Result<WorkerHandle, String> {
         let Ok(mut joined) = self.joined.lock() else {
             let why = "the manager's list of workers is unusable, a thread having panicked while it held it".to_string();
             error!("gaggle: could not admit a worker: {why}");
@@ -442,7 +477,7 @@ impl Shared {
             unique = suffixed(&base, n);
             n += 1;
         }
-        let worker = Joined {
+        let worker = WorkerHandle {
             id,
             name: unique,
             outbound: Arc::new(Mutex::new(Some(outbound))),
@@ -467,6 +502,7 @@ fn reject(reason: String) -> Responses {
     Responses {
         queued: ReceiverStream::new(rx),
         ended: Arc::new(AtomicBool::new(false)),
+        ending: Arc::default(),
     }
 }
 
@@ -532,11 +568,12 @@ impl Gaggle for GaggleService {
         info!("gaggle: worker {id} ({}) joined from {peer}", worker.name);
         let _ = worker.send(ToWorker::Welcome(Welcome { worker_id: id }));
         let _ = self.0.events.send_async((Event::Joined, None)).await;
-        let heard = Arc::new(Mutex::new(Instant::now()));
+        let heard = Arc::new(Heard::new());
         let lost = Arc::new(AtomicBool::new(false));
         let responses = Responses {
             queued: ReceiverStream::new(rx),
             ended: worker.ended.clone(),
+            ending: self.0.streams_ending.clone(),
         };
         tokio::spawn(read_worker(
             worker.clone(),
@@ -857,15 +894,15 @@ async fn lose(shared: &Shared, id: u32, lost: &AtomicBool, why: String) {
 /// bounded: while it is full this waits, reading nothing more, so HTTP/2
 /// flow control holds the worker back. Nothing the main loop waits on is
 /// held here while it waits: the main loop only ever takes events and
-/// sends with `try_send`, and the lock on `heard` is released before.
+/// sends with `try_send`.
 /// `heard` is refreshed as each message arrives, before it is queued, and
 /// again while a full queue holds it, so a worker held back by a slow main
 /// loop is never taken for a silent one.
 async fn read_worker(
-    worker: Joined,
+    worker: WorkerHandle,
     mut inbound: tonic::Streaming<WorkerMessage>,
     shared: Arc<Shared>,
-    heard: Arc<Mutex<Instant>>,
+    heard: Arc<Heard>,
     lost: Arc<AtomicBool>,
 ) {
     #[cfg(test)]
@@ -890,19 +927,29 @@ async fn read_worker(
                 break;
             }
         };
-        if let Ok(mut heard) = heard.lock() {
-            *heard = Instant::now();
-        }
-        if matches!(message.message, Some(FromWorker::Heartbeat(_)) | None) {
-            continue;
-        }
+        heard.now();
+        let encoded = message.encoded_len();
+        let arrived = match message.message {
+            Some(FromWorker::Heartbeat(_)) | None => continue,
+            Some(FromWorker::Hello(_)) => {
+                lose(&shared, id, &lost, "it said Hello twice".to_string()).await;
+                break;
+            }
+            Some(FromWorker::PrepareAck(ack)) => Arrived::Event(Event::PrepareAck {
+                id,
+                error: ack.error,
+            }),
+            Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta),
+            Some(FromWorker::UsersStopped(_)) => Arrived::Event(Event::UsersStopped { id }),
+            Some(FromWorker::Stopped(stopped)) => Arrived::Event(Event::Stopped { id, stopped }),
+            Some(FromWorker::LogChunk(chunk)) => Arrived::Event(Event::Log { id, chunk }),
+        };
         // Its share of the byte budget first, before a delta is decoded, so
         // no reader holds a decoded delta outside the budget: for a delta, as
         // much as it may decode to, and once decoded what it holds.
-        let encoded = message.encoded_len();
-        let reserve = match &message.message {
-            Some(FromWorker::Metrics(_)) => encoded.saturating_mul(DECODED_PER_ENCODED),
-            _ => encoded,
+        let reserve = match &arrived {
+            Arrived::Delta(_) => encoded.saturating_mul(DECODED_PER_ENCODED),
+            Arrived::Event(_) => encoded,
         };
         let bytes = (reserve as u64).min(EVENT_BYTES) as u32;
         let permit = held(
@@ -912,36 +959,27 @@ async fn read_worker(
             &heard,
         )
         .await;
-        let Some(mut permit) = permit else {
+        let Some(Ok(mut permit)) = permit else {
             break;
         };
-        let event = match message.message {
-            // Skipped before the budget was taken.
-            Some(FromWorker::Heartbeat(_)) | None => continue,
-            Some(FromWorker::Hello(_)) => {
-                lose(&shared, id, &lost, "it said Hello twice".to_string()).await;
-                break;
-            }
-            Some(FromWorker::PrepareAck(ack)) => Event::PrepareAck {
-                id,
-                error: ack.error,
-            },
-            Some(FromWorker::Metrics(metrics)) => match GaggleDelta::decode(&metrics.delta) {
+        // A delta holds its share itself, until the merge has taken it.
+        let queued = match arrived {
+            Arrived::Event(event) => (event, Some(permit)),
+            Arrived::Delta(bytes) => match GaggleDelta::decode(&bytes) {
                 Ok(delta) => {
                     got_final |= delta.kind == DeltaKind::Final;
                     // What it holds decoded, at least its encoded size, is
                     // kept; the rest of the reserve goes back.
                     let holds = delta.decoded_bytes().max(encoded).min(EVENT_BYTES as usize);
-                    if let Ok(permit) = permit.as_mut() {
-                        if let Some(rest) = permit.num_permits().checked_sub(holds) {
-                            drop(permit.split(rest));
-                        }
+                    if let Some(rest) = permit.num_permits().checked_sub(holds) {
+                        drop(permit.split(rest));
                     }
-                    Event::Delta {
+                    let event = Event::Delta {
                         id,
                         delta: Box::new(delta),
-                        bytes: None,
-                    }
+                        bytes: Some(permit),
+                    };
+                    (event, None)
                 }
                 Err(e) => {
                     lose(
@@ -954,17 +992,8 @@ async fn read_worker(
                     break;
                 }
             },
-            Some(FromWorker::UsersStopped(_)) => Event::UsersStopped { id },
-            Some(FromWorker::Stopped(stopped)) => Event::Stopped { id, stopped },
-            Some(FromWorker::LogChunk(chunk)) => Event::Log { id, chunk },
         };
-        let queued = held(
-            shared.events.send_async((event, permit.ok())),
-            &worker,
-            &shared,
-            &heard,
-        )
-        .await;
+        let queued = held(shared.events.send_async(queued), &worker, &shared, &heard).await;
         if !matches!(queued, Some(Ok(()))) {
             break;
         }
@@ -982,14 +1011,21 @@ async fn read_worker(
     }
 }
 
+/// A worker's message as it arrives, before its share of the byte budget:
+/// an event, or a delta still to decode.
+enum Arrived {
+    Event(Event),
+    Delta(Vec<u8>),
+}
+
 /// Wait for `future`, which the manager holds back, as when its event queue
 /// is full: `heard` is kept fresh meanwhile, as the worker has not gone
 /// silent. `None` once the worker is closed.
 async fn held<T>(
     future: impl Future<Output = T>,
-    worker: &Joined,
+    worker: &WorkerHandle,
     shared: &Shared,
-    heard: &Mutex<Instant>,
+    heard: &Heard,
 ) -> Option<T> {
     // Created before the check, so a close between them still wakes it.
     let closing = worker.closing.notified();
@@ -1002,11 +1038,7 @@ async fn held<T>(
         tokio::select! {
             out = &mut future => return Some(out),
             () = &mut closing => return None,
-            _ = holding.tick() => {
-                if let Ok(mut heard) = heard.lock() {
-                    *heard = Instant::now();
-                }
-            }
+            _ = holding.tick() => heard.now(),
         }
     }
 }
@@ -1034,9 +1066,9 @@ impl Drop for Reading {
 /// lost, send it `Shutdown` and close its stream when nothing has come from
 /// it for the heartbeat timeout.
 async fn heartbeat_worker(
-    worker: Joined,
+    worker: WorkerHandle,
     shared: Arc<Shared>,
-    heard: Arc<Mutex<Instant>>,
+    heard: Arc<Heard>,
     lost: Arc<AtomicBool>,
 ) {
     let id = worker.id;
@@ -1047,11 +1079,7 @@ async fn heartbeat_worker(
         if worker.closed.load(Ordering::Relaxed) || worker.ended.load(Ordering::Relaxed) {
             return;
         }
-        let silent = heard
-            .lock()
-            .map(|heard| heard.elapsed())
-            .unwrap_or_default();
-        if silent > shared.heartbeat_timeout {
+        if heard.silent() > shared.heartbeat_timeout {
             lose(
                 &shared,
                 id,
@@ -1066,17 +1094,14 @@ async fn heartbeat_worker(
     }
 }
 
-/// An event as the main loop takes it: a delta keeps its share of the byte
-/// budget, for the merge to free once it has taken the delta; any other
-/// event frees its share now.
-fn taken((mut event, permit): Queued) -> Event {
-    if let Event::Delta { bytes, .. } = &mut event {
-        *bytes = permit;
-    }
+/// An event as the main loop takes it: the share of the byte budget it was
+/// queued with is free now. A delta holds its own share, for the merge to
+/// free once it has taken the delta.
+fn taken((event, _bytes): Queued) -> Event {
     event
 }
 
-impl super::WorkerId for Joined {
+impl super::WorkerId for WorkerHandle {
     fn worker_id(&self) -> u32 {
         self.id
     }
@@ -1123,6 +1148,7 @@ impl Manager {
             events: events_tx,
             event_bytes: Arc::new(tokio::sync::Semaphore::new(EVENT_BYTES as usize)),
             refusals: Arc::default(),
+            streams_ending: Arc::default(),
             plan_hash,
             hash_check,
             heartbeat_timeout,
@@ -1236,15 +1262,17 @@ impl Manager {
         }
         // Each stream ends once its `Shutdown` has left: wait for that, at
         // most a second, before the service stops.
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while Instant::now() < deadline {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            // Created before the check, so a stream ending between them
+            // still wakes it.
+            let ending = self.shared.streams_ending.notified();
             let drained = self.shared.joined.lock().map_or(true, |joined| {
                 joined.iter().all(|w| w.ended.load(Ordering::Relaxed))
             });
-            if drained {
+            if drained || tokio::time::timeout_at(deadline, ending).await.is_err() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
         }
         if let Some(stop) = self.stop_server.take() {
             let _ = stop.send(());
@@ -1460,7 +1488,7 @@ mod tests {
     #[tokio::test]
     async fn a_dropped_message_is_named() {
         let (outbound, _rx) = mpsc::channel(1);
-        let worker = Joined {
+        let worker = WorkerHandle {
             id: 3,
             name: "w".to_string(),
             outbound: Arc::new(Mutex::new(Some(outbound))),
