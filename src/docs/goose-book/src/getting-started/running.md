@@ -9,7 +9,7 @@ $ cargo run --release
 17:13:37 [INFO] Output verbosity level: INFO
 17:13:37 [INFO] Logfile verbosity level: WARN
 17:13:37 [INFO] users defaulted to number of CPUs = 18
-Error: InvalidOption { option: "--host", value: "", detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions)." }
+Error: invalid option or value specified (--host "": A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions).)
 ```
 
 The load test fails because it has not been told which host to load test.
