@@ -1635,10 +1635,12 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                     continue;
                 }
                 use tokio::io::AsyncWriteExt;
-                let mut ok = chunk.offset == incoming.written
+                let written = chunk.offset == incoming.written
                     && incoming.file.write_all(&chunk.data).await.is_ok();
                 #[cfg(test)]
-                let mut ok = ok && !FAIL_LOG_WRITES.load(std::sync::atomic::Ordering::Relaxed);
+                let written =
+                    written && !FAIL_LOG_WRITES.load(std::sync::atomic::Ordering::Relaxed);
+                let mut ok = written;
                 if ok {
                     incoming.written += chunk.data.len() as u64;
                     // Only progress keeps a transfer alive: a worker sends
@@ -1754,6 +1756,7 @@ mod tests {
             id: 0,
             name: "w".to_string(),
             users: 1,
+            users_stopped: None,
             stopped: None,
             lost: None,
             gone: false,
