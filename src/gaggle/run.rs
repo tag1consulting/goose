@@ -128,6 +128,11 @@ pub(crate) enum LogsFault {
 pub(crate) static FAIL_LOG_WRITES: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Every log a worker sent that the manager warned it did not ask for, by
+/// name (unit tests).
+#[cfg(test)]
+static UNASKED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 /// When a worker's [`LogsFault`] triggered the killswitch or sent its first
 /// chunk (unit tests).
 #[cfg(test)]
@@ -1584,6 +1589,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         "gaggle: worker {id} sent a log the manager did not ask for: {:?}",
                         chunk.file
                     );
+                    #[cfg(test)]
+                    UNASKED.lock().unwrap().push(chunk.file.clone());
                     continue;
                 }
                 let key = (id, chunk.file.clone());
@@ -1841,6 +1848,56 @@ mod tests {
                 other => panic!("{:?}", other),
             }
         }
+    }
+
+    /// Chunks of a log already given up are dropped without a warning each:
+    /// its one warning came as it was given up.
+    #[tokio::test]
+    async fn a_log_given_up_warns_once() {
+        let test = async {
+            let folder = std::env::temp_dir()
+                .join(format!("goose-gaggle-given-up-log-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&folder);
+            let log = |kind: u8, file: &str| LogSpec {
+                kind,
+                format: None,
+                manager_file: file.to_string(),
+                gzip: false,
+            };
+            let (mut run, tx, mut inbound) =
+                collecting(vec![log(0, "given-up.json"), log(1, "kept.json")]).await;
+            let worker = tokio::spawn(async move {
+                send_logs_asked(&mut inbound).await;
+                let mut failed = chunk("given-up.json", 0, b"", true);
+                if let Some(crate::gaggle::proto::worker_message::Message::LogChunk(chunk)) =
+                    failed.message.as_mut()
+                {
+                    chunk.error = Some("permission denied".to_string());
+                }
+                tx.send(failed).await.unwrap();
+                for offset in 0..3 {
+                    tx.send(chunk("given-up.json", offset, b"x", false))
+                        .await
+                        .unwrap();
+                }
+                tx.send(chunk("kept.json", 0, b"kept", true)).await.unwrap();
+                (tx, inbound)
+            });
+            collect_logs(&mut run, Some(folder.clone())).await;
+            let _ = worker.await.unwrap();
+            let unasked = UNASKED
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|file| *file == "given-up.json")
+                .count();
+            assert_eq!(unasked, 0);
+            assert_eq!(run.logs_left.len(), 1, "{:?}", run.logs_left);
+            let _ = std::fs::remove_dir_all(&folder);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
     }
 
     /// A log the worker says it could not read is recorded as left on it,
