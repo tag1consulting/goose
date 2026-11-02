@@ -8,7 +8,7 @@
 //! manager sends.
 
 use super::delta::DeltaLimits;
-use super::link::{Link, LinkEvent, LinkSettings};
+use super::link::{Link, LinkEvent, LinkSettings, LOG_CHUNK};
 use super::manager::{Event, Manager};
 use super::merge::MergeHealth;
 use super::proto::{

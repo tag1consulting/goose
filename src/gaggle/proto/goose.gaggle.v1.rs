@@ -9,6 +9,7 @@ pub struct WorkerMessage {
 pub mod worker_message {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Message {
+        /// Field 1 for good: the handshake.
         #[prost(message, tag = "1")]
         Hello(super::Hello),
         #[prost(message, tag = "2")]
@@ -30,10 +31,11 @@ pub mod worker_message {
 /// before any message is read.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Hello {
-    /// The worker's Goose version, which must equal the manager's.
+    /// The worker's Goose version, which must equal the manager's. Field 1 for
+    /// good: the handshake.
     #[prost(string, tag = "1")]
     pub goose_version: ::prost::alloc::string::String,
-    /// The protocol version, 1.
+    /// The protocol version, 1. Field 2 for good: the handshake.
     #[prost(uint32, tag = "2")]
     pub protocol_version: u32,
     /// The hash of the load test's scenarios and transactions.
