@@ -2230,8 +2230,8 @@ mod tests {
     }
 
     /// A worker that sends chunks that move nothing, of a file never asked
-    /// for or empty and not the last, is not kept alive by them: its log
-    /// is left on it once the idle deadline passes.
+    /// for or empty and not the last, is not kept alive by them, however
+    /// often they come: its log is left on it once the idle deadline passes.
     #[tokio::test]
     #[serial_test::serial]
     async fn chunks_without_progress_do_not_keep_a_transfer_alive() {
@@ -2242,13 +2242,15 @@ mod tests {
             let (mut run, tx, mut inbound) = collecting(vec![request_log()]).await;
             let worker = tokio::spawn(async move {
                 send_logs_asked(&mut inbound).await;
-                for _ in 0..20 {
+                // Every 20 ms for 10 seconds: never quiet for the manager's
+                // 100 ms wait.
+                for _ in 0..500 {
                     let unasked = chunk("other.json", 0, b"", false);
                     let empty = chunk("requests.json", 0, b"", false);
                     if tx.send(unasked).await.is_err() || tx.send(empty).await.is_err() {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 (tx, inbound)
             });
