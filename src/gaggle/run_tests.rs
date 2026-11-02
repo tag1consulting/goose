@@ -1030,7 +1030,7 @@ async fn gaggle_handshake_refusals() {
                 ("plan", Some(_)) => quick(configuration, place),
                 _ => standard(configuration, place),
             };
-            let mut manager_args = vec!["--users", "2", "--gaggle-connect-timeout", "5s"];
+            let mut manager_args = vec!["--users", "2", "--gaggle-connect-timeout", "1s"];
             manager_args.extend(manager_extra);
             let (manager, workers) = gaggle(
                 build,
@@ -1073,9 +1073,8 @@ async fn gaggle_handshake_refusals() {
         .expect("within 60 seconds");
 }
 
-/// A worker with no manager to reach keeps trying, waiting 1 and then 2
-/// seconds between attempts, and then fails, without a panic, within its
-/// connect timeout plus 5 seconds.
+/// A worker with no manager to reach tries again after a second, and then
+/// fails, without a panic, within its connect timeout plus 5 seconds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_worker_without_a_manager() {
@@ -1097,7 +1096,7 @@ async fn gaggle_worker_without_a_manager() {
                 &port,
                 "--quiet",
                 "--gaggle-connect-timeout",
-                "4s",
+                "2s",
             ]),
             Some(0),
         );
@@ -1109,10 +1108,11 @@ async fn gaggle_worker_without_a_manager() {
             }
             other => panic!("{:?}", other.map(|_| ())),
         }
-        // Its first two waits, 1 and 2 seconds, passed; the next, 4, would
-        // pass the timeout.
-        assert!(took >= Duration::from_secs(1 + 2), "{:?}", took);
-        assert!(took <= Duration::from_secs(4 + 5), "{:?}", took);
+        // Its first wait, 1 second, passed; the next, 2, would pass the
+        // timeout. `backoff_is_one_two_four_eight_then_ten` checks the waits
+        // that follow.
+        assert!(took >= Duration::from_secs(1), "{:?}", took);
+        assert!(took <= Duration::from_secs(2 + 5), "{:?}", took);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await

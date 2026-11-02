@@ -327,7 +327,7 @@ fn worker_lost_mid_run(frozen: bool) {
         let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
         let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
         until_load(|| index.calls(), Duration::from_secs(30));
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(1));
         let killed = chrono::Utc::now();
         if frozen {
             freeze(second.child.id());
@@ -444,7 +444,7 @@ fn manager_lost_mid_run(frozen: bool) {
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
         ];
         until_load(|| index.calls(), Duration::from_secs(30));
-        std::thread::sleep(Duration::from_secs(3));
+        std::thread::sleep(Duration::from_secs(1));
         let killed = if frozen {
             freeze(manager.child.id());
             Instant::now()

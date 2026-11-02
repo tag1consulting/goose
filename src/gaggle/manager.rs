@@ -1819,7 +1819,7 @@ pub(crate) mod handshake_tests {
     async fn a_worker_held_by_a_full_queue_is_not_lost() {
         use super::super::proto::LogChunk;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(3))
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(1))
                 .await
                 .unwrap();
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
@@ -1848,7 +1848,7 @@ pub(crate) mod handshake_tests {
                 tx
             });
             // Three heartbeat timeouts with the queue full and nothing taken.
-            tokio::time::sleep(Duration::from_secs(9)).await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
             assert_eq!(manager.events.len(), EVENT_QUEUE);
             let deadline = Instant::now() + Duration::from_secs(20);
             let mut chunks = 0;
