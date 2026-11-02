@@ -403,7 +403,7 @@ async fn worker_failed(link: &Link, why: String) -> GooseError {
         run_folder: String::new(),
     });
     link.flush().await;
-    GooseError::Gaggle { detail: why }
+    gaggle_error(why)
 }
 
 /// The failure that ends a manager before its run, `error`: every worker is
@@ -830,14 +830,14 @@ impl GooseAttack {
             match link.next_event(Duration::from_secs(1)).await {
                 Some(LinkEvent::Prepare(bytes)) => break bytes,
                 Some(LinkEvent::Lost(why)) => {
-                    return Err(GooseError::Gaggle {
-                        detail: format!("lost the manager before the run started: {why}"),
-                    })
+                    return Err(gaggle_error(format!(
+                        "lost the manager before the run started: {why}"
+                    )))
                 }
                 Some(LinkEvent::Shutdown) => {
-                    return Err(GooseError::Gaggle {
-                        detail: "the manager shut down before the run started".to_string(),
-                    })
+                    return Err(gaggle_error(
+                        "the manager shut down before the run started".to_string(),
+                    ))
                 }
                 _ => {}
             }
@@ -849,18 +849,12 @@ impl GooseAttack {
         let decoded = match self.gaggle.test_faults.prepare {
             PrepareFault::None => decoded,
             PrepareFault::Refuse => Err("refused on purpose".to_string()),
-            PrepareFault::Vanish => {
-                return Err(GooseError::Gaggle {
-                    detail: "went away on purpose".to_string(),
-                })
-            }
+            PrepareFault::Vanish => return Err(gaggle_error("went away on purpose".to_string())),
             PrepareFault::Stall => loop {
                 if let Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) =
                     link.next_event(Duration::from_secs(1)).await
                 {
-                    return Err(GooseError::Gaggle {
-                        detail: "stalled on purpose".to_string(),
-                    });
+                    return Err(gaggle_error("stalled on purpose".to_string()));
                 }
             },
         };
@@ -869,7 +863,7 @@ impl GooseAttack {
             Err(detail) => {
                 link.prepared(Some(detail.clone()));
                 link.flush().await;
-                return Err(GooseError::Gaggle { detail });
+                return Err(gaggle_error(detail));
             }
         };
         info!(
@@ -994,7 +988,7 @@ impl GooseAttack {
             if let Err(why) = self.gaggle_worker_reset(goose_attack_run_state).await {
                 return Err(match self.gaggle_link() {
                     Some(link) => worker_failed(link, why).await,
-                    None => GooseError::Gaggle { detail: why },
+                    None => gaggle_error(why),
                 });
             }
         }
@@ -1193,9 +1187,7 @@ impl GooseAttack {
         );
         #[cfg(test)]
         if running && self.gaggle.test_faults.exit_mid_run && self.series_elapsed_secs() >= 1 {
-            return Err(GooseError::Gaggle {
-                detail: "ended mid run on purpose".to_string(),
-            });
+            return Err(gaggle_error("ended mid run on purpose".to_string()));
         }
         #[cfg(test)]
         if let Some(reason) = self.gaggle.test_faults.stop_reason {
@@ -1299,13 +1291,11 @@ impl GooseAttack {
                     }
                 }
                 LinkEvent::Lost(why) => {
-                    return Err(GooseError::Gaggle {
-                        detail: format!("lost the manager: {why}"),
-                    })
+                    return Err(gaggle_error(format!("lost the manager: {why}")))
                 }
                 LinkEvent::Refused(why) => {
                     error!("gaggle: {why}");
-                    return Err(GooseError::Gaggle { detail: why });
+                    return Err(gaggle_error(why));
                 }
             }
         }
@@ -1480,9 +1470,9 @@ impl GooseAttack {
             loop {
                 match run.link.next_event(Duration::from_secs(1)).await {
                     Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) => {
-                        return Err(GooseError::Gaggle {
-                            detail: "withheld its final metrics on purpose".to_string(),
-                        })
+                        return Err(gaggle_error(
+                            "withheld its final metrics on purpose".to_string(),
+                        ))
                     }
                     // A second later, once any other worker's final metrics
                     // merged.
