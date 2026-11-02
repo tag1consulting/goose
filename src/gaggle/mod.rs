@@ -10,6 +10,13 @@
 //! in [`link`], and each side's part in a run in [`run`], with the share a
 //! worker is handed in [`spec`]. `--gaggle-shadow-merge` runs both sides of
 //! the merge in one process and checks the result ([`shadow`]).
+//!
+//! Where each test lives: a module's unit tests, those that reach its
+//! private items, in that module; tests of the merge and the deltas through
+//! the crate's own API, one process against many, in `tests.rs`; runs of a
+//! manager and its workers in one process in `run_tests.rs`; and anything
+//! that needs processes of its own, a signal, a kill or a freeze, or the
+//! real binary's command line or exit status, in `tests/gaggle.rs`.
 
 pub(crate) mod compare;
 pub(crate) mod delta;

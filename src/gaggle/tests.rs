@@ -2692,3 +2692,210 @@ fn gaggle_refused_delta_leaves_last_seq() {
     apply(&mut side, counted(0, 5, 0));
     assert_eq!(held().missing, 1);
 }
+
+/// The merge built as it goes, one second of every worker at a time: a late
+/// row, and how long a refresh takes.
+mod built_as_it_goes {
+    use super::super::delta::{
+        Average, DeltaKind, DeltaLimits, GaggleDelta, Histogram, RequestPart, Timing,
+    };
+    use super::super::merge::GaggleAccumulator;
+    use crate::graph::{GraphData, GraphSettings};
+    use crate::metrics::buckets::bucket_floor;
+    use crate::metrics::GooseMetrics;
+    use std::time::Instant;
+
+    /// One second of one worker's figures, `names` request names each with
+    /// a few response times, as delta `seq`, covering `first_seq` on.
+    fn second(
+        worker: u32,
+        first_seq: u64,
+        seq: u64,
+        seconds: std::ops::Range<u64>,
+        names: usize,
+    ) -> GaggleDelta {
+        let mut delta = GaggleDelta::new(worker, seq, 0, DeltaKind::Delta);
+        delta.first_seq = first_seq;
+        delta.now = seconds.end;
+        for name in 0..names {
+            let key = format!("GET /{name}");
+            let mut request =
+                RequestPart::new(&format!("/{name}"), crate::goose::GooseMethod::Get, "");
+            let count = seconds.end - seconds.start;
+            let times: Vec<u64> = [1_000, 5_000, 20_000]
+                .iter()
+                .map(|&us| bucket_floor(us + name as u64 * 100))
+                .collect();
+            request.raw = Timing {
+                buckets: times.iter().map(|&us| (us, count)).collect(),
+                minimum_us: times[0],
+                maximum_us: times[2],
+                total_us: times.iter().sum::<u64>() * count,
+                count: 3 * count,
+            };
+            request.status_codes.insert(200, 3 * count);
+            request.success = 3 * count as i64;
+            delta.metrics.requests.insert(key.clone(), request);
+            for s in seconds.clone() {
+                delta
+                    .graph
+                    .requests
+                    .entry(key.clone())
+                    .or_default()
+                    .insert(s, 3);
+                delta.graph.averages.entry(key.clone()).or_default().insert(
+                    s,
+                    Average {
+                        count: 3,
+                        sum_ms: 26.0 + 0.3 * name as f64,
+                    },
+                );
+                delta.graph.latency.entry(key.clone()).or_default().insert(
+                    s,
+                    Histogram {
+                        rows: vec![(10, 1), (20, 1), (30, 1)],
+                        minimum_us: times[0],
+                        maximum_us: times[2],
+                        total_us: times.iter().sum(),
+                        count: 3,
+                    },
+                );
+            }
+        }
+        for s in seconds {
+            delta.graph.transactions.insert(s, 3 * names as u64);
+            delta.graph.users.insert(s, 10);
+        }
+        delta
+    }
+
+    /// A delta with rows for a second the last build already holds, as no
+    /// honest worker sends but a manager must take: the next build holds
+    /// them, as a build from nothing does.
+    #[test]
+    fn a_late_row_builds_the_graph_again() {
+        let settings = GraphSettings {
+            records: true,
+            latency: true,
+            synthetic: false,
+            columns: false,
+        };
+        let deltas = vec![
+            second(0, 1, 1, 0..4, 2),
+            second(1, 1, 1, 0..4, 2),
+            second(1, 2, 2, 4..6, 2),
+            // Worker 0, at second 6, with rows for second 1.
+            {
+                let mut late = second(0, 2, 2, 1..2, 2);
+                late.now = 6;
+                late
+            },
+        ];
+        let accumulator =
+            || GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+        let (mut built, mut fresh) = (accumulator(), accumulator());
+        let mut graph = GraphData::new();
+        for delta in &deltas {
+            built.apply(delta.worker, delta.clone()).unwrap();
+            // Built after every delta, so the late row's second was built.
+            graph = built.merged_and_excluded(graph).1;
+            fresh.apply(delta.worker, delta.clone()).unwrap();
+        }
+        let (_, built, _) = built.merged_and_excluded(graph);
+        let (_, fresh, _) = fresh.merged_and_excluded(GraphData::new());
+        assert_eq!(built.gaggle_diff(&fresh), Vec::<String>::new());
+    }
+
+    /// The median of 9 refreshes of the merge of 50 workers of 30 request
+    /// names each, `seconds` into a run: each refresh merges one more second
+    /// from every worker, with a row for a request of 2 to 5 seconds that
+    /// started before it, and builds the merge.
+    fn refresh_cost(seconds: u64) -> std::time::Duration {
+        const WORKERS: u32 = 50;
+        const NAMES: usize = 30;
+        let settings = GraphSettings {
+            records: true,
+            latency: true,
+            synthetic: false,
+            columns: false,
+        };
+        let mut accumulator =
+            GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+        // A manager's lag, at the default 60 second request timeout.
+        accumulator.set_lag(60 + 60);
+        let started = Instant::now();
+        for worker in 0..WORKERS {
+            accumulator
+                .apply(worker, second(worker, 1, seconds, 0..seconds, NAMES))
+                .unwrap();
+        }
+        let mut graph = accumulator.merged_and_excluded(GraphData::new()).1;
+        eprintln!(
+            "filled {WORKERS} workers x {NAMES} names x {seconds} s in {:?}",
+            started.elapsed()
+        );
+        let mut refreshes = Vec::new();
+        for next in 0..9 {
+            let at = seconds + next;
+            let started = Instant::now();
+            for worker in 0..WORKERS {
+                let mut delta = second(worker, at + 1, at + 1, at..at + 1, NAMES);
+                // A request of 2 to 5 seconds, stamped with the second it
+                // started.
+                let late = at - 2 - u64::from(worker % 4);
+                let key = "GET /0".to_string();
+                *delta
+                    .graph
+                    .requests
+                    .entry(key.clone())
+                    .or_default()
+                    .entry(late)
+                    .or_default() += 1;
+                delta.graph.averages.entry(key.clone()).or_default().insert(
+                    late,
+                    Average {
+                        count: 1,
+                        sum_ms: 3_000.0,
+                    },
+                );
+                delta.graph.latency.entry(key).or_default().insert(
+                    late,
+                    Histogram {
+                        rows: vec![(40, 1)],
+                        minimum_us: 3_000_000,
+                        maximum_us: 3_000_000,
+                        total_us: 3_000_000,
+                        count: 1,
+                    },
+                );
+                accumulator.apply(worker, delta).unwrap();
+            }
+            let applied = started.elapsed();
+            let (metrics, built, excluded) = accumulator.merged_and_excluded(graph);
+            graph = built;
+            let total = started.elapsed();
+            assert!(excluded.is_empty());
+            assert_eq!(metrics.requests.len(), NAMES);
+            refreshes.push(total);
+            eprintln!(
+                "{seconds} s, refresh {next}: {total:?} ({applied:?} applying {WORKERS} deltas)"
+            );
+        }
+        refreshes.sort();
+        refreshes[refreshes.len() / 2]
+    }
+
+    /// Not a test: how long one refresh of a long run's merge takes, an
+    /// hour and four hours in, late rows among each second's. Run it with
+    /// `cargo test --release --features gaggle --lib merge_refresh_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn merge_refresh_cost() {
+        let hour = refresh_cost(3_600);
+        let four = refresh_cost(4 * 3_600);
+        eprintln!(
+            "median refresh: 1 h {hour:?}, 4 h {four:?}, {:.2} times",
+            four.as_secs_f64() / hour.as_secs_f64()
+        );
+    }
+}
