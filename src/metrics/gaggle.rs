@@ -182,7 +182,10 @@ impl MetricsProcessor {
         let Some(merge) = self.gaggle_merge.as_mut() else {
             return;
         };
-        if !merge.dirty || (!force && merge.built_at == Some(merge.clock)) {
+        // A forced read holds every row: a late row's build put off is made
+        // now.
+        let settled = force && merge.accumulator.settle();
+        if !(merge.dirty || settled) || (!force && merge.built_at == Some(merge.clock)) {
             return;
         }
         merge.dirty = false;

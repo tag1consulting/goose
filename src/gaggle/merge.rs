@@ -66,6 +66,9 @@ struct WorkerTotal {
     /// The deltas from it that never arrived, as [`GaggleAccumulator::missing`]
     /// counts them.
     missing: u64,
+    /// Its delta's second when a row of it for a second already built last
+    /// built the graph data again from nothing.
+    late_rebuilt: Option<Second>,
     /// Repeats of deltas already taken, ignored (tests: a repeat changes
     /// nothing in the results, so nothing reports it).
     #[cfg(test)]
@@ -97,6 +100,9 @@ struct Merged {
     /// What the graph data last built holds, so the next build adds only
     /// the seconds completed since to it.
     built: Option<GraphCache>,
+    /// Rows for seconds `built` holds were merged and not yet built: the
+    /// next build from nothing holds them.
+    late: bool,
     /// The key of each coordinated omission event the last build gave its
     /// caller, in its order; `None` until a build gathered them.
     event_keys: Option<Vec<EventKey>>,
@@ -254,12 +260,31 @@ impl GaggleAccumulator {
         let known = self.workers.contains_key(&from);
         let taken = self.take(from, &delta)?;
         let merged = self.merged.get_mut();
-        // Rows or users levels for a second already built: build again.
+        // Rows or users levels for a second already built: build again from
+        // nothing, at most once a lag window for each worker, as a buggy or
+        // hostile worker could ask for it every second. The rows merge at
+        // once either way; a build that waits leaves them to the next from
+        // nothing, which a forced read or the run's end makes
+        // ([`Self::settle`]).
         if !matches!(taken, Taken::Ignored) {
             let earliest = delta.graph.seconds().min();
             if let (Some(built), Some(earliest)) = (merged.built.as_ref(), earliest) {
                 if earliest < built.before {
-                    merged.built = None;
+                    let lag = self.lag;
+                    if let Some(worker) = self.workers.get_mut(&from) {
+                        let due = worker
+                            .late_rebuilt
+                            .is_none_or(|at| delta.now >= at.saturating_add(lag));
+                        if due {
+                            warn!(
+                                "gaggle: worker {from} sent rows for second {earliest}, which the graph data already holds: it is built again, and at most once in {lag} seconds for this worker"
+                            );
+                            worker.late_rebuilt = Some(delta.now);
+                            merged.built = None;
+                        } else {
+                            merged.late = true;
+                        }
+                    }
                 }
             }
         }
@@ -335,6 +360,7 @@ impl GaggleAccumulator {
                     got_final,
                     lost: false,
                     missing,
+                    late_rebuilt: None,
                     #[cfg(test)]
                     repeats: 0,
                 },
@@ -611,11 +637,16 @@ impl GaggleAccumulator {
         // The graph data built so far, when it still holds: only the
         // seconds completed since are added. Every second before the last
         // build's `before` is unchanged, or the cache was dropped.
+        // Once every worker is done, nothing is left out of it.
         let reusable = merged.built.take().filter(|built| {
             built.series_origin == series_origin
                 && built.columns == self.settings.columns
                 && complete.is_none_or(|complete| complete >= built.before)
+                && !(merged.late && complete.is_none())
         });
+        if reusable.is_none() {
+            merged.late = false;
+        }
         #[cfg(test)]
         if reusable.is_none() {
             FRESH_BUILDS.with(|builds| builds.set(builds.get() + 1));
@@ -653,6 +684,18 @@ impl GaggleAccumulator {
             graph,
             merged.excluded.clone(),
         )
+    }
+
+    /// Have the next build hold every row merged, building the graph data
+    /// from nothing when a late row's build was put off (see [`Self::apply`]),
+    /// as a report, a Controller and the end of a run read it: whether one
+    /// was.
+    pub(crate) fn settle(&self) -> bool {
+        let mut merged = self.merged.borrow_mut();
+        if merged.late {
+            merged.built = None;
+        }
+        merged.late
     }
 
     /// Hand back the coordinated omission events the last build gave, as
