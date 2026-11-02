@@ -17,7 +17,7 @@ use goose::prelude::*;
 /// Set when stdout was held while the metrics logged.
 static HELD: AtomicBool = AtomicBool::new(false);
 
-/// The metrics' log lines checked.
+/// The metrics' percentile log lines checked.
 static CHECKED: AtomicUsize = AtomicUsize::new(0);
 
 /// A logger that checks stdout is free each time the metrics log.
@@ -29,7 +29,11 @@ impl log::Log for Probe {
     }
 
     fn log(&self, record: &log::Record<'_>) {
-        if !record.target().starts_with("goose::metrics") || CHECKED.load(Ordering::SeqCst) >= 20 {
+        // The line the metrics' formatting logs, for each percentile.
+        if !record.target().starts_with("goose::metrics")
+            || !record.args().to_string().starts_with("percentile:")
+            || CHECKED.load(Ordering::SeqCst) >= 20
+        {
             return;
         }
         CHECKED.fetch_add(1, Ordering::SeqCst);
