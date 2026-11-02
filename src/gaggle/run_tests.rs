@@ -1333,7 +1333,7 @@ async fn manager_past_a_worker_bound(more: &[&str], message: &str) {
         );
         if let Ok(address) = address.await {
             manager.abort();
-            panic!("the manager listened on {address}, past the check");
+            panic!("the manager listened on {}, past the check", address);
         }
         match manager.await.expect("the manager task ends") {
             Err(crate::GooseError::InvalidOption { detail, .. }) => {

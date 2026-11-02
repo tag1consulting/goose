@@ -1477,12 +1477,17 @@ impl GooseAttack {
         #[cfg(test)]
         if self.gaggle.test_faults.withhold_final {
             loop {
-                if let Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) =
-                    run.link.next_event(Duration::from_secs(1)).await
-                {
-                    return Err(GooseError::Gaggle {
-                        detail: "withheld its final metrics on purpose".to_string(),
-                    });
+                match run.link.next_event(Duration::from_secs(1)).await {
+                    Some(LinkEvent::Shutdown | LinkEvent::Lost(_)) => {
+                        return Err(GooseError::Gaggle {
+                            detail: "withheld its final metrics on purpose".to_string(),
+                        })
+                    }
+                    Some(LinkEvent::Stop(_)) if self.gaggle.test_faults.cancel_on_stop => {
+                        *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
+                        crate::trigger_killswitch("a test's Ctrl-C as the run stops");
+                    }
+                    _ => {}
                 }
             }
         }
