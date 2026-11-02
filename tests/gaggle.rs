@@ -942,7 +942,14 @@ fn gaggle_worker_missing_the_answer_deadline_is_lost() {
             .wait(Duration::from_secs(20))
             .expect("the other worker exits");
         // The change stood on the other worker: its share of 30 users.
-        assert!(first.output().contains(" to 15"), "{}", first.output());
+        assert!(
+            first
+                .output()
+                .lines()
+                .any(|line| line.contains("changing users from") && line.ends_with(" to 15")),
+            "{}",
+            first.output()
+        );
     });
 }
 
@@ -998,6 +1005,13 @@ fn throttle_after_loss(rebalance: bool) {
     let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &[]));
     until_load(|| index.calls(), Duration::from_secs(30));
     std::thread::sleep(Duration::from_secs(2));
+    // Before the loss, the two workers together make the throttle's 40.
+    let before = rate(|| index.calls(), Duration::from_secs(3));
+    assert!(
+        (before - 40.0).abs() <= 40.0 * 0.15,
+        "{:.1} requests a second before the loss",
+        before
+    );
     second.kill();
     std::thread::sleep(Duration::from_secs(3));
     let after = rate(|| index.calls(), Duration::from_secs(5));

@@ -440,15 +440,9 @@ impl GooseAttack {
                 self.gaggle_settings(state, *settings, false)?
             }
             #[cfg(feature = "dashboard")]
+            // `fans_out` keeps these on the path one process takes.
             ControlCommand::Report { .. } | ControlCommand::SaveReportNow => {
-                let refused = self.control_outcome(
-                    state,
-                    false,
-                    Some("internal"),
-                    "internal control error",
-                    None,
-                );
-                (refused, None)
+                unreachable!("the report switches never fan out")
             }
         })
     }
@@ -887,7 +881,7 @@ impl GooseAttack {
 fn live(run: &ManagerRun) -> Vec<u32> {
     run.workers
         .iter()
-        .filter(|worker| worker.lost.is_none() && !worker.gone)
+        .filter(|worker| worker.is_live())
         .map(|worker| worker.id)
         .collect()
 }
@@ -898,7 +892,7 @@ fn live(run: &ManagerRun) -> Vec<u32> {
 fn mask(run: &ManagerRun) -> Vec<bool> {
     run.workers
         .iter()
-        .map(|worker| worker.lost.is_none() && !worker.gone && worker.stopped.is_none())
+        .map(|worker| worker.is_live() && worker.stopped.is_none())
         .collect()
 }
 

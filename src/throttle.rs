@@ -10,7 +10,7 @@ const TICK: time::Duration = time::Duration::from_millis(10);
 /// How far a running throttle can rise past the one its run started with:
 /// the channel holds one second of the starting rate, and a tick drains at
 /// most what it holds, so 100 ticks a second reach 100 times that.
-pub(crate) const MAX_THROTTLE_RISE: usize = 100;
+pub(crate) const MAX_THROTTLE_RISE: usize = (1_000 / TICK.as_millis()) as usize;
 
 /// The live throttle's rate, shared by the drain task and the main loop, which
 /// changes it while the run goes on.

@@ -312,16 +312,21 @@ pub(crate) struct RunSettings {
 impl RunSettings {
     /// The settings one Controller command sets: 0 clears a time.
     pub(crate) fn from_command(command: ControllerCommand) -> Self {
-        let time = |seconds: usize| Some((seconds > 0).then_some(seconds));
+        // 0 clears a time or the throttle.
+        let zero_clears = |value: usize| Some((value > 0).then_some(value));
         let mut settings = Self::default();
         match command {
             ControllerCommand::Host(host) => settings.host = Some(Some(host)),
             ControllerCommand::IncreaseRate(rate) => settings.increase_rate = Some(Some(rate)),
             ControllerCommand::DecreaseRate(rate) => settings.decrease_rate = Some(Some(rate)),
-            ControllerCommand::IncreaseTime(seconds) => settings.increase_time = time(seconds),
-            ControllerCommand::DecreaseTime(seconds) => settings.decrease_time = time(seconds),
-            ControllerCommand::RunTime(seconds) => settings.run_time = time(seconds),
-            ControllerCommand::Throttle(requests) => settings.throttle = time(requests),
+            ControllerCommand::IncreaseTime(seconds) => {
+                settings.increase_time = zero_clears(seconds)
+            }
+            ControllerCommand::DecreaseTime(seconds) => {
+                settings.decrease_time = zero_clears(seconds)
+            }
+            ControllerCommand::RunTime(seconds) => settings.run_time = zero_clears(seconds),
+            ControllerCommand::Throttle(requests) => settings.throttle = zero_clears(requests),
             _ => {}
         }
         settings

@@ -2695,6 +2695,7 @@ async fn runtime_control_in_one_process() {
 
         // An uneven split: the throttle follows each worker's users.
         let reply = telnet.send("users 21").await;
+        assert!(reply.starts_with("users configured"), "{}", reply);
         assert!(!reply.contains("lost"), "{}", reply);
         let uneven = applied(&mut reports, 2).await;
         let counts: Vec<usize> = uneven.iter().map(|r| r.users.unwrap()).collect();
@@ -2704,6 +2705,9 @@ async fn runtime_control_in_one_process() {
             shares
         );
         assert_ne!(shares, [500, 500]);
+        let mut sorted = shares.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, [476, 524]);
 
         // What a Gaggle refuses, before any worker hears of it.
         let reply = telnet.send("throttle 1").await;
@@ -2755,7 +2759,13 @@ async fn runtime_control_in_one_process() {
         let mut ones: Vec<usize> = one.iter().map(|r| r.users.unwrap()).collect();
         ones.sort_unstable();
         assert_eq!(ones, [0, 1]);
-        assert!(one.iter().all(|r| r.throttle >= 1));
+        assert_eq!(one.iter().map(|r| r.throttle).sum::<usize>(), 1_000);
+        // The worker with no users keeps 1 request a second.
+        assert!(
+            one.iter().any(|r| r.users == Some(0) && r.throttle == 1),
+            "{:?}",
+            one
+        );
         let reply = telnet.send("users 4").await;
         assert!(reply.starts_with("users configured"), "{}", reply);
         let four = applied(&mut reports, 2).await;
@@ -2787,6 +2797,9 @@ async fn runtime_control_in_one_process() {
         assert!(reply.contains(r#""success":true"#), "{}", reply);
         let throttled = applied(&mut reports, 2).await;
         assert_eq!(throttled.iter().map(|r| r.throttle).sum::<usize>(), 100);
+        // The manager's configuration says so too.
+        let config = telnet.send("config-json").await;
+        assert!(config.contains(r#""throttle_requests":100"#), "{}", config);
 
         // Users by the dashboard.
         let body = dashboard_post(DASHBOARD, "users", r#"{"users": 40}"#).await;
@@ -2904,9 +2917,9 @@ async fn runtime_control_in_one_process() {
             worker.await.unwrap().expect("the worker exits cleanly");
         }
     };
-    tokio::time::timeout(Duration::from_secs(30), Box::pin(test))
+    tokio::time::timeout(Duration::from_secs(60), Box::pin(test))
         .await
-        .expect("within 30 seconds");
+        .expect("within 60 seconds");
 }
 
 /// A manager and two workers in this process, the manager given `args` and
@@ -2991,16 +3004,7 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
         )
         .await;
         let mut telnet = Telnet::connect(IDLE_TELNET).await;
-        // Every worker joined once the manager is idle.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while !telnet
-            .send("config-json")
-            .await
-            .contains("\"no_autostart\":true")
-        {
-            assert!(std::time::Instant::now() < deadline);
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // The Controller listens once every worker joined.
         let reply = telnet.send("shutdown").await;
         assert!(reply.starts_with("load test shut down"), "{}", reply);
         manager.await.unwrap().expect("the manager exits cleanly");

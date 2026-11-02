@@ -252,6 +252,11 @@ impl WorkerEntry {
         true
     }
 
+    /// Whether it is still a worker of this Gaggle: neither lost nor gone.
+    pub(super) fn is_live(&self) -> bool {
+        self.lost.is_none() && !self.gone
+    }
+
     /// Whether it can still send its logs: it is neither lost nor gone, and
     /// it ran, so has a run folder they are in. A worker that never started
     /// has none.
@@ -700,7 +705,7 @@ impl GooseAttack {
         let live: Vec<u32> = run
             .workers
             .iter()
-            .filter(|worker| worker.lost.is_none() && !worker.gone)
+            .filter(|worker| worker.is_live())
             .map(|worker| worker.id)
             .collect();
         if live.is_empty() {

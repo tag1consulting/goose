@@ -5115,7 +5115,7 @@ impl GooseConfiguration {
         // A throttle of 0 means no throttle.
         if self.throttle_requests() > 0 {
             // Be sure throttle_requests is in allowed range.
-            if self.throttle_requests() > 1_000_000 {
+            if self.throttle_requests() > crate::controller::MAX_CONTROL_THROTTLE {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.throttle_requests`".to_string(),
                     value: self.throttle_requests().to_string(),

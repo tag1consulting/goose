@@ -955,6 +955,33 @@ mod tests {
             .all(|ramp| ramp.run_time.as_deref() == Some("1m")));
         let throttles: Vec<usize> = specs.iter().map(|spec| spec.throttle_requests).collect();
         assert_eq!(throttles.iter().sum::<usize>(), 10);
+        // With neither an increase rate nor time, the workers share one
+        // user a second.
+        let default =
+            GooseConfiguration::parse_args_default(&["--host", "http://h", "--users", "4"])
+                .unwrap();
+        let specs = worker_specs(
+            &default,
+            CommandLineClientOptions::default(),
+            &[(4, 4_000)],
+            &[0; 4],
+            4,
+            true,
+        );
+        let rate: f32 = specs
+            .iter()
+            .map(|spec| {
+                spec.ramp
+                    .as_ref()
+                    .unwrap()
+                    .increase_rate
+                    .as_deref()
+                    .unwrap()
+                    .parse::<f32>()
+                    .unwrap()
+            })
+            .sum();
+        assert!((rate - 1.0).abs() < 1e-5, "{}", rate);
         // Four workers for three users: the shares run test plans.
         let specs = worker_specs(
             &manager,

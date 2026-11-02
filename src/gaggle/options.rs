@@ -506,6 +506,13 @@ mod tests {
                 "--manager can't be used with --worker",
             ),
             (
+                with(
+                    &["--manager", "--expect-workers", "4", "--host", "http://h"],
+                    &["--users", "2", "--throttle-requests", "3"],
+                ),
+                "is fewer than the 4 workers",
+            ),
+            (
                 with(&["--gaggle-rebalance"], &[]),
                 "--gaggle-rebalance needs --manager",
             ),
