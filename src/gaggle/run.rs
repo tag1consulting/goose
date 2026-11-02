@@ -167,7 +167,8 @@ fn send_faulty_logs(fault: LogsFault, outbox: Arc<super::link::Outbox>, files: V
                         data: vec![b'x'; size],
                         last: false,
                         error: None,
-                        size: None,
+                        // Larger than any it sends.
+                        size: Some(u64::MAX),
                     })
                     .await;
             }
@@ -2090,7 +2091,8 @@ mod tests {
                     data: data.to_vec(),
                     last,
                     error: None,
-                    size: None,
+                    // Larger than any a test sends.
+                    size: Some(1 << 30),
                 },
             )),
         }
