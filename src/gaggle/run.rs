@@ -1617,19 +1617,11 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
             .filter_map(|(id, _)| heard.get(id))
             .min()
             .map_or(asked, |&last| last + LOG_IDLE_TIMEOUT);
-        let wake = deadline.min(Instant::now() + KILLSWITCH_POLL);
-        let Some(event) = run.manager.next_event(wake).await else {
-            // Every worker that made no progress for the idle timeout: its
-            // logs still to come stay on it.
-            let now = Instant::now();
-            if now < wake {
-                // No event, and no wake yet: the event queue closed.
-                tokio::time::sleep_until(tokio::time::Instant::from_std(wake)).await;
-                continue;
-            }
-            if now < deadline {
-                continue;
-            }
+        // Every worker that made no progress for the idle timeout: its logs
+        // still to come stay on it. Checked before each wait, so events that
+        // make no progress, however often, never hold the check off.
+        let now = Instant::now();
+        if now >= deadline {
             for (&id, files) in pending.iter_mut() {
                 if files.is_empty()
                     || heard
@@ -1647,6 +1639,14 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
                         LOG_IDLE_TIMEOUT.as_secs()
                     );
                 }
+            }
+            continue;
+        }
+        let wake = deadline.min(now + KILLSWITCH_POLL);
+        let Some(event) = run.manager.next_event(wake).await else {
+            if Instant::now() < wake {
+                // No event, and no wake yet: the event queue closed.
+                tokio::time::sleep_until(tokio::time::Instant::from_std(wake)).await;
             }
             continue;
         };
