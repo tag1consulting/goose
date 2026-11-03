@@ -49,6 +49,7 @@
 
 ## 0.19.1-dev
 
+ - [#803](https://github.com/tag1consulting/goose/pull/803) the Goose Book loads Rybbit page view analytics when served from `book.goose.rs`, through `theme/head.hbs`, and nowhere else
  - [#794](https://github.com/tag1consulting/goose/pull/794) `examples/umami` runs against a stock Drupal 11.4 Umami site, with CSS and JS aggregation on or off; it targets 11.4 only
     o the contact form and search transactions are removed: 11.4's Umami installs neither the contact module nor node search, so they only got 404s
     o the mushroom article is requested at its 11.4 alias, `the-umami-guide-to-our-favorite-mushrooms`, not `favourite`
