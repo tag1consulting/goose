@@ -252,13 +252,17 @@ impl MetricsProcessor {
         self.metrics.transactions = transactions;
         self.metrics.scenarios = scenarios;
         // A worker keeps its own --no-error-summary, which the manager does
-        // not hand it, so the manager drops what its workers sent, as one
-        // process with the option records none.
+        // not hand it, so the manager drops the errors and transaction
+        // errors its workers sent, as one process with the option records
+        // none.
         self.metrics.errors = match self.configuration.no_error_summary {
             true => Default::default(),
             false => errors,
         };
-        self.metrics.transaction_errors = transaction_errors;
+        self.metrics.transaction_errors = match self.configuration.no_error_summary {
+            true => Default::default(),
+            false => transaction_errors,
+        };
         self.metrics.hosts = hosts;
         self.metrics.coordinated_omission_metrics = coordinated_omission_metrics;
         self.graph_data = graph;

@@ -223,6 +223,12 @@ impl WorkerHandle {
     /// message that finds the queue full or closed is dropped, with a
     /// warning naming it and the worker, which is the error.
     fn send(&self, message: ToWorker) -> Result<(), String> {
+        self.queue(message, false)
+    }
+
+    /// [`Self::send`]; with `shutdown`, also once draining, for the
+    /// worker's own `Shutdown`.
+    fn queue(&self, message: ToWorker, shutdown: bool) -> Result<(), String> {
         let message = ManagerMessage {
             message: Some(message),
         };
@@ -230,7 +236,10 @@ impl WorkerHandle {
         let outbound = self.outbound.lock().ok();
         let outbound = outbound.as_ref().and_then(|outbound| outbound.as_ref());
         // Nothing follows `Shutdown`, though the stream stays open.
-        let open = !self.closed.load(Ordering::Relaxed) && !self.draining.load(Ordering::Relaxed);
+        // Read under the outbound lock, which orders it against the
+        // `Shutdown` queued once draining.
+        let open = !self.closed.load(Ordering::Relaxed)
+            && (shutdown || !self.draining.load(Ordering::SeqCst));
         let Some(outbound) = outbound.filter(|_| open) else {
             return Err(format!(
                 "gaggle: worker {} ({}): {kind} not sent, its stream closed",
@@ -260,9 +269,15 @@ impl WorkerHandle {
     /// [`Manager::shut_down_all_waiting`]). A worker whose reader already
     /// stopped is closed at once.
     fn shut_down_draining(&self) {
-        let _ = self.send(ToWorker::Shutdown(Default::default()));
-        self.draining.store(true, Ordering::Relaxed);
-        if self.read_done.load(Ordering::Relaxed) {
+        // Draining first: a reader that ends the moment `Shutdown` is read
+        // finds it set, and nothing is queued after `Shutdown`. SeqCst on
+        // both flags, here and as the reader ends: each side stores its own
+        // and then reads the other's, so one of them closes the stream.
+        self.draining.store(true, Ordering::SeqCst);
+        let queued = self.queue(ToWorker::Shutdown(Default::default()), true);
+        // A `Shutdown` that could not be queued never leaves: nothing to
+        // wait for.
+        if queued.is_err() || self.read_done.load(Ordering::SeqCst) {
             self.close();
         }
     }
@@ -284,6 +299,16 @@ struct Responses {
     ended: Arc<AtomicBool>,
     /// Woken as it ends.
     ending: Arc<tokio::sync::Notify>,
+}
+
+/// A response stream dropped unfinished, as when the worker resets it once
+/// it has read `Shutdown`, or its connection drops, has ended too: nothing
+/// more can leave.
+impl Drop for Responses {
+    fn drop(&mut self) {
+        self.ended.store(true, Ordering::Relaxed);
+        self.ending.notify_waiters();
+    }
 }
 
 impl tokio_stream::Stream for Responses {
@@ -1085,10 +1110,10 @@ async fn read_worker(
             break;
         }
     }
-    worker.read_done.store(true, Ordering::Relaxed);
+    worker.read_done.store(true, Ordering::SeqCst);
     // Told to shut down at the end of the run, and the worker closed its
     // side: its stream ends now, `Shutdown` read.
-    if worker.draining.load(Ordering::Relaxed) {
+    if worker.draining.load(Ordering::SeqCst) {
         worker.close();
         return;
     }
@@ -2047,8 +2072,6 @@ pub(crate) mod handshake_tests {
             .expect("within 30 seconds");
     }
 
-    /// The messages a worker's stream brings until it ends, within 5
-    /// seconds.
     /// At the end of a run a worker's stream stays open after `Shutdown`
     /// until the worker closes its own side, so no reset can reach it
     /// before it has read `Shutdown`; then the stream ends cleanly, and the
@@ -2086,6 +2109,37 @@ pub(crate) mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// As a real worker does it: it stops reading the moment it reads
+    /// `Shutdown`, dropping its side of the response, and closes its own
+    /// side; the manager stops at once, not after the drain.
+    #[tokio::test]
+    async fn shut_down_all_ends_as_the_worker_drops_its_stream() {
+        let test = async {
+            let mut manager = test_manager(1, Duration::from_secs(30)).await;
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let mut inbound = inbound.unwrap();
+            let started = std::time::Instant::now();
+            let shutting = tokio::spawn(async move {
+                manager.shut_down_all_waiting(&[0]).await;
+            });
+            loop {
+                let message = inbound.message().await.unwrap().unwrap();
+                if message_kind(&message) == "Shutdown" {
+                    break;
+                }
+            }
+            drop(inbound);
+            drop(tx);
+            shutting.await.unwrap();
+            assert!(started.elapsed() < SHUTDOWN_DRAIN, "{:?}", started.elapsed());
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// The messages a worker's stream brings until it ends, within 5
+    /// seconds.
     async fn until_it_ends(inbound: &mut tonic::Streaming<ManagerMessage>) -> Vec<&'static str> {
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut kinds = Vec::new();
