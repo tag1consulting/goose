@@ -212,7 +212,8 @@ pub(crate) struct WorkerHandle {
     draining: Arc<AtomicBool>,
     /// Set once its reader has stopped.
     read_done: Arc<AtomicBool>,
-    /// Set once its response stream has ended, everything queued sent.
+    /// Set once its response stream has ended: everything queued sent, or
+    /// the stream dropped unfinished, so nothing more can leave.
     ended: Arc<AtomicBool>,
     /// Woken when it is closed, so its reader stops at once.
     closing: Arc<tokio::sync::Notify>,
