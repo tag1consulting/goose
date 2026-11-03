@@ -3391,17 +3391,16 @@ async fn gaggle_worker_health_in_one_process() {
         assert!(workers[1].is_err(), "the worker that exits mid run fails");
 
         let (gaggle, html) = record(&folder);
-        let worker = |id: u64| {
-            gaggle["workers"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|worker| worker["id"] == id)
-                .cloned()
-                .unwrap()
-        };
-        for id in [0, 2] {
-            let worker = worker(id);
+        // The manager numbers workers as they join, which on a loaded host
+        // is not the order they were started in: each is found by what it
+        // did, and the two left are told apart by their CPU.
+        let all = gaggle["workers"].as_array().unwrap();
+        assert_eq!(all.len(), 3, "{:?}", all);
+        let (lost, finished): (Vec<_>, Vec<_>) =
+            all.iter().partition(|worker| worker["state"] == "lost");
+        assert_eq!(lost.len(), 1, "the worker that exits mid run: {:?}", all);
+        assert_eq!(lost[0]["flags"][0], "lost", "{}", lost[0]);
+        for worker in &finished {
             assert_eq!(worker["state"], "finished", "{}", worker);
             assert!(
                 worker["running_secs"].as_f64().unwrap() > 10.0,
@@ -3411,11 +3410,12 @@ async fn gaggle_worker_health_in_one_process() {
             assert!(worker["requests"].as_u64().unwrap() > 0, "{}", worker);
             assert!(worker["cores"].as_u64().unwrap() > 0, "{}", worker);
         }
-        let lost = worker(1);
-        assert_eq!(lost["state"], "lost", "{}", lost);
-        assert_eq!(lost["flags"][0], "lost", "{}", lost);
-        let busy = worker(2);
-        assert!(busy["peak_cpu_percent"].as_u64().unwrap() >= 90, "{}", busy);
+        // The busy worker claims 150% of its cores: the manager shows 100.
+        let (busy, real): (Vec<_>, Vec<_>) = finished
+            .iter()
+            .partition(|worker| worker["peak_cpu_percent"].as_u64() == Some(100));
+        assert_eq!(busy.len(), 1, "one busy worker: {:?}", finished);
+        let busy = busy[0];
         assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
         assert!(
             busy["flags"]
@@ -3426,7 +3426,11 @@ async fn gaggle_worker_health_in_one_process() {
             busy
         );
         // The real worker is far from saturated.
-        assert!(worker(0)["saturated_secs"].as_u64().unwrap_or(0) < 5);
+        assert!(
+            real[0]["saturated_secs"].as_u64().unwrap_or(0) < 5,
+            "{}",
+            real[0]
+        );
 
         let events: Vec<(String, String)> = gaggle["events"]
             .as_array()
