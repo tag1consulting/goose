@@ -397,14 +397,10 @@ impl GaggleHealth {
         self.workers.values().map(|worker| &worker.merge)
     }
 
-    /// Worker `id`.
+    /// Worker `id` (tests).
+    #[cfg(test)]
     pub(crate) fn worker(&self, id: u32) -> Option<&WorkerHealth> {
         self.workers.get(&id)
-    }
-
-    /// Every worker, by id.
-    pub(crate) fn workers(&self) -> impl Iterator<Item = &WorkerHealth> {
-        self.workers.values()
     }
 
     /// Worker `id`, kept from now on, named `name` and with `cores`.
@@ -583,7 +579,8 @@ impl GaggleHealth {
         }
     }
 
-    /// The epoch worker `id`'s totals are of.
+    /// The epoch worker `id`'s totals are of (tests).
+    #[cfg(test)]
     pub(crate) fn totals_epoch(&self, id: u32) -> Option<u64> {
         self.workers.get(&id).and_then(|worker| worker.totals_epoch)
     }

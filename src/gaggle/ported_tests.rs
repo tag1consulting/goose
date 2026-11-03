@@ -210,7 +210,7 @@ fn four(configuration: GooseConfiguration, default: bool) -> GooseAttack {
         attack = attack.register_scenario(Scenario::new(name).register_transaction(get(path)));
     }
     if default {
-        attack = attack
+        attack = *attack
             .set_default(GooseDefault::Scenarios, "scenariob*")
             .unwrap();
     }
@@ -500,7 +500,7 @@ fn redirected(configuration: GooseConfiguration, defaults: bool) -> GooseAttack 
     if !defaults {
         return attack;
     }
-    attack
+    *attack
         .set_default(GooseDefault::StickyFollow, true)
         .unwrap()
         .set_default(GooseDefault::NoResetMetrics, true)

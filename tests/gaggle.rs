@@ -703,6 +703,94 @@ fn gaggle_manager_interrupted() {
     });
 }
 
+/// Ctrl-C on the manager of a run that `plan` shapes: every worker stops,
+/// sends its final metrics and exits 0, and the record, canceled and not
+/// degraded, holds every worker's requests: together what the server saw,
+/// less at most a request in flight for each user when the users stopped.
+fn manager_canceled(name: &str, plan: &[&str]) {
+    let (name, plan): (String, Vec<String>) =
+        (name.to_string(), plan.iter().map(|arg| arg.to_string()).collect());
+    within(move || {
+        let server = MockServer::start();
+        let index = mock_simple(&server, Duration::from_millis(5));
+        let folder = scratch(&name);
+        let host = server.base_url();
+        let manager_folder = folder.join("manager").display().to_string();
+        let simple = example("simple");
+        let mut extra = vec![
+            "--users",
+            "10",
+            "--increase-rate",
+            "20",
+            "--no-reset-metrics",
+            "--report-file",
+            "--output-dir",
+            &manager_folder,
+        ];
+        extra.extend(plan.iter().map(String::as_str));
+        let mut manager = Process::start(&simple, "manager", &folder, &manager_args(&host, "2", &extra));
+        let port = manager.port();
+        let mut workers = [
+            Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
+            Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
+        ];
+        until_load(|| index.calls(), Duration::from_secs(30));
+        std::thread::sleep(Duration::from_secs(2));
+        signal(manager.child.id(), nix::sys::signal::Signal::SIGINT);
+        manager
+            .wait(Duration::from_secs(60))
+            .unwrap_or_else(|| panic!("the manager ends: {}", manager.output()));
+        for worker in workers.iter_mut() {
+            let (status, _) = worker
+                .wait(Duration::from_secs(30))
+                .unwrap_or_else(|| panic!("{} exits: {}", worker.name, worker.output()));
+            assert!(status.success(), "{}: {}", worker.name, worker.output());
+        }
+        let report = manager_record(&folder);
+        assert_eq!(report["ended_by"], "canceled", "{}", manager.output());
+        let gaggle = &report["gaggle"];
+        assert_eq!(gaggle["degraded"], false, "{}", gaggle);
+        let workers = gaggle["workers"].as_array().unwrap();
+        assert_eq!(workers.len(), 2, "{}", gaggle);
+        let mut requests = 0;
+        for worker in workers {
+            assert_eq!(worker["state"], "finished", "{}", gaggle);
+            let made = worker["requests"].as_u64().unwrap_or(0);
+            assert!(made > 0, "{}", gaggle);
+            requests += made as usize;
+        }
+        // The simple example logs in, as POST /login, once per user, which
+        // the GET mock does not count.
+        let seen = index.calls();
+        let logins = 10;
+        assert!(
+            requests <= seen + logins && requests + 10 >= seen,
+            "merged {requests}, the server saw {seen}: {gaggle}"
+        );
+    });
+}
+
+/// With --run-time, canceled before it ends.
+#[test]
+#[serial_test::serial]
+fn gaggle_manager_canceled_before_its_run_time() {
+    manager_canceled("cancel-run-time", &["--run-time", "60s"]);
+}
+
+/// With no --run-time, canceled as the only way it ends.
+#[test]
+#[serial_test::serial]
+fn gaggle_manager_canceled_without_a_run_time() {
+    manager_canceled("cancel-no-run-time", &[]);
+}
+
+/// With --iterations, canceled before the users finish them.
+#[test]
+#[serial_test::serial]
+fn gaggle_manager_canceled_during_iterations() {
+    manager_canceled("cancel-iterations", &["--iterations", "100000"]);
+}
+
 /// Ctrl-C on a worker mid run: its final metrics reach the manager, which
 /// marks it lost, and the run finishes on the other, degraded.
 #[test]
