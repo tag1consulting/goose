@@ -924,10 +924,11 @@ impl GaggleHealth {
     }
 }
 
-/// The median of `values`, `None` without any.
+/// The median of `values`, `None` with fewer than
+/// [`OUTLIER_MIN_WORKERS`]: with two, each is as far from it as the other.
 fn median(values: impl Iterator<Item = f64>) -> Option<f64> {
     let mut values: Vec<f64> = values.filter(|value| value.is_finite()).collect();
-    if values.is_empty() {
+    if values.len() < OUTLIER_MIN_WORKERS {
         return None;
     }
     values.sort_unstable_by(f64::total_cmp);
@@ -1285,6 +1286,25 @@ mod tests {
                 flagged,
                 "{rate}"
             );
+        }
+    }
+
+    /// Three workers run, but only two have a rate, as one runs no users:
+    /// two values are never judged against their own midpoint.
+    #[test]
+    fn outliers_need_three_values_not_only_three_workers() {
+        let at = Instant::now();
+        let mut health = running(3, Some(1), at);
+        health.set_users(2, 0, 0);
+        for second in 1..=31 {
+            let now = at + secs(second as f64);
+            health.applied(0, Some((fold(100, 100), 1)), None, now);
+            health.applied(1, Some((fold(200, 100), 1)), None, now);
+            health.tick(now);
+        }
+        for id in 0..3 {
+            let ran = record(&health, id, at + secs(31.0));
+            assert!(!ran.flags.contains(&GaggleWorkerFlag::Outlier), "{:?}", ran);
         }
     }
 
