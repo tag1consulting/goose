@@ -3311,3 +3311,146 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
         .await
         .expect("within 30 seconds");
 }
+
+/// Worker health in a run of a manager and three workers: every worker
+/// runs and then finishes, or is lost; the worker that stops on its own a
+/// second in is lost, with an event; a users change and a throttle change
+/// from the manager's Controller each make an event saying both workers
+/// left acknowledged it; and the worker that says its CPU is 95% busy for 6
+/// seconds is flagged saturated, once, then recovers, once. The reports
+/// carry it all: the Workers and Events sections, and the Check sentence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_health_in_one_process() {
+    const TELNET: u16 = 5236;
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("worker-health");
+        let telnet_port = TELNET.to_string();
+        let faults = [
+            TestFaults::default(),
+            TestFaults {
+                exit_mid_run: true,
+                ..Default::default()
+            },
+            TestFaults {
+                busy_cpu: Some((95, Duration::from_secs(6))),
+                ..Default::default()
+            },
+        ];
+        let run = gaggle(
+            standard,
+            3,
+            server.base_url(),
+            &folder,
+            &[
+                "--users",
+                "6",
+                "--increase-rate",
+                "60",
+                "--run-time",
+                "14",
+                "--throttle-requests",
+                "300",
+                "--telnet-port",
+                &telnet_port,
+                "--report-file",
+                "--report-file",
+                "report.md",
+            ],
+            &[],
+            &faults,
+        );
+        let control = async {
+            let mut telnet = Telnet::connect(TELNET).await;
+            // The worker that exits a second in is lost first.
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            let users = telnet.send("users 8").await;
+            assert!(users.contains("accepted by 2 of 2 workers"), "{}", users);
+            let throttle = telnet.send("throttle 200").await;
+            assert!(throttle.contains("accepted by 2 of 2 workers"), "{}", throttle);
+        };
+        let ((manager, workers), ()) = tokio::join!(run, control);
+        manager.expect("the manager exits cleanly");
+        assert!(workers[0].is_ok() && workers[2].is_ok());
+        assert!(workers[1].is_err(), "the worker that exits mid run fails");
+
+        let (gaggle, html) = record(&folder);
+        let worker = |id: u64| {
+            gaggle["workers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|worker| worker["id"] == id)
+                .cloned()
+                .unwrap()
+        };
+        for id in [0, 2] {
+            let worker = worker(id);
+            assert_eq!(worker["state"], "finished", "{}", worker);
+            assert!(worker["running_secs"].as_f64().unwrap() > 10.0, "{}", worker);
+            assert!(worker["requests"].as_u64().unwrap() > 0, "{}", worker);
+            assert!(worker["cores"].as_u64().unwrap() > 0, "{}", worker);
+        }
+        let lost = worker(1);
+        assert_eq!(lost["state"], "lost", "{}", lost);
+        assert_eq!(lost["flags"][0], "lost", "{}", lost);
+        let busy = worker(2);
+        assert!(busy["peak_cpu_percent"].as_u64().unwrap() >= 90, "{}", busy);
+        assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
+        assert!(
+            busy["flags"].as_array().unwrap().contains(&"saturated".into()),
+            "{}",
+            busy
+        );
+        // The real worker is far from saturated.
+        assert!(worker(0)["saturated_secs"].as_u64().unwrap_or(0) < 5);
+
+        let events: Vec<(String, String)> = gaggle["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| {
+                (
+                    event["kind"].as_str().unwrap().to_string(),
+                    event["text"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let of = |kind: &str| -> Vec<&String> {
+            events
+                .iter()
+                .filter(|(k, _)| k == kind)
+                .map(|(_, text)| text)
+                .collect()
+        };
+        assert_eq!(of("run_started"), ["3 of 3 workers joined, run started"]);
+        assert_eq!(of("worker_lost").len(), 1, "{:?}", events);
+        assert_eq!(of("throttle_shares_rescaled").len(), 1, "{:?}", events);
+        let users = of("users_changed");
+        assert_eq!(users.len(), 1, "{:?}", events);
+        assert!(users[0].starts_with("users 6 to 8, acknowledged by 2 of 2 in "), "{:?}", users);
+        let throttle = of("throttle_changed");
+        assert_eq!(throttle.len(), 1, "{:?}", events);
+        assert!(
+            throttle[0].starts_with("throttle set to 200 req/s, acknowledged by 2 of 2 in "),
+            "{:?}",
+            throttle
+        );
+        assert_eq!(of("worker_saturated").len(), 1, "{:?}", events);
+        assert_eq!(of("worker_recovered").len(), 1, "{:?}", events);
+
+        // The reports.
+        for text in ["<h2>Workers</h2>", "<h2>Events</h2>", "Check: ", "saturated", "users 6 to 8"] {
+            assert!(html.contains(text), "{}", text);
+        }
+        let markdown =
+            std::fs::read_to_string(folder.join("manager").join("report.md")).unwrap();
+        for text in ["## Workers", "## Events", "Check: "] {
+            assert!(markdown.contains(text), "{}: {}", text, markdown);
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
+}

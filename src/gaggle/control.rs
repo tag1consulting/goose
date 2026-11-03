@@ -445,7 +445,7 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         #[cfg(feature = "dashboard")]
         let with_settings = matches!(command, ControlCommand::Settings { .. });
-        let events = self.change_events(&command);
+        let events = self.change_events(goose_attack_run_state.active_users, &command);
         let (outcome, controls) = match self.gaggle_change(goose_attack_run_state, command).await {
             Ok(change) => change,
             Err(e) => {
@@ -548,8 +548,12 @@ impl GooseAttack {
 
     /// The events `command` makes once applied and received by every
     /// worker: its users, throttle and host changes, and a stop, each as a
-    /// sentence, the users as they were before it.
-    fn change_events(&self, command: &ControlCommand) -> Vec<(GaggleEventKind, String)> {
+    /// sentence, the users as the manager counted them before it, `active`.
+    fn change_events(
+        &self,
+        active: usize,
+        command: &ControlCommand,
+    ) -> Vec<(GaggleEventKind, String)> {
         let settings = match command {
             ControlCommand::Command(ControllerCommand::Stop) => {
                 return vec![(GaggleEventKind::Stop, "stop".to_string())]
@@ -566,10 +570,7 @@ impl GooseAttack {
         };
         let mut events = Vec::new();
         if let Some(users) = settings.users {
-            let before = match self.manager_run() {
-                Some(run) if run.book.total() > 0 => run.book.total(),
-                _ => self.configuration.users.unwrap_or(0),
-            };
+            let before = active;
             events.push((
                 GaggleEventKind::UsersChanged,
                 format!(
