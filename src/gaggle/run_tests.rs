@@ -3330,8 +3330,11 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
 /// runs and then finishes, or is lost; the worker that stops on its own a
 /// second in is lost, with an event; a users change and a throttle change
 /// from the manager's Controller each make an event saying both workers
-/// left acknowledged it; and the worker that says its CPU is 95% busy for 6
-/// seconds is flagged saturated, once, then recovers, once. The reports
+/// left acknowledged it; and the worker that says its CPU is busy for 8
+/// seconds is flagged saturated, once, then recovers, once. It claims 150%
+/// of its cores, clamped to 100 by the manager, as the manager times each
+/// sample by its arrival: on a loaded host a delta 1.5 s late spreads a
+/// second's CPU time over 1.5 s, which a claim of 95% would show as 63%. The reports
 /// carry it all: the Workers and Events sections, and the Check sentence.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
@@ -3348,7 +3351,7 @@ async fn gaggle_worker_health_in_one_process() {
                 ..Default::default()
             },
             TestFaults {
-                busy_cpu: Some((95, Duration::from_secs(6))),
+                busy_cpu: Some((150, Duration::from_secs(8))),
                 ..Default::default()
             },
         ];
