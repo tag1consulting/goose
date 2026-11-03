@@ -171,7 +171,15 @@ start_second: number, rps: Array<number>, fps: Array<number>, users: Array<numbe
  * Response times of all requests by second, for the dashboard's
  * heatmap. Null when percentiles over time are off.
  */
-heatmap: Heatmap | null, };
+heatmap: Heatmap | null,
+/**
+ * On a Gaggle manager while a worker still runs, the first second, from
+ * the test start, whose figures may still be arriving from the workers:
+ * from it on each second holds what has arrived so far, and a second
+ * with nothing yet has no data rather than 0. Absent on one process and
+ * once every worker finished or was lost. Added in 0.20.
+ */
+provisional_from?: number, };
 
 type SnapshotFlags = { metrics_disabled: boolean,
 /**

@@ -104,6 +104,15 @@ export function heatmapCursor(state: HeatmapState | null): HeatmapCursor | null 
   return state === null ? null : { generation: state.generation, since: state.rev };
 }
 
+/**
+ * How strongly a cell of `second` is drawn: half as strong from
+ * `provisionalFrom` on, where the workers' figures are still arriving, else
+ * fully.
+ */
+export function provisionalAlpha(second: number, provisionalFrom: number | null): number {
+  return provisionalFrom !== null && second >= provisionalFrom ? 0.5 : 1;
+}
+
 /** One drawn cell: a second and a bucket, with its request counts. */
 export interface HeatmapCell {
   /** Seconds from the window's first, so the column drawn. */
@@ -579,7 +588,8 @@ export function drawHeatmap(
   canvas: HTMLCanvasElement,
   view: HeatmapView,
   dark: boolean,
-  colors: { tick: string; grid: string; percentile: string }
+  colors: { tick: string; grid: string; percentile: string },
+  provisionalFrom: number | null = null
 ): HeatmapLayout | null {
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
@@ -628,6 +638,9 @@ export function drawHeatmap(
     const x0 = x(cell.column);
     const y0 = y(row.top);
     ctx.fillStyle = cellColor(cell.count, view.minCount, view.maxCount, dark);
+    // On a Gaggle manager a second still arriving from the workers is drawn
+    // lighter, as far as it has arrived.
+    ctx.globalAlpha = provisionalAlpha(cell.second, provisionalFrom);
     // At least a pixel each way, so a single request is never lost.
     ctx.fillRect(
       x0,
@@ -637,6 +650,7 @@ export function drawHeatmap(
     );
     layout.cells.set(cellKey(cell.column, cell.bucket), cell);
   }
+  ctx.globalAlpha = 1;
 
   // Latency ticks, with grid lines over the cells as a faint overlay.
   ctx.font = "10px " + font;

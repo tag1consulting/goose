@@ -2999,6 +2999,80 @@ mod built_as_it_goes {
         assert_eq!(built.gaggle_diff(&fresh), Vec::<String>::new());
     }
 
+    /// The requests per second the graph data's series window holds, from
+    /// its first second, and the first provisional second.
+    fn window(graph: &mut GraphData) -> (u64, Vec<f64>, Option<u64>) {
+        let series = graph.export_series_window(300);
+        (series.start_second, series.rps, series.provisional_from)
+    }
+
+    /// Three workers sending a delta every second: at every build the graph
+    /// data covers every second up to the newest delta, the seconds from the
+    /// complete point on marked provisional, without building the graph
+    /// data again from nothing; a late row for a provisional second updates
+    /// it in place; and once every worker is done the graph equals one
+    /// built from nothing.
+    #[test]
+    fn a_live_graph_runs_to_the_newest_delta() {
+        let lag = 10;
+        let (mut built, mut fresh) = (lagged(lag), lagged(lag));
+        let mut graph = GraphData::new();
+        let mut first = true;
+        for at in 0..40_u64 {
+            let seq = at + 1;
+            for worker in 0..3 {
+                let mut delta = second(worker, seq, seq, at..at + 1, 2);
+                // Worker 0 also sends a late row for a provisional second:
+                // one more request two seconds back.
+                if worker == 0 && at >= 2 {
+                    *delta
+                        .graph
+                        .requests
+                        .entry("GET /0".to_string())
+                        .or_default()
+                        .entry(at - 2)
+                        .or_default() += 1;
+                }
+                built.apply_live(worker, delta.clone(), &mut graph).unwrap();
+                fresh.apply(worker, delta).unwrap();
+            }
+            if first {
+                graph = built.merged_and_excluded(graph).1;
+                super::super::merge::FRESH_BUILDS.with(|builds| builds.set(0));
+                first = false;
+            } else {
+                graph = built.merged_and_excluded(graph).1;
+            }
+            let complete = built.complete_before().expect("every worker runs");
+            assert_eq!(complete, (at + 1).saturating_sub(1 + lag));
+            let (start, rps, provisional) = window(&mut graph);
+            assert_eq!(start, 0, "at {}", at);
+            assert_eq!(rps.len() as u64, at + 1, "at {}: {:?}", at, rps);
+            for (second, &got) in rps.iter().enumerate() {
+                let second = second as u64;
+                // 3 workers, 2 names, 3 requests each, and worker 0's late
+                // request for the second two before the newest, once that
+                // has come.
+                let late = if second + 2 <= at { 1.0 } else { 0.0 };
+                assert_eq!(got, 18.0 + late, "at {}, second {}: {:?}", at, second, rps);
+            }
+            assert_eq!(provisional, Some(complete), "at {}", at);
+        }
+        assert_eq!(
+            super::super::merge::FRESH_BUILDS.with(std::cell::Cell::get),
+            0,
+            "the graph data was built again from nothing"
+        );
+        for worker in 0..3 {
+            built.done(worker);
+            fresh.done(worker);
+        }
+        let (_, mut built, _) = built.merged_and_excluded(graph);
+        let (_, fresh, _) = fresh.merged_and_excluded(GraphData::new());
+        assert_eq!(built.gaggle_diff(&fresh), Vec::<String>::new());
+        assert_eq!(window(&mut built).2, None, "every worker is done");
+    }
+
     /// An accumulator for the graph data, with `lag`.
     fn lagged(lag: u64) -> GaggleAccumulator {
         let settings = GraphSettings {
@@ -3042,7 +3116,7 @@ mod built_as_it_goes {
                         .entry(0)
                         .or_default() += 1;
                 }
-                built.apply(worker, delta.clone()).unwrap();
+                built.apply_live(worker, delta.clone(), &mut graph).unwrap();
                 fresh.apply(worker, delta).unwrap();
             }
             graph = built.merged_and_excluded(graph).1;
@@ -3238,7 +3312,8 @@ mod built_as_it_goes {
                 if stalls {
                     stalled(&mut delta, worker, at..at + 1);
                 }
-                accumulator.apply(worker, delta).unwrap();
+                // As the manager's processor takes it, with the graph data.
+                accumulator.apply_live(worker, delta, &mut graph).unwrap();
             }
             let applied = started.elapsed();
             let (metrics, built, excluded) = accumulator.merged_and_excluded(graph);

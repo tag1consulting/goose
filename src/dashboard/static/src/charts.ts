@@ -28,7 +28,7 @@ Chart.register(
   Filler
 );
 
-type LineChart = Chart<"line", number[], string>;
+type LineChart = Chart<"line", (number | null)[], string>;
 
 interface ChartColors {
   rps: string;
@@ -44,6 +44,9 @@ interface ChartColors {
 let chartRps: LineChart | null = null;
 let chartUsers: LineChart | null = null;
 let chartLatency: LineChart | null = null;
+/** The index of each chart's first provisional second, or null. */
+let rpsProvisional: number | null = null;
+let latencyProvisional: number | null = null;
 
 function isDark(): boolean {
   let dark =
@@ -163,12 +166,69 @@ export function completeSeconds(values: number[]): number[] {
 }
 
 /**
+ * The index in `series` of its first provisional second: on a Gaggle
+ * manager, from there on each second holds what the workers have sent so
+ * far. Null when every second is complete.
+ */
+export function provisionalIndex(series: SeriesWindow): number | null {
+  const from = series.provisional_from;
+  return from === undefined || from === null ? null : Math.max(0, from - series.start_second);
+}
+
+/**
+ * `values` drawn with the provisional seconds from index `from` on: one with
+ * no data yet, where `empty` says so, is a gap, never 0. With `from` null
+ * every value stays.
+ */
+export function provisionalValues(
+  values: number[],
+  from: number | null,
+  empty: (i: number) => boolean
+): (number | null)[] {
+  return values.map((value, i) => (from !== null && i >= from && empty(i) ? null : value));
+}
+
+/**
+ * How many seconds of a window of `length` are provisional from index
+ * `from`: what the chart's note says are still arriving.
+ */
+export function provisionalSeconds(length: number, from: number | null): number {
+  return from === null ? 0 : Math.max(0, length - from);
+}
+
+/** A colour of the charts', `#rrggbb`, half as strong. */
+export function lighter(color: string): string {
+  return /^#[0-9a-f]{6}$/i.test(color) ? color + "80" : color;
+}
+
+/**
+ * A line's style from its first provisional second on: lighter, and dashed
+ * as `dash` says, which differs from the line's own.
+ */
+function provisionalSegment(
+  color: () => string,
+  dash: number[],
+  from: () => number | null
+): object {
+  return {
+    borderColor: (ctx: { p1DataIndex: number }) => {
+      const at = from();
+      return at !== null && ctx.p1DataIndex >= at ? lighter(color()) : undefined;
+    },
+    borderDash: (ctx: { p1DataIndex: number }) => {
+      const at = from();
+      return at !== null && ctx.p1DataIndex >= at ? dash : undefined;
+    },
+  };
+}
+
+/**
  * The RPS chart's two lines. Failures/s is dashed so the lines differ by more
  * than colour.
  */
 export function rpsDatasets(
   colors: ChartColors
-): ChartConfiguration<"line", number[], string>["data"]["datasets"] {
+): ChartConfiguration<"line", (number | null)[], string>["data"]["datasets"] {
   return [
     {
       label: "RPS",
@@ -178,6 +238,7 @@ export function rpsDatasets(
       borderWidth: 1.5,
       pointRadius: 0,
       tension: 0.15,
+      segment: provisionalSegment(() => chartColors().rps, [3, 3], () => rpsProvisional),
     },
     {
       label: "Failures/s",
@@ -188,6 +249,7 @@ export function rpsDatasets(
       borderDash: [6, 4],
       pointRadius: 0,
       tension: 0.15,
+      segment: provisionalSegment(() => chartColors().fps, [2, 3], () => rpsProvisional),
     },
   ];
 }
@@ -196,7 +258,7 @@ export function ensureCharts(): void {
   const colors = chartColors();
 
   if (!chartRps) {
-    const config: ChartConfiguration<"line", number[], string> = {
+    const config: ChartConfiguration<"line", (number | null)[], string> = {
       type: "line",
       data: {
         labels: [],
@@ -207,7 +269,7 @@ export function ensureCharts(): void {
     chartRps = new Chart(requireElement("chart-rps", HTMLCanvasElement), config);
   }
   if (!chartUsers) {
-    const config: ChartConfiguration<"line", number[], string> = {
+    const config: ChartConfiguration<"line", (number | null)[], string> = {
       type: "line",
       data: {
         labels: [],
@@ -232,7 +294,7 @@ export function ensureCharts(): void {
     );
   }
   if (!chartLatency) {
-    const config: ChartConfiguration<"line", number[], string> = {
+    const config: ChartConfiguration<"line", (number | null)[], string> = {
       type: "line",
       data: {
         labels: [],
@@ -245,6 +307,11 @@ export function ensureCharts(): void {
             borderWidth: 1.5,
             pointRadius: 0,
             tension: 0.15,
+            segment: provisionalSegment(
+              () => chartColors().latency,
+              [3, 3],
+              () => latencyProvisional
+            ),
           },
         ],
       },
@@ -282,12 +349,18 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
     labels.push(String(start + i));
   }
 
+  // On a Gaggle manager the newest seconds are still arriving: drawn
+  // lighter and dashed, and a second with nothing yet is a gap, never 0.
+  const provisional = provisionalIndex(series);
+  rpsProvisional = provisional;
+  latencyProvisional = provisional;
   if (drawable(chartRps)) {
     const rpsComplete = completeSeconds(rps);
     const fpsComplete = completeSeconds(fps);
+    const empty = (i: number): boolean => !rpsComplete[i] && !fpsComplete[i];
     chartRps.data.labels = labels.slice(0, Math.max(rpsComplete.length, fpsComplete.length));
-    chartRps.data.datasets[0].data = rpsComplete;
-    chartRps.data.datasets[1].data = fpsComplete;
+    chartRps.data.datasets[0].data = provisionalValues(rpsComplete, provisional, empty);
+    chartRps.data.datasets[1].data = provisionalValues(fpsComplete, provisional, empty);
     chartRps.update("none");
   }
   if (drawable(chartUsers)) {
@@ -298,7 +371,11 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
   if (averageLatency && drawable(chartLatency)) {
     const latComplete = completeSeconds(lat);
     chartLatency.data.labels = labels.slice(0, latComplete.length);
-    chartLatency.data.datasets[0].data = latComplete;
+    chartLatency.data.datasets[0].data = provisionalValues(
+      latComplete,
+      provisional,
+      (i) => !latComplete[i]
+    );
     chartLatency.update("none");
   }
 }

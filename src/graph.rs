@@ -2052,6 +2052,7 @@ impl RecordedGraphs {
             scenarios_per_second: self.scenarios_per_second,
             users_per_second: self.users_per_second,
             latency: None,
+            provisional_from: None,
         };
         (graph_data, self.heatmap)
     }
@@ -2077,6 +2078,11 @@ pub(crate) struct GraphData {
     /// Only the metrics processor's copy has them, and only while the
     /// dashboard tracks percentiles over time.
     latency: Option<LatencyHistograms>,
+    /// On a Gaggle manager while a worker still runs, the first second whose
+    /// rows may still be arriving: from it on the graph data holds what has
+    /// arrived so far. `None` on one process, and once every worker finished
+    /// or was lost.
+    provisional_from: Option<usize>,
 }
 
 impl GraphData {
@@ -2091,6 +2097,7 @@ impl GraphData {
             scenarios_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
             latency: None,
+            provisional_from: None,
         }
     }
 
@@ -2832,6 +2839,7 @@ impl GraphData {
             users,
             avg_latency_ms,
             heatmap,
+            provisional_from: self.provisional_from.map(|second| second as u64),
         }
     }
 

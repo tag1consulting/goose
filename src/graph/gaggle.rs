@@ -330,6 +330,12 @@ impl GraphData {
         changed
     }
 
+    /// Mark the seconds from `second` on as provisional, their rows still
+    /// arriving from the workers, or none when `None`.
+    pub(crate) fn set_provisional_from(&mut self, second: Option<Second>) {
+        self.provisional_from = second.map(|second| second as usize);
+    }
+
     /// Graph data with nothing in it yet, for [`Self::gaggle_extend`], as the
     /// metrics processor of a run with `settings` starts it: its rate series
     /// from `series_origin` when a metrics reset restarted them there.

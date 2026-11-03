@@ -2,7 +2,7 @@
 // from charts.ts, which the tests bundle on its own without a page: these
 // look their elements up when the module loads.
 
-import { completeSeconds } from "./charts";
+import { completeSeconds, provisionalIndex, provisionalSeconds } from "./charts";
 import { requireElement } from "./dom";
 import { formatInt, formatMs, formatRate } from "./format";
 import { chartDataTable } from "./tables";
@@ -13,6 +13,22 @@ const SUMMARY_SECONDS = 10;
 const rpsSummary = requireElement("chart-rps-summary", HTMLElement);
 const usersSummary = requireElement("chart-users-summary", HTMLElement);
 const latencySummary = requireElement("chart-latency-summary", HTMLElement);
+const rpsProvisionalNote = requireElement("chart-rps-provisional", HTMLElement);
+const latencyProvisionalNote = requireElement("chart-latency-provisional", HTMLElement);
+
+/**
+ * A chart's one line note on a Gaggle manager: how many of its newest
+ * seconds are still arriving from the workers, drawn lighter and dashed.
+ * Hidden when none is.
+ */
+export function provisionalNote(seconds: number): string {
+  return seconds > 0 ? "last " + seconds + " s still arriving" : "";
+}
+
+function setNote(el: HTMLElement, text: string): void {
+  if (el.textContent !== text) el.textContent = text;
+  el.hidden = text === "";
+}
 
 const showRpsData = chartDataTable<{ second: number; rps: number; fps: number }>(
   "chart-rps-details",
@@ -88,8 +104,19 @@ export function setLatencySummary(text: string): void {
 export function updateChartData(series: SeriesWindow, averageLatency: boolean, targetUsers: number): void {
   const start = series.start_second;
   // Left in, the newest second would lean every summary to "falling".
-  const rpsComplete = completeSeconds(series.rps);
-  const fpsComplete = completeSeconds(series.fps);
+  const rpsDrawn = completeSeconds(series.rps);
+  const fpsDrawn = completeSeconds(series.fps);
+  // On a Gaggle manager the summaries read the complete seconds only, and
+  // the tables leave out a provisional second with nothing yet, as the
+  // chart draws it as a gap.
+  const provisional = provisionalIndex(series);
+  const complete = (values: number[]): number[] =>
+    provisional === null ? values : values.slice(0, provisional);
+  const rpsComplete = complete(rpsDrawn);
+  const fpsComplete = complete(fpsDrawn);
+  const note = provisionalNote(provisionalSeconds(rpsDrawn.length, provisional));
+  setNote(rpsProvisionalNote, note);
+  setNote(latencyProvisionalNote, note);
   const rps = recentTrend(rpsComplete);
   setSummary(
     rpsSummary,
@@ -98,7 +125,12 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
       : withTrend("RPS " + formatRate(rps.mean), rps.trend) +
           "; failures " + formatRate(recentTrend(fpsComplete).mean) + "/s."
   );
-  showRpsData(rpsComplete.map((rps, i) => ({ second: start + i, rps, fps: fpsComplete[i] || 0 })));
+  showRpsData(
+    rpsDrawn
+      .map((rps, i) => ({ second: start + i, rps, fps: fpsDrawn[i] || 0, at: i }))
+      .filter((row) => provisional === null || row.at < provisional || row.rps > 0 || row.fps > 0)
+      .map(({ second, rps, fps }) => ({ second, rps, fps }))
+  );
   const users = recentTrend(series.users);
   setSummary(
     usersSummary,
@@ -111,13 +143,19 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
   );
   showUsersData(series.users.map((users, i) => ({ second: start + i, users })));
   if (averageLatency) {
-    const latComplete = completeSeconds(series.avg_latency_ms);
+    const latDrawn = completeSeconds(series.avg_latency_ms);
+    const latComplete = complete(latDrawn);
     const lat = recentTrend(latComplete);
     setLatencySummary(
       series.avg_latency_ms.length === 0
         ? "No data yet."
         : withTrend("Average " + formatMs(lat.mean) + " ms", lat.trend) + "."
     );
-    showLatencyData(latComplete.map((avg, i) => ({ second: start + i, avg })));
+    showLatencyData(
+      latDrawn
+        .map((avg, i) => ({ second: start + i, avg, at: i }))
+        .filter((row) => provisional === null || row.at < provisional || row.avg > 0)
+        .map(({ second, avg }) => ({ second, avg }))
+    );
   }
 }

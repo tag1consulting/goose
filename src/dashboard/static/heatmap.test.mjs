@@ -25,6 +25,7 @@ import {
   secondLabels,
   secondStep,
   tooltipText,
+  provisionalAlpha,
 } from "./test-build/heatmap.mjs";
 import { formatMs } from "./test-build/format.mjs";
 import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
@@ -955,4 +956,11 @@ test("heatmap percentiles show the row they are in", () => {
     ]).map((l) => l.text),
     ["p99: " + (5500).toLocaleString() + " ms", "p95: 2 ms", "p50: 0.4 ms"]
   );
+});
+
+test("a Gaggle manager's provisional seconds are drawn half as strong", () => {
+  assert.equal(provisionalAlpha(10, null), 1);
+  assert.equal(provisionalAlpha(9, 10), 1);
+  assert.equal(provisionalAlpha(10, 10), 0.5);
+  assert.equal(provisionalAlpha(11, 10), 0.5);
 });
