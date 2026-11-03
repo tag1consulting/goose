@@ -7,6 +7,12 @@ import { requireElement } from "./dom";
 import { formatInt, formatMs, formatRate } from "./format";
 import { chartDataTable } from "./tables";
 
+/**
+ * A summary's text on a Gaggle manager before any second is complete: every
+ * second the chart draws is still arriving from the workers.
+ */
+const NO_COMPLETE = "No complete seconds yet.";
+
 /** Seconds a summary averages, and compares with as many before them. */
 const SUMMARY_SECONDS = 10;
 
@@ -122,6 +128,8 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
     rpsSummary,
     series.rps.length === 0
       ? "No data yet."
+      : rpsComplete.length === 0
+      ? NO_COMPLETE
       : withTrend("RPS " + formatRate(rps.mean), rps.trend) +
           "; failures " + formatRate(recentTrend(fpsComplete).mean) + "/s."
   );
@@ -149,6 +157,8 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
     setLatencySummary(
       series.avg_latency_ms.length === 0
         ? "No data yet."
+        : latComplete.length === 0
+        ? NO_COMPLETE
         : withTrend("Average " + formatMs(lat.mean) + " ms", lat.trend) + "."
     );
     showLatencyData(

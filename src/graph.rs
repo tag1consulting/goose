@@ -3698,6 +3698,20 @@ where
 }
 
 impl TimeSeries<u32, u32> {
+    /// Takes `count` back from a given second, stopping at zero, in one
+    /// step however large. Does nothing for a second the series does not
+    /// hold.
+    fn decrement_by(&mut self, second: usize, count: u64) {
+        if second < self.origin {
+            return;
+        }
+        if let Some(held) = self.data.get_mut(second - self.origin) {
+            let taken = (*held as u64).min(count) as u32;
+            *held -= taken;
+            self.total = self.total.saturating_sub(taken);
+        }
+    }
+
     /// Takes one back from a given second, stopping at zero. Does nothing for
     /// a second the series does not hold.
     fn decrement(&mut self, second: usize) {

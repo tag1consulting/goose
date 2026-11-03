@@ -1378,15 +1378,17 @@ impl GooseAttack {
         let reason = why.clone();
         let newly = worker.lose(stop_sent, why);
         // Every change waiting on it goes on without it, and the one a front
-        // end waits on names it, when it had yet to receive it, even when it
-        // went away after its run rather than being lost.
+        // end waits on names it, when it had yet to apply it, even when it
+        // went away after its run rather than being lost: a refusal always
+        // follows the worker's received.
         let pending = run.pending.as_ref().map(|pending| pending.id);
-        let mut unreceived = false;
+        let mut waited = false;
         for sent in run.sent.iter_mut() {
-            let missed = sent.forget(id);
-            unreceived |= missed && Some(sent.id) == pending;
+            let unapplied = sent.unapplied.contains(&id);
+            sent.forget(id);
+            waited |= unapplied && Some(sent.id) == pending;
         }
-        if let (true, true, Some(pending)) = (unreceived, newly, run.pending.as_mut()) {
+        if let (true, true, Some(pending)) = (waited, newly, run.pending.as_mut()) {
             pending
                 .lost
                 .push(format!("worker {id} ({name}) lost: {reason}"));
@@ -2971,6 +2973,14 @@ mod tests {
                 ending: false,
                 health: MergeHealth::default(),
             };
+            // A worker says it received a change before it refuses it.
+            let received = Event::ControlAck {
+                id: 1,
+                control: 7,
+                error: None,
+                received: true,
+            };
+            attack.manager_event(&mut state, &mut run, received);
             let refused = Event::ControlAck {
                 id: 1,
                 control: 7,

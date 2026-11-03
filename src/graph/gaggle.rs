@@ -330,6 +330,26 @@ impl GraphData {
         changed
     }
 
+    /// Take back, from every second from `from` on, the failures a negative
+    /// errors row of `part` takes back: failures `set_success()` took back
+    /// after the delta that sent them, which [`Self::gaggle_extend`] adds as
+    /// 0. For a delta's rows added in place to the provisional seconds; a
+    /// build from nothing adds rows already summed, never negative.
+    pub(crate) fn gaggle_take_back_failures(&mut self, part: &GraphPart, from: Second) {
+        for (key, rows) in &part.errors {
+            let Some(series) = self.errors_per_second.series.get_mut(key) else {
+                continue;
+            };
+            for (&second, &count) in rows.range(from..) {
+                if count < 0 {
+                    series
+                        .counts
+                        .decrement_by(second as usize, count.unsigned_abs());
+                }
+            }
+        }
+    }
+
     /// Mark the seconds from `second` on as provisional, their rows still
     /// arriving from the workers, or none when `None`.
     pub(crate) fn set_provisional_from(&mut self, second: Option<Second>) {

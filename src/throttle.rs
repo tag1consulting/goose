@@ -138,7 +138,7 @@ async fn throttle_main(
         // of this rate is when it has nothing left to drain.
         let drainable = throttle_receiver.len().saturating_sub(held);
         if tokens > drainable {
-            debug!("[throttle]: empty channel, exit after removing {drainable} tokens");
+            debug!("[throttle]: drained to the fillers held, after removing {drainable} tokens");
             owed = 0.0;
         }
         for _ in 0..tokens.min(drainable) {

@@ -359,13 +359,18 @@ impl GaggleAccumulator {
                 // graph data the last build returned, if it still holds.
                 if let Some(built) = merged.built.as_ref() {
                     match graph {
-                        Some(graph) => graph.gaggle_extend(
-                            &delta.graph,
-                            &BTreeMap::new(),
-                            settings,
-                            built.before,
-                            None,
-                        ),
+                        Some(graph) => {
+                            graph.gaggle_extend(
+                                &delta.graph,
+                                &BTreeMap::new(),
+                                settings,
+                                built.before,
+                                None,
+                            );
+                            if settings.records {
+                                graph.gaggle_take_back_failures(&delta.graph, built.before);
+                            }
+                        }
                         None => merged.built = None,
                     }
                 }

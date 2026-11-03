@@ -3073,6 +3073,40 @@ mod built_as_it_goes {
         assert_eq!(window(&mut built).2, None, "every worker is done");
     }
 
+    /// A failure `set_success()` took back in a later delta than the one
+    /// that sent it, for a provisional second: the live graph data counts it
+    /// once taken back, as a build from nothing does.
+    #[test]
+    fn a_failure_taken_back_later_leaves_the_live_graph() {
+        let (mut built, mut fresh) = (lagged(10), lagged(10));
+        let mut graph = built.merged_and_excluded(GraphData::new()).1;
+        let key = "GET /0".to_string();
+        let mut first = second(0, 1, 1, 0..1, 1);
+        first
+            .graph
+            .errors
+            .entry(key.clone())
+            .or_default()
+            .insert(0, 2);
+        let mut later = second(0, 2, 2, 1..2, 1);
+        later
+            .graph
+            .errors
+            .entry(key.clone())
+            .or_default()
+            .insert(0, -1);
+        for delta in [first, later] {
+            built.apply_live(0, delta.clone(), &mut graph).unwrap();
+            fresh.apply(0, delta).unwrap();
+            graph = built.merged_and_excluded(graph).1;
+        }
+        let series = graph.export_series_window(300);
+        assert_eq!(series.provisional_from, Some(0));
+        assert_eq!(series.fps.first(), Some(&1.0), "{:?}", series.fps);
+        let (_, fresh, _) = fresh.merged_and_excluded(GraphData::new());
+        assert_eq!(graph.gaggle_diff(&fresh), Vec::<String>::new());
+    }
+
     /// An accumulator for the graph data, with `lag`.
     fn lagged(lag: u64) -> GaggleAccumulator {
         let settings = GraphSettings {

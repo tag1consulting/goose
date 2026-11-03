@@ -342,7 +342,7 @@ pub(crate) struct PendingControl {
     pub(super) respond: oneshot::Sender<ControlReply>,
     /// The manager's own outcome, which the reply carries.
     pub(super) outcome: ControlOutcome,
-    /// Each worker lost before it received the change, and why.
+    /// Each worker lost before it applied the change, and why.
     pub(super) lost: Vec<String>,
 }
 
