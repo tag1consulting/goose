@@ -326,7 +326,7 @@ pub(crate) const ACK_TIMEOUT: Duration = if cfg!(test) {
 };
 const _: () = assert!(ACK_TIMEOUT.as_millis() < crate::controller::CONTROL_TIMEOUT.as_millis());
 
-/// The most changes a worker may hold that it has yet to apply before the
+/// The most changes a worker may have yet to apply, received or not, before the
 /// next control request waits for it: below the 16 events its stream reader
 /// queues ([`super::link`]'s `EVENT_QUEUE`), with room for a Stop, a metrics
 /// reset and the changes the manager sends after a loss, so the reader never

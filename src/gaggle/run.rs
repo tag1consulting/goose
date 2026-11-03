@@ -776,6 +776,19 @@ impl GooseAttack {
                         "worker {id} was lost while preparing: {why}"
                     )))
                 }
+                // An answer to a change made while idle, which this share
+                // carries: kept, or the change would stay open for good,
+                // warned about and holding the next requests back.
+                Some(Event::ControlAck {
+                    id,
+                    control,
+                    received,
+                    ..
+                }) => {
+                    if let Some(sent) = run.sent.iter_mut().find(|sent| sent.id == control) {
+                        sent.answered(id, received);
+                    }
+                }
                 Some(_) => {}
                 None => {
                     return Err(gaggle_error(format!(
@@ -877,6 +890,10 @@ impl GooseAttack {
                 Some(LinkEvent::Control { id, command }) => {
                     told_to_shut_down |=
                         matches!(WorkerControl::decode(&command), Ok(WorkerControl::Shutdown));
+                    #[cfg(test)]
+                    if let Some(delay) = self.gaggle.test_faults.slow_idle_ack {
+                        tokio::time::sleep(delay).await;
+                    }
                     link.control_ack(id, None);
                 }
                 _ => {}
@@ -966,7 +983,11 @@ impl GooseAttack {
         run.pending_reset = None;
         run.log_files.clear();
         run.run_folder = None;
-        run.pending_controls.clear();
+        // Moot with the new share, which carries every change: answered,
+        // so none stays open on the manager.
+        for (id, _) in run.pending_controls.drain(..) {
+            run.link.control_ack(id, None);
+        }
         #[cfg(test)]
         self.report(run.link.id, prepared.is_err());
         run.link.prepared(prepared.err());

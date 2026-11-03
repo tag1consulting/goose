@@ -3700,7 +3700,9 @@ where
 impl TimeSeries<u32, u32> {
     /// Takes `count` back from a given second, stopping at zero, in one
     /// step however large. Does nothing for a second the series does not
-    /// hold.
+    /// hold. A Gaggle manager's, for failures taken back after their second
+    /// was sent.
+    #[cfg(feature = "gaggle")]
     fn decrement_by(&mut self, second: usize, count: u64) {
         if second < self.origin {
             return;

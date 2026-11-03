@@ -53,6 +53,9 @@ pub(crate) struct TestFaults {
     /// test, after reading it: its main loop waits, as one building many
     /// users does.
     pub(crate) slow_apply: Option<Duration>,
+    /// Say a change made while the manager is idle was applied this long
+    /// after reading it, as a busy main loop would.
+    pub(crate) slow_idle_ack: Option<Duration>,
 }
 
 impl TestFaults {

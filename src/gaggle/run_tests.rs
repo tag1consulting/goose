@@ -3001,6 +3001,74 @@ async fn telnet_gaggle_with(
     (manager, workers, reports)
 }
 
+/// The telnet port of [`gaggle_start_keeps_an_idle_change_s_answer`].
+const IDLE_ACK_TELNET: u16 = 5239;
+
+/// A change made while the manager is idle, which a worker says it applied
+/// only once the Start that follows it is preparing: the manager takes
+/// that answer as it waits for the workers to prepare, so the change is
+/// logged as applied and closed, never left open, warned about and holding
+/// later requests back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_start_keeps_an_idle_change_s_answer() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("idle-ack");
+        let slow = TestFaults {
+            slow_idle_ack: Some(Duration::from_secs(1)),
+            ..TestFaults::default()
+        };
+        let (manager, workers, _reports) = telnet_gaggle_with(
+            IDLE_ACK_TELNET,
+            &server.base_url(),
+            &folder,
+            &["--no-autostart", "--users", "4", "--increase-rate", "100"],
+            &[slow],
+        )
+        .await;
+        let mut telnet = Telnet::connect(IDLE_ACK_TELNET).await;
+        // Both workers joined: an idle change reaches both.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let reply = telnet.send("users 6").await;
+            if reply.contains("accepted by 2 of 2 workers") {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{}", reply);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        super::faults::CHANGES_DONE.store(0, SeqCst);
+        let reply = telnet.send("users 10").await;
+        assert!(reply.contains("accepted by 2 of 2 workers"), "{}", reply);
+        // At once: the slow worker says it applied the change while the
+        // Start waits for its Prepare answer.
+        let reply = telnet.send("start").await;
+        assert!(reply.starts_with("load test started"), "{}", reply);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while super::faults::CHANGES_DONE.load(SeqCst) < 1 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the idle change was never logged as applied"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let reply = telnet.send("shutdown").await;
+        assert!(reply.starts_with("load test shut down"), "{}", reply);
+        manager
+            .await
+            .expect("the manager task ends")
+            .expect("the manager ends cleanly");
+        for worker in workers {
+            worker.await.expect("the worker task ends").expect("clean");
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("within 60 seconds");
+}
+
 /// The telnet port of [`gaggle_slow_apply_keeps_its_worker`].
 const SLOW_TELNET: u16 = 5238;
 

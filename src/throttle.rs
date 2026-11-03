@@ -205,11 +205,13 @@ mod tests {
             burst(&throttle.users);
             throttle.rate.store(400, Ordering::Relaxed);
             tokio::time::sleep(QUIET).await;
-            near("a burst at 400 a second", burst(&throttle.users), 400, 10);
+            // Exact: on this one thread a burst runs between two ticks, and
+            // the drain never takes the channel below the fillers held.
+            assert_eq!(burst(&throttle.users), 400, "a burst at 400 a second");
             tokio::time::sleep(QUIET).await;
             throttle.rate.store(50, Ordering::Relaxed);
             tokio::time::sleep(QUIET).await;
-            near("a burst at 50 a second", burst(&throttle.users), 50, 10);
+            assert_eq!(burst(&throttle.users), 50, "a burst at 50 a second");
             throttle.stop.send(true).unwrap();
         };
         tokio::time::timeout(time::Duration::from_secs(30), test)
@@ -233,12 +235,7 @@ mod tests {
                 5,
             );
             tokio::time::sleep(QUIET).await;
-            near(
-                "a burst at 1,000 a second",
-                burst(&throttle.users),
-                1_000,
-                5,
-            );
+            assert_eq!(burst(&throttle.users), 1_000, "a burst at 1,000 a second");
             throttle.stop.send(true).unwrap();
         };
         tokio::time::timeout(time::Duration::from_secs(30), test)
@@ -253,10 +250,10 @@ mod tests {
     async fn an_unchanged_rate_is_a_fixed_throttle() {
         let test = async {
             let throttle = start(200);
-            assert!(burst(&throttle.users) <= 3, "the start is all but full");
-            assert!(burst(&throttle.users) <= 3, "no free slots once full");
+            assert_eq!(burst(&throttle.users), 1, "the start is all but full");
+            assert_eq!(burst(&throttle.users), 0, "no free slots once full");
             tokio::time::sleep(QUIET).await;
-            near("a burst at 200 a second", burst(&throttle.users), 200, 5);
+            assert_eq!(burst(&throttle.users), 200, "a burst at 200 a second");
             near(
                 "sent over 2 s at 200 a second",
                 sent_over(&throttle.users, 2.0).await,

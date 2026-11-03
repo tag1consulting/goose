@@ -2989,7 +2989,9 @@ mod built_as_it_goes {
         let (mut built, mut fresh) = (accumulator(), accumulator());
         let mut graph = GraphData::new();
         for delta in &deltas {
-            built.apply(delta.worker, delta.clone()).unwrap();
+            built
+                .apply_live(delta.worker, delta.clone(), &mut graph)
+                .unwrap();
             // Built after every delta, so the late row's second was built.
             graph = built.merged_and_excluded(graph).1;
             fresh.apply(delta.worker, delta.clone()).unwrap();
