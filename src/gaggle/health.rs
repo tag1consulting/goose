@@ -898,3 +898,362 @@ pub(crate) fn process_cpu_micros() -> Option<u64> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `n` successful requests, each taking `ms` milliseconds.
+    fn fold(n: u64, ms: u64) -> Fold {
+        let us = ms * 1_000;
+        Fold {
+            success: n as i64,
+            fail: 0,
+            times: Timing {
+                buckets: if n > 0 {
+                    vec![(buckets::bucket_floor(us), n)]
+                } else {
+                    Vec::new()
+                },
+                minimum_us: us,
+                maximum_us: us,
+                total_us: us * n,
+                count: n,
+            },
+        }
+    }
+
+    /// A model of `workers` workers, each with `cores`, running since `at`.
+    fn running(workers: u32, cores: Option<u32>, at: Instant) -> GaggleHealth {
+        let mut health = GaggleHealth::default();
+        for id in 0..workers {
+            health.join(id, &format!("load-{id}"), cores);
+            health.set_state(id, WorkerState::Ready, at);
+            health.set_users(id, 10, 10);
+        }
+        health.start(at);
+        health
+    }
+
+    fn secs(n: f64) -> Duration {
+        Duration::from_secs_f64(n)
+    }
+
+    fn kinds(health: &GaggleHealth) -> Vec<GaggleEventKind> {
+        health.events().0.map(|event| event.kind).collect()
+    }
+
+    fn record(health: &GaggleHealth, id: u32, now: Instant) -> GaggleWorkerRecord {
+        health
+            .records(now)
+            .into_iter()
+            .find(|record| record.id == id)
+            .unwrap()
+    }
+
+    #[test]
+    fn every_state_transition() {
+        let at = Instant::now();
+        let mut health = GaggleHealth::default();
+        health.join(0, "a", Some(2));
+        assert_eq!(health.worker(0).unwrap().state, WorkerState::Joining);
+        // The run starts only workers that said they are ready.
+        health.join(1, "b", Some(2));
+        health.set_state(0, WorkerState::Ready, at);
+        health.start(at);
+        assert_eq!(health.worker(0).unwrap().state, WorkerState::Running);
+        assert_eq!(health.worker(1).unwrap().state, WorkerState::Joining);
+        for state in [WorkerState::Stopping, WorkerState::Finished] {
+            health.set_state(0, state, at + secs(2.0));
+            assert_eq!(health.worker(0).unwrap().state, state);
+        }
+        health.set_state(1, WorkerState::UsersExited, at);
+        assert_eq!(health.worker(1).unwrap().state, WorkerState::UsersExited);
+        // Lost stays lost, and is said once.
+        assert!(health.lose(1, "connection reset", at));
+        assert!(!health.lose(1, "again", at));
+        health.set_state(1, WorkerState::Running, at);
+        assert_eq!(health.worker(1).unwrap().state, WorkerState::Lost);
+        assert_eq!(kinds(&health), vec![GaggleEventKind::WorkerLost]);
+        assert_eq!(
+            health.events().0.next().unwrap().text,
+            "b lost: connection reset"
+        );
+        // Its running time stops when it stops.
+        assert_eq!(record(&health, 0, at + secs(10.0)).running_secs, Some(2.0));
+    }
+
+    #[test]
+    fn lagging_is_judged_past_three_seconds() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        health.applied(0, Some((fold(10, 5), 1)), None, at + secs(1.0));
+        // Exactly 3 seconds is not lagging; just over is.
+        health.tick(at + secs(4.0));
+        assert!(!health.worker(0).unwrap().live.lagging);
+        health.tick(at + secs(4.01));
+        assert!(health.worker(0).unwrap().live.lagging);
+        // Once, then recovered once.
+        health.tick(at + secs(5.0));
+        health.applied(0, Some((fold(10, 5), 1)), None, at + secs(5.5));
+        health.tick(at + secs(5.6));
+        health.tick(at + secs(6.0));
+        assert_eq!(
+            kinds(&health),
+            vec![GaggleEventKind::WorkerLagging, GaggleEventKind::WorkerRecovered]
+        );
+        assert!(health
+            .events()
+            .0
+            .next()
+            .unwrap()
+            .text
+            .starts_with("load-0 lagging (last delta 3 s ago)"));
+        // The run form: the longest gap, 4.5 seconds, is past 3.
+        let lagged = record(&health, 0, at + secs(6.0));
+        assert!(lagged.flags.contains(&GaggleWorkerFlag::Lagging));
+        assert_eq!(lagged.longest_delta_gap_secs, Some(4.5));
+        // A longest gap of exactly 3 seconds is not lagging for the run.
+        let mut health = running(1, Some(1), at);
+        for second in 1..=4 {
+            health.applied(0, None, None, at + secs(3.0 * second as f64));
+            health.tick(at + secs(3.0 * second as f64));
+        }
+        let steady = record(&health, 0, at + secs(12.0));
+        assert_eq!(steady.longest_delta_gap_secs, Some(3.0));
+        assert!(!steady.flags.contains(&GaggleWorkerFlag::Lagging));
+        // A stopped worker is never lagging.
+        health.set_state(0, WorkerState::Finished, at + secs(12.0));
+        health.tick(at + secs(60.0));
+        assert!(!health.worker(0).unwrap().live.lagging);
+    }
+
+    /// Feed worker 0 of `health` CPU at `percent` of its one core every
+    /// second from `from` to `to` seconds past `at`, from CPU time `micros`;
+    /// the CPU time after.
+    fn burn(health: &mut GaggleHealth, at: Instant, from: u64, to: u64, percent: u64, mut micros: u64) -> u64 {
+        for second in from..=to {
+            health.cpu(0, Some(micros), at + secs(second as f64));
+            health.tick(at + secs(second as f64));
+            micros += percent * 10_000;
+        }
+        micros
+    }
+
+    #[test]
+    fn saturation_is_judged_over_five_seconds() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        // 95% from second 0: saturated from the span starting at 0, so at 5.
+        let micros = burn(&mut health, at, 0, 4, 95, 0);
+        assert!(!health.worker(0).unwrap().live.saturated, "4 s is not 5");
+        let since = health.worker(0).unwrap().above_since.unwrap().0;
+        assert_eq!(since, at);
+        let micros = burn(&mut health, at, 5, 6, 95, micros);
+        assert!(health.worker(0).unwrap().live.saturated);
+        // 90% exactly still counts; just under recovers.
+        let micros = burn(&mut health, at, 7, 8, 90, micros);
+        assert!(health.worker(0).unwrap().live.saturated);
+        let _ = burn(&mut health, at, 9, 10, 89, micros);
+        assert!(!health.worker(0).unwrap().live.saturated);
+        assert_eq!(
+            kinds(&health),
+            vec![GaggleEventKind::WorkerSaturated, GaggleEventKind::WorkerRecovered]
+        );
+        let saturated = health.events().0.next().unwrap().text.clone();
+        assert_eq!(saturated, "load-0 saturated (CPU 95% for 5 s)");
+        let done = record(&health, 0, at + secs(10.0));
+        assert_eq!(done.peak_cpu_percent, Some(95));
+        assert_eq!(done.saturated_secs, Some(9));
+        assert!(done.flags.contains(&GaggleWorkerFlag::Saturated));
+        // For the run: 5 seconds in total at or above, never 5 in a row, is
+        // saturated; 4 is not.
+        for (seconds, flagged) in [(4, false), (5, true)] {
+            let mut health = running(1, Some(1), at);
+            let mut micros = 0;
+            health.cpu(0, Some(micros), at);
+            for second in 1..=seconds * 2 {
+                micros += if second % 2 == 1 { 950_000 } else { 100_000 };
+                health.cpu(0, Some(micros), at + secs(second as f64));
+                health.tick(at + secs(second as f64));
+            }
+            assert!(!health.worker(0).unwrap().live.saturated);
+            let ran = record(&health, 0, at + secs(20.0));
+            assert_eq!(
+                ran.flags.contains(&GaggleWorkerFlag::Saturated),
+                flagged,
+                "{seconds} s: {ran:?}"
+            );
+            assert!(kinds(&health).is_empty());
+        }
+    }
+
+    #[test]
+    fn cpu_is_a_percent_of_the_cores_and_absent_without_them() {
+        let at = Instant::now();
+        let mut health = running(1, Some(4), at);
+        health.cpu(0, Some(0), at);
+        // Two cores of four busy.
+        health.cpu(0, Some(2_000_000), at + secs(1.0));
+        assert_eq!(health.worker(0).unwrap().cpu_percent, Some(50.0));
+        // Samples closer than the span are not taken against each other.
+        health.cpu(0, Some(3_000_000), at + secs(1.1));
+        assert_eq!(health.worker(0).unwrap().cpu_percent, Some(50.0));
+        // Without CPU time, or without cores, nothing is worked out.
+        for cores in [Some(4), None] {
+            let mut health = running(1, cores, at);
+            let cpu = |second: u64| (cores.is_none()).then_some(second * 1_000_000);
+            for second in 0..10 {
+                health.cpu(0, cpu(second), at + secs(second as f64));
+                health.tick(at + secs(second as f64));
+            }
+            let worker = health.worker(0).unwrap();
+            assert_eq!(worker.cpu_percent, None);
+            let ran = record(&health, 0, at + secs(10.0));
+            assert_eq!((ran.peak_cpu_percent, ran.saturated_secs), (None, None));
+        }
+    }
+
+    /// Workers 0 to `n - 1`, each with `rates[id]` requests a second at
+    /// `p95s[id]` milliseconds, for `seconds` seconds.
+    fn outlying(n: u32, rates: &[u64], ms: &[u64], seconds: u64, at: Instant) -> GaggleHealth {
+        let mut health = running(n, Some(1), at);
+        for second in 1..=seconds {
+            let now = at + secs(second as f64);
+            for id in 0..n {
+                let sample = fold(rates[id as usize], ms[id as usize]);
+                health.applied(id, Some((sample, 1)), None, now);
+            }
+            health.tick(now);
+        }
+        health
+    }
+
+    #[test]
+    fn outliers_need_three_workers_and_thirty_seconds() {
+        let at = Instant::now();
+        // Worker 0 makes 35% fewer requests, at a 40% higher p95.
+        let rates = [65, 100, 100, 100];
+        let ms = [140, 100, 100, 100];
+        // Two workers: never judged.
+        let two = outlying(2, &rates, &ms, 40, at);
+        assert!(two.records(at + secs(40.0)).iter().all(|r| r.flags.is_empty()));
+        // Three: not before 30 seconds, then flagged, live and for the run.
+        let early = outlying(3, &rates, &ms, 29, at);
+        assert_eq!(early.worker(0).unwrap().live.rate_outlier, None);
+        assert!(early.records(at + secs(29.0)).iter().all(|r| r.flags.is_empty()));
+        for n in [3, 4] {
+            let late = outlying(n, &rates, &ms, 31, at);
+            let live = &late.worker(0).unwrap().live;
+            assert_eq!((live.rate_outlier, live.p95_outlier), (Some(-35), Some(40)));
+            let worker = record(&late, 0, at + secs(31.0));
+            assert!(worker.flags.contains(&GaggleWorkerFlag::Outlier));
+            assert_eq!(worker.rate_vs_median_percent, Some(-35));
+            assert_eq!(worker.p95_vs_median_percent, Some(40));
+            for id in 1..n {
+                assert!(record(&late, id, at + secs(31.0)).flags.is_empty());
+            }
+        }
+        // 25% from the median is not past it; 26% is.
+        for (rate, flagged) in [(75, false), (74, true)] {
+            let health = outlying(3, &[rate, 100, 100], &[100, 100, 100], 31, at);
+            let worker = record(&health, 0, at + secs(31.0));
+            assert_eq!(worker.flags.contains(&GaggleWorkerFlag::Outlier), flagged, "{rate}");
+        }
+    }
+
+    #[test]
+    fn the_window_holds_ten_seconds_across_gaps_and_coalesced_deltas() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        for second in 1..=8 {
+            health.applied(0, Some((fold(10, 5), 1)), None, at + secs(second as f64));
+        }
+        // A coalesced delta of 3 seconds, after a gap: the window still
+        // holds 10 seconds, the oldest dropped.
+        health.applied(0, Some((fold(90, 50), 3)), None, at + secs(14.0));
+        let window = health.worker(0).unwrap().window_figures();
+        assert_eq!(window.requests, 7 * 10 + 90);
+        assert_eq!(window.requests_per_second, Some(16.0));
+        assert_eq!(window.requests_per_user_per_second, Some(1.6));
+        assert_eq!(window.p95_ms.map(f64::round), Some(50.0));
+        // The run keeps every request.
+        let ran = record(&health, 0, at + secs(14.0));
+        assert_eq!(ran.requests, Some(8 * 10 + 90));
+        // 80 at 5 ms and 90 at 50 ms.
+        assert_eq!(ran.average_ms.map(|ms| (ms * 100.0).round()), Some(2882.0));
+        assert_eq!(ran.p50_ms.map(f64::round), Some(50.0));
+        // Totals read back from the merge replace those held.
+        health.applied(0, None, Some((fold(5, 1), 2)), at + secs(15.0));
+        assert_eq!(record(&health, 0, at + secs(15.0)).requests, Some(5));
+        assert_eq!(health.totals_epoch(0), Some(2));
+    }
+
+    #[test]
+    fn the_event_log_keeps_the_newest_and_counts_the_rest() {
+        let mut health = GaggleHealth::default();
+        let extra = 25;
+        for n in 0..GaggleRecord::MAX_EVENTS + extra {
+            health.set_second(n as u64);
+            health.event(GaggleEventKind::Stop, None, format!("event {n}"));
+        }
+        let (events, dropped) = health.events();
+        let events: Vec<&GaggleEvent> = events.collect();
+        assert_eq!(events.len(), GaggleRecord::MAX_EVENTS);
+        assert_eq!(dropped, extra as u64);
+        assert_eq!(events[0].text, format!("event {extra}"));
+        assert_eq!(events[0].second, extra as u64);
+        assert!(chrono::DateTime::parse_from_rfc3339(&events[0].time).is_ok());
+    }
+
+    #[test]
+    fn refusals_and_exclusions_are_flagged_and_logged_sparingly() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        for n in 0..20 {
+            health.refused(0, format!("delta {n}: too many names"));
+        }
+        health.excluded(vec![(0, "it reported an old epoch".to_string())]);
+        health.excluded(vec![(0, "it reported an old epoch".to_string())]);
+        assert_eq!(
+            kinds(&health),
+            vec![
+                GaggleEventKind::DeltasRefused,
+                GaggleEventKind::DeltasRefused,
+                GaggleEventKind::DeltasRefused,
+                GaggleEventKind::WorkerExcluded
+            ]
+        );
+        let worker = record(&health, 0, at);
+        assert_eq!(
+            worker.flags,
+            vec![GaggleWorkerFlag::Excluded, GaggleWorkerFlag::Refused]
+        );
+        health.excluded(Vec::new());
+        assert_eq!(record(&health, 0, at).flags, vec![GaggleWorkerFlag::Refused]);
+    }
+
+    #[test]
+    fn names_are_capped() {
+        let mut health = GaggleHealth::default();
+        health.join(0, &"x".repeat(100), None);
+        assert_eq!(health.worker(0).unwrap().name.chars().count(), MAX_NAME);
+    }
+
+    #[test]
+    fn this_process_has_cpu_time() {
+        let before = process_cpu_micros();
+        if cfg!(unix) {
+            let before = before.expect("getrusage works");
+            // Burn a little CPU.
+            let mut x = 0u64;
+            for i in 0..5_000_000u64 {
+                x = x.wrapping_add(i ^ (x >> 3));
+            }
+            assert!(x > 0);
+            assert!(process_cpu_micros().unwrap() >= before);
+        } else {
+            assert_eq!(before, None);
+        }
+    }
+}
