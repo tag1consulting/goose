@@ -7,17 +7,16 @@ use super::*;
 use crate::goose::{GooseMethod, TransactionName};
 use std::sync::Arc;
 
-/// Two requests, a transaction and a scenario, with a fixed run record and
+/// A request, a transaction and a scenario, with a fixed run record and
 /// no plan history, so no report holds a time of day.
 fn metrics() -> GooseMetrics {
     let mut metrics = GooseMetrics {
         duration: 60,
         ..Default::default()
     };
-    for (path, times) in [
-        ("/", &[450u64, 520, 560, 590, 590, 640, 700, 820, 950][..]),
-        ("/about", &[380, 610, 680, 730, 1_240][..]),
-    ] {
+    // One request and one user: the requests and a scenario's users are
+    // hash maps and sets, whose order is not fixed.
+    for (path, times) in [("/", &[450u64, 520, 560, 590, 590, 640, 700, 820, 950][..])] {
         let mut aggregate = GooseRequestMetricAggregate::new(path, GooseMethod::Get, 0, "");
         for &us in times {
             aggregate.record_time_us(us, false);
@@ -38,7 +37,7 @@ fn metrics() -> GooseMetrics {
     metrics.transactions = vec![vec![transaction]];
     let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
     scenario.update_us(1_230, 0);
-    scenario.update_us(1_870, 1);
+    scenario.update_us(1_870, 0);
     metrics.scenarios = vec![scenario];
     metrics.display_metrics = true;
     metrics
