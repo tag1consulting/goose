@@ -3338,29 +3338,22 @@ async fn gaggle_worker_health_in_one_process() {
                 ..Default::default()
             },
         ];
-        let run = gaggle(
-            standard,
-            3,
-            server.base_url(),
-            &folder,
-            &[
-                "--users",
-                "6",
-                "--increase-rate",
-                "60",
-                "--run-time",
-                "14",
-                "--throttle-requests",
-                "300",
-                "--telnet-port",
-                &telnet_port,
-                "--report-file",
-                "--report-file",
-                "report.md",
-            ],
-            &[],
-            &faults,
-        );
+        let args = [
+            "--users",
+            "6",
+            "--increase-rate",
+            "60",
+            "--run-time",
+            "14",
+            "--throttle-requests",
+            "300",
+            "--telnet-port",
+            &telnet_port,
+            "--report-file",
+            "--report-file",
+            "report.md",
+        ];
+        let run = gaggle(standard, 3, server.base_url(), &folder, &args, &[], &faults);
         let control = async {
             let mut telnet = Telnet::connect(TELNET).await;
             // The worker that exits a second in is lost first.

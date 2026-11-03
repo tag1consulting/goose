@@ -1236,6 +1236,78 @@ mod tests {
         assert_eq!(record(&health, 0, at).flags, vec![GaggleWorkerFlag::Refused]);
     }
 
+    /// The budget at scale: 1,024 workers, each delta 50 request names of
+    /// 40 response time buckets. The time to take one second of every
+    /// worker's deltas, judge the flags, build the records and render the
+    /// HTML Workers section, and the live window's memory a worker, are
+    /// printed for the record and held to generous bounds.
+    #[test]
+    fn budget_at_1024_workers() {
+        use super::super::delta::{DeltaKind, RequestPart};
+        use crate::goose::GooseMethod;
+        const WORKERS: u32 = 1_024;
+        const NAMES: usize = 50;
+        let at = Instant::now();
+        let mut health = running(WORKERS, Some(4), at);
+        let mut delta = GaggleDelta::new(0, 1, 1, DeltaKind::Delta);
+        for name in 0..NAMES {
+            let mut part = RequestPart::new(&format!("/page/{name}"), GooseMethod::Get, "");
+            for bucket in 0..40u64 {
+                let us = buckets::bucket_floor(1_000 + bucket * 997 + name as u64 * 13);
+                part.raw.buckets.push((us, 3));
+                part.raw.count += 3;
+                part.raw.total_us += us * 3;
+            }
+            part.raw.buckets.sort_unstable();
+            part.raw.buckets.dedup_by_key(|bucket| bucket.0);
+            part.raw.minimum_us = part.raw.buckets[0].0;
+            part.raw.maximum_us = part.raw.buckets.last().unwrap().0;
+            part.success = 120;
+            delta.metrics.requests.insert(format!("GET /page/{name}"), part);
+        }
+        let mut second = Duration::ZERO;
+        for tick in 1..=12u64 {
+            let now = at + secs(tick as f64);
+            let started = Instant::now();
+            for id in 0..WORKERS {
+                health.cpu(id, Some(tick * 1_000_000), now);
+                health.applied(id, sample_of(&delta), None, now);
+            }
+            health.tick(now);
+            second = started.elapsed();
+        }
+        let started = Instant::now();
+        let record = GaggleRecord {
+            workers: health.records(at + secs(12.0)),
+            ..GaggleRecord::default()
+        };
+        let records = started.elapsed();
+        let started = Instant::now();
+        let html = crate::report::workers::html(Some(&record), crate::report::escape_html);
+        let rendered = started.elapsed();
+        let worker = health.worker(0).unwrap();
+        let window: usize = worker
+            .window
+            .iter()
+            .map(|sample| {
+                std::mem::size_of::<Sample>()
+                    + sample.fold.times.buckets.capacity() * std::mem::size_of::<(u64, u64)>()
+            })
+            .sum();
+        let totals = worker.totals.times.buckets.capacity() * std::mem::size_of::<(u64, u64)>();
+        println!(
+            "budget: 1,024 workers x 50 names: one second of deltas and the tick {second:?}, records {records:?}, HTML Workers section {rendered:?} ({} bytes); live window {window} bytes a worker ({} samples), run totals {totals} bytes a worker",
+            html.len(),
+            worker.window.len()
+        );
+        assert_eq!(worker.window.len(), WINDOW_SECS as usize);
+        assert_eq!(record.workers.len(), WORKERS as usize);
+        // Generous bounds for an unoptimized test build on a busy machine.
+        assert!(second < Duration::from_secs(5), "{:?}", second);
+        assert!(rendered < Duration::from_secs(5), "{:?}", rendered);
+        assert!(window < 512 * 1024, "{}", window);
+    }
+
     #[test]
     fn names_are_capped() {
         let mut health = GaggleHealth::default();
