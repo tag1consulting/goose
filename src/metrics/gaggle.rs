@@ -41,10 +41,14 @@ impl ManagerMerge {
             .then(|| self.accumulator.requests_of(worker))
             .flatten()
             .map(|(requests, epoch)| (crate::gaggle::health::Fold::of(requests.values()), epoch));
+        // One lock for the delta and what the merge now holds of the worker.
         if let Ok(mut health) = self.health.lock() {
             health.applied(worker, sample, totals, std::time::Instant::now());
+            let entry = health.merge_mut(worker);
+            entry.last_seq = self.accumulator.last_seq(worker).unwrap_or(0);
+            entry.missing = self.accumulator.missing(worker);
+            entry.final_merged = self.accumulator.got_final(worker);
         }
-        self.note(worker);
     }
 
     /// Record a delta refused from `worker`.

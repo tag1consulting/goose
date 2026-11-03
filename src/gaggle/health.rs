@@ -71,6 +71,10 @@ const MAX_NAME: usize = 64;
 /// arrive together, and their CPU over a few milliseconds says nothing.
 const MIN_CPU_SPAN: Duration = Duration::from_millis(900);
 
+/// The longest event text kept, in characters: a sentence with a worker's
+/// reason in it, which the worker could make as long as it likes.
+const MAX_EVENT_TEXT: usize = 500;
+
 /// The model behind one lock: the manager's metrics processor writes what
 /// it merges, the manager's run the rest.
 pub(crate) type MergeHealth = Arc<Mutex<GaggleHealth>>;
@@ -570,6 +574,8 @@ impl GaggleHealth {
     pub(crate) fn cpu(&mut self, id: u32, cpu_micros: Option<u64>, now: Instant) {
         let worker = self.entry(id);
         let (Some(micros), Some(cores)) = (cpu_micros, worker.cores) else {
+            // No CPU time from it now: nothing says it is still saturated.
+            worker.above_since = None;
             return;
         };
         let Some((at, before)) = worker.cpu_sample else {
@@ -715,6 +721,14 @@ impl GaggleHealth {
     /// Log an event of `kind`, about `worker` when it is about one, saying
     /// `text`, stamped with the run's series second and the time now.
     pub(crate) fn event(&mut self, kind: GaggleEventKind, worker: Option<&str>, text: String) {
+        // A worker's words reach the text, through the reasons it gives:
+        // no control character, so none reaches a terminal or a report, and
+        // at most MAX_EVENT_TEXT characters.
+        let text: String = text
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(MAX_EVENT_TEXT)
+            .collect();
         if self.events.len() >= GaggleRecord::MAX_EVENTS {
             self.events.pop_front();
             self.events_dropped += 1;
@@ -1485,6 +1499,22 @@ mod tests {
         assert!(second < Duration::from_secs(5), "{:?}", second);
         assert!(rendered < Duration::from_secs(5), "{:?}", rendered);
         assert!(window < 512 * 1024, "{}", window);
+    }
+
+    /// A worker's words in an event carry no control character, and are
+    /// cut short.
+    #[test]
+    fn event_text_is_plain_and_bounded() {
+        let mut health = GaggleHealth::default();
+        health.event(
+            GaggleEventKind::WorkerLost,
+            None,
+            format!("w lost: \u{1b}[31mred\r\n{}", "x".repeat(1_000)),
+        );
+        let text = &health.events().0.next().unwrap().text;
+        assert!(text.starts_with("w lost:  [31mred  x"), "{}", text);
+        assert!(!text.chars().any(char::is_control));
+        assert_eq!(text.chars().count(), MAX_EVENT_TEXT);
     }
 
     #[test]

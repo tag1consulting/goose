@@ -592,7 +592,9 @@ impl GooseAttack {
         }
         if let Some(host) = settings.host {
             let text = match host {
-                Some(host) => format!("host set to {host}"),
+                // Any user name or password in it stays out of the events and
+                // reports.
+                Some(host) => format!("host set to {}", without_userinfo(&host)),
                 None => "host cleared".to_string(),
             };
             events.push((GaggleEventKind::HostChanged, text));
@@ -1115,6 +1117,18 @@ impl GooseAttack {
     }
 }
 
+/// `host` without any user name or password in it.
+fn without_userinfo(host: &str) -> String {
+    match url::Url::parse(host) {
+        Ok(mut url) if !url.username().is_empty() || url.password().is_some() => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.to_string()
+        }
+        _ => host.to_string(),
+    }
+}
+
 /// How a change's acknowledgements read in its event: `acknowledged by 48
 /// of 48 in 0.4 s`, and how many workers were lost before they received it.
 pub(crate) fn acks_text(acknowledged: usize, workers: usize, secs: f64, lost: usize) -> String {
@@ -1415,6 +1429,17 @@ mod tests {
             assert_eq!(users.len(), users_started(plan));
         }
         assert_eq!(book.next_ordinal(), 3 + total);
+    }
+
+    /// A host's user name and password never reach an event.
+    #[test]
+    fn host_events_leave_userinfo_out() {
+        assert_eq!(
+            without_userinfo("https://user:secret@example.com/path"),
+            "https://example.com/path"
+        );
+        assert_eq!(without_userinfo("http://example.com"), "http://example.com");
+        assert_eq!(without_userinfo("not a url"), "not a url");
     }
 
     #[test]

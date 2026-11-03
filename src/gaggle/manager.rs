@@ -2150,7 +2150,14 @@ pub(crate) mod handshake_tests {
                 "the finished worker was not waited for"
             );
             // Its stream stays open until it closes its side.
-            while message_kind(&finished.message().await.unwrap().unwrap()) != "Shutdown" {}
+            while message_kind(
+                &finished
+                    .message()
+                    .await
+                    .unwrap()
+                    .expect("the finished worker's stream ended before Shutdown"),
+            ) != "Shutdown"
+            {}
             assert!(
                 tokio::time::timeout(Duration::from_millis(500), finished.message())
                     .await
