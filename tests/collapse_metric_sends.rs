@@ -44,7 +44,7 @@ async fn single_request_per_scenario_metrics_correct() {
         None,
     );
 
-    let metrics = common::run_load_test(goose, None).await;
+    let metrics = common::run_load_test(goose).await;
 
     // The mock endpoint should have been hit.
     assert!(mock.calls() > 0, "mock endpoint should be called");
@@ -105,7 +105,7 @@ async fn multi_transaction_scenario_metrics_correct() {
         None,
     );
 
-    let metrics = common::run_load_test(goose, None).await;
+    let metrics = common::run_load_test(goose).await;
 
     // Two request keys: GET / and GET /other.
     assert_eq!(metrics.requests.len(), 2, "expected two request keys");
@@ -165,7 +165,7 @@ async fn set_success_with_buffered_metrics() {
         None,
     );
 
-    let metrics = common::run_load_test(goose, None).await;
+    let metrics = common::run_load_test(goose).await;
 
     // With set_success, the request should be counted as a success.
     let req = metrics.requests.values().next().unwrap();
@@ -203,7 +203,7 @@ async fn no_transaction_metrics_flag() {
         None,
     );
 
-    let metrics = common::run_load_test(goose, None).await;
+    let metrics = common::run_load_test(goose).await;
 
     // Request metrics should still be recorded.
     assert!(!metrics.requests.is_empty());

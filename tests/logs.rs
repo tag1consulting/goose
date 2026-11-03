@@ -1,5 +1,4 @@
 use httpmock::{Method::GET, Mock, MockServer};
-use serial_test::serial;
 use std::fmt;
 
 mod common;
@@ -13,9 +12,6 @@ const ERROR_PATH: &str = "/error";
 // Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const ERROR_KEY: usize = 1;
-
-// Load test configuration.
-const EXPECT_WORKERS: usize = 2;
 
 // There are multiple test variations in this file.
 enum TestType {
@@ -304,10 +300,12 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
     let configuration = common::build_configuration(&server, configuration_flags);
 
     // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration, vec![get_transactions()], None, None),
+    let goose_metrics = common::run_load_test(common::build_load_test(
+        configuration,
+        vec![get_transactions()],
         None,
-    )
+        None,
+    ))
     .await;
 
     let log_files = LogFiles {
@@ -329,162 +327,6 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
     ]);
 }
 
-// Helper to run all gaggle tests.
-async fn run_gaggle_test(test_type: TestType, format: &str) {
-    let requests_file = test_type.to_string() + "-gaggle-request-log." + format;
-    let transactions_file = test_type.to_string() + "-gaggle-transaction-log." + format;
-    let scenarios_file = test_type.to_string() + "-gaggle-scenario-log." + format;
-    let error_file = test_type.to_string() + "-gaggle-error-log." + format;
-    let debug_file = test_type.to_string() + "-gaggle-debug-log." + format;
-
-    let server = MockServer::start();
-
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Launch each worker in its own thread, storing the join handles.
-    let mut worker_handles = Vec::new();
-    let mut requests_files = Vec::new();
-    let mut transactions_files = Vec::new();
-    let mut scenarios_files = Vec::new();
-    let mut error_files = Vec::new();
-    let mut debug_files = Vec::new();
-    for i in 0..EXPECT_WORKERS {
-        // Name files different per-Worker thread.
-        let worker_requests_file = requests_file.clone() + &i.to_string();
-        let worker_transactions_file = transactions_file.clone() + &i.to_string();
-        let worker_scenarios_file = scenarios_file.clone() + &i.to_string();
-        let worker_error_file = error_file.clone() + &i.to_string();
-        let worker_debug_file = debug_file.clone() + &i.to_string();
-        // Store filenames to cleanup at end of test.
-        requests_files.push(worker_requests_file.clone());
-        transactions_files.push(worker_transactions_file.clone());
-        scenarios_files.push(worker_scenarios_file.clone());
-        error_files.push(worker_error_file.clone());
-        debug_files.push(worker_debug_file.clone());
-        // Build appropriate configuration.
-        let worker_configuration_flags = match test_type {
-            TestType::Debug => vec![
-                "--worker",
-                "--debug-log",
-                &worker_debug_file,
-                "--debug-format",
-                format,
-            ],
-            TestType::Error => vec![
-                "--worker",
-                "--error-log",
-                &worker_error_file,
-                "--error-format",
-                format,
-            ],
-            TestType::Requests => vec![
-                "--worker",
-                "--request-log",
-                &worker_requests_file,
-                "--request-format",
-                format,
-            ],
-            TestType::Transactions => vec![
-                "--worker",
-                "--transaction-log",
-                &worker_transactions_file,
-                "--transaction-format",
-                format,
-            ],
-            TestType::Scenarios => vec![
-                "--worker",
-                "--scenario-log",
-                &worker_scenarios_file,
-                "--scenario-format",
-                format,
-            ],
-            TestType::All => vec![
-                "--worker",
-                "--request-log",
-                &worker_requests_file,
-                "--request-format",
-                format,
-                "--transaction-log",
-                &worker_transactions_file,
-                "--transaction-format",
-                format,
-                "--scenario-log",
-                &worker_scenarios_file,
-                "--scenario-format",
-                format,
-                "--error-log",
-                &worker_error_file,
-                "--error-format",
-                format,
-                "--debug-log",
-                &worker_debug_file,
-                "--debug-format",
-                format,
-            ],
-        };
-        let worker_configuration = common::build_configuration(&server, worker_configuration_flags);
-        let worker_goose_attack = common::build_load_test(
-            worker_configuration.clone(),
-            vec![get_transactions()],
-            None,
-            None,
-        );
-        // Start worker instance of the load test.
-        worker_handles.push(tokio::spawn(common::run_load_test(
-            worker_goose_attack,
-            None,
-        )));
-    }
-
-    let manager_configuration = common::build_configuration(
-        &server,
-        vec![
-            "--manager",
-            "--expect-workers",
-            &EXPECT_WORKERS.to_string(),
-            "--users",
-            "4",
-            "--increase-rate",
-            "4",
-            "--run-time",
-            "2",
-        ],
-    );
-
-    // Build the load test for the Manager.
-    let manager_goose_attack =
-        common::build_load_test(manager_configuration, vec![get_transactions()], None, None);
-
-    // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
-
-    let log_files = LogFiles {
-        request_logs: &requests_files,
-        transaction_logs: &transactions_files,
-        scenario_logs: &scenarios_files,
-        error_logs: &error_files,
-        debug_logs: &debug_files,
-    };
-
-    validate_test(goose_metrics, &mock_endpoints, &test_type, &log_files);
-
-    for file in requests_files {
-        common::cleanup_files(vec![&file]);
-    }
-    for file in transactions_files {
-        common::cleanup_files(vec![&file]);
-    }
-    for file in scenarios_files {
-        common::cleanup_files(vec![&file]);
-    }
-    for file in error_files {
-        common::cleanup_files(vec![&file]);
-    }
-    for file in debug_files {
-        common::cleanup_files(vec![&file]);
-    }
-}
-
 /* Request logs */
 
 #[tokio::test]
@@ -493,26 +335,10 @@ async fn test_requests_logs_json() {
     run_standalone_test(TestType::Requests, "json").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable json-formatted requests log, in Gaggle mode.
-async fn test_requests_logs_json_gaggle() {
-    run_gaggle_test(TestType::Requests, "json").await;
-}
-
 #[tokio::test]
 // Enable csv-formatted requests log.
 async fn test_requests_logs_csv() {
     run_standalone_test(TestType::Requests, "csv").await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable csv-formatted requests log, in Gaggle mode.
-async fn test_requests_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Requests, "csv").await;
 }
 
 #[tokio::test]
@@ -521,26 +347,10 @@ async fn test_requests_logs_raw() {
     run_standalone_test(TestType::Requests, "raw").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable raw-formatted requests log, in Gaggle mode.
-async fn test_requests_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Requests, "raw").await;
-}
-
 #[tokio::test]
 // Enable pretty-formatted requests log.
 async fn test_requests_logs_pretty() {
     run_standalone_test(TestType::Requests, "pretty").await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable pretty-formatted requests log, in Gaggle mode.
-async fn test_requests_logs_pretty_gaggle() {
-    run_gaggle_test(TestType::Requests, "pretty").await;
 }
 
 /* Transaction logs */
@@ -551,40 +361,16 @@ async fn test_transactions_logs_json() {
     run_standalone_test(TestType::Transactions, "json").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable json-formatted transaction log, in Gaggle mode.
-async fn test_transactions_logs_json_gaggle() {
-    run_gaggle_test(TestType::Transactions, "json").await;
-}
-
 #[tokio::test]
 // Enable csv-formatted transaction log.
 async fn test_transactions_logs_csv() {
     run_standalone_test(TestType::Transactions, "csv").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable csv-formatted transaction log, in Gaggle mode.
-async fn test_transactions_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Transactions, "csv").await;
-}
-
 #[tokio::test]
 // Enable raw-formatted transaction log.
 async fn test_transactions_logs_raw() {
     run_standalone_test(TestType::Transactions, "raw").await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable raw-formatted transaction log, in Gaggle mode.
-async fn test_transactions_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Transactions, "raw").await;
 }
 
 /* Scenario logs */
@@ -595,40 +381,16 @@ async fn test_scenarios_logs_json() {
     run_standalone_test(TestType::Scenarios, "json").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable json-formatted scenario log, in Gaggle mode.
-async fn test_scenarios_logs_json_gaggle() {
-    run_gaggle_test(TestType::Scenarios, "json").await;
-}
-
 #[tokio::test]
 // Enable csv-formatted scenario log.
 async fn test_scenarios_logs_csv() {
     run_standalone_test(TestType::Scenarios, "csv").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable csv-formatted scenario log, in Gaggle mode.
-async fn test_scenarios_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Scenarios, "csv").await;
-}
-
 #[tokio::test]
 // Enable raw-formatted scenario log.
 async fn test_scenarios_logs_raw() {
     run_standalone_test(TestType::Scenarios, "raw").await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable raw-formatted scenario log, in Gaggle mode.
-async fn test_scenarios_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Scenarios, "raw").await;
 }
 
 /* Error logs */
@@ -639,40 +401,16 @@ async fn test_error_logs_raw() {
     run_standalone_test(TestType::Error, "raw").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable raw-formatted error log, in Gaggle mode.
-async fn test_error_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Error, "raw").await;
-}
-
 #[tokio::test]
 // Enable json-formatted error log.
 async fn test_error_logs_json() {
     run_standalone_test(TestType::Error, "json").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable json-formatted error log, in Gaggle mode.
-async fn test_error_logs_json_gaggle() {
-    run_gaggle_test(TestType::Error, "json").await;
-}
-
 #[tokio::test]
 // Enable csv-formatted error log.
 async fn test_error_logs_csv() {
     run_standalone_test(TestType::Error, "csv").await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable csv-formatted error log, in Gaggle mode.
-async fn test_error_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Error, "csv").await;
 }
 
 /* Debug logs */
@@ -683,40 +421,16 @@ async fn test_debug_logs_raw() {
     run_standalone_test(TestType::Debug, "raw").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable raw-formatted debug log, in Gaggle mode.
-async fn test_debug_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Debug, "raw").await;
-}
-
 #[tokio::test]
 // Enable json-formatted debug log.
 async fn test_debug_logs_json() {
     run_standalone_test(TestType::Debug, "json").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable json-formatted debug log, in Gaggle mode.
-async fn test_debug_logs_json_gaggle() {
-    run_gaggle_test(TestType::Debug, "json").await;
-}
-
 #[tokio::test]
 // Enable csv-formatted debug log.
 async fn test_debug_logs_csv() {
     run_standalone_test(TestType::Debug, "csv").await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable csv-formatted debug log, in Gaggle mode.
-async fn test_debug_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Debug, "csv").await;
 }
 
 /* All logs */
@@ -727,26 +441,10 @@ async fn test_all_logs_raw() {
     run_standalone_test(TestType::All, "raw").await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable raw-formatted logs, in Gaggle mode.
-async fn test_all_logs_raw_gaggle() {
-    run_gaggle_test(TestType::All, "raw").await;
-}
-
 #[tokio::test]
 // Enable pretty-formatted logs.
 async fn test_all_logs_pretty() {
     run_standalone_test(TestType::All, "pretty").await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable pretty-formatted logs, in Gaggle mode.
-async fn test_all_logs_pretty_gaggle() {
-    run_gaggle_test(TestType::All, "pretty").await;
 }
 
 #[test]

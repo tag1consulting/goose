@@ -110,15 +110,12 @@ async fn run_header_test(test_type: TestType) {
     ]);
     let configuration = common::build_configuration(&server, configuration_flags);
 
-    common::run_load_test(
-        common::build_load_test(
-            configuration,
-            vec![scenario!("LoadTest").register_transaction(transaction!(get_error_with_headers))],
-            None,
-            None,
-        ),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario!("LoadTest").register_transaction(transaction!(get_error_with_headers))],
         None,
-    )
+        None,
+    ))
     .await;
 
     assert!(mock_endpoint.calls() > 0);

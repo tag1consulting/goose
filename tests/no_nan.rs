@@ -44,10 +44,12 @@ async fn test_no_iteration_no_request_no_nan() {
         .register_transaction(transaction!(start))
         .register_transaction(transaction!(get_index));
     let other = scenario!("Other").register_transaction(transaction!(get_index));
-    let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration, vec![waiting, other], None, None),
+    let goose_metrics = common::run_load_test(common::build_load_test(
+        configuration,
+        vec![waiting, other],
         None,
-    )
+        None,
+    ))
     .await;
 
     assert_eq!(index.calls(), 0);

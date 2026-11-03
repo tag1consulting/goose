@@ -22,6 +22,8 @@ mod nullable;
 
 #[cfg(test)]
 mod microsecond_tests;
+#[cfg(test)]
+mod golden_tests;
 
 pub use buckets::TimeBuckets;
 #[cfg(feature = "dashboard")]

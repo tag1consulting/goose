@@ -11,9 +11,6 @@ use goose::prelude::*;
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
-// Load test configuration.
-const EXPECT_WORKERS: usize = 2;
-
 // Test transaction.
 pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -73,42 +70,18 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
 }
 
 // Build load test configuration.
-fn common_build_configuration(
-    server: &MockServer,
-    users: usize,
-    worker: Option<bool>,
-    manager: Option<usize>,
-) -> GooseConfiguration {
-    if let Some(expect_workers) = manager {
-        common::build_configuration(
-            server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &expect_workers.to_string(),
-                "--no-reset-metrics",
-                "--no-transaction-metrics",
-                "--users",
-                &users.to_string(),
-                "--increase-rate",
-                &(users * 2).to_string(),
-            ],
-        )
-    } else if worker.is_some() {
-        common::build_configuration(server, vec!["--worker"])
-    } else {
-        common::build_configuration(
-            server,
-            vec![
-                "--no-reset-metrics",
-                "--no-transaction-metrics",
-                "--users",
-                &users.to_string(),
-                "--increase-rate",
-                &(users * 2).to_string(),
-            ],
-        )
-    }
+fn common_build_configuration(server: &MockServer, users: usize) -> GooseConfiguration {
+    common::build_configuration(
+        server,
+        vec![
+            "--no-reset-metrics",
+            "--no-transaction-metrics",
+            "--users",
+            &users.to_string(),
+            "--increase-rate",
+            &(users * 2).to_string(),
+        ],
+    )
 }
 
 // Dynamically build scenario.
@@ -212,9 +185,8 @@ fn validate_closer_test(
     assert!(goose_metrics.total_users == configuration.users.unwrap());
 }
 
-// Helper to run the test, takes a flag for indicating if running in standalone
-// mode or Gaggle mode.
-async fn run_load_test(is_gaggle: bool) {
+// Helper to run the test.
+async fn run_load_test() {
     // Start mock server.
     let server = MockServer::start();
 
@@ -224,59 +196,17 @@ async fn run_load_test(is_gaggle: bool) {
     // Get configuration for building the load test itself.
     let test_endpoints = configure_mock_endpoints();
 
-    let (configuration, goose_metrics) = match is_gaggle {
-        false => {
-            // Build configuration.
-            let configuration =
-                common_build_configuration(&server, test_endpoints.len(), None, None);
+    // Build configuration.
+    let configuration = common_build_configuration(&server, test_endpoints.len());
 
-            // Run the Goose Attack.
-            let goose_metrics = common::run_load_test(
-                common::build_load_test(configuration.clone(), vec![build_scenario()], None, None),
-                None,
-            )
-            .await;
-
-            (configuration, goose_metrics)
-        }
-        true => {
-            // Each worker has the same identical configuration.
-            let worker_configuration =
-                common_build_configuration(&server, test_endpoints.len(), Some(true), None);
-
-            // Workers launched in own threads, store thread handles.
-            let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-                common::build_load_test(
-                    worker_configuration.clone(),
-                    vec![build_scenario()],
-                    None,
-                    None,
-                )
-            });
-
-            // Build Manager configuration.
-            let manager_configuration = common_build_configuration(
-                &server,
-                test_endpoints.len(),
-                None,
-                Some(EXPECT_WORKERS),
-            );
-
-            // Run the Goose Attack.
-            let goose_metrics = common::run_load_test(
-                common::build_load_test(
-                    manager_configuration.clone(),
-                    vec![build_scenario()],
-                    None,
-                    None,
-                ),
-                Some(worker_handles),
-            )
-            .await;
-
-            (manager_configuration, goose_metrics)
-        }
-    };
+    // Run the Goose Attack.
+    let goose_metrics = common::run_load_test(common::build_load_test(
+        configuration.clone(),
+        vec![build_scenario()],
+        None,
+        None,
+    ))
+    .await;
 
     // Confirm the load test ran correctly.
     validate_closer_test(&mock_endpoints, &goose_metrics, &configuration);
@@ -286,16 +216,5 @@ async fn run_load_test(is_gaggle: bool) {
 // Load test with a single scenario containing two weighted transactions setup via closure.
 // Validate weighting and statistics.
 async fn test_single_scenario_closure() {
-    // Run load test with is_gaggle set to false.
-    run_load_test(false).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-// Spawn a gaggle of 1 manager and 2 workers each simulating one user. Run a load test,
-// with a single scenario containing two weighted transactions setup via closure. Validate
-// that weighting and metrics are correctly merged to the Manager.
-async fn test_single_scenario_closure_gaggle() {
-    // Run load test with is_gaggle set to true.
-    run_load_test(true).await;
+    run_load_test().await;
 }

@@ -20,9 +20,6 @@ const INDEX_PATH: &str = "/";
 // Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 
-// Load test configuration.
-const EXPECT_WORKERS: usize = 2;
-
 // There are multiple test variations in this file.
 enum TestType {
     // Cancel a load test that would otherwise run forever.
@@ -146,14 +143,9 @@ fn validate_one_scenario(
     mock_endpoints: &[Mock],
     configuration: &GooseConfiguration,
     test_type: TestType,
-    is_gaggle: bool,
 ) {
     // The throttle limits how many hits are registered.
-    if is_gaggle {
-        assert!(mock_endpoints[INDEX_KEY].calls() <= 40);
-    } else {
-        assert!(mock_endpoints[INDEX_KEY].calls() <= 20);
-    }
+    assert!(mock_endpoints[INDEX_KEY].calls() <= 20);
     assert!(mock_endpoints[INDEX_KEY].calls() > 10);
 
     // Get index and about out of goose metrics.
@@ -170,24 +162,18 @@ fn validate_one_scenario(
     assert!(index_metrics.fail_count == 0);
 
     // The load test should run for 3 seconds before being canceled.
-    if !is_gaggle {
-        assert!(goose_metrics.duration == 3);
-    }
+    assert!(goose_metrics.duration == 3);
 
     match test_type {
         TestType::RunTime => {
             assert!(goose_metrics.total_users == configuration.users.unwrap());
-            if !is_gaggle {
-                assert!(goose_metrics.history.len() == 4);
-            }
+            assert!(goose_metrics.history.len() == 4);
             assert!(goose_metrics.maximum_users == 10);
             assert!(goose_metrics.total_users == 10);
         }
         TestType::NoRunTime => {
             assert!(goose_metrics.total_users == configuration.users.unwrap());
-            if !is_gaggle {
-                assert!(goose_metrics.history.len() == 4);
-            }
+            assert!(goose_metrics.history.len() == 4);
             assert!(goose_metrics.maximum_users == 10);
             assert!(goose_metrics.total_users == 10);
         }
@@ -207,9 +193,7 @@ fn validate_one_scenario(
             assert!(goose_metrics.total_users == 10);
         }
         TestType::Iterations => {
-            if !is_gaggle {
-                assert!(goose_metrics.history.len() == 4);
-            }
+            assert!(goose_metrics.history.len() == 4);
             assert!(goose_metrics.maximum_users == 10);
             assert!(goose_metrics.total_users == 10);
         }
@@ -243,114 +227,16 @@ async fn run_standalone_test(test_type: TestType) {
     let _ignored_joinhandle = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
 
     // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration.clone(), vec![get_transactions()], None, None),
-        None,
-    )
-    .await;
-
-    // Confirm that the load test ran correctly.
-    validate_one_scenario(
-        &goose_metrics,
-        &mock_endpoints,
-        &configuration,
-        test_type,
-        false,
-    );
-}
-
-// Helper to run all standalone tests.
-async fn run_gaggle_test(test_type: TestType) {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Each worker has the same identical configuration.
-    let worker_configuration =
-        common::build_configuration(&server, vec!["--worker", "--throttle-requests", "5"]);
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-        common::build_load_test(
-            worker_configuration.clone(),
-            vec![get_transactions()],
-            None,
-            None,
-        )
-    });
-
-    // Build common configuration elements, adding Manager Gaggle flags.
-    let manager_configuration = match test_type {
-        TestType::RunTime => common::build_configuration(
-            &server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &EXPECT_WORKERS.to_string(),
-                "--no-reset-metrics",
-                "--users",
-                "10",
-                "--increase-rate",
-                "5",
-                "--run-time",
-                "10",
-            ],
-        ),
-        TestType::NoRunTime => common::build_configuration(
-            &server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &EXPECT_WORKERS.to_string(),
-                "--no-reset-metrics",
-                "--users",
-                "10",
-                "--increase-rate",
-                "5",
-            ],
-        ),
-        TestType::Iterations => common::build_configuration(
-            &server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &EXPECT_WORKERS.to_string(),
-                "--users",
-                "10",
-                "--increase-rate",
-                "5",
-            ],
-        ),
-        TestType::TestPlanIncrease | TestType::TestPlanDecrease | TestType::TestPlanMaintain => {
-            panic!("test plan configuration not supported in gaggle mode")
-        }
-    };
-
-    // Build the load test for the Manager.
-    let manager_goose_attack = common::build_load_test(
-        manager_configuration.clone(),
+    let goose_metrics = common::run_load_test(common::build_load_test(
+        configuration.clone(),
         vec![get_transactions()],
         None,
         None,
-    );
-
-    // Start a thread that will send a SIGINT to the running load test.
-    // Don't await tokio::spawn, instead run in parallel and continue to start Goose Attakc.
-    let _ignored_joinhandle = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
-
-    // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
+    ))
+    .await;
 
     // Confirm that the load test ran correctly.
-    validate_one_scenario(
-        &goose_metrics,
-        &mock_endpoints,
-        &manager_configuration,
-        test_type,
-        true,
-    );
+    validate_one_scenario(&goose_metrics, &mock_endpoints, &configuration, test_type);
 }
 
 /* With --run-time */
@@ -362,14 +248,6 @@ async fn test_cancel_runtime() {
     run_standalone_test(TestType::RunTime).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Cancel a scenario with --run-time configured before it times out, in Gaggle mode.
-async fn test_cancel_runtime_gaggle() {
-    run_gaggle_test(TestType::RunTime).await;
-}
-
 /* Without --run-time */
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -379,14 +257,6 @@ async fn test_cancel_noruntime() {
     run_standalone_test(TestType::NoRunTime).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Cancel a scenario without --run-time configured, in Gaggle mode.
-async fn test_cancel_noruntime_gaggle() {
-    run_gaggle_test(TestType::NoRunTime).await;
-}
-
 /* With --iterations */
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -394,14 +264,6 @@ async fn test_cancel_noruntime_gaggle() {
 // Cancel a scenario with --iterations configured.
 async fn test_cancel_iterations() {
     run_standalone_test(TestType::Iterations).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Cancel a scenario with --iterations configured, in Gaggle mode.
-async fn test_cancel_iterations_gaggle() {
-    run_gaggle_test(TestType::Iterations).await;
 }
 
 /* With --test--plan */

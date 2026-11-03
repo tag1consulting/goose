@@ -2,7 +2,6 @@ use httpmock::{
     Method::{DELETE, GET, HEAD, PATCH, POST, PUT},
     Mock, MockServer,
 };
-use serial_test::serial;
 
 mod common;
 
@@ -26,7 +25,6 @@ const PUT_KEY: usize = 4;
 const DELETE_KEY: usize = 5;
 
 // Load test configuration.
-const EXPECT_WORKERS: usize = 2;
 const USERS: usize = 5;
 const RUN_TIME: usize = 2;
 
@@ -177,43 +175,19 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
 }
 
 // Build appropriate configuration for these tests.
-fn common_build_configuration(
-    server: &MockServer,
-    worker: Option<bool>,
-    manager: Option<usize>,
-) -> GooseConfiguration {
-    if let Some(expect_workers) = manager {
-        common::build_configuration(
-            server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &expect_workers.to_string(),
-                "--users",
-                &USERS.to_string(),
-                "--increase-rate",
-                &USERS.to_string(),
-                "--run-time",
-                &RUN_TIME.to_string(),
-                "--no-reset-metrics",
-            ],
-        )
-    } else if worker.is_some() {
-        common::build_configuration(server, vec!["--worker"])
-    } else {
-        common::build_configuration(
-            server,
-            vec![
-                "--users",
-                &USERS.to_string(),
-                "--increase-rate",
-                &USERS.to_string(),
-                "--run-time",
-                &RUN_TIME.to_string(),
-                "--no-reset-metrics",
-            ],
-        )
-    }
+fn common_build_configuration(server: &MockServer) -> GooseConfiguration {
+    common::build_configuration(
+        server,
+        vec![
+            "--users",
+            &USERS.to_string(),
+            "--increase-rate",
+            &USERS.to_string(),
+            "--run-time",
+            &RUN_TIME.to_string(),
+            "--no-reset-metrics",
+        ],
+    )
 }
 
 // Helper to confirm all variations generate appropriate results.
@@ -313,64 +287,25 @@ fn get_transactions(is_builder: bool) -> Scenario {
     }
 }
 
-// Helper to run the test, takes a flag for indicating if running in standalone
-// mode or Gaggle mode.
-async fn run_load_test(is_builder: bool, is_gaggle: bool) {
+// Helper to run the test.
+async fn run_load_test(is_builder: bool) {
     // Start the mock server.
     let server = MockServer::start();
 
     // Setup the mock endpoints needed for this test.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    // Configure and run test differently in standalone versus Gaggle mode.
-    let metrics = match is_gaggle {
-        false => {
-            // Build common configuration.
-            let configuration = common_build_configuration(&server, None, None);
+    // Build common configuration.
+    let configuration = common_build_configuration(&server);
 
-            // Run the Goose Attack.
-            common::run_load_test(
-                common::build_load_test(
-                    configuration,
-                    vec![get_transactions(is_builder)],
-                    None,
-                    None,
-                ),
-                None,
-            )
-            .await
-        }
-        true => {
-            // Build common configuration.
-            let worker_configuration = common_build_configuration(&server, Some(true), None);
-
-            // Workers launched in own threads, store thread handles.
-            let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-                common::build_load_test(
-                    worker_configuration.clone(),
-                    vec![get_transactions(is_builder)],
-                    None,
-                    None,
-                )
-            });
-
-            // Build Manager configuration.
-            let manager_configuration =
-                common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-            // Run the Goose Attack.
-            common::run_load_test(
-                common::build_load_test(
-                    manager_configuration,
-                    vec![get_transactions(is_builder)],
-                    None,
-                    None,
-                ),
-                Some(worker_handles),
-            )
-            .await
-        }
-    };
+    // Run the Goose Attack.
+    let metrics = common::run_load_test(common::build_load_test(
+        configuration,
+        vec![get_transactions(is_builder)],
+        None,
+        None,
+    ))
+    .await;
 
     // Confirm the load test ran correctly.
     validate_test(is_builder, &mock_endpoints, metrics);
@@ -379,31 +314,13 @@ async fn run_load_test(is_builder: bool, is_gaggle: bool) {
 #[tokio::test]
 // Test scenario using GooseRequest::builder().
 async fn test_request_builder() {
-    // Run load test with is_builder set to true and is_gaggle set to false.
-    run_load_test(true, false).await;
+    // Run load test with is_builder set to true.
+    run_load_test(true).await;
 }
 
 #[tokio::test]
 // Test scenario without using GooseRequest::builder().
 async fn test_request_no_builder() {
-    // Run load test with is_builder set to false and is_gaggle set to false.
-    run_load_test(false, false).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Test scenario using GooseRequest::builder().
-async fn test_request_builder_gaggle() {
-    // Run load test with is_builder set to true and is_gaggle set to true.
-    run_load_test(true, true).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Test scenario without using GooseRequest::builder().
-async fn test_request_no_builder_gaggle() {
-    // Run load test with is_builder set to false and is_gaggle set to true.
-    run_load_test(false, true).await;
+    // Run load test with is_builder set to false.
+    run_load_test(false).await;
 }

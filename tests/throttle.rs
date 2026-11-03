@@ -19,7 +19,6 @@ const REQUEST_LOG: &str = "throttle-metrics.log";
 const THROTTLE_REQUESTS: usize = 25;
 const USERS: usize = 5;
 const RUN_TIME: usize = 3;
-const EXPECT_WORKERS: usize = 2;
 
 // Test transaction.
 pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
@@ -56,58 +55,25 @@ fn common_build_configuration(
     throttle_requests: usize,
     users: usize,
     run_time: usize,
-    worker: Option<bool>,
-    manager: Option<usize>,
 ) -> GooseConfiguration {
-    if let Some(expect_workers) = manager {
-        common::build_configuration(
-            server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &expect_workers.to_string(),
-                "--users",
-                &users.to_string(),
-                "--increase-rate",
-                &users.to_string(),
-                // Run the load test long enough to confirm the throttle is working correctly.
-                "--run-time",
-                &run_time.to_string(),
-            ],
-        )
-    } else if worker.is_some() {
-        common::build_configuration(
-            server,
-            vec![
-                "--worker",
-                // Limit the maximum requests per second.
-                "--throttle-requests",
-                &throttle_requests.to_string(),
-                // Write requests to file to confirm throttle is working.
-                "--request-log",
-                request_log,
-            ],
-        )
-    } else {
-        common::build_configuration(
-            server,
-            vec![
-                "--users",
-                &users.to_string(),
-                "--increase-rate",
-                &users.to_string(),
-                // Run the load test long enough to confirm the throttle is working correctly.
-                "--run-time",
-                &run_time.to_string(),
-                // Limit the maximum requests per second.
-                "--throttle-requests",
-                &throttle_requests.to_string(),
-                // Write requests to file to confirm throttle is working.
-                "--request-log",
-                request_log,
-            ],
-        )
-    }
+    common::build_configuration(
+        server,
+        vec![
+            "--users",
+            &users.to_string(),
+            "--increase-rate",
+            &users.to_string(),
+            // Run the load test long enough to confirm the throttle is working correctly.
+            "--run-time",
+            &run_time.to_string(),
+            // Limit the maximum requests per second.
+            "--throttle-requests",
+            &throttle_requests.to_string(),
+            // Write requests to file to confirm throttle is working.
+            "--request-log",
+            request_log,
+        ],
+    )
 }
 
 // Helper to confirm all variations generate appropriate results.
@@ -178,22 +144,17 @@ async fn test_throttle() {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     // Build configuration.
-    let configuration = common_build_configuration(
-        &server,
-        REQUEST_LOG,
-        THROTTLE_REQUESTS,
-        USERS,
-        RUN_TIME,
-        None,
-        None,
-    );
+    let configuration =
+        common_build_configuration(&server, REQUEST_LOG, THROTTLE_REQUESTS, USERS, RUN_TIME);
 
     // Run the Goose Attack.
     let started = std::time::Instant::now();
-    common::run_load_test(
-        common::build_load_test(configuration, vec![get_transactions()], None, None),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![get_transactions()],
         None,
-    )
+        None,
+    ))
     .await;
     let ran = started.elapsed();
 
@@ -211,22 +172,17 @@ async fn test_throttle() {
     let increased_throttle = THROTTLE_REQUESTS * 5;
 
     // Build a new configuration.
-    let configuration = common_build_configuration(
-        &server,
-        REQUEST_LOG,
-        increased_throttle,
-        USERS,
-        RUN_TIME,
-        None,
-        None,
-    );
+    let configuration =
+        common_build_configuration(&server, REQUEST_LOG, increased_throttle, USERS, RUN_TIME);
 
     // Run the Goose Attack.
     let started = std::time::Instant::now();
-    common::run_load_test(
-        common::build_load_test(configuration, vec![get_transactions()], None, None),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![get_transactions()],
         None,
-    )
+        None,
+    ))
     .await;
     let ran = started.elapsed();
 
@@ -235,132 +191,6 @@ async fn test_throttle() {
         &mock_endpoints,
         &[REQUEST_LOG.to_string()],
         increased_throttle,
-        Some(test1_lines),
-        ran,
-    );
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Enable throttle to confirm it limits the number of request per second, in
-// Gaggle mode. Increase the throttle and confirm it increases the number of
-// requests per second, in Gaggle mode.
-async fn test_throttle_gaggle() {
-    // Multiple tests run together, so set a unique name.
-    let request_log = "gaggle-".to_string() + REQUEST_LOG;
-
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Each worker has the same identical configuration.
-    let configuration =
-        common_build_configuration(&server, "", THROTTLE_REQUESTS, 0, 0, Some(true), None);
-
-    // Build the load test for the Workers.
-    // Launch each worker in its own thread, storing the join handles.
-    let started = std::time::Instant::now();
-    let mut worker_handles = Vec::new();
-    let mut request_logs = Vec::new();
-    for i in 0..EXPECT_WORKERS {
-        let mut worker_configuration = configuration.clone();
-        let worker_request_log = request_log.clone() + &i.to_string();
-        worker_configuration.request_log = Some(worker_request_log.clone());
-        request_logs.push(worker_request_log);
-        let worker_goose_attack = common::build_load_test(
-            worker_configuration.clone(),
-            vec![get_transactions()],
-            None,
-            None,
-        );
-        // Start worker instance of the load test.
-        worker_handles.push(tokio::spawn(common::run_load_test(
-            worker_goose_attack,
-            None,
-        )));
-    }
-
-    // Start manager instance in current thread and run a distributed load test.
-    let manager_configuration = common_build_configuration(
-        &server,
-        &request_log,
-        0,
-        USERS,
-        RUN_TIME,
-        None,
-        Some(EXPECT_WORKERS),
-    );
-
-    // Build the load test for the Manager.
-    let manager_goose_attack = common::build_load_test(
-        manager_configuration.clone(),
-        vec![get_transactions()],
-        None,
-        None,
-    );
-
-    // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
-    let ran = started.elapsed();
-
-    // Confirm that the load test was actually throttled.
-    let test1_lines = validate_test(
-        &mock_endpoints,
-        &request_logs,
-        // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
-        THROTTLE_REQUESTS * EXPECT_WORKERS,
-        None,
-        ran,
-    );
-
-    // Increase the throttle and run a second load test, so we can compare the difference
-    // and confirm the throttle is actually working.
-    let increased_throttle = THROTTLE_REQUESTS * 5;
-
-    // Each worker has the same identical configuration.
-    let configuration =
-        common_build_configuration(&server, "", increased_throttle, 0, 0, Some(true), None);
-
-    // Build the load test for the Workers.
-    // Launch each worker in its own thread, storing the join handles.
-    let started = std::time::Instant::now();
-    let mut worker_handles = Vec::new();
-    let mut request_logs = Vec::new();
-    for i in 0..EXPECT_WORKERS {
-        let mut worker_configuration = configuration.clone();
-        let worker_request_log = request_log.clone() + &i.to_string();
-        worker_configuration.request_log = Some(worker_request_log.clone());
-        request_logs.push(worker_request_log);
-        let worker_goose_attack = common::build_load_test(
-            worker_configuration.clone(),
-            vec![get_transactions()],
-            None,
-            None,
-        );
-        // Start worker instance of the load test.
-        worker_handles.push(tokio::spawn(common::run_load_test(
-            worker_goose_attack,
-            None,
-        )));
-    }
-
-    // Build the load test for the Manager.
-    let manager_goose_attack =
-        common::build_load_test(manager_configuration, vec![get_transactions()], None, None);
-
-    // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
-    let ran = started.elapsed();
-
-    // Confirm that the load test was actually throttled, at an increased rate.
-    let _ = validate_test(
-        &mock_endpoints,
-        &request_logs,
-        // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
-        increased_throttle * EXPECT_WORKERS,
         Some(test1_lines),
         ran,
     );

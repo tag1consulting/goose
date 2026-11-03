@@ -37,20 +37,17 @@ async fn user_times(args: Vec<&str>) -> Vec<(u64, u64)> {
     let mut args = args;
     args.extend_from_slice(&["--users", "9", "--transaction-log", &log_path]);
     let configuration = common::build_configuration(&server, args);
-    common::run_load_test(
-        common::build_load_test(
-            configuration,
-            vec![scenario!("LoadTest")
-                // Each user logs a transaction every 50 ms, from when it starts
-                // until it stops.
-                .set_wait_time(Duration::from_millis(50), Duration::from_millis(50))
-                .unwrap()
-                .register_transaction(transaction!(get_index))],
-            None,
-            None,
-        ),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario!("LoadTest")
+            // Each user logs a transaction every 50 ms, from when it starts
+            // until it stops.
+            .set_wait_time(Duration::from_millis(50), Duration::from_millis(50))
+            .unwrap()
+            .register_transaction(transaction!(get_index))],
         None,
-    )
+        None,
+    ))
     .await;
 
     let mut times: HashMap<u64, (u64, u64)> = HashMap::new();

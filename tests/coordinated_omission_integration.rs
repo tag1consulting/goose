@@ -42,15 +42,12 @@ mod load_test_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // When CO is disabled, no CO metrics should be collected
@@ -83,15 +80,12 @@ mod load_test_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // CO should be enabled and metrics collected
@@ -137,18 +131,15 @@ mod load_test_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![
-                    scenario!("Fast").register_transaction(transaction!(get_index)),
-                    scenario!("Slow").register_transaction(transaction!(get_delayed_page)),
-                ],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![
+                scenario!("Fast").register_transaction(transaction!(get_index)),
+                scenario!("Slow").register_transaction(transaction!(get_delayed_page)),
+            ],
             None,
-        )
+            None,
+        ))
         .await;
 
         assert!(goose_metrics.coordinated_omission_metrics.is_some());
@@ -194,15 +185,12 @@ mod load_test_integration {
             ],
         );
 
-        let metrics_min = common::run_load_test(
-            common::build_load_test(
-                config_min,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let metrics_min = common::run_load_test(common::build_load_test(
+            config_min,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // Test with average strategy
@@ -218,15 +206,12 @@ mod load_test_integration {
             ],
         );
 
-        let metrics_avg = common::run_load_test(
-            common::build_load_test(
-                config_avg,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let metrics_avg = common::run_load_test(common::build_load_test(
+            config_avg,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // Test with maximum strategy
@@ -242,15 +227,12 @@ mod load_test_integration {
             ],
         );
 
-        let metrics_max = common::run_load_test(
-            common::build_load_test(
-                config_max,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let metrics_max = common::run_load_test(common::build_load_test(
+            config_max,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // All should have CO metrics enabled
@@ -306,15 +288,12 @@ mod metrics_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // CO metrics should be integrated into main GooseMetrics
@@ -359,15 +338,12 @@ mod metrics_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         assert!(goose_metrics.coordinated_omission_metrics.is_some());
@@ -428,15 +404,12 @@ mod reporting_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // Verify CO metrics were collected
@@ -479,15 +452,12 @@ mod reporting_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // Verify CO metrics were collected
@@ -532,15 +502,12 @@ mod reporting_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // Verify CO metrics were collected
@@ -679,18 +646,15 @@ mod configuration_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![
-                    scenario!("Test1").register_transaction(transaction!(get_index)),
-                    scenario!("Test2").register_transaction(transaction!(get_index)),
-                ],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![
+                scenario!("Test1").register_transaction(transaction!(get_index)),
+                scenario!("Test2").register_transaction(transaction!(get_index)),
+            ],
             None,
-        )
+            None,
+        ))
         .await;
 
         // CO should work with other options enabled
@@ -736,15 +700,12 @@ mod configuration_integration {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // Default should be disabled, so no CO metrics
@@ -778,15 +739,12 @@ mod performance_and_edge_cases {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         assert!(goose_metrics.coordinated_omission_metrics.is_some());
@@ -830,15 +788,12 @@ mod performance_and_edge_cases {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         // Should handle short tests gracefully
@@ -879,15 +834,12 @@ mod performance_and_edge_cases {
             ],
         );
 
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Test").register_transaction(transaction!(get_index))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
             None,
-        )
+            None,
+        ))
         .await;
 
         assert!(goose_metrics.coordinated_omission_metrics.is_some());
@@ -977,15 +929,12 @@ mod co_counts {
                 "--no-reset-metrics",
             ],
         );
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Stall").register_transaction(transaction!(get_index_stalling))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Stall").register_transaction(transaction!(get_index_stalling))],
             None,
-        )
+            None,
+        ))
         .await;
 
         let co = goose_metrics
@@ -1032,15 +981,12 @@ mod co_counts {
                 "average",
             ],
         );
-        let goose_metrics = common::run_load_test(
-            common::build_load_test(
-                config,
-                vec![scenario!("Steady").register_transaction(transaction!(get_index_steady))],
-                None,
-                None,
-            ),
+        let goose_metrics = common::run_load_test(common::build_load_test(
+            config,
+            vec![scenario!("Steady").register_transaction(transaction!(get_index_steady))],
             None,
-        )
+            None,
+        ))
         .await;
 
         let co = goose_metrics

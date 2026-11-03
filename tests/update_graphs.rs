@@ -105,17 +105,14 @@ async fn updated_requests_count_once_in_report_graphs() {
             "--report-graph-data",
         ],
     );
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            configuration,
-            vec![scenario!("Updates")
-                .register_transaction(transaction!(get_ok_then_set_failure))
-                .register_transaction(transaction!(get_error_then_set_success))],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario!("Updates")
+            .register_transaction(transaction!(get_ok_then_set_failure))
+            .register_transaction(transaction!(get_error_then_set_success))],
         None,
-    )
+        None,
+    ))
     .await;
     let html = std::fs::read_to_string(report).unwrap();
     let json: serde_json::Value =

@@ -1,4 +1,3 @@
-use futures::future::join_all;
 use httpmock::MockServer;
 use std::io::{self, BufRead};
 
@@ -7,13 +6,10 @@ use goose::goose::{Scenario, Transaction};
 use goose::metrics::GooseMetrics;
 use goose::GooseAttack;
 
-type WorkerHandles = Vec<tokio::task::JoinHandle<GooseMetrics>>;
-
 /// Not all functions are used by all tests, so we enable allow(dead_code) to avoid
 /// compiler warnings during testing.
 ///
-/// The following options are configured by default, if not set to a custom value
-/// and if not building a Worker configuration:
+/// The following options are configured by default, if not set to a custom value:
 ///  --host <mock-server>
 ///  --users 1
 ///  --increase-rate 1
@@ -29,32 +25,29 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
     // Merge in all custom options first.
     configuration.extend_from_slice(&custom);
 
-    // If not building a Worker configuration, set some defaults.
-    if !configuration.contains(&"--worker") {
-        // Default to using mock server if not otherwise configured.
-        if !configuration.contains(&"--host") {
-            configuration.extend_from_slice(&["--host", &server_url]);
-        }
+    // Default to using mock server if not otherwise configured.
+    if !configuration.contains(&"--host") {
+        configuration.extend_from_slice(&["--host", &server_url]);
+    }
 
-        // Default to testing with 1 user if not otherwise configured.
-        if !configuration.contains(&"--users") {
-            configuration.extend_from_slice(&["--users", "1"]);
-        }
+    // Default to testing with 1 user if not otherwise configured.
+    if !configuration.contains(&"--users") {
+        configuration.extend_from_slice(&["--users", "1"]);
+    }
 
-        // Default to increasing 1 user per second if not otherwise configured.
-        if !configuration.contains(&"--increase-rate") {
-            configuration.extend_from_slice(&["--increase-rate", "1"]);
-        }
+    // Default to increasing 1 user per second if not otherwise configured.
+    if !configuration.contains(&"--increase-rate") {
+        configuration.extend_from_slice(&["--increase-rate", "1"]);
+    }
 
-        // Default to running for 1 second if not otherwise configured.
-        if !configuration.contains(&"--run-time") {
-            configuration.extend_from_slice(&["--run-time", "1"]);
-        }
+    // Default to running for 1 second if not otherwise configured.
+    if !configuration.contains(&"--run-time") {
+        configuration.extend_from_slice(&["--run-time", "1"]);
+    }
 
-        // Default to disabling coordinated omission mitigation if not otherwise configured
-        if !configuration.contains(&"--co-mitigation") {
-            configuration.extend_from_slice(&["--co-mitigation", "disabled"]);
-        }
+    // Default to disabling coordinated omission mitigation if not otherwise configured
+    if !configuration.contains(&"--co-mitigation") {
+        configuration.extend_from_slice(&["--co-mitigation", "disabled"]);
     }
 
     // Disable verbose output when running tests.
@@ -63,25 +56,6 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
     // Parse these options to generate a GooseConfiguration.
     GooseConfiguration::parse_args_default(&configuration)
         .expect("failed to parse options and generate a configuration")
-}
-
-/// Launch each Worker in its own thread, and return a vector of Worker handles.
-#[allow(dead_code)]
-pub fn launch_gaggle_workers<F: Fn() -> GooseAttack>(
-    // The number of Workers to launch.
-    expect_workers: usize,
-    // A goose attack object which is cloned for each Worker.
-    goose_attack_provider: F,
-) -> WorkerHandles {
-    // Launch each worker in its own thread, storing the join handles.
-    let mut worker_handles = Vec::new();
-    for _ in 0..expect_workers {
-        let worker_goose_attack = goose_attack_provider();
-        // Start worker instance of the load test.
-        worker_handles.push(tokio::spawn(run_load_test(worker_goose_attack, None)));
-    }
-
-    worker_handles
 }
 
 // Create a GooseAttack object from the configuration, Scenarios, and optional start and
@@ -112,20 +86,9 @@ pub fn build_load_test(
 }
 
 /// Run the actual load test, returning the GooseMetrics.
-pub async fn run_load_test(
-    goose_attack: GooseAttack,
-    worker_handles: Option<WorkerHandles>,
-) -> GooseMetrics {
+pub async fn run_load_test(goose_attack: GooseAttack) -> GooseMetrics {
     // Execute the load test.
-    let goose_metrics = goose_attack.execute().await.unwrap();
-
-    // If this is a Manager test, first wait for the Workers to exit to return.
-    if let Some(handles) = worker_handles {
-        // Wait for both worker threads to finish and exit.
-        join_all(handles).await;
-    }
-
-    goose_metrics
+    goose_attack.execute().await.unwrap()
 }
 
 /// Helper to count the number of lines in a test artifact.
@@ -207,6 +170,6 @@ pub fn run_load_test_with_co(
             None,
         );
 
-        run_load_test(goose_attack, None).await
+        run_load_test(goose_attack).await
     }
 }

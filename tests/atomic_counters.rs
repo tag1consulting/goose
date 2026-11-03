@@ -70,17 +70,14 @@ async fn test_atomic_counters_basic() {
         vec!["--users", "2", "--increase-rate", "4", "--run-time", "2"],
     );
 
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![scenario!("IndexScenario")
-                .register_transaction(transaction!(get_index).set_weight(2).unwrap())
-                .register_transaction(transaction!(get_about).set_weight(1).unwrap())],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![scenario!("IndexScenario")
+            .register_transaction(transaction!(get_index).set_weight(2).unwrap())
+            .register_transaction(transaction!(get_about).set_weight(1).unwrap())],
         None,
-    )
+        None,
+    ))
     .await;
 
     // Verify index requests: all should be successes.
@@ -138,16 +135,13 @@ async fn test_atomic_counters_set_success() {
         vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![scenario!("SetSuccessScenario")
-                .register_transaction(transaction!(get_error_then_set_success))],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![scenario!("SetSuccessScenario")
+            .register_transaction(transaction!(get_error_then_set_success))],
         None,
-    )
+        None,
+    ))
     .await;
 
     // The 404 was originally recorded as a failure, then set_success() was called.
@@ -181,16 +175,13 @@ async fn test_atomic_counters_set_failure() {
         vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![scenario!("SetFailureScenario")
-                .register_transaction(transaction!(get_success_then_set_failure))],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![scenario!("SetFailureScenario")
+            .register_transaction(transaction!(get_success_then_set_failure))],
         None,
-    )
+        None,
+    ))
     .await;
 
     // The 200 was originally recorded as a success, then set_failure() was called.
@@ -230,15 +221,12 @@ async fn test_atomic_counters_metrics_reset() {
         vec!["--users", "2", "--increase-rate", "1", "--run-time", "2"],
     );
 
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![scenario!("ResetScenario").register_transaction(transaction!(get_index))],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![scenario!("ResetScenario").register_transaction(transaction!(get_index))],
         None,
-    )
+        None,
+    ))
     .await;
 
     let index = metrics
@@ -302,15 +290,12 @@ async fn test_atomic_counters_coordinated_omission() {
         ],
     );
 
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![scenario!("CoScenario").register_transaction(transaction!(get_slow))],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![scenario!("CoScenario").register_transaction(transaction!(get_slow))],
         None,
-    )
+        None,
+    ))
     .await;
 
     let slow = metrics
@@ -367,18 +352,15 @@ async fn test_atomic_counters_isolation() {
         vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![scenario!("IsolationScenario")
-                .register_transaction(transaction!(get_index).set_weight(2).unwrap())
-                .register_transaction(transaction!(get_about).set_weight(2).unwrap())
-                .register_transaction(transaction!(get_error).set_weight(1).unwrap())],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![scenario!("IsolationScenario")
+            .register_transaction(transaction!(get_index).set_weight(2).unwrap())
+            .register_transaction(transaction!(get_about).set_weight(2).unwrap())
+            .register_transaction(transaction!(get_error).set_weight(1).unwrap())],
         None,
-    )
+        None,
+    ))
     .await;
 
     // Index: all successes, zero failures.

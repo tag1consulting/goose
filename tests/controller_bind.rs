@@ -46,15 +46,12 @@ async fn test_controller_bind_failure_is_logged() {
             "2",
         ],
     );
-    let goose_metrics = common::run_load_test(
-        common::build_load_test(
-            configuration,
-            vec![scenario!("LoadTest").register_transaction(transaction!(get_index))],
-            None,
-            None,
-        ),
+    let goose_metrics = common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario!("LoadTest").register_transaction(transaction!(get_index))],
         None,
-    )
+        None,
+    ))
     .await;
 
     // The load test ran.
