@@ -3361,7 +3361,11 @@ async fn gaggle_worker_health_in_one_process() {
             let users = telnet.send("users 8").await;
             assert!(users.contains("accepted by 2 of 2 workers"), "{}", users);
             let throttle = telnet.send("throttle 200").await;
-            assert!(throttle.contains("accepted by 2 of 2 workers"), "{}", throttle);
+            assert!(
+                throttle.contains("accepted by 2 of 2 workers"),
+                "{}",
+                throttle
+            );
         };
         let ((manager, workers), ()) = tokio::join!(run, control);
         manager.expect("the manager exits cleanly");
@@ -3381,7 +3385,11 @@ async fn gaggle_worker_health_in_one_process() {
         for id in [0, 2] {
             let worker = worker(id);
             assert_eq!(worker["state"], "finished", "{}", worker);
-            assert!(worker["running_secs"].as_f64().unwrap() > 10.0, "{}", worker);
+            assert!(
+                worker["running_secs"].as_f64().unwrap() > 10.0,
+                "{}",
+                worker
+            );
             assert!(worker["requests"].as_u64().unwrap() > 0, "{}", worker);
             assert!(worker["cores"].as_u64().unwrap() > 0, "{}", worker);
         }
@@ -3392,7 +3400,10 @@ async fn gaggle_worker_health_in_one_process() {
         assert!(busy["peak_cpu_percent"].as_u64().unwrap() >= 90, "{}", busy);
         assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
         assert!(
-            busy["flags"].as_array().unwrap().contains(&"saturated".into()),
+            busy["flags"]
+                .as_array()
+                .unwrap()
+                .contains(&"saturated".into()),
             "{}",
             busy
         );
@@ -3422,7 +3433,11 @@ async fn gaggle_worker_health_in_one_process() {
         assert_eq!(of("throttle_shares_rescaled").len(), 1, "{:?}", events);
         let users = of("users_changed");
         assert_eq!(users.len(), 1, "{:?}", events);
-        assert!(users[0].starts_with("users 6 to 8, acknowledged by 2 of 2 in "), "{:?}", users);
+        assert!(
+            users[0].starts_with("users 6 to 8, acknowledged by 2 of 2 in "),
+            "{:?}",
+            users
+        );
         let throttle = of("throttle_changed");
         assert_eq!(throttle.len(), 1, "{:?}", events);
         assert!(
@@ -3434,11 +3449,16 @@ async fn gaggle_worker_health_in_one_process() {
         assert_eq!(of("worker_recovered").len(), 1, "{:?}", events);
 
         // The reports.
-        for text in ["<h2>Workers</h2>", "<h2>Events</h2>", "Check: ", "saturated", "users 6 to 8"] {
+        for text in [
+            "<h2>Workers</h2>",
+            "<h2>Events</h2>",
+            "Check: ",
+            "saturated",
+            "users 6 to 8",
+        ] {
             assert!(html.contains(text), "{}", text);
         }
-        let markdown =
-            std::fs::read_to_string(folder.join("manager").join("report.md")).unwrap();
+        let markdown = std::fs::read_to_string(folder.join("manager").join("report.md")).unwrap();
         for text in ["## Workers", "## Events", "Check: "] {
             assert!(markdown.contains(text), "{}: {}", text, markdown);
         }

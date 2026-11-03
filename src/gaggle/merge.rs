@@ -609,10 +609,7 @@ impl GaggleAccumulator {
     }
 
     /// Every request `worker` made this epoch, by name, and the epoch.
-    pub(crate) fn requests_of(
-        &self,
-        worker: u32,
-    ) -> Option<(&BTreeMap<String, RequestPart>, u64)> {
+    pub(crate) fn requests_of(&self, worker: u32) -> Option<(&BTreeMap<String, RequestPart>, u64)> {
         self.workers
             .get(&worker)
             .map(|total| (&total.total.metrics.requests, total.total.epoch))

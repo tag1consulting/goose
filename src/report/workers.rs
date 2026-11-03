@@ -4,7 +4,9 @@
 //! as the run's own did.
 
 use crate::metrics::format_number;
-use crate::runs::{secs_text, GaggleRecord, GaggleWorkerFlag, GaggleWorkerRecord, GaggleWorkerState};
+use crate::runs::{
+    secs_text, GaggleRecord, GaggleWorkerFlag, GaggleWorkerRecord, GaggleWorkerState,
+};
 use std::fmt::Write;
 
 /// The most worker rows the console print shows.
@@ -77,9 +79,7 @@ pub(crate) fn flags_text(worker: &GaggleWorkerRecord) -> String {
                     words.push(format!("p95 {}", signed(percent)));
                 }
             }
-            GaggleWorkerFlag::Refused => {
-                words.push(format!("refused {}", worker.refused_deltas))
-            }
+            GaggleWorkerFlag::Refused => words.push(format!("refused {}", worker.refused_deltas)),
             GaggleWorkerFlag::Missing => {
                 if worker.missing_deltas > 0 {
                     words.push(format!("missing {}", worker.missing_deltas));
@@ -133,9 +133,10 @@ pub(crate) fn row(worker: &GaggleWorkerRecord) -> Row {
             worker.name.clone(),
             worker.state.label().to_string(),
             format_number(worker.users),
-            worker
-                .requests
-                .map_or_else(|| "-".to_string(), |requests| format_number(requests as usize)),
+            worker.requests.map_or_else(
+                || "-".to_string(),
+                |requests| format_number(requests as usize),
+            ),
             or_dash(worker.requests_per_second, 1),
             or_dash(fail, 1),
             or_dash(worker.average_ms, 1),
@@ -279,7 +280,11 @@ pub(crate) fn html(record: Option<&GaggleRecord>, escape: fn(&str) -> String) ->
         </table>"#,
     );
     if record.events_dropped > 0 {
-        let _ = write!(html, "\n        <p>{}</p>", escape(&dropped_text(record.events_dropped)));
+        let _ = write!(
+            html,
+            "\n        <p>{}</p>",
+            escape(&dropped_text(record.events_dropped))
+        );
     }
     html.push_str("\n    </div>");
     html
@@ -293,7 +298,10 @@ pub(crate) fn console(record: &GaggleRecord) -> String {
         return text;
     }
     let rows: Vec<Row> = sorted(record).into_iter().map(row).collect();
-    let mut widths: Vec<usize> = HEADINGS.iter().map(|heading| heading.chars().count()).collect();
+    let mut widths: Vec<usize> = HEADINGS
+        .iter()
+        .map(|heading| heading.chars().count())
+        .collect();
     for row in rows.iter().take(CONSOLE_ROWS) {
         for (width, cell) in widths.iter_mut().zip(&row.cells) {
             *width = (*width).max(cell.chars().count());
@@ -410,13 +418,25 @@ mod tests {
     fn every_flag_shows_in_the_table_and_the_intro() {
         let record = record();
         let order: Vec<&str> = sorted(&record).iter().map(|w| w.name.as_str()).collect();
-        assert_eq!(order, ["load-31", "load-17", "load-42", "load-09", "load-01"]);
+        assert_eq!(
+            order,
+            ["load-31", "load-17", "load-42", "load-09", "load-01"]
+        );
         assert_eq!(
             summary(&record),
             "4 of 5 workers finished, 1 lost, 1 saturated, 1 lagging, 1 outlying"
         );
         let flags: Vec<String> = sorted(&record).into_iter().map(flags_text).collect();
-        assert_eq!(flags, ["lost 03:05", "saturated 42 s", "lagging 6 s", "p95 +35%", ""]);
+        assert_eq!(
+            flags,
+            [
+                "lost 03:05",
+                "saturated 42 s",
+                "lagging 6 s",
+                "p95 +35%",
+                ""
+            ]
+        );
         let intro = record.intro();
         let checks: Vec<&String> = intro.iter().filter(|s| s.starts_with("Check:")).collect();
         assert_eq!(
@@ -451,11 +471,17 @@ mod tests {
     #[test]
     fn the_console_shows_twenty_workers() {
         let record = GaggleRecord {
-            workers: (0..25).map(|id| worker(id, &format!("load-{id:02}"))).collect(),
+            workers: (0..25)
+                .map(|id| worker(id, &format!("load-{id:02}")))
+                .collect(),
             ..GaggleRecord::default()
         };
         let console = console(&record);
-        assert!(console.contains("load-19") && !console.contains("load-20"), "{}", console);
+        assert!(
+            console.contains("load-19") && !console.contains("load-20"),
+            "{}",
+            console
+        );
         assert!(console.contains(" and 5 more workers: see the HTML or JSON report"));
     }
 
@@ -479,7 +505,11 @@ mod tests {
         assert!(!html.contains("<img"), "{}", html);
         let escaped = "&lt;img src=x onerror=alert(1)&gt;&quot;&#39;&amp;";
         assert!(html.contains(&format!("<td>{escaped}</td>")), "{}", html);
-        assert!(html.contains(&format!("<td colspan=\"5\">{escaped} lagging")), "{}", html);
+        assert!(
+            html.contains(&format!("<td colspan=\"5\">{escaped} lagging")),
+            "{}",
+            html
+        );
     }
 
     #[test]

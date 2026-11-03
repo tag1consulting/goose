@@ -502,7 +502,9 @@ pub(crate) fn check_sentences(workers: &[GaggleWorkerRecord]) -> Vec<String> {
     let gap = |worker: &GaggleWorkerRecord| {
         worker
             .longest_delta_gap_secs
-            .map_or_else(String::new, |gap| format!(" (longest gap {} s)", secs_text(gap)))
+            .map_or_else(String::new, |gap| {
+                format!(" (longest gap {} s)", secs_text(gap))
+            })
     };
     let lagging = flagged(GaggleWorkerFlag::Lagging);
     match lagging.as_slice() {

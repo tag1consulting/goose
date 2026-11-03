@@ -9,9 +9,9 @@
 
 use super::control::{WorkerControl, WorkerSettings};
 use super::delta::DeltaLimits;
+use super::health::{MergeHealth, WorkerState};
 use super::link::{Link, LinkEvent, LinkSettings, LOG_CHUNK};
 use super::manager::{Event, Manager};
-use super::health::{MergeHealth, WorkerState};
 use super::proto::{
     manager_message::Message as ToWorker, stopped::Reason, Prepare, ResetMetrics, SendLogs,
     StartAt, Stop, Stopped,
@@ -738,7 +738,13 @@ impl GooseAttack {
         let users: Vec<(u32, usize, usize)> = run
             .workers
             .iter()
-            .map(|worker| (worker.id, run.book.users(worker.id as usize).len(), worker.users))
+            .map(|worker| {
+                (
+                    worker.id,
+                    run.book.users(worker.id as usize).len(),
+                    worker.users,
+                )
+            })
             .collect();
         if let Ok(mut health) = run.health.lock() {
             for (id, now, started_users) in users {
@@ -1732,9 +1738,11 @@ impl GooseAttack {
         run.stop_sent = true;
         if let Ok(mut health) = run.health.lock() {
             let now = Instant::now();
-            for worker in run.workers.iter().filter(|worker| {
-                worker.lost.is_none() && worker.stopped.is_none()
-            }) {
+            for worker in run
+                .workers
+                .iter()
+                .filter(|worker| worker.lost.is_none() && worker.stopped.is_none())
+            {
                 health.set_state(worker.id, WorkerState::Stopping, now);
             }
         }

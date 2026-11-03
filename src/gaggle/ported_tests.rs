@@ -142,7 +142,11 @@ async fn scheduled(scheduler: GooseScheduler, iterated: bool) {
     let sizes: Vec<usize> = users.iter().map(BTreeSet::len).collect();
     assert_eq!(sizes, vec![3, 2, 1], "{users:?}");
     let all: BTreeSet<usize> = users.iter().flatten().copied().collect();
-    assert_eq!(all, (0..6).collect::<BTreeSet<usize>>(), "every user once: {users:?}");
+    assert_eq!(
+        all,
+        (0..6).collect::<BTreeSet<usize>>(),
+        "every user once: {users:?}"
+    );
     if scheduler != GooseScheduler::Random {
         assert_eq!(users, scenario_users(&single), "{scheduler:?}");
     }
@@ -259,7 +263,11 @@ async fn scenarios_default_reaches_every_worker() {
 
 /// One scenario of three transactions, GET /one, /two (weight 2) and
 /// /three, sequenced 1, 2 and unsequenced when `sequenced`.
-fn sequence(configuration: GooseConfiguration, sequenced: bool, scheduler: &GooseScheduler) -> GooseAttack {
+fn sequence(
+    configuration: GooseConfiguration,
+    sequenced: bool,
+    scheduler: &GooseScheduler,
+) -> GooseAttack {
     let mut one = get("/one");
     let mut two = get("/two").set_weight(2).unwrap();
     if sequenced {
@@ -364,9 +372,7 @@ fn entries(folder: &std::path::Path, file: &str, csv: bool) -> usize {
         .map(|entry| entry.unwrap().path().join(file))
         .collect();
     assert_eq!(logs.len(), 2, "a {file} from each worker");
-    logs.iter()
-        .map(|log| lines(log) - usize::from(csv))
-        .sum()
+    logs.iter().map(|log| lines(log) - usize::from(csv)).sum()
 }
 
 /// Each log `kind` set on the manager, in `format`, is written on every
@@ -379,10 +385,20 @@ async fn collected(kinds: &[(&str, &str, &str)]) {
     let mut args = iterations("2", "3");
     let mut names = Vec::new();
     for (kind, format, _) in kinds {
-        names.push((format!("--{kind}-log"), format!("{kind}.log"), format!("--{kind}-format"), format.to_string()));
+        names.push((
+            format!("--{kind}-log"),
+            format!("{kind}.log"),
+            format!("--{kind}-format"),
+            format.to_string(),
+        ));
     }
     for (option, file, format_option, format) in &names {
-        args.extend_from_slice(&[option.as_str(), file.as_str(), format_option.as_str(), format.as_str()]);
+        args.extend_from_slice(&[
+            option.as_str(),
+            file.as_str(),
+            format_option.as_str(),
+            format.as_str(),
+        ]);
     }
     let (merged, folder) = two_workers(failing, &host, "logs", &args).await;
     let requests = counts(&merged).values().sum::<usize>();
@@ -463,7 +479,11 @@ async fn error_summary(summary: bool) {
     let single = one_process(failing, &host, &args).await;
     assert_eq!(merged.requests["GET /error"].fail_count, 8);
     let occurrences = |metrics: &GooseMetrics| -> Vec<usize> {
-        metrics.errors.values().map(|error| error.occurrences).collect()
+        metrics
+            .errors
+            .values()
+            .map(|error| error.occurrences)
+            .collect()
     };
     assert_eq!(occurrences(&merged), occurrences(&single));
     match summary {
@@ -586,7 +606,10 @@ async fn sticky(args: &[&str], defaults: bool, sticky: bool) {
     }
     // Without a reset, as set, every /pre stays counted.
     assert_eq!(pre.calls_async().await, 2);
-    let counted = merged.requests.get("GET /pre").map_or(0, |pre| pre.success_count);
+    let counted = merged
+        .requests
+        .get("GET /pre")
+        .map_or(0, |pre| pre.success_count);
     assert_eq!(counted, 2);
 }
 
@@ -640,7 +663,10 @@ async fn metrics_reset_reaches_every_worker() {
             args.push("--no-reset-metrics");
         }
         let (merged, _folder) = two_workers(ramped, &server.base_url(), "reset", &args).await;
-        let counted = merged.requests.get("GET /pre").map_or(0, |pre| pre.success_count);
+        let counted = merged
+            .requests
+            .get("GET /pre")
+            .map_or(0, |pre| pre.success_count);
         assert_eq!(pre.calls_async().await, 4);
         match reset {
             false => assert_eq!(counted, 4),

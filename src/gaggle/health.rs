@@ -125,7 +125,10 @@ impl Fold {
                 }
             }
             if low <= high {
-                let held = counts[low..=high].iter().filter(|&&count| count > 0).count();
+                let held = counts[low..=high]
+                    .iter()
+                    .filter(|&&count| count > 0)
+                    .count();
                 let mut buckets = Vec::with_capacity(held);
                 for (index, count) in counts[low..=high].iter_mut().enumerate() {
                     if *count > 0 {
@@ -265,8 +268,7 @@ impl Figures {
         Figures {
             requests,
             failures: fold.failures(),
-            fail_percent: (requests > 0)
-                .then(|| fold.failures() as f64 * 100.0 / requests as f64),
+            fail_percent: (requests > 0).then(|| fold.failures() as f64 * 100.0 / requests as f64),
             average_ms: fold.average_ms(),
             p50_ms: fold.percentile_ms(0.5),
             p95_ms: fold.percentile_ms(0.95),
@@ -357,7 +359,10 @@ impl WorkerHealth {
     /// How long it has run its share, as of `now`.
     fn running_for(&self, now: Instant) -> Duration {
         match self.running_since {
-            Some(since) => self.running_until.unwrap_or(now).saturating_duration_since(since),
+            Some(since) => self
+                .running_until
+                .unwrap_or(now)
+                .saturating_duration_since(since),
             None => Duration::ZERO,
         }
     }
@@ -407,10 +412,8 @@ impl WorkerHealth {
     /// It stopped after sending metrics, and its final metrics never
     /// arrived: the results hold its last running totals.
     pub(crate) fn final_missing(&self) -> bool {
-        matches!(
-            self.state,
-            WorkerState::Finished | WorkerState::UsersExited
-        ) && self.merge.last_seq > 0
+        matches!(self.state, WorkerState::Finished | WorkerState::UsersExited)
+            && self.merge.last_seq > 0
             && !self.merge.final_merged
     }
 }
@@ -567,9 +570,12 @@ impl GaggleHealth {
                 worker.saturated_total += span;
             }
             // Saturated since the start of the span this sample covers.
-            worker
-                .above_since
-                .get_or_insert_with(|| (at, chrono::Utc::now() - chrono::Duration::from_std(span).unwrap_or_default()));
+            worker.above_since.get_or_insert_with(|| {
+                (
+                    at,
+                    chrono::Utc::now() - chrono::Duration::from_std(span).unwrap_or_default(),
+                )
+            });
         } else {
             worker.above_since = None;
         }
@@ -591,9 +597,7 @@ impl GaggleHealth {
         let worker = self.entry(id);
         if worker.is_running() {
             if let Some(since) = worker.last_delta.or(worker.running_since) {
-                worker.longest_gap = worker
-                    .longest_gap
-                    .max(now.saturating_duration_since(since));
+                worker.longest_gap = worker.longest_gap.max(now.saturating_duration_since(since));
             }
         }
         worker.last_delta = Some(now);
@@ -709,9 +713,9 @@ impl GaggleHealth {
             }
             let mut live = worker.merge_flags();
             live.saturated = worker.is_running()
-                && worker
-                    .above_since
-                    .is_some_and(|(since, _)| now.saturating_duration_since(since) >= SATURATED_FOR);
+                && worker.above_since.is_some_and(|(since, _)| {
+                    now.saturating_duration_since(since) >= SATURATED_FOR
+                });
             live.lagging = worker.delta_gap(now).is_some_and(|gap| gap > LAGGING_AFTER);
             if let Some((rate, p95)) = outliers.get(&worker.id) {
                 live.rate_outlier = *rate;
@@ -720,9 +724,9 @@ impl GaggleHealth {
             let name = &worker.name;
             if live.saturated && !worker.live.saturated {
                 let percent = worker.cpu_percent.unwrap_or(0.0).round();
-                let secs = worker
-                    .above_since
-                    .map_or(0, |(since, _)| now.saturating_duration_since(since).as_secs());
+                let secs = worker.above_since.map_or(0, |(since, _)| {
+                    now.saturating_duration_since(since).as_secs()
+                });
                 events.push((
                     GaggleEventKind::WorkerSaturated,
                     name.clone(),
@@ -805,7 +809,10 @@ impl GaggleHealth {
                 let percent = (value - median) * 100.0 / median;
                 (percent.abs() > OUTLIER_PERCENT).then(|| percent.round() as i32)
             };
-            let (r, p) = (from(rate(figures), rate_median), from(p95(figures), p95_median));
+            let (r, p) = (
+                from(rate(figures), rate_median),
+                from(p95(figures), p95_median),
+            );
             if r.is_some() || p.is_some() {
                 far.insert(*id, (r, p));
             }
@@ -870,9 +877,8 @@ impl GaggleHealth {
                         .map(|_| worker.saturated_total.as_secs_f64().round() as u64),
                     longest_delta_gap_secs: ran
                         .then(|| (worker.longest_gap.as_secs_f64() * 10.0).round() / 10.0),
-                    running_secs: ran.then(|| {
-                        (worker.running_for(now).as_secs_f64() * 10.0).round() / 10.0
-                    }),
+                    running_secs: ran
+                        .then(|| (worker.running_for(now).as_secs_f64() * 10.0).round() / 10.0),
                     requests: ran.then_some(figures.requests),
                     failures: ran.then_some(figures.failures),
                     average_ms: figures.average_ms.filter(|_| times),
@@ -1046,7 +1052,10 @@ mod tests {
         health.tick(at + secs(6.0));
         assert_eq!(
             kinds(&health),
-            vec![GaggleEventKind::WorkerLagging, GaggleEventKind::WorkerRecovered]
+            vec![
+                GaggleEventKind::WorkerLagging,
+                GaggleEventKind::WorkerRecovered
+            ]
         );
         assert!(health
             .events()
@@ -1077,7 +1086,14 @@ mod tests {
     /// Feed worker 0 of `health` CPU at `percent` of its one core every
     /// second from `from` to `to` seconds past `at`, from CPU time `micros`;
     /// the CPU time after.
-    fn burn(health: &mut GaggleHealth, at: Instant, from: u64, to: u64, percent: u64, mut micros: u64) -> u64 {
+    fn burn(
+        health: &mut GaggleHealth,
+        at: Instant,
+        from: u64,
+        to: u64,
+        percent: u64,
+        mut micros: u64,
+    ) -> u64 {
         for second in from..=to {
             health.applied(0, None, None, at + secs(second as f64));
             health.cpu(0, Some(micros), at + secs(second as f64));
@@ -1105,7 +1121,10 @@ mod tests {
         assert!(!health.worker(0).unwrap().live.saturated);
         assert_eq!(
             kinds(&health),
-            vec![GaggleEventKind::WorkerSaturated, GaggleEventKind::WorkerRecovered]
+            vec![
+                GaggleEventKind::WorkerSaturated,
+                GaggleEventKind::WorkerRecovered
+            ]
         );
         let saturated = health.events().0.next().unwrap().text.clone();
         assert_eq!(saturated, "load-0 saturated (CPU 95% for 5 s)");
@@ -1185,11 +1204,17 @@ mod tests {
         let ms = [140, 100, 100, 100];
         // Two workers: never judged.
         let two = outlying(2, &rates, &ms, 40, at);
-        assert!(two.records(at + secs(40.0)).iter().all(|r| r.flags.is_empty()));
+        assert!(two
+            .records(at + secs(40.0))
+            .iter()
+            .all(|r| r.flags.is_empty()));
         // Three: not before 30 seconds, then flagged, live and for the run.
         let early = outlying(3, &rates, &ms, 29, at);
         assert_eq!(early.worker(0).unwrap().live.rate_outlier, None);
-        assert!(early.records(at + secs(29.0)).iter().all(|r| r.flags.is_empty()));
+        assert!(early
+            .records(at + secs(29.0))
+            .iter()
+            .all(|r| r.flags.is_empty()));
         for n in [3, 4] {
             let late = outlying(n, &rates, &ms, 31, at);
             let live = &late.worker(0).unwrap().live;
@@ -1206,7 +1231,11 @@ mod tests {
         for (rate, flagged) in [(75, false), (74, true)] {
             let health = outlying(3, &[rate, 100, 100], &[100, 100, 100], 31, at);
             let worker = record(&health, 0, at + secs(31.0));
-            assert_eq!(worker.flags.contains(&GaggleWorkerFlag::Outlier), flagged, "{rate}");
+            assert_eq!(
+                worker.flags.contains(&GaggleWorkerFlag::Outlier),
+                flagged,
+                "{rate}"
+            );
         }
     }
 
@@ -1278,7 +1307,10 @@ mod tests {
             vec![GaggleWorkerFlag::Excluded, GaggleWorkerFlag::Refused]
         );
         health.excluded(Vec::new());
-        assert_eq!(record(&health, 0, at).flags, vec![GaggleWorkerFlag::Refused]);
+        assert_eq!(
+            record(&health, 0, at).flags,
+            vec![GaggleWorkerFlag::Refused]
+        );
     }
 
     /// The budget at scale: 1,024 workers, each delta 50 request names of
@@ -1308,7 +1340,10 @@ mod tests {
             part.raw.minimum_us = part.raw.buckets[0].0;
             part.raw.maximum_us = part.raw.buckets.last().unwrap().0;
             part.success = 120;
-            delta.metrics.requests.insert(format!("GET /page/{name}"), part);
+            delta
+                .metrics
+                .requests
+                .insert(format!("GET /page/{name}"), part);
         }
         let mut second = Duration::ZERO;
         // Past the first 30 seconds, so the outliers are judged too.

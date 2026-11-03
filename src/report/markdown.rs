@@ -1,8 +1,8 @@
 use crate::{
     metrics::{format_number, format_value, ReportData},
     report::{
-        common::OrEmpty, ErrorMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
-        workers, TransactionErrorMetric, TransactionMetric,
+        common::OrEmpty, workers, ErrorMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
+        TransactionErrorMetric, TransactionMetric,
     },
     runs::GaggleRecord,
     test_plan::TestPlanStepAction,
@@ -163,7 +163,10 @@ impl<W: Write> Markdown<'_, '_, W> {
         if record.events.is_empty() && record.events_dropped == 0 {
             return Ok(());
         }
-        write!(self.w, "\n## Events\n\n| Time | Event |\n| ---- | ----- |\n")?;
+        write!(
+            self.w,
+            "\n## Events\n\n| Time | Event |\n| ---- | ----- |\n"
+        )?;
         for event in &record.events {
             writeln!(
                 self.w,

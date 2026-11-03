@@ -708,8 +708,10 @@ fn gaggle_manager_interrupted() {
 /// degraded, holds every worker's requests: together what the server saw,
 /// less at most a request in flight for each user when the users stopped.
 fn manager_canceled(name: &str, plan: &[&str]) {
-    let (name, plan): (String, Vec<String>) =
-        (name.to_string(), plan.iter().map(|arg| arg.to_string()).collect());
+    let (name, plan): (String, Vec<String>) = (
+        name.to_string(),
+        plan.iter().map(|arg| arg.to_string()).collect(),
+    );
     within(move || {
         let server = MockServer::start();
         let index = mock_simple(&server, Duration::from_millis(5));
@@ -728,7 +730,12 @@ fn manager_canceled(name: &str, plan: &[&str]) {
             &manager_folder,
         ];
         extra.extend(plan.iter().map(String::as_str));
-        let mut manager = Process::start(&simple, "manager", &folder, &manager_args(&host, "2", &extra));
+        let mut manager = Process::start(
+            &simple,
+            "manager",
+            &folder,
+            &manager_args(&host, "2", &extra),
+        );
         let port = manager.port();
         let mut workers = [
             Process::start(&simple, "first", &folder, &worker_args(&port, &[])),

@@ -31,7 +31,12 @@ impl ManagerMerge {
     /// the seconds it covers (none for a final delta), and `restarted`
     /// whether it started the worker's figures again, whose totals are then
     /// read from the merge.
-    fn merged(&self, worker: u32, sample: Option<(crate::gaggle::health::Fold, u64)>, restarted: bool) {
+    fn merged(
+        &self,
+        worker: u32,
+        sample: Option<(crate::gaggle::health::Fold, u64)>,
+        restarted: bool,
+    ) {
         let totals = restarted
             .then(|| self.accumulator.requests_of(worker))
             .flatten()
@@ -111,7 +116,10 @@ impl MetricsProcessor {
                 // ignores, a repeat or one of an older epoch, adds nothing,
                 // and one that starts its figures again has them read back.
                 let last_seq = merge.accumulator.last_seq(worker);
-                let epoch = merge.accumulator.requests_of(worker).map(|(_, epoch)| epoch);
+                let epoch = merge
+                    .accumulator
+                    .requests_of(worker)
+                    .map(|(_, epoch)| epoch);
                 let ignored = last_seq.is_some_and(|last| delta.seq <= last)
                     || epoch.is_some_and(|epoch| delta.epoch < epoch);
                 let restarted = !ignored

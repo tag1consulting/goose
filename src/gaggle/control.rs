@@ -1051,15 +1051,16 @@ impl GooseAttack {
                 });
                 if let Ok(mut health) = run.health.lock() {
                     for (kind, text) in pending.events {
-                        let text = format!("{text}, {}", acks_text(acknowledged, workers, secs, pending.lost.len()));
+                        let text = format!(
+                            "{text}, {}",
+                            acks_text(acknowledged, workers, secs, pending.lost.len())
+                        );
                         health.event(kind, None, text);
                     }
                 }
                 outcome.message = format!(
                     "{}; accepted by {} of {} workers",
-                    outcome.message,
-                    acknowledged,
-                    workers
+                    outcome.message, acknowledged, workers
                 );
                 if !pending.lost.is_empty() {
                     outcome.message = format!("{}; {}", outcome.message, pending.lost.join("; "));
