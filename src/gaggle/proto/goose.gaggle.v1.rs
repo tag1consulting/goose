@@ -46,6 +46,9 @@ pub struct Hello {
     /// The worker's name, for logs and the run folder.
     #[prost(string, tag = "4")]
     pub worker_name: ::prost::alloc::string::String,
+    /// The CPU cores the worker's process may use, for its CPU percent.
+    #[prost(uint32, optional, tag = "5")]
+    pub cores: ::core::option::Option<u32>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PrepareAck {
@@ -60,6 +63,11 @@ pub struct Metrics {
     /// A postcard encoded metrics delta.
     #[prost(bytes = "vec", tag = "1")]
     pub delta: ::prost::alloc::vec::Vec<u8>,
+    /// The worker process's user and system CPU time so far, in microseconds,
+    /// read as the delta is sent; absent where the platform has no cheap
+    /// source of it.
+    #[prost(uint64, optional, tag = "2")]
+    pub cpu_micros: ::core::option::Option<u64>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Stopped {

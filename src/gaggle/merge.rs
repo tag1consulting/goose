@@ -15,29 +15,8 @@ use crate::metrics::{
 };
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 
-/// What the merge did with one worker's deltas, for the manager's run
-/// record: anything here but `last_seq` means the results undercount it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct WorkerMerge {
-    /// The sequence number of the last delta merged.
-    pub(crate) last_seq: u64,
-    /// Deltas refused.
-    pub(crate) refused: u64,
-    /// Why the last refused delta was refused.
-    pub(crate) refusal: Option<String>,
-    /// Why the merge last built left the worker out, when it did.
-    pub(crate) excluded: Option<String>,
-    /// Deltas that never arrived: their graph rows are not in the results.
-    pub(crate) missing: u64,
-    /// Its final delta was merged.
-    pub(crate) final_merged: bool,
-}
-
-/// Each worker's [`WorkerMerge`], written by the manager's metrics
-/// processor as it merges, read by the manager's run.
-pub(crate) type MergeHealth = Arc<Mutex<BTreeMap<u32, WorkerMerge>>>;
+pub(crate) use super::health::{MergeHealth, WorkerMerge};
 
 /// A delta that did not follow the one before it from the same worker.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -625,6 +604,16 @@ impl GaggleAccumulator {
         self.workers
             .get(&worker)
             .is_some_and(|total| total.got_final)
+    }
+
+    /// Every request `worker` made this epoch, by name, and the epoch.
+    pub(crate) fn requests_of(
+        &self,
+        worker: u32,
+    ) -> Option<(&BTreeMap<String, RequestPart>, u64)> {
+        self.workers
+            .get(&worker)
+            .map(|total| (&total.total.metrics.requests, total.total.epoch))
     }
 
     /// The sequence number of the last delta merged from `worker`.

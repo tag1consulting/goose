@@ -164,6 +164,8 @@ pub(crate) enum Event {
     Delta {
         id: u32,
         delta: Box<GaggleDelta>,
+        /// The worker's CPU time so far, in microseconds, when it said.
+        cpu_micros: Option<u64>,
         bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
     /// Its answer to `Control` `control`: `received` as it read the change,
@@ -197,6 +199,8 @@ pub(crate) struct WorkerHandle {
     pub(crate) id: u32,
     /// Its name, unique in this Gaggle, safe as a folder name.
     pub(crate) name: String,
+    /// The CPU cores it said its process may use, when it said.
+    cores: Option<u32>,
     /// The worker's one sender, taken when it is shut down, so its stream
     /// ends.
     outbound: Arc<Mutex<Option<Outbound>>>,
@@ -496,6 +500,7 @@ impl Shared {
         let worker = WorkerHandle {
             id,
             name: unique,
+            cores: None,
             outbound: Arc::new(Mutex::new(Some(outbound))),
             closed: Arc::new(AtomicBool::new(false)),
             ended: Arc::new(AtomicBool::new(false)),
@@ -504,7 +509,20 @@ impl Shared {
         joined.push(worker.clone());
         Ok(worker)
     }
+
+    /// Note the cores worker `id` said it may use: a count of 0 or past
+    /// [`MAX_CORES`] is taken as none said.
+    fn set_cores(&self, id: u32, cores: Option<u32>) {
+        if let Ok(mut joined) = self.joined.lock() {
+            if let Some(worker) = super::worker_mut(joined.as_mut_slice(), id) {
+                worker.cores = cores.filter(|cores| (1..=MAX_CORES).contains(cores));
+            }
+        }
+    }
 }
+
+/// The most CPU cores a worker may say it has: more is taken as none said.
+const MAX_CORES: u32 = 65_536;
 
 /// The gRPC service.
 struct GaggleService(Arc<Shared>);
@@ -581,6 +599,7 @@ impl Gaggle for GaggleService {
             }
         };
         let id = worker.id;
+        self.0.set_cores(id, hello.cores);
         info!("gaggle: worker {id} ({}) joined from {peer}", worker.name);
         let _ = worker.send(ToWorker::Welcome(Welcome { worker_id: id }));
         let _ = self.0.events.send_async((Event::Joined, None)).await;
@@ -955,7 +974,7 @@ async fn read_worker(
                 id,
                 error: ack.error,
             }),
-            Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta),
+            Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta, metrics.cpu_micros),
             Some(FromWorker::UsersStopped(_)) => Arrived::Event(Event::UsersStopped { id }),
             Some(FromWorker::ControlAck(ack)) => Arrived::Event(Event::ControlAck {
                 id,
@@ -971,7 +990,7 @@ async fn read_worker(
         // holds. A reader holds a decoded delta outside the budget only
         // while it waits for more than its reserve.
         let reserve = match &arrived {
-            Arrived::Delta(_) => encoded.saturating_mul(DECODED_PER_ENCODED),
+            Arrived::Delta(..) => encoded.saturating_mul(DECODED_PER_ENCODED),
             Arrived::Event(_) => encoded,
         };
         let bytes = (reserve as u64).min(EVENT_BYTES) as u32;
@@ -988,7 +1007,7 @@ async fn read_worker(
         // A delta holds its share itself, until the merge has taken it.
         let queued = match arrived {
             Arrived::Event(event) => (event, Some(permit)),
-            Arrived::Delta(bytes) => match GaggleDelta::decode(&bytes) {
+            Arrived::Delta(bytes, cpu_micros) => match GaggleDelta::decode(&bytes) {
                 Ok(delta) => {
                     got_final |= delta.kind == DeltaKind::Final;
                     // What it holds decoded, at least its encoded size, is
@@ -1022,6 +1041,7 @@ async fn read_worker(
                     let event = Event::Delta {
                         id,
                         delta: Box::new(delta),
+                        cpu_micros,
                         bytes: Some(permit),
                     };
                     (event, None)
@@ -1060,7 +1080,8 @@ async fn read_worker(
 /// an event, or a delta still to decode.
 enum Arrived {
     Event(Event),
-    Delta(Vec<u8>),
+    /// A delta, and the worker's CPU time with it.
+    Delta(Vec<u8>, Option<u64>),
 }
 
 /// Wait for `future`, which the manager holds back, as when its event queue
@@ -1256,6 +1277,15 @@ impl Manager {
     /// The next event if one is waiting.
     pub(crate) fn try_event(&self) -> Option<Event> {
         self.events.try_recv().ok().map(taken)
+    }
+
+    /// The cores worker `id` said its process may use.
+    pub(crate) fn cores(&self, id: u32) -> Option<u32> {
+        self.shared
+            .joined
+            .lock()
+            .ok()
+            .and_then(|joined| super::worker(joined.as_slice(), id).and_then(|w| w.cores))
     }
 
     /// Each worker's id and name.
@@ -1818,6 +1848,7 @@ pub(crate) mod handshake_tests {
             tx.send(WorkerMessage {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: last.encode().unwrap(),
+                    cpu_micros: None,
                 })),
             })
             .await
@@ -1898,6 +1929,7 @@ pub(crate) mod handshake_tests {
             tx.send(WorkerMessage {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: vec![0xff; 16],
+                    cpu_micros: None,
                 })),
             })
             .await
@@ -2032,6 +2064,7 @@ pub(crate) mod handshake_tests {
             protocol_version: PROTOCOL_VERSION,
             plan_hash: 7,
             worker_name: "w".to_string(),
+            cores: None,
         }
     }
 
@@ -2149,6 +2182,7 @@ pub(crate) mod handshake_tests {
             tx.send(WorkerMessage {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: delta.encode().unwrap(),
+                    cpu_micros: None,
                 })),
             })
             .await
@@ -2376,6 +2410,7 @@ pub(crate) mod handshake_tests {
                     let message = WorkerMessage {
                         message: Some(FromWorker::Metrics(Metrics {
                             delta: encoded.clone(),
+                            cpu_micros: None,
                         })),
                     };
                     if tx.send(message).await.is_err() {

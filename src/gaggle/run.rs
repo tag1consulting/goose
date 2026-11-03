@@ -11,7 +11,7 @@ use super::control::{WorkerControl, WorkerSettings};
 use super::delta::DeltaLimits;
 use super::link::{Link, LinkEvent, LinkSettings, LOG_CHUNK};
 use super::manager::{Event, Manager};
-use super::merge::MergeHealth;
+use super::health::{MergeHealth, WorkerState};
 use super::proto::{
     manager_message::Message as ToWorker, stopped::Reason, Prepare, ResetMetrics, SendLogs,
     StartAt, Stop, Stopped,
@@ -19,7 +19,7 @@ use super::proto::{
 use super::spec::{self, LogSpec, WorkerRunSpec};
 use crate::controller::RunSettings;
 use crate::metrics::MetricsCommand;
-use crate::runs::{EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, GaggleWorkerState};
+use crate::runs::{EndedBy, GaggleEventKind, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord};
 use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError, WorkerShare};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -204,8 +204,11 @@ pub(crate) struct ManagerRun {
     /// The run already ended for every worker lost or every worker's users
     /// exited.
     pub(super) ending: bool,
-    /// What the merge did with each worker's deltas.
-    health: MergeHealth,
+    /// Each worker's health, and what happened to the Gaggle: the metrics
+    /// processor writes what it merges.
+    pub(super) health: MergeHealth,
+    /// Runs begun so far: a later one began with a Start.
+    begun: usize,
 }
 
 /// The worker's side of a run.
@@ -665,6 +668,7 @@ impl GooseAttack {
             canceled_at_stop: false,
             ending: false,
             health: MergeHealth::default(),
+            begun: 0,
         })));
         Ok(())
     }
@@ -686,6 +690,20 @@ impl GooseAttack {
     }
 
     async fn manager_begin(&mut self, run: &mut ManagerRun) -> Result<(), GooseError> {
+        // Each run's health starts again: the processor this run starts
+        // takes this model.
+        run.health = MergeHealth::default();
+        if let Ok(mut health) = run.health.lock() {
+            let now = Instant::now();
+            for worker in &run.workers {
+                health.join(worker.id, &worker.name, run.manager.cores(worker.id));
+                if let Some((at, why)) = &worker.lost {
+                    health.lost_before(worker.id, *at, why);
+                } else if worker.gone {
+                    health.set_state(worker.id, WorkerState::Finished, now);
+                }
+            }
+        }
         // The report files can be created: a path that cannot fails here,
         // before test_start runs or any worker starts.
         if let Err(e) = self.create_reports().await {
@@ -713,7 +731,32 @@ impl GooseAttack {
         run.stop_sent = false;
         run.canceled_at_stop = false;
         run.ending = false;
-        run.health = MergeHealth::default();
+        let started = Instant::now();
+        let from_start = run.begun > 0 || self.configuration.no_autostart;
+        run.begun += 1;
+        let live = run.workers.iter().filter(|worker| worker.is_live()).count();
+        let users: Vec<(u32, usize, usize)> = run
+            .workers
+            .iter()
+            .map(|worker| (worker.id, run.book.users(worker.id as usize).len(), worker.users))
+            .collect();
+        if let Ok(mut health) = run.health.lock() {
+            for (id, now, started_users) in users {
+                health.set_users(id, now, started_users);
+            }
+            health.start(started);
+            if from_start {
+                health.event(GaggleEventKind::Start, None, "start".to_string());
+            }
+            health.event(
+                GaggleEventKind::RunStarted,
+                None,
+                format!(
+                    "{live} of {} workers joined, run started",
+                    run.workers.len()
+                ),
+            );
+        }
         info!(
             "gaggle: starting at {}",
             chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
@@ -787,6 +830,9 @@ impl GooseAttack {
             match next_event_or_canceled(manager, deadline, "workers prepared").await? {
                 Some(Event::PrepareAck { id, error: None }) => {
                     ready.insert(id);
+                    if let Ok(mut health) = run.health.lock() {
+                        health.set_state(id, WorkerState::Ready, Instant::now());
+                    }
                 }
                 Some(Event::PrepareAck {
                     id,
@@ -1247,6 +1293,22 @@ impl GooseAttack {
                     .send(MetricsCommand::GaggleClock {
                         second: now as u64 + CLOCK_SLACK,
                     });
+                // Once a second: the workers' users, then their live flags.
+                let users: Vec<(u32, usize, usize)> = run
+                    .workers
+                    .iter()
+                    .map(|worker| {
+                        let users = run.book.users(worker.id as usize).len();
+                        (worker.id, users, worker.users.max(users))
+                    })
+                    .collect();
+                if let Ok(mut health) = run.health.lock() {
+                    health.set_second(now as u64);
+                    for (id, users, started) in users {
+                        health.set_users(id, users, started);
+                    }
+                    health.tick(Instant::now());
+                }
             }
         }
         while let Some(event) = run.manager.try_event() {
@@ -1293,13 +1355,21 @@ impl GooseAttack {
         event: Event,
     ) {
         match event {
-            Event::Delta { id, delta, bytes } => {
+            Event::Delta {
+                id,
+                delta,
+                cpu_micros,
+                bytes,
+            } => {
                 let Some(worker) = run.worker(id) else {
                     return;
                 };
                 // The results hold what a lost worker sent before it was lost.
                 if worker.lost.is_some() {
                     return;
+                }
+                if let Ok(mut health) = run.health.lock() {
+                    health.cpu(id, cpu_micros, Instant::now());
                 }
                 // Whether the merge takes a delta depends on all it holds of
                 // the worker (its sequence, epoch, final delta and names),
@@ -1340,6 +1410,15 @@ impl GooseAttack {
                     return;
                 };
                 worker.stopped = Some(reason);
+                if worker.lost.is_none() {
+                    let state = match reason {
+                        Reason::UsersExited => WorkerState::UsersExited,
+                        _ => WorkerState::Finished,
+                    };
+                    if let Ok(mut health) = run.health.lock() {
+                        health.set_state(id, state, Instant::now());
+                    }
+                }
                 #[cfg(test)]
                 super::faults::STOPPED_SEEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 worker.run_folder = Some(stopped.run_folder).filter(|folder| !folder.is_empty());
@@ -1363,6 +1442,11 @@ impl GooseAttack {
             Event::UsersStopped { id } => {
                 if let Some(worker) = run.worker(id) {
                     worker.users_stopped.get_or_insert_with(Instant::now);
+                    if worker.lost.is_none() && worker.stopped.is_none() {
+                        if let Ok(mut health) = run.health.lock() {
+                            health.set_state(id, WorkerState::Stopping, Instant::now());
+                        }
+                    }
                 }
             }
             Event::Lost { id, why } => self.lose_worker(goose_attack_run_state, run, id, why),
@@ -1423,6 +1507,9 @@ impl GooseAttack {
         }
         if !newly {
             return;
+        }
+        if let Ok(mut health) = run.health.lock() {
+            health.lose(id, &reason, Instant::now());
         }
         warn!("{message}");
         run.manager.shut_down(id);
@@ -1641,6 +1728,14 @@ impl GooseAttack {
         #[cfg(test)]
         super::faults::MANAGER_STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
         run.stop_sent = true;
+        if let Ok(mut health) = run.health.lock() {
+            let now = Instant::now();
+            for worker in run.workers.iter().filter(|worker| {
+                worker.lost.is_none() && worker.stopped.is_none()
+            }) {
+                health.set_state(worker.id, WorkerState::Stopping, now);
+            }
+        }
         // Whatever the processor has queued, a threshold check among them,
         // is done first: a rule that fails now triggers the killswitch before
         // the cancel is set aside, never during the wait, where it would read
@@ -1871,53 +1966,36 @@ impl GooseAttack {
         let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_ref() else {
             return None;
         };
-        let health = run
-            .health
-            .lock()
-            .map(|health| health.clone())
-            .unwrap_or_default();
-        let workers: Vec<GaggleWorkerRecord> = run
-            .workers
-            .iter()
-            .map(|worker| {
-                let merge = health.get(&worker.id).cloned().unwrap_or_default();
-                let state = match (&worker.lost, worker.stopped) {
-                    (Some(_), _) => GaggleWorkerState::Lost,
-                    (None, Some(Reason::UsersExited)) => GaggleWorkerState::UsersExited,
-                    (None, Some(_)) => GaggleWorkerState::Finished,
-                    (None, None) => GaggleWorkerState::Running,
-                };
-                // A worker that stopped after sending metrics sent its final
-                // delta first: without it, its last running totals stand.
-                let final_missing = matches!(
-                    state,
-                    GaggleWorkerState::Finished | GaggleWorkerState::UsersExited
-                ) && merge.last_seq > 0
-                    && !merge.final_merged;
-                GaggleWorkerRecord {
+        let (mut workers, events, events_dropped) = match run.health.lock() {
+            Ok(health) => {
+                let (events, dropped) = health.events();
+                (
+                    health.records(Instant::now()),
+                    events.cloned().collect(),
+                    dropped,
+                )
+            }
+            Err(_) => (Vec::new(), Vec::new(), 0),
+        };
+        // A worker the model never heard of still has a row.
+        for worker in &run.workers {
+            if !workers.iter().any(|record| record.id == worker.id) {
+                workers.push(GaggleWorkerRecord {
                     id: worker.id,
                     name: worker.name.clone(),
                     users: worker.users,
-                    state,
-                    lost_at: worker
-                        .lost
-                        .as_ref()
-                        .map(|(at, _)| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
-                    lost_reason: worker.lost.as_ref().map(|(_, why)| why.clone()),
-                    last_seq: worker.lost.as_ref().map(|_| merge.last_seq),
-                    refused_deltas: merge.refused,
-                    refused_reason: merge.refusal,
-                    excluded_reason: merge.excluded,
-                    missing_deltas: merge.missing,
-                    final_missing,
-                }
-            })
-            .collect();
+                    ..GaggleWorkerRecord::default()
+                });
+            }
+        }
+        workers.sort_by_key(|record| record.id);
         let degraded = workers.iter().any(GaggleWorkerRecord::degraded);
         Some(GaggleRecord {
             workers,
             logs_left: run.logs_left.clone(),
             degraded,
+            events,
+            events_dropped,
         })
     }
 }
@@ -2338,6 +2416,7 @@ mod tests {
             canceled_at_stop: false,
             ending: false,
             health: MergeHealth::default(),
+            begun: 0,
         };
         (run, tx, inbound)
     }
@@ -2854,14 +2933,16 @@ mod tests {
         async fn record(final_merged: bool) -> GaggleRecord {
             let manager = test_manager(1, Duration::from_secs(10)).await;
             let health = MergeHealth::default();
-            health.lock().unwrap().insert(
-                0,
-                crate::gaggle::merge::WorkerMerge {
+            {
+                let mut held = health.lock().unwrap();
+                held.join(0, "w", None);
+                held.set_state(0, WorkerState::Finished, Instant::now());
+                *held.merge_mut(0) = crate::gaggle::merge::WorkerMerge {
                     last_seq: 4,
                     final_merged,
                     ..Default::default()
-                },
-            );
+                };
+            }
             let configuration =
                 crate::config::GooseConfiguration::parse_args_default(&["--host", "http://h"])
                     .unwrap();
@@ -2885,6 +2966,7 @@ mod tests {
                 canceled_at_stop: false,
                 ending: false,
                 health,
+                begun: 0,
             })));
             attack.gaggle_run_record().unwrap()
         }
@@ -3003,6 +3085,7 @@ mod tests {
                 canceled_at_stop: false,
                 ending: false,
                 health: MergeHealth::default(),
+                begun: 0,
             };
             // A worker says it received a change before it refuses it.
             let received = Event::ControlAck {

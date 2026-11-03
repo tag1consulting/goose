@@ -394,7 +394,10 @@ impl Outbox {
                             Err(e) => Err(e.to_string()),
                         };
                         match encoded {
-                            Ok(bytes) => ToManager::Metrics(Metrics { delta: bytes }),
+                            Ok(bytes) => ToManager::Metrics(Metrics {
+                                delta: bytes,
+                                cpu_micros: super::health::process_cpu_micros(),
+                            }),
                             // No final metrics will reach the manager: say
                             // so, so it records them missing, rather than
                             // wait for them.
@@ -528,6 +531,9 @@ impl LinkSettings {
             protocol_version: PROTOCOL_VERSION,
             plan_hash,
             worker_name: name,
+            cores: std::thread::available_parallelism()
+                .ok()
+                .map(|cores| cores.get() as u32),
         }
     }
 }

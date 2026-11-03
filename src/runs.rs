@@ -104,7 +104,7 @@ pub(crate) struct RunRecord {
 }
 
 /// A Gaggle run's workers, as the manager's run record keeps them.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct GaggleRecord {
     #[serde(default)]
     pub workers: Vec<GaggleWorkerRecord>,
@@ -115,19 +115,99 @@ pub(crate) struct GaggleRecord {
     /// results: each such worker's entry says why.
     #[serde(default)]
     pub degraded: bool,
+    /// What happened to the Gaggle during the run, oldest first: the newest
+    /// [`GaggleRecord::MAX_EVENTS`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<GaggleEvent>,
+    /// Older events left out of `events`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub events_dropped: u64,
+}
+
+/// What a Gaggle event is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GaggleEventKind {
+    /// Every worker joined and the run started.
+    RunStarted,
+    WorkerLost,
+    /// The merge left a worker's metrics out.
+    WorkerExcluded,
+    DeltasRefused,
+    WorkerSaturated,
+    WorkerLagging,
+    /// A worker no longer saturated or lagging.
+    WorkerRecovered,
+    UsersChanged,
+    ThrottleChanged,
+    HostChanged,
+    /// The throttle's shares were made again over the workers left.
+    ThrottleSharesRescaled,
+    /// A lost worker's users were moved to the workers left.
+    UsersRebalanced,
+    Stop,
+    Start,
+}
+
+/// One thing that happened to a Gaggle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GaggleEvent {
+    /// The run's series second it happened in.
+    #[serde(default)]
+    pub second: u64,
+    /// When it happened, RFC 3339, UTC.
+    #[serde(default)]
+    pub time: String,
+    pub kind: GaggleEventKind,
+    /// The worker it is about, when it is about one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
+    /// What happened, as a short sentence.
+    #[serde(default)]
+    pub text: String,
+}
+
+/// Why a Gaggle worker's figures may not be what they seem, most severe
+/// first: the order its report table sorts workers in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GaggleWorkerFlag {
+    /// It was lost during the run.
+    Lost,
+    /// The results leave its metrics out.
+    Excluded,
+    /// Its own CPU was saturated for a while: it may have capped its load.
+    Saturated,
+    /// Its metrics arrived late.
+    Lagging,
+    /// Its rate or p95 was far from the median of the running workers.
+    Outlier,
+    /// Deltas from it were refused.
+    Refused,
+    /// Deltas from it, or its final metrics, never arrived.
+    Missing,
 }
 
 fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
-/// Where a Gaggle worker stood when the manager wrote its run record.
+/// Where a Gaggle worker stands: the one state the manager's health model
+/// (`gaggle::health`) keeps for each worker, and what its run record says.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum GaggleWorkerState {
-    /// It had not stopped.
+    /// It joined, and has yet to say it is ready to run its share.
+    Joining,
+    /// It is ready, and waits for the run to start.
+    Ready,
+    /// It runs its share. A record of 0.19 or step 2 says this of any
+    /// worker that had not stopped.
     #[default]
     Running,
+    /// It was told to stop, or said its users stopped: its final metrics
+    /// follow.
+    Stopping,
     /// It stopped and sent its final metrics.
     Finished,
     /// Every one of its users exited (`--iterations`).
@@ -136,8 +216,23 @@ pub(crate) enum GaggleWorkerState {
     Lost,
 }
 
+impl GaggleWorkerState {
+    /// The state as the reports show it.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            GaggleWorkerState::Joining => "joining",
+            GaggleWorkerState::Ready => "ready",
+            GaggleWorkerState::Running => "running",
+            GaggleWorkerState::Stopping => "stopping",
+            GaggleWorkerState::Finished => "finished",
+            GaggleWorkerState::UsersExited => "users exited",
+            GaggleWorkerState::Lost => "lost",
+        }
+    }
+}
+
 /// One worker of a Gaggle run.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct GaggleWorkerRecord {
     pub id: u32,
     pub name: String,
@@ -170,6 +265,57 @@ pub(crate) struct GaggleWorkerRecord {
     /// arrived: the results hold its last running totals.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub final_missing: bool,
+    /// The run's series second it was lost in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost_second: Option<u64>,
+    /// The CPU cores it said its process may use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cores: Option<u32>,
+    /// Its highest CPU use over a second, in percent of its cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_cpu_percent: Option<u32>,
+    /// The seconds its CPU use was at or above the saturation threshold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saturated_secs: Option<u64>,
+    /// The longest it went without a delta merged while running, in
+    /// seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub longest_delta_gap_secs: Option<f64>,
+    /// How long it ran its share, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_secs: Option<f64>,
+    /// Its requests over the run, every request name together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failures: Option<u64>,
+    /// Its response times over the run, every request name together, in
+    /// milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub average_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p50_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p95_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p99_ms: Option<f64>,
+    /// Its requests per second over its running time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_per_second: Option<f64>,
+    /// Its requests per second for each of its users.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_per_user_per_second: Option<f64>,
+    /// How far its requests per user per second were from the median of the
+    /// running workers, in percent, signed, when there were enough to judge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_vs_median_percent: Option<i32>,
+    /// How far its p95 was from the median of the running workers' p95, in
+    /// percent, signed, when there were enough to judge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p95_vs_median_percent: Option<i32>,
+    /// Why its figures may not be what they seem, most severe first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flags: Vec<GaggleWorkerFlag>,
 }
 
 impl GaggleWorkerRecord {
@@ -250,6 +396,7 @@ impl GaggleRecord {
                 short.join(", ")
             ));
         }
+        intro.extend(check_sentences(&self.workers));
         if !self.logs_left.is_empty() {
             let left: Vec<String> = self
                 .logs_left
@@ -260,6 +407,161 @@ impl GaggleRecord {
         }
         intro
     }
+}
+
+impl GaggleRecord {
+    /// The most events a record keeps: older ones are counted in
+    /// `events_dropped`.
+    pub(crate) const MAX_EVENTS: usize = 1_000;
+}
+
+/// The most workers a "Check:" sentence names; the rest are counted.
+const CHECK_NAMES: usize = 10;
+
+/// `items`, at most [`CHECK_NAMES`] of them, joined with commas, the rest
+/// counted: `a, b and 3 more`.
+fn named(items: &[String]) -> String {
+    let shown = &items[..items.len().min(CHECK_NAMES)];
+    let mut text = shown.join(", ");
+    if items.len() > shown.len() {
+        text.push_str(&format!(" and {} more", items.len() - shown.len()));
+    }
+    text
+}
+
+/// Seconds as a report shows them: one decimal, none when it is 0.
+pub(crate) fn secs_text(secs: f64) -> String {
+    let rounded = (secs * 10.0).round() / 10.0;
+    if rounded.fract() == 0.0 {
+        format!("{rounded:.0}")
+    } else {
+        format!("{rounded:.1}")
+    }
+}
+
+/// `percent` from the median as words: `35% above` or `35% below`.
+fn from_median(percent: i32) -> String {
+    match percent >= 0 {
+        true => format!("{percent}% above"),
+        false => format!("{}% below", -percent),
+    }
+}
+
+/// A worker's peak CPU, as a saturated sentence gives it: ` (peak 97% of 4
+/// cores)`, or nothing when it did not say.
+fn peak_cpu(worker: &GaggleWorkerRecord) -> String {
+    match (worker.peak_cpu_percent, worker.cores) {
+        (Some(peak), Some(1)) => format!(" (peak {peak}% of 1 core)"),
+        (Some(peak), Some(cores)) => format!(" (peak {peak}% of {cores} cores)"),
+        (Some(peak), None) => format!(" (peak {peak}%)"),
+        (None, _) => String::new(),
+    }
+}
+
+/// The "Check:" sentences of a Gaggle run: one for each kind of flag a
+/// worker's own limits may have shaped the numbers by (CPU saturated,
+/// metrics late, rate or p95 far from the other workers'), naming the
+/// workers that carry it, in the order given. The reports' intro and the
+/// dashboard's banner both say these.
+pub(crate) fn check_sentences(workers: &[GaggleWorkerRecord]) -> Vec<String> {
+    let flagged = |flag: GaggleWorkerFlag| -> Vec<&GaggleWorkerRecord> {
+        workers
+            .iter()
+            .filter(|worker| worker.flags.contains(&flag))
+            .collect()
+    };
+    let mut sentences = Vec::new();
+    let saturated = flagged(GaggleWorkerFlag::Saturated);
+    match saturated.as_slice() {
+        [] => {}
+        [worker] => sentences.push(format!(
+            "Check: {} was CPU saturated for {} s in total{}; its share of requests may be capped and its response times inflated by the generator, not the target.",
+            worker.name,
+            worker.saturated_secs.unwrap_or(0),
+            peak_cpu(worker)
+        )),
+        many => {
+            let items: Vec<String> = many
+                .iter()
+                .map(|worker| {
+                    format!(
+                        "{} for {} s{}",
+                        worker.name,
+                        worker.saturated_secs.unwrap_or(0),
+                        peak_cpu(worker)
+                    )
+                })
+                .collect();
+            sentences.push(format!(
+                "Check: {} workers were CPU saturated: {}; their shares of requests may be capped and their response times inflated by the generator, not the target.",
+                many.len(),
+                named(&items)
+            ));
+        }
+    }
+    let gap = |worker: &GaggleWorkerRecord| {
+        worker
+            .longest_delta_gap_secs
+            .map_or_else(String::new, |gap| format!(" (longest gap {} s)", secs_text(gap)))
+    };
+    let lagging = flagged(GaggleWorkerFlag::Lagging);
+    match lagging.as_slice() {
+        [] => {}
+        [worker] => sentences.push(format!(
+            "Check: {}'s metrics arrived late{}.",
+            worker.name,
+            gap(worker)
+        )),
+        many => {
+            let items: Vec<String> = many
+                .iter()
+                .map(|worker| format!("{}{}", worker.name, gap(worker)))
+                .collect();
+            sentences.push(format!(
+                "Check: the metrics of {} workers arrived late: {}.",
+                many.len(),
+                named(&items)
+            ));
+        }
+    }
+    let outliers = flagged(GaggleWorkerFlag::Outlier);
+    for (what, percent) in [
+        (
+            "p95",
+            (|worker: &GaggleWorkerRecord| worker.p95_vs_median_percent)
+                as fn(&GaggleWorkerRecord) -> Option<i32>,
+        ),
+        (
+            "requests per user per second",
+            |worker: &GaggleWorkerRecord| worker.rate_vs_median_percent,
+        ),
+    ] {
+        let far: Vec<(&GaggleWorkerRecord, i32)> = outliers
+            .iter()
+            .filter_map(|worker| percent(worker).map(|percent| (*worker, percent)))
+            .collect();
+        let verb = if what == "p95" { "was" } else { "were" };
+        match far.as_slice() {
+            [] => {}
+            [(worker, percent)] => sentences.push(format!(
+                "Check: {}'s {what} {verb} {} the median of the running workers.",
+                worker.name,
+                from_median(*percent)
+            )),
+            many => {
+                let items: Vec<String> = many
+                    .iter()
+                    .map(|(worker, percent)| format!("{} ({})", worker.name, from_median(*percent)))
+                    .collect();
+                sentences.push(format!(
+                    "Check: the {what} of {} workers was far from the median of the running workers: {}.",
+                    many.len(),
+                    named(&items)
+                ));
+            }
+        }
+    }
+    sentences
 }
 
 /// Where a report's graphs start when they do not cover the whole run.
