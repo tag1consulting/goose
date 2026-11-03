@@ -1236,6 +1236,10 @@ async fn read_manager(
             }
             Some(FromManager::Shutdown(_)) => {
                 shutdown.store(true, Ordering::Relaxed);
+                // Nothing more is sent: the stream's own side ends once what
+                // is queued has left, which the manager waits for before it
+                // stops.
+                switch.outbox.close();
                 switch.shut_down();
                 events.last.set(LinkEvent::Shutdown);
                 return;

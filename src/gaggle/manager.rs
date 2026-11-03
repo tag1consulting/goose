@@ -229,7 +229,9 @@ impl WorkerHandle {
         let kind = message_kind(&message);
         let outbound = self.outbound.lock().ok();
         let outbound = outbound.as_ref().and_then(|outbound| outbound.as_ref());
-        let Some(outbound) = outbound.filter(|_| !self.closed.load(Ordering::Relaxed)) else {
+        // Nothing follows `Shutdown`, though the stream stays open.
+        let open = !self.closed.load(Ordering::Relaxed) && !self.draining.load(Ordering::Relaxed);
+        let Some(outbound) = outbound.filter(|_| open) else {
             return Err(format!(
                 "gaggle: worker {} ({}): {kind} not sent, its stream closed",
                 self.id, self.name
