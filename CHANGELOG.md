@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.19.2-dev
+
 ## 0.19.1 November 3, 2026
 
  - [#803](https://github.com/tag1consulting/goose/pull/803) the Goose Book loads Rybbit page view analytics when served from `book.goose.rs`, through `theme/head.hbs`, and nowhere else
