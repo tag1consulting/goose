@@ -460,19 +460,21 @@ async fn render_report_with_and_without_graph_data() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Rule 8 with a 0.18.1 JSON report, which has no test plan history: its
-/// HTML and Markdown reports render, and say the graphs were not recorded.
+/// Rule 8 with a 0.19.0 JSON report, which has no test plan history and no
+/// graph data: its HTML and Markdown reports render, and say the graphs were
+/// not recorded. (A 0.18 report, which had this test before, is refused;
+/// tests/baseline.rs checks that.)
 #[tokio::test]
 #[serial]
-async fn render_report_from_a_0_18_report() {
-    let dir = temp_dir("render-0-18");
+async fn render_report_from_a_report_without_history_or_graphs() {
+    let dir = temp_dir("render-0-19-0");
     let html = dir.join("old.html");
     let md = dir.join("old.md");
     let configuration = GooseConfiguration::parse_args_default(&[
         "--render-report",
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/report-0.18.1.json"
+            "/tests/fixtures/report-0.19.0.json"
         ),
         "--report-file",
         &html.to_string_lossy(),

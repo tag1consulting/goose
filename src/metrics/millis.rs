@@ -1,18 +1,17 @@
 use super::delta::{DeltaValue, Value};
 use num_format::{Locale, ToFormattedString};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 
 /// A response time kept in microseconds and shown in milliseconds, rounded
 /// half up: to the hundredth under 10 ms, where whole milliseconds hide the
 /// difference, and whole from there.
 ///
-/// It serializes as whole milliseconds, truncated as Goose always took them,
-/// so a JSON report's rows read as they did; it deserializes from whole
-/// milliseconds. A JSON report row also writes each one in microseconds, in
-/// a field named for it with `_us` added, so the report keeps the time the
-/// other reports show. The whole millisecond fields are deprecated; see the
-/// `TODO(0.20)` note in `src/report.rs` for their removal in 0.20.
+/// It serializes as its integer number of microseconds. Only the JSON
+/// report's rows serialize one, each under its field's name with `_us`
+/// added. Nothing deserializes one: a JSON report read back takes its
+/// minimums, maximums and percentiles from its raw timing data, not from
+/// its rows.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Millis(pub u64);
 
@@ -86,14 +85,7 @@ impl PartialEq<usize> for Millis {
 
 impl Serialize for Millis {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        (self.0 / 1000).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Millis {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let ms = u64::deserialize(deserializer)?;
-        Ok(Millis(ms.saturating_mul(1000)))
+        self.0.serialize(serializer)
     }
 }
 
@@ -137,9 +129,10 @@ impl DeltaValue for Millis {
 
 /// A time in milliseconds worked out from measured times, such as a mean or
 /// a standard deviation, held as an `f64`; NaN without times. It shows as a
-/// [`Millis`] does and serializes as the `f64`.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize)]
-#[serde(transparent)]
+/// [`Millis`] does. It is neither serialized nor deserialized: the JSON
+/// report writes each such time as an integer number of microseconds from a
+/// `_us` field of its own, worked out from the microseconds measured.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub(crate) struct MillisFloat(pub f64);
 
 impl MillisFloat {
@@ -182,15 +175,6 @@ impl Display for MillisFloat {
     /// As Goose shows a time.
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.pad(&format_ms(self.0, false))
-    }
-}
-
-impl<'de> Deserialize<'de> for MillisFloat {
-    /// From a number, or `null` as NaN.
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(MillisFloat(
-            Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::NAN),
-        ))
     }
 }
 
@@ -283,10 +267,6 @@ mod test {
         assert_eq!(MillisFloat(1_436.69).to_string(), "1437");
         assert_eq!(MillisFloat(1_436.69).formatted(), "1,437");
         assert_eq!(MillisFloat(f64::NAN).to_string(), "NaN");
-        assert_eq!(
-            serde_json::to_string(&MillisFloat(1_436.69)).unwrap(),
-            "1436.69"
-        );
         let mut mean = Value::Plain(MillisFloat(1_436.69));
         mean.diff(MillisFloat(1_436.2));
         assert_eq!(mean.to_string(), "1437 (+1)");
@@ -299,12 +279,11 @@ mod test {
     }
 
     #[test]
-    fn serializes_as_whole_milliseconds() {
-        assert_eq!(serde_json::to_string(&Millis(37_999)).unwrap(), "37");
-        assert_eq!(serde_json::to_string(&Millis(420)).unwrap(), "0");
-        let back: Millis = serde_json::from_str("37").unwrap();
-        assert_eq!(back, Millis(37_000));
-        assert_eq!(back, 37usize);
+    fn serializes_as_microseconds() {
+        assert_eq!(serde_json::to_string(&Millis(37_999)).unwrap(), "37999");
+        assert_eq!(serde_json::to_string(&Millis(420)).unwrap(), "420");
+        assert_eq!(serde_json::to_string(&Millis(0)).unwrap(), "0");
+        assert_eq!(Millis::from_ms(37), 37usize);
     }
 
     #[test]

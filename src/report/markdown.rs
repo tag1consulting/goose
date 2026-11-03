@@ -247,6 +247,7 @@ impl<W: Write> Markdown<'_, '_, W> {
             response_time_maximum,
             requests_per_second,
             failures_per_second,
+            ..
         } in transaction_metrics
         {
             match is_scenario {
@@ -288,6 +289,7 @@ impl<W: Write> Markdown<'_, '_, W> {
             response_time_maximum,
             count_per_second,
             iterations,
+            ..
         } in scenario_metrics
         {
             writeln!(
