@@ -35,6 +35,8 @@ pub(crate) mod worker;
 #[cfg(test)]
 pub(crate) mod faults;
 #[cfg(test)]
+mod ported_tests;
+#[cfg(test)]
 mod run_tests;
 #[cfg(test)]
 mod tests;

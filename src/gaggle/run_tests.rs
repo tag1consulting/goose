@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// A transaction that GETs `path`.
-fn get(path: &'static str) -> Transaction {
+pub(super) fn get(path: &'static str) -> Transaction {
     Transaction::new(Arc::new(move |user| {
         Box::pin(async move {
             let _ = user.get(path).await;
@@ -71,13 +71,13 @@ fn load_test(configuration: GooseConfiguration) -> GooseAttack {
         .set_worker_data(|share| format!("w{}", share.index).into_bytes())
 }
 
-fn configuration(args: &[&str]) -> GooseConfiguration {
+pub(super) fn configuration(args: &[&str]) -> GooseConfiguration {
     GooseConfiguration::parse_args_default(args).unwrap()
 }
 
 /// A fresh folder for a test's runs, removed once dropped, however the test
 /// ends.
-struct Scratch(PathBuf);
+pub(super) struct Scratch(PathBuf);
 
 impl std::ops::Deref for Scratch {
     type Target = Path;
@@ -94,7 +94,7 @@ impl Drop for Scratch {
 }
 
 /// A fresh folder for this test's runs.
-fn scratch(name: &str) -> Scratch {
+pub(super) fn scratch(name: &str) -> Scratch {
     let folder = std::env::temp_dir().join(format!(
         "goose-gaggle-{name}-{}-{}",
         std::process::id(),
@@ -105,7 +105,7 @@ fn scratch(name: &str) -> Scratch {
 }
 
 /// The lines in `file`.
-fn lines(file: &Path) -> usize {
+pub(super) fn lines(file: &Path) -> usize {
     std::fs::read_to_string(file)
         .unwrap_or_else(|e| panic!("{}: {e}", file.display()))
         .lines()
@@ -113,7 +113,7 @@ fn lines(file: &Path) -> usize {
 }
 
 /// The users of each scenario.
-fn scenario_users(metrics: &GooseMetrics) -> Vec<BTreeSet<usize>> {
+pub(super) fn scenario_users(metrics: &GooseMetrics) -> Vec<BTreeSet<usize>> {
     metrics
         .scenarios
         .iter()
@@ -132,7 +132,7 @@ fn no_token_from_the_environment() {
 /// manager and `Some(n)` for worker `n`, which is also given `faults[n]`.
 /// The manager listens on a port the system picks, and each process keeps
 /// its run folder under `folder`. The manager's result, and each worker's.
-async fn gaggle(
+pub(super) async fn gaggle(
     build: impl Fn(GooseConfiguration, Option<usize>) -> GooseAttack,
     count: usize,
     host: String,
@@ -238,7 +238,7 @@ fn standard(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack 
 }
 
 /// The manager's metrics, when it and every worker exited cleanly.
-fn clean(
+pub(super) fn clean(
     (manager, workers): (
         Result<GooseMetrics, crate::GooseError>,
         Vec<Result<GooseMetrics, crate::GooseError>>,
@@ -493,7 +493,7 @@ fn record(folder: &Path) -> (serde_json::Value, String) {
 }
 
 /// A mock on `server` that answers a GET of `path` with 200 and `ok`.
-async fn mock_ok<'a>(server: &'a MockServer, path: &str) -> httpmock::Mock<'a> {
+pub(super) async fn mock_ok<'a>(server: &'a MockServer, path: &str) -> httpmock::Mock<'a> {
     server
         .mock_async(|when, then| {
             when.method(GET).path(path);
@@ -730,7 +730,7 @@ async fn gaggle_manager_client_options_win_on_workers() {
 }
 
 /// Each worker's copy of the request log in the run in `folder`.
-fn worker_logs(folder: &Path, file: &str) -> Vec<Vec<u8>> {
+pub(super) fn worker_logs(folder: &Path, file: &str) -> Vec<Vec<u8>> {
     let workers = folder.join("manager").join("workers");
     let mut logs: Vec<Vec<u8>> = std::fs::read_dir(&workers)
         .unwrap_or_else(|e| panic!("{}: {e}", workers.display()))
