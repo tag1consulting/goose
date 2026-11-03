@@ -714,6 +714,9 @@ async fn metrics_reset_reaches_every_worker() {
             .get("GET /pre")
             .map_or(0, |pre| pre.success_count);
         assert_eq!(pre.calls_async().await, 4);
+        // Every worker took the reset: none is left out of the merge.
+        let a = counts(&merged).get("GET /a").copied().unwrap_or(0);
+        assert!(a > 0, "every worker's /a is merged: {:?}", counts(&merged));
         match reset {
             false => assert_eq!(counted, 4),
             // Only each worker's last user may race the reset with its /pre.
