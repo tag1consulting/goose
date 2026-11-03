@@ -1970,6 +1970,7 @@ impl GooseAttack {
                     &run.workers,
                     &run.logs_left,
                     crate::killswitch_reason().is_some(),
+                    run.begun == 0,
                 );
                 run.manager.shut_down_all_waiting(&finished).await;
             }
@@ -2054,9 +2055,15 @@ impl Incoming {
 
 /// Where worker `id` of `workers` keeps `log`, which stays on it.
 /// The workers the manager waits for at shutdown, each reading its
-/// `Shutdown` before the manager stops: those that stopped and are still
-/// connected, every log sent. None after a cancel, which ends at once.
-fn finished_workers(workers: &[WorkerEntry], logs_left: &[GaggleLogLeft], canceled: bool) -> Vec<u32> {
+/// `Shutdown` before the manager stops: those still connected that stopped,
+/// or that never ran, as before the first run, every log sent. None after a
+/// cancel, which ends at once.
+fn finished_workers(
+    workers: &[WorkerEntry],
+    logs_left: &[GaggleLogLeft],
+    canceled: bool,
+    before_any_run: bool,
+) -> Vec<u32> {
     if canceled {
         return Vec::new();
     }
@@ -2064,7 +2071,7 @@ fn finished_workers(workers: &[WorkerEntry], logs_left: &[GaggleLogLeft], cancel
         .iter()
         .filter(|worker| {
             worker.is_live()
-                && worker.stopped.is_some()
+                && (worker.stopped.is_some() || before_any_run)
                 && !logs_left.iter().any(|left| left.worker == worker.name)
         })
         .map(|worker| worker.id)
@@ -2515,8 +2522,10 @@ mod tests {
             worker: "log-left".to_string(),
             path: "requests.json".to_string(),
         }];
-        assert_eq!(finished_workers(&workers, &left, false), vec![0]);
-        assert_eq!(finished_workers(&workers, &left, true), Vec::<u32>::new());
+        assert_eq!(finished_workers(&workers, &left, false, false), vec![0]);
+        assert_eq!(finished_workers(&workers, &left, true, false), Vec::<u32>::new());
+        // Before the first run, a worker that never ran is waited for too.
+        assert_eq!(finished_workers(&workers, &left, false, true), vec![0, 3]);
     }
 
     #[test]
