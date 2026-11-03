@@ -49,6 +49,13 @@ pub(crate) struct TestFaults {
     pub(crate) oversize_delta: u64,
     /// Make the final delta larger than a message may be.
     pub(crate) oversize_final: bool,
+    /// Take this long to apply the first users change of a running load
+    /// test, after reading it: its main loop waits, as one building many
+    /// users does.
+    pub(crate) slow_apply: Option<Duration>,
+    /// Say a change made while the manager is idle was applied this long
+    /// after reading it, as a busy main loop would.
+    pub(crate) slow_idle_ack: Option<Duration>,
 }
 
 impl TestFaults {
@@ -117,20 +124,24 @@ impl TestFaults {
                         detail: "withheld its final metrics on purpose".to_string(),
                     })
                 }
-                Some(LinkEvent::Stop(_)) if self.cancel_on_stop => {
-                    tokio::spawn(async {
-                        let until = std::time::Instant::now() + Duration::from_secs(10);
-                        while STOPPED_SEEN.load(std::sync::atomic::Ordering::SeqCst) == 0
-                            && std::time::Instant::now() < until
-                        {
-                            tokio::time::sleep(Duration::from_millis(20)).await;
-                        }
-                        *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
-                        crate::trigger_killswitch("a test's Ctrl-C as the run stops");
-                    });
-                }
+                Some(LinkEvent::Stop(_)) if self.cancel_on_stop => cancel_after_stopped(),
                 _ => {}
             }
+        }
+    }
+
+    /// What [`Self::cancel_on_stop`] does as `Stop` arrives: at once, or,
+    /// with [`Self::withhold_final`], once the manager took another
+    /// worker's `Stopped`, wherever the worker reads that `Stop`.
+    pub(crate) fn on_stop(&self) {
+        if !self.cancel_on_stop {
+            return;
+        }
+        if self.withhold_final {
+            cancel_after_stopped();
+        } else {
+            *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
+            crate::trigger_killswitch("a test's Ctrl-C as the run stops");
         }
     }
 
@@ -186,6 +197,30 @@ pub(crate) fn hold_threshold_check(has_requests: bool) {
         std::thread::sleep(Duration::from_millis(300));
     });
 }
+
+/// Trigger the killswitch, as Ctrl-C on the manager, once the manager took
+/// a worker's `Stopped`, or after 10 seconds, at [`LOG_FAULT_AT`].
+fn cancel_after_stopped() {
+    tokio::spawn(async {
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while STOPPED_SEEN.load(std::sync::atomic::Ordering::SeqCst) == 0
+            && std::time::Instant::now() < until
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
+        crate::trigger_killswitch("a test's Ctrl-C as the run stops");
+    });
+}
+
+/// The warnings the manager logged for a change a worker received but had
+/// not yet applied.
+pub(crate) static DONE_WARNINGS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// The changes every worker the manager sent them to has applied.
+pub(crate) static CHANGES_DONE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// The workers' `Stopped`, which follows their final metrics, the manager
 /// has taken.

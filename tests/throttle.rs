@@ -116,6 +116,7 @@ fn validate_test(
     request_logs: &[String],
     throttle_value: usize,
     previous_requests_file_lines: Option<usize>,
+    ran: std::time::Duration,
 ) -> usize {
     // Verify that the metrics file was created and has the correct number of lines.
     let mut current_requests_file_lines = 0;
@@ -128,8 +129,17 @@ fn validate_test(
     assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
-    // Requests are made while GooseUsers are launched, and then for RUN_TIME seconds.
-    assert!(current_requests_file_lines <= (RUN_TIME + 1) * throttle_value);
+    // Requests are made at the throttle's rate for as long as its throttle
+    // runs, which is within `ran`, the whole load test's time: the users'
+    // launch, RUN_TIME and the shutdown. Each process's throttle also starts
+    // with one token's room free.
+    let most = (ran.as_secs_f64() * throttle_value as f64).ceil() as usize + request_logs.len();
+    assert!(
+        current_requests_file_lines <= most,
+        "{} requests, at most {}",
+        current_requests_file_lines,
+        most
+    );
 
     if let Some(previous_lines) = previous_requests_file_lines {
         // Verify the second load test generated more than 4x the load of the first test.
@@ -179,11 +189,13 @@ async fn test_throttle() {
     );
 
     // Run the Goose Attack.
+    let started = std::time::Instant::now();
     common::run_load_test(
         common::build_load_test(configuration, vec![get_transactions()], None, None),
         None,
     )
     .await;
+    let ran = started.elapsed();
 
     // Confirm that the load test was actually throttled.
     let test1_lines = validate_test(
@@ -191,6 +203,7 @@ async fn test_throttle() {
         &[REQUEST_LOG.to_string()],
         THROTTLE_REQUESTS,
         None,
+        ran,
     );
 
     // Increase the throttle and run a second load test, so we can compare the difference
@@ -209,11 +222,13 @@ async fn test_throttle() {
     );
 
     // Run the Goose Attack.
+    let started = std::time::Instant::now();
     common::run_load_test(
         common::build_load_test(configuration, vec![get_transactions()], None, None),
         None,
     )
     .await;
+    let ran = started.elapsed();
 
     // Confirm that the load test was actually throttled, at an increased rate.
     let _ = validate_test(
@@ -221,6 +236,7 @@ async fn test_throttle() {
         &[REQUEST_LOG.to_string()],
         increased_throttle,
         Some(test1_lines),
+        ran,
     );
 }
 
@@ -246,6 +262,7 @@ async fn test_throttle_gaggle() {
 
     // Build the load test for the Workers.
     // Launch each worker in its own thread, storing the join handles.
+    let started = std::time::Instant::now();
     let mut worker_handles = Vec::new();
     let mut request_logs = Vec::new();
     for i in 0..EXPECT_WORKERS {
@@ -287,6 +304,7 @@ async fn test_throttle_gaggle() {
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
+    let ran = started.elapsed();
 
     // Confirm that the load test was actually throttled.
     let test1_lines = validate_test(
@@ -295,6 +313,7 @@ async fn test_throttle_gaggle() {
         // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
         THROTTLE_REQUESTS * EXPECT_WORKERS,
         None,
+        ran,
     );
 
     // Increase the throttle and run a second load test, so we can compare the difference
@@ -307,6 +326,7 @@ async fn test_throttle_gaggle() {
 
     // Build the load test for the Workers.
     // Launch each worker in its own thread, storing the join handles.
+    let started = std::time::Instant::now();
     let mut worker_handles = Vec::new();
     let mut request_logs = Vec::new();
     for i in 0..EXPECT_WORKERS {
@@ -333,6 +353,7 @@ async fn test_throttle_gaggle() {
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
+    let ran = started.elapsed();
 
     // Confirm that the load test was actually throttled, at an increased rate.
     let _ = validate_test(
@@ -341,5 +362,6 @@ async fn test_throttle_gaggle() {
         // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
         increased_throttle * EXPECT_WORKERS,
         Some(test1_lines),
+        ran,
     );
 }

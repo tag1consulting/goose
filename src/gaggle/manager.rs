@@ -166,6 +166,15 @@ pub(crate) enum Event {
         delta: Box<GaggleDelta>,
         bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
+    /// Its answer to `Control` `control`: `received` as it read the change,
+    /// then, `received` false, with `error` `None` once it applied it, or
+    /// why it refused it.
+    ControlAck {
+        id: u32,
+        control: u64,
+        error: Option<String>,
+        received: bool,
+    },
     /// Its users stopped: its final delta and `Stopped` follow.
     UsersStopped { id: u32 },
     /// Its users stopped, and its final delta was sent first.
@@ -267,6 +276,11 @@ impl tokio_stream::Stream for Responses {
     }
 }
 
+/// How long the manager waits at shutdown for every worker's `Shutdown` to
+/// leave: 5 seconds, half the 10 a worker waits before its dead man's
+/// switch fires. The wait ends as soon as every stream has ended.
+const SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
+
 /// The warning a message to a worker that could not be queued logs.
 fn dropped(id: u32, name: &str, kind: &str) -> String {
     format!("gaggle: worker {id} ({name}): {kind} not sent, its send queue full or closed")
@@ -284,6 +298,7 @@ pub(crate) fn message_kind(message: &ManagerMessage) -> &'static str {
         Some(ToWorker::Stop(_)) => "Stop",
         Some(ToWorker::SendLogs(_)) => "SendLogs",
         Some(ToWorker::Shutdown(_)) => "Shutdown",
+        Some(ToWorker::Control(_)) => "Control",
         None => "an empty message",
     }
 }
@@ -942,6 +957,12 @@ async fn read_worker(
             }),
             Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta),
             Some(FromWorker::UsersStopped(_)) => Arrived::Event(Event::UsersStopped { id }),
+            Some(FromWorker::ControlAck(ack)) => Arrived::Event(Event::ControlAck {
+                id,
+                control: ack.id,
+                error: ack.error,
+                received: ack.received,
+            }),
             Some(FromWorker::Stopped(stopped)) => Arrived::Event(Event::Stopped { id, stopped }),
             Some(FromWorker::LogChunk(chunk)) => Arrived::Event(Event::Log { id, chunk }),
         };
@@ -1284,9 +1305,11 @@ impl Manager {
                 worker.shut_down();
             }
         }
-        // Each stream ends once its `Shutdown` has left: wait for that, at
-        // most a second, before the service stops.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        // Each stream ends once its `Shutdown` has left: wait for that
+        // before the service stops, at most SHUTDOWN_DRAIN. A loaded machine
+        // can take over a second to get there, and a service stopped first
+        // closes a worker's stream with its `Shutdown` unsent.
+        let deadline = tokio::time::Instant::now() + SHUTDOWN_DRAIN;
         loop {
             // Created before the check, so a stream ending between them
             // still wakes it.

@@ -19,17 +19,18 @@ Thresholds are judged on the merged metrics, by the manager, as a run of one pro
 
 - A fixed set of workers: the manager waits for `--expect-workers` workers before it starts, and no worker joins later.
 - Users, ramps, `--test-plan`, `--iterations`, `--throttle-requests`, `--scenarios`, coordinated omission mitigation and every metrics, report and log option, given to the manager.
+- [Runtime control](manager.md#runtime-control): the manager's Controllers and dashboard control start, stop and change the whole Gaggle while it runs, users, rates, times, the test plan, the host and the throttle, as one process running every user would; `--no-autostart` on the manager waits for a `start`.
+- `--throttle-requests` is [one limit across the workers](manager.md#the-throttle-across-workers), and holds when a worker is lost; with `--gaggle-rebalance` a lost worker's users move to the others.
 - One metrics reset when every user has started, across the whole Gaggle.
 - `test_start` and `test_stop` run once, on the manager.
 - [Custom data for each worker](worker.md#custom-data-for-each-worker), such as its share of a pool of accounts.
 - A lost worker does not stop the run: the run goes on with the others, and its reports say it is degraded. So does a worker whose metrics are not all in the results, as one that missed the metrics reset; its users are left out of the users graph too. A worker that loses its manager stops all of its load within seconds.
 - Ctrl-C on the manager at any stage: while the workers join or prepare, during the run, or while their logs arrive. Every worker is told to stop, `test_stop` runs if `test_start` did, and a log not yet whole stays on its worker. In a run that was not canceled, one pressed while the workers hand over their final metrics takes effect once they have: the logs are then left on the workers.
-- The manager's graphs show a second once no worker can still add to it: a worker's rows reach back its request timeout and a minute, so the live dashboard's graphs, and a report saved while the run goes on, trail the run by about two minutes with the default `--timeout`. The final reports cover the whole run.
+- A worker's rows reach back its request timeout and a minute, so a second is complete once it is that much older than every running worker's newest, about two minutes with the default `--timeout`. The live dashboard's graphs, and a report saved while the run goes on, show every second the workers have sent, the recent ones as far as they have arrived: the dashboard draws them lighter, as provisional, and a second with nothing yet as a gap. Each delta's rows for those seconds are added as it arrives, so they cost no build from nothing. The final reports cover the whole run, every second complete.
 - Once every user has started, a Gaggle runs the same scenario mix one process would. During a ramp the order users start in differs, as each worker starts its own share at its own pace.
 
 ## What comes next
 
-- Runtime control: the manager's Controllers and dashboard can read the run but not yet change it. Starting, stopping and changing users, rates, the test plan, the throttle or the host while a Gaggle runs is refused with `not supported in Gaggle mode yet`, and `--no-autostart` can't be used with `--manager`. Ctrl-C on the manager stops the whole Gaggle.
 - Per worker tables in the reports, and a Gaggle view on the dashboard.
 - TLS between the manager and its workers, workers joining a running Gaggle, and workers reconnecting: until TLS arrives, see [Trust](#trust).
 
@@ -53,7 +54,7 @@ In two more terminals, start two workers:
 target/release/examples/simple --worker --manager-host localhost
 ```
 
-The run starts two seconds after both workers are ready. When it ends, the manager's run folder holds its reports and each worker's request log, in `workers/<worker name>/`. A worker never runs a Controller, so only the manager listens on the telnet Controller's port.
+The run starts two seconds after both workers are ready. When it ends, the manager's run folder holds its reports and each worker's request log, in `workers/<worker name>/`. A worker never runs a Controller, so only the manager listens on the telnet Controller's port: `telnet localhost 5116` there, and `users 40` or `throttle 50` changes the whole Gaggle.
 
 ## The lifecycle
 

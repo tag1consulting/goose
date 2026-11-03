@@ -7,6 +7,7 @@
 //! says when to start the share it was handed, and is then driven by what the
 //! manager sends.
 
+use super::control::{WorkerControl, WorkerSettings};
 use super::delta::DeltaLimits;
 use super::link::{Link, LinkEvent, LinkSettings, LOG_CHUNK};
 use super::manager::{Event, Manager};
@@ -16,6 +17,7 @@ use super::proto::{
     StartAt, Stop, Stopped,
 };
 use super::spec::{self, LogSpec, WorkerRunSpec};
+use crate::controller::RunSettings;
 use crate::metrics::MetricsCommand;
 use crate::runs::{EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, GaggleWorkerState};
 use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError, WorkerShare};
@@ -122,10 +124,31 @@ pub(crate) struct GaggleState {
     /// returns, which stops the dead man's switch's last resort (unit tests).
     #[cfg(test)]
     pub(crate) link_done: Arc<std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>>,
+    /// Where a worker reports the settings it runs after each change and
+    /// each `Prepare` (unit tests).
+    #[cfg(test)]
+    pub(crate) applied: Option<tokio::sync::mpsc::UnboundedSender<WorkerApplied>>,
     /// Where the client settings every user gets are reported (unit tests).
     #[cfg(test)]
     pub(crate) client_report:
         Option<tokio::sync::oneshot::Sender<crate::client::GooseClientConfig>>,
+}
+
+/// What a worker runs after a change or a `Prepare` (unit tests).
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WorkerApplied {
+    /// Its link's id.
+    pub(crate) worker: u32,
+    pub(crate) users: Option<usize>,
+    pub(crate) test_plan: Option<Vec<(usize, usize)>>,
+    pub(crate) throttle: usize,
+    pub(crate) host: Option<String>,
+    pub(crate) increase_rate: Option<String>,
+    pub(crate) decrease_rate: Option<String>,
+    pub(crate) run_time: Option<String>,
+    /// Whether the change was refused.
+    pub(crate) refused: bool,
 }
 
 /// This process's side of a Gaggle.
@@ -135,38 +158,52 @@ pub(crate) enum GaggleRole {
 }
 
 /// One of a manager's workers.
-struct WorkerEntry {
-    id: u32,
-    name: String,
+pub(super) struct WorkerEntry {
+    pub(super) id: u32,
+    pub(super) name: String,
     users: usize,
     /// When it said its users stopped: its final metrics follow.
     users_stopped: Option<Instant>,
-    stopped: Option<Reason>,
-    lost: Option<(chrono::DateTime<chrono::Utc>, String)>,
+    pub(super) stopped: Option<Reason>,
+    pub(super) lost: Option<(chrono::DateTime<chrono::Utc>, String)>,
     /// It stopped as told and then went away: not lost, but nothing more,
     /// its logs among them, will come from it.
-    gone: bool,
+    pub(super) gone: bool,
     run_folder: Option<String>,
 }
 
 /// The manager's side of a run.
 pub(crate) struct ManagerRun {
-    manager: Manager,
-    workers: Vec<WorkerEntry>,
+    pub(super) manager: Manager,
+    pub(super) workers: Vec<WorkerEntry>,
+    /// Each worker's users, as one process running them all would.
+    pub(super) book: super::control::UserBook,
+    /// Every worker runs a users ramp of its own, so a Controller can change
+    /// its users, rates and run time: false with a test plan, and when a
+    /// worker had no users as the run started.
+    pub(super) ramps: bool,
+    /// The id the next `Control` takes.
+    pub(super) next_control: u64,
+    /// The change a front end waits on, until every worker received it.
+    pub(super) pending: Option<super::control::PendingControl>,
+    /// Every change sent, oldest first, until every worker applied it.
+    pub(super) sent: Vec<super::control::SentControl>,
+    /// Every worker was told to shut down.
+    shut_down: bool,
     /// The logs every worker writes.
     logs: Vec<LogSpec>,
     logs_left: Vec<GaggleLogLeft>,
     /// The series second of the last clock sent to the merge.
     clock_second: Option<usize>,
     /// `Stop` was sent: a worker that stops now is not lost.
-    stop_sent: bool,
+    pub(super) stop_sent: bool,
     /// The killswitch had canceled the run when `Stop` was sent, and no
     /// Ctrl-C came while the workers sent their final metrics: the log
     /// collection sets that cancel aside, so it still collects.
     canceled_at_stop: bool,
     /// The run already ended for every worker lost or every worker's users
     /// exited.
-    ending: bool,
+    pub(super) ending: bool,
     /// What the merge did with each worker's deltas.
     health: MergeHealth,
 }
@@ -192,6 +229,11 @@ pub(crate) struct WorkerRun {
     /// Its [`TestFaults::stop_reason`] was sent (unit tests).
     #[cfg(test)]
     stop_reason_sent: bool,
+    /// Runtime changes that came between `StartAt` and the start, applied
+    /// once started, each with its id.
+    pending_controls: Vec<(u64, WorkerControl)>,
+    /// Whether the whole load test's test plan holds until stopped.
+    holds: bool,
 }
 
 impl WorkerEntry {
@@ -207,6 +249,11 @@ impl WorkerEntry {
         }
         self.lost = Some((chrono::Utc::now(), why));
         true
+    }
+
+    /// Whether it is still a worker of this Gaggle: neither lost nor gone.
+    pub(super) fn is_live(&self) -> bool {
+        self.lost.is_none() && !self.gone
     }
 
     /// Whether it can still send its logs: it is neither lost nor gone, and
@@ -302,6 +349,31 @@ fn put_back_cancel(reason: Option<String>) {
     }
 }
 
+/// Note in `sent` a worker's answer to a change, when `event` is one: every
+/// loop that takes the manager's events calls this, so no answer is lost to
+/// a loop waiting for something else, which would leave the change open,
+/// warned about and holding later requests back. Taking an answer twice
+/// changes nothing.
+fn note_answer(sent: &mut [super::control::SentControl], event: &Event) {
+    if let Event::ControlAck {
+        id,
+        control,
+        received,
+        error,
+    } = event
+    {
+        if let Some(sent) = sent.iter_mut().find(|sent| sent.id == *control) {
+            match error {
+                // Refused: never applied, and never waited on again.
+                Some(_) => {
+                    sent.forget(*id);
+                }
+                None => sent.answered(*id, *received),
+            }
+        }
+    }
+}
+
 /// The manager's next event before `deadline`, `None` at the deadline, or
 /// the canceled error once the killswitch is triggered: it is checked every
 /// [`KILLSWITCH_POLL`].
@@ -373,8 +445,13 @@ impl GooseAttack {
             _ => MergeHealth::default(),
         };
         let workers = self.configuration.expect_workers.unwrap_or(1);
+        // Users a Controller added take ordinals past the plan's.
+        let started = match self.gaggle.role.as_ref() {
+            Some(GaggleRole::Manager(run)) => run.book.next_ordinal(),
+            _ => 0,
+        };
         let limits = DeltaLimits {
-            max_users: self.test_plan.total_users() as u64,
+            max_users: self.test_plan.total_users().max(started) as u64,
             // At most MAX_WORKERS, which validate_gaggle enforces.
             max_workers: workers as u32,
             ..DeltaLimits::default()
@@ -387,6 +464,19 @@ impl GooseAttack {
     pub(crate) fn gaggle_watch_user<T>(&self, user: &tokio::task::JoinHandle<T>) {
         if let Some(link) = self.gaggle_link() {
             link.watch(user.abort_handle());
+        }
+    }
+
+    /// Whether this worker, at 0 users at the end of its plan, waits for its
+    /// manager rather than ending its run: the whole load test holds until
+    /// stopped, as its users ramp or test plan does.
+    pub(crate) fn gaggle_worker_holds(&self) -> bool {
+        match self.gaggle.role.as_ref() {
+            Some(GaggleRole::Worker(run)) => match self.run_shape.as_ref() {
+                Some(shape) => shape.holds_until_stopped(),
+                None => run.holds,
+            },
+            _ => false,
         }
     }
 
@@ -424,6 +514,39 @@ impl GooseAttack {
         self
     }
 
+    /// Have a worker report what it runs after each change and `Prepare`
+    /// (unit tests).
+    #[cfg(test)]
+    pub(crate) fn report_applied(
+        mut self,
+        applied: tokio::sync::mpsc::UnboundedSender<WorkerApplied>,
+    ) -> Self {
+        self.gaggle.applied = Some(applied);
+        self
+    }
+
+    /// What this worker runs, to its test's report (unit tests).
+    #[cfg(test)]
+    fn report(&self, worker: u32, refused: bool) {
+        if let Some(applied) = self.gaggle.applied.as_ref() {
+            let _ = applied.send(WorkerApplied {
+                worker,
+                users: self.configuration.users,
+                test_plan: self
+                    .configuration
+                    .test_plan
+                    .as_ref()
+                    .map(|plan| plan.steps.clone()),
+                throttle: self.configuration.throttle_requests(),
+                host: self.configuration.host.clone(),
+                increase_rate: self.configuration.increase_rate.clone(),
+                decrease_rate: self.configuration.decrease_rate.clone(),
+                run_time: self.configuration.run_time.clone(),
+                refused,
+            });
+        }
+    }
+
     /// Have the manager report how many workers joined, as each does (unit
     /// tests).
     #[cfg(test)]
@@ -449,6 +572,16 @@ impl GooseAttack {
     /// when its own run starts. A failure shuts every worker down, and once
     /// `test_start` ran, runs `test_stop`.
     pub(crate) async fn gaggle_manager_start(&mut self) -> Result<(), GooseError> {
+        self.gaggle_manager_join().await?;
+        // Without autostart, an accepted Start begins the run.
+        if self.configuration.no_autostart {
+            return Ok(());
+        }
+        self.gaggle_manager_begin().await
+    }
+
+    /// The manager, before its first run: listen and wait for every worker.
+    async fn gaggle_manager_join(&mut self) -> Result<(), GooseError> {
         // Ctrl-C cancels the waits before the run too.
         crate::util::setup_ctrlc_handler();
         let (host, port) = self.configuration.manager_bind();
@@ -502,33 +635,29 @@ impl GooseAttack {
         }
         info!("gaggle: all {expected} workers joined");
 
-        // The report files can be created: a path that cannot fails here,
-        // before test_start runs or any worker starts.
-        if let Err(e) = self.create_reports().await {
-            return Err(fail(&mut manager, e).await);
-        }
-
-        // test_start runs once, here, before any worker starts.
-        if let Err(e) = self.run_test_start().await {
-            return Err(fail(&mut manager, e).await);
-        }
-
-        // test_start ran: any failure from here runs test_stop too, once, as
-        // after any run.
-        let workers = match self.gaggle_prepare_workers(&manager, expected).await {
-            Ok(workers) => workers,
-            Err(e) => {
-                let e = fail(&mut manager, e).await;
-                if let Err(stop) = self.run_test_stop().await {
-                    warn!("test_stop after the manager failed: {stop}");
-                }
-                return Err(e);
-            }
-        };
-
+        let workers = manager
+            .workers()
+            .into_iter()
+            .map(|(id, name)| WorkerEntry {
+                id,
+                name,
+                users: 0,
+                users_stopped: None,
+                stopped: None,
+                lost: None,
+                gone: false,
+                run_folder: None,
+            })
+            .collect();
         self.gaggle.role = Some(GaggleRole::Manager(Box::new(ManagerRun {
             manager,
             workers,
+            book: super::control::UserBook::default(),
+            ramps: false,
+            next_control: 1,
+            pending: None,
+            sent: Vec::new(),
+            shut_down: false,
             logs: spec::log_specs(&self.configuration),
             logs_left: Vec::new(),
             clock_second: None,
@@ -537,6 +666,54 @@ impl GooseAttack {
             ending: false,
             health: MergeHealth::default(),
         })));
+        Ok(())
+    }
+
+    /// The manager, as each run begins, after its first once every worker
+    /// joined, or after an accepted Start: confirm the report files can be
+    /// created, run `test_start` once, hand each worker still running its
+    /// share and custom data, wait for each to prepare, then tell all of
+    /// them to start in [`START_DELAY`] and wait for that instant, when its
+    /// own run starts. A failure shuts every worker down, and once
+    /// `test_start` ran, runs `test_stop`.
+    pub(crate) async fn gaggle_manager_begin(&mut self) -> Result<(), GooseError> {
+        let Some(GaggleRole::Manager(mut run)) = self.gaggle.role.take() else {
+            return Ok(());
+        };
+        let begun = self.manager_begin(&mut run).await;
+        self.gaggle.role = Some(GaggleRole::Manager(run));
+        begun
+    }
+
+    async fn manager_begin(&mut self, run: &mut ManagerRun) -> Result<(), GooseError> {
+        // The report files can be created: a path that cannot fails here,
+        // before test_start runs or any worker starts.
+        if let Err(e) = self.create_reports().await {
+            return Err(fail(&mut run.manager, e).await);
+        }
+
+        // test_start runs once, here, before any worker starts.
+        if let Err(e) = self.run_test_start().await {
+            return Err(fail(&mut run.manager, e).await);
+        }
+
+        // test_start ran: any failure from here runs test_stop too, once, as
+        // after any run.
+        if let Err(e) = self.gaggle_prepare_workers(run).await {
+            let e = fail(&mut run.manager, e).await;
+            if let Err(stop) = self.run_test_stop().await {
+                warn!("test_stop after the manager failed: {stop}");
+            }
+            return Err(e);
+        }
+
+        run.logs = spec::log_specs(&self.configuration);
+        run.logs_left.clear();
+        run.clock_second = None;
+        run.stop_sent = false;
+        run.canceled_at_stop = false;
+        run.ending = false;
+        run.health = MergeHealth::default();
         info!(
             "gaggle: starting at {}",
             chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
@@ -544,14 +721,21 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Hand each worker its share and custom data, wait for each to prepare,
-    /// then tell all of them to start in [`START_DELAY`] and wait for that
-    /// instant: the manager's workers, as it keeps them for the run.
-    async fn gaggle_prepare_workers(
-        &mut self,
-        manager: &Manager,
-        expected: usize,
-    ) -> Result<Vec<WorkerEntry>, GooseError> {
+    /// Hand each worker still running its share and custom data, wait for
+    /// each to prepare, then tell all of them to start in [`START_DELAY`]
+    /// and wait for that instant. The shares are made for the workers that
+    /// are left, numbered from 0 in id order.
+    async fn gaggle_prepare_workers(&mut self, run: &mut ManagerRun) -> Result<(), GooseError> {
+        let live: Vec<u32> = run
+            .workers
+            .iter()
+            .filter(|worker| worker.is_live())
+            .map(|worker| worker.id)
+            .collect();
+        if live.is_empty() {
+            return Err(gaggle_error("every worker was lost".to_string()));
+        }
+        let expected = live.len();
         let total = self.test_plan.total_users();
         let order = self.user_scenarios(total)?;
         let specs = spec::worker_specs(
@@ -562,12 +746,12 @@ impl GooseAttack {
             expected,
             self.configuration.records_graph_data(),
         );
-        let names = manager.workers();
-        let mut workers = Vec::with_capacity(expected);
+        let mut book = vec![Vec::new(); run.workers.len()];
+        run.ramps = specs.iter().all(|spec| spec.ramp.is_some());
         // One worker at a time: its data is made, encoded into its Prepare
         // and dropped before the next worker's is made. Each encoded Prepare
         // then waits in its worker's send queue until the link takes it.
-        for (mut spec, (id, name)) in specs.into_iter().zip(names) {
+        for (mut spec, &id) in specs.into_iter().zip(&live) {
             let share = WorkerShare {
                 index: spec.worker as usize,
                 workers: expected,
@@ -576,22 +760,26 @@ impl GooseAttack {
             };
             spec.custom_data = self.call_worker_data_hook(&share)?.unwrap_or_default();
             let users = spec.users;
+            // The users it runs at its peak, as one process numbers them.
+            let peak = spec::peak_users(&spec.test_plan).min(spec.slice.len());
+            book[id as usize] = (0..peak)
+                .map(|at| (spec.user_offset + at, spec.slice[at]))
+                .collect();
             let encoded = spec.encode();
             drop(spec);
             let bytes =
                 encoded.map_err(|e| gaggle_error(format!("could not encode a run spec: {e}")))?;
-            manager.send(id, ToWorker::Prepare(Prepare { spec: bytes }));
-            workers.push(WorkerEntry {
-                id,
-                name,
-                users,
-                users_stopped: None,
-                stopped: None,
-                lost: None,
-                gone: false,
-                run_folder: None,
-            });
+            run.manager
+                .send(id, ToWorker::Prepare(Prepare { spec: bytes }));
+            if let Some(worker) = run.worker(id) {
+                worker.users = users;
+                worker.users_stopped = None;
+                worker.stopped = None;
+                worker.run_folder = None;
+            }
         }
+        run.book = super::control::UserBook::new(book, total);
+        let manager = &run.manager;
 
         let deadline = Instant::now() + PREPARE_TIMEOUT;
         let mut ready = BTreeSet::new();
@@ -613,6 +801,9 @@ impl GooseAttack {
                         "worker {id} was lost while preparing: {why}"
                     )))
                 }
+                // An answer to a change made while idle, which this share
+                // carries.
+                Some(event @ Event::ControlAck { .. }) => note_answer(&mut run.sent, &event),
                 Some(_) => {}
                 None => {
                     return Err(gaggle_error(format!(
@@ -625,9 +816,14 @@ impl GooseAttack {
         }
 
         let start = tokio::time::Instant::now() + START_DELAY;
-        manager.broadcast(ToWorker::StartAt(StartAt {
-            delay_ms: START_DELAY.as_millis() as u64,
-        }));
+        for &id in &live {
+            manager.send(
+                id,
+                ToWorker::StartAt(StartAt {
+                    delay_ms: START_DELAY.as_millis() as u64,
+                }),
+            );
+        }
         info!(
             "gaggle: every worker is ready; starting in {} seconds",
             START_DELAY.as_secs()
@@ -640,7 +836,7 @@ impl GooseAttack {
             tokio::time::sleep_until(start.min(tokio::time::Instant::now() + KILLSWITCH_POLL))
                 .await;
         }
-        Ok(workers)
+        Ok(())
     }
 
     /// The manager, failing once its workers were told to start but before
@@ -659,7 +855,10 @@ impl GooseAttack {
     /// The worker, before its run: connect to the manager, wait for its
     /// share, and configure this process to run it. The Controllers and the
     /// dashboard stay off.
-    pub(crate) async fn gaggle_worker_join(&mut self) -> Result<(), GooseError> {
+    /// Whether it was handed a share: a worker whose manager shut down from
+    /// Idle, as asked by a Controller or the dashboard, before handing one
+    /// out has nothing to run, and exits cleanly.
+    pub(crate) async fn gaggle_worker_join(&mut self) -> Result<bool, GooseError> {
         self.attack_mode = AttackMode::Worker;
         self.configuration.no_telnet = true;
         self.configuration.websocket = false;
@@ -682,6 +881,7 @@ impl GooseAttack {
         }
         // The manager waits for its other workers and runs test_start: the
         // heartbeats, and the dead man's switch, cover the wait.
+        let mut told_to_shut_down = false;
         let bytes = loop {
             match link.next_event(Duration::from_secs(1)).await {
                 Some(LinkEvent::Prepare(bytes)) => break bytes,
@@ -690,17 +890,31 @@ impl GooseAttack {
                         "lost the manager before the run started: {why}"
                     )))
                 }
+                Some(LinkEvent::Shutdown) if told_to_shut_down => {
+                    info!("gaggle: the manager shut down before handing out a share");
+                    return Ok(false);
+                }
                 Some(LinkEvent::Shutdown) => {
                     return Err(gaggle_error(
                         "the manager shut down before the run started".to_string(),
                     ))
                 }
+                // A change made while the manager is idle: the share it
+                // hands this worker carries it. A shutdown from Idle says
+                // the `Shutdown` that follows is no failure.
+                Some(LinkEvent::Control { id, command }) => {
+                    told_to_shut_down |=
+                        matches!(WorkerControl::decode(&command), Ok(WorkerControl::Shutdown));
+                    #[cfg(test)]
+                    if let Some(delay) = self.gaggle.test_faults.slow_idle_ack {
+                        tokio::time::sleep(delay).await;
+                    }
+                    link.control_ack(id, None);
+                }
                 _ => {}
             }
         };
-        let decoded = WorkerRunSpec::decode(&bytes)
-            .map_err(|e| format!("could not read the run spec: {e}"))
-            .and_then(|spec| spec.validate(self.scenarios.len()).map(|()| spec));
+        let decoded = self.gaggle_worker_decode(&bytes);
         #[cfg(test)]
         let decoded = self.gaggle.test_faults.on_prepare(&link, decoded).await?;
         let mut spec = match decoded {
@@ -711,6 +925,44 @@ impl GooseAttack {
                 return Err(gaggle_error(detail));
             }
         };
+        self.gaggle_worker_take(&mut spec);
+        #[cfg(test)]
+        self.report(link.id, false);
+        #[cfg(test)]
+        let skip_reset = self.gaggle.test_faults.skip_reset;
+        #[cfg(test)]
+        self.gaggle.test_faults.arm(&link.outbox);
+        let holds = spec.holds;
+        self.gaggle.role = Some(GaggleRole::Worker(Box::new(WorkerRun {
+            link,
+            spec,
+            holds,
+            start_at: None,
+            started_late: None,
+            pending_reset: None,
+            tick_second: None,
+            log_files: Vec::new(),
+            run_folder: None,
+            #[cfg(test)]
+            skip_reset,
+            #[cfg(test)]
+            stop_reason_sent: false,
+            pending_controls: Vec::new(),
+        })));
+        Ok(true)
+    }
+
+    /// The share in a `Prepare`, read and checked: an error, why, when it
+    /// can not be run.
+    fn gaggle_worker_decode(&self, bytes: &[u8]) -> Result<WorkerRunSpec, String> {
+        WorkerRunSpec::decode(bytes)
+            .map_err(|e| format!("could not read the run spec: {e}"))
+            .and_then(|spec| spec.validate(self.scenarios.len()).map(|()| spec))
+    }
+
+    /// Configure this process to run the share `spec`, its custom data
+    /// taken.
+    fn gaggle_worker_take(&mut self, spec: &mut WorkerRunSpec) {
         info!(
             "gaggle: worker {} of {}: {} users from ordinal {}",
             spec.worker, spec.workers, spec.users, spec.user_offset
@@ -722,25 +974,178 @@ impl GooseAttack {
         self.gaggle.client_command_line = spec.client_command_line;
         self.set_user_slice(spec.user_offset, spec.slice.clone());
         self.worker_data = Some(Arc::from(std::mem::take(&mut spec.custom_data)));
+    }
+
+    /// A `Prepare` for another run, which comes while this worker is idle
+    /// after a run the manager stopped: take the share and prepare its users
+    /// as before the first run, and tell the manager whether they are ready.
+    fn worker_prepare_again(&mut self, run: &mut WorkerRun, bytes: &[u8]) {
+        let prepared = self.gaggle_worker_decode(bytes).and_then(|mut spec| {
+            self.gaggle_worker_take(&mut spec);
+            run.holds = spec.holds;
+            run.spec = spec;
+            self.test_plan = crate::test_plan::TestPlan::build(&self.configuration)
+                .map_err(|e| e.to_string())?;
+            self.run_shape = crate::run_shape::RunShape::for_configuration(&self.configuration);
+            self.prepare_load_test().map_err(|e| e.to_string())
+        });
+        if let Err(why) = &prepared {
+            warn!("gaggle: could not prepare the next run: {why}");
+        }
+        run.start_at = None;
+        run.started_late = None;
+        run.tick_second = None;
+        run.pending_reset = None;
+        run.log_files.clear();
+        run.run_folder = None;
+        // Moot with the new share, which carries every change: answered,
+        // so none stays open on the manager.
+        for (id, _) in run.pending_controls.drain(..) {
+            run.link.control_ack(id, None);
+        }
         #[cfg(test)]
-        let skip_reset = self.gaggle.test_faults.skip_reset;
+        self.report(run.link.id, prepared.is_err());
+        run.link.prepared(prepared.err());
+    }
+
+    /// Apply the manager's runtime change `command`, and answer it: a
+    /// running load test applies its share with the checks one process
+    /// makes, and a refusal, which the manager never expects, is answered
+    /// with why. An idle worker answers at once, as the share its next
+    /// `Prepare` carries holds every change; one about to start applies it
+    /// once started.
+    async fn worker_control(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        run: &mut WorkerRun,
+        id: u64,
+        command: &[u8],
+    ) -> Result<(), GooseError> {
+        let control = match WorkerControl::decode(command) {
+            Ok(control) => control,
+            Err(e) => {
+                let why = format!("could not read the change: {e}");
+                warn!("gaggle: {why}");
+                run.link.control_ack(id, Some(why));
+                return Ok(());
+            }
+        };
+        let running = matches!(
+            self.attack_phase,
+            AttackPhase::Increase | AttackPhase::Maintain | AttackPhase::Decrease
+        );
+        if !running && run.start_at.is_some() {
+            run.pending_controls.push((id, control));
+            return Ok(());
+        }
+        self.worker_apply(goose_attack_run_state, run, id, control)
+            .await
+    }
+
+    /// Apply the manager's runtime change `control`, id `id`, and answer it.
+    async fn worker_apply(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        run: &mut WorkerRun,
+        id: u64,
+        control: WorkerControl,
+    ) -> Result<(), GooseError> {
+        let running = matches!(
+            self.attack_phase,
+            AttackPhase::Increase | AttackPhase::Maintain | AttackPhase::Decrease
+        );
+        if let WorkerControl::Settings(WorkerSettings {
+            test_plan: Some(Some(plan)),
+            ..
+        }) = &control
+        {
+            if running {
+                run.holds = plan.holds;
+            }
+        }
         #[cfg(test)]
-        self.gaggle.test_faults.arm(&link.outbox);
-        self.gaggle.role = Some(GaggleRole::Worker(Box::new(WorkerRun {
-            link,
-            spec,
-            start_at: None,
-            started_late: None,
-            pending_reset: None,
-            tick_second: None,
-            log_files: Vec::new(),
-            run_folder: None,
-            #[cfg(test)]
-            skip_reset,
-            #[cfg(test)]
-            stop_reason_sent: false,
-        })));
+        if let (true, Some(delay), WorkerControl::Settings(WorkerSettings { users: Some(_), .. })) =
+            (running, self.gaggle.test_faults.slow_apply, &control)
+        {
+            self.gaggle.test_faults.slow_apply = None;
+            tokio::time::sleep(delay).await;
+        }
+        let refused = match control {
+            WorkerControl::Stop | WorkerControl::Shutdown => {
+                if running && !goose_attack_run_state.stopping {
+                    info!("gaggle: the manager stopped the run");
+                    self.set_ended_by(EndedBy::Stopped, None);
+                    self.cancel_attack(goose_attack_run_state).await?;
+                }
+                None
+            }
+            WorkerControl::Settings(_) if !running => None,
+            WorkerControl::Settings(settings) => {
+                self.worker_settings(goose_attack_run_state, settings)?
+            }
+        };
+        if let Some(why) = &refused {
+            error!("gaggle: this worker refused a change its manager accepted: {why}");
+        }
+        #[cfg(test)]
+        self.report(run.link.id, refused.is_some());
+        run.link.control_ack(id, refused);
         Ok(())
+    }
+
+    /// Apply this worker's share of a runtime change to its running load
+    /// test: why it was refused, if it was.
+    fn worker_settings(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        settings: WorkerSettings,
+    ) -> Result<Option<String>, GooseError> {
+        // The throttle first: it never waits behind building users.
+        if let Some(throttle) = settings.throttle {
+            let throttle = RunSettings {
+                throttle: Some(throttle),
+                ..RunSettings::default()
+            };
+            let outcome = self.control_settings(goose_attack_run_state, throttle)?;
+            if !outcome.ok {
+                return Ok(Some(outcome.message));
+            }
+        }
+        if let Some(users) = &settings.users {
+            let active = goose_attack_run_state.active_users;
+            if let Some(next) = users.users.get(active..) {
+                self.set_next_users(next);
+            }
+            let outcome = self.control_set_users_over(
+                goose_attack_run_state,
+                users.users.len(),
+                Some(users.ramp_ms),
+            )?;
+            if !outcome.ok {
+                return Ok(Some(outcome.message));
+            }
+        }
+        // A test plan and the settings sent with it, the ramp settings it
+        // clears among them, are checked and applied together, as on the
+        // manager.
+        let mut rest = settings.run_settings();
+        rest.throttle = None;
+        if let Some(plan) = settings.test_plan {
+            if let Some(plan) = plan.as_ref() {
+                self.set_next_users(&plan.users);
+            }
+            rest.test_plan = Some(plan.map(|plan| crate::test_plan::TestPlan {
+                steps: plan.steps,
+                current: 0,
+            }));
+        }
+        if !rest.fields().is_empty() {
+            let outcome = self.control_settings(goose_attack_run_state, rest)?;
+            if !outcome.ok {
+                return Ok(Some(outcome.message));
+            }
+        }
+        Ok(None)
     }
 
     /// Tell the manager whether the worker's users are ready.
@@ -847,6 +1252,7 @@ impl GooseAttack {
         while let Some(event) = run.manager.try_event() {
             self.manager_event(goose_attack_run_state, run, event);
         }
+        self.gaggle_settle(goose_attack_run_state, run);
         if run.ending || run.stop_sent || !self.run_in_progress {
             return Ok(());
         }
@@ -948,6 +1354,11 @@ impl GooseAttack {
                         .metrics_cmd_tx
                         .send(MetricsCommand::GaggleDone { worker: id });
                 }
+                // Its users exited: it runs none of the book's while the
+                // others go on.
+                if reason == Reason::UsersExited {
+                    run.book.lose(id as usize);
+                }
             }
             Event::UsersStopped { id } => {
                 if let Some(worker) = run.worker(id) {
@@ -955,13 +1366,27 @@ impl GooseAttack {
                 }
             }
             Event::Lost { id, why } => self.lose_worker(goose_attack_run_state, run, id, why),
+            Event::ControlAck {
+                id,
+                control,
+                error: Some(error),
+                ..
+            } => {
+                // It refused what the manager accepted and the others took.
+                error!("gaggle: worker {id} refused change {control}, which the manager accepted: {error}");
+                let why =
+                    format!("it refused change {control}, which the manager accepted: {error}");
+                self.lose_worker(goose_attack_run_state, run, id, why);
+            }
+            event @ Event::ControlAck { .. } => note_answer(&mut run.sent, &event),
             Event::Joined | Event::PrepareAck { .. } | Event::Log { .. } => {}
         }
+        self.gaggle_settle(goose_attack_run_state, run);
     }
 
     /// Mark worker `id` lost: what it sent stays merged, the run goes on with
     /// the others, and its stream, if still open, gets `Shutdown`.
-    fn lose_worker(
+    pub(super) fn lose_worker(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut ManagerRun,
@@ -977,7 +1402,26 @@ impl GooseAttack {
             "gaggle: worker {id} ({}) lost: {why}; last delta merged {merged}",
             worker.name
         );
-        if !worker.lose(stop_sent, why) {
+        let name = worker.name.clone();
+        let reason = why.clone();
+        let newly = worker.lose(stop_sent, why);
+        // Every change waiting on it goes on without it, and the one a front
+        // end waits on names it, when it had yet to apply it, even when it
+        // went away after its run rather than being lost: a refusal always
+        // follows the worker's received.
+        let pending = run.pending.as_ref().map(|pending| pending.id);
+        let mut waited = false;
+        for sent in run.sent.iter_mut() {
+            let unapplied = sent.unapplied.contains(&id);
+            sent.forget(id);
+            waited |= unapplied && Some(sent.id) == pending;
+        }
+        if let (true, true, Some(pending)) = (waited, newly, run.pending.as_mut()) {
+            pending
+                .lost
+                .push(format!("worker {id} ({name}) lost: {reason}"));
+        }
+        if !newly {
             return;
         }
         warn!("{message}");
@@ -985,6 +1429,7 @@ impl GooseAttack {
         let _ = goose_attack_run_state
             .metrics_cmd_tx
             .send(MetricsCommand::GaggleLost { worker: id });
+        self.gaggle_after_loss(goose_attack_run_state, run, id);
     }
 
     async fn worker_tick(
@@ -1006,6 +1451,13 @@ impl GooseAttack {
                 .test_faults
                 .stop_once(&run.link, &mut run.stop_reason_sent);
         }
+        // Changes that came between StartAt and the start, now applied.
+        if running && !run.pending_controls.is_empty() {
+            for (id, control) in std::mem::take(&mut run.pending_controls) {
+                self.worker_apply(goose_attack_run_state, run, id, control)
+                    .await?;
+            }
+        }
         if running && self.series_started.is_some() {
             let now = self.series_elapsed_secs();
             if run.tick_second != Some(now) {
@@ -1020,7 +1472,14 @@ impl GooseAttack {
         }
         while let Some(event) = run.link.try_event() {
             match event {
-                LinkEvent::Prepare(_) => warn!("gaggle: a second Prepare ignored"),
+                LinkEvent::Prepare(bytes) if !running && run.start_at.is_none() => {
+                    self.worker_prepare_again(run, &bytes);
+                }
+                LinkEvent::Prepare(_) => warn!("gaggle: a Prepare while running ignored"),
+                LinkEvent::Control { id, command } => {
+                    self.worker_control(goose_attack_run_state, run, id, &command)
+                        .await?;
+                }
                 LinkEvent::StartAt(at) => run.start_at = Some(at),
                 #[cfg(test)]
                 LinkEvent::ResetMetrics(epoch) if run.skip_reset => {
@@ -1053,6 +1512,10 @@ impl GooseAttack {
                     // the milliseconds before this worker's start instant:
                     // never start, and say so.
                     if !running && run.start_at.take().is_some() {
+                        // The changes waiting for the start are moot.
+                        for (id, _) in run.pending_controls.drain(..) {
+                            run.link.control_ack(id, None);
+                        }
                         run.link.stopped(Stopped {
                             reason: Reason::Stopped as i32,
                             canceled: String::new(),
@@ -1060,10 +1523,7 @@ impl GooseAttack {
                         });
                     }
                     #[cfg(test)]
-                    if self.gaggle.test_faults.cancel_on_stop {
-                        *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
-                        crate::trigger_killswitch("a test's Ctrl-C as the run stops");
-                    }
+                    self.gaggle.test_faults.on_stop();
                     if running && !goose_attack_run_state.stopping {
                         info!("gaggle: the manager stopped the run: {reason}");
                         self.set_ended_by(EndedBy::Stopped, None);
@@ -1252,6 +1712,7 @@ impl GooseAttack {
                 self.manager_event(goose_attack_run_state, run, event);
                 continue;
             }
+            self.gaggle_settle(goose_attack_run_state, run);
             let now = Instant::now();
             if now < next {
                 continue;
@@ -1394,10 +1855,14 @@ impl GooseAttack {
         left
     }
 
-    /// The manager, after its reports: tell every worker to shut down.
+    /// The manager, after its reports or shutting down from Idle: tell every
+    /// worker to shut down, once.
     pub(crate) async fn gaggle_shut_down(&mut self) {
         if let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_mut() {
-            run.manager.shut_down_all().await;
+            if !run.shut_down {
+                run.shut_down = true;
+                run.manager.shut_down_all().await;
+            }
         }
     }
 
@@ -1746,12 +2211,18 @@ async fn collect_logs_into(run: &mut ManagerRun, folder: Option<PathBuf>) {
             }
             Event::Lost { id, why } => {
                 warn!("gaggle: worker {id} lost while sending its logs: {why}");
+                // No change waits on it any longer.
+                for sent in run.sent.iter_mut() {
+                    sent.forget(id);
+                }
                 if let Some(files) = pending.get_mut(&id) {
                     for log in std::mem::take(files).into_values() {
                         give_up(run, &mut open, id, &log).await;
                     }
                 }
             }
+            // An answer to a change sent before the run ended.
+            event @ Event::ControlAck { .. } => note_answer(&mut run.sent, &event),
             _ => {}
         }
     }
@@ -1854,6 +2325,12 @@ mod tests {
                 stopped: Some(Reason::Stopped),
                 ..entry()
             }],
+            book: crate::gaggle::control::UserBook::default(),
+            ramps: false,
+            next_control: 1,
+            pending: None,
+            sent: Vec::new(),
+            shut_down: false,
             logs,
             logs_left: Vec::new(),
             clock_second: None,
@@ -2111,6 +2588,8 @@ mod tests {
             run_folder: None,
             skip_reset: false,
             stop_reason_sent: false,
+            pending_controls: Vec::new(),
+            holds: false,
         })));
         (attack, run_state)
     }
@@ -2393,6 +2872,12 @@ mod tests {
                     stopped: Some(Reason::Stopped),
                     ..entry()
                 }],
+                book: crate::gaggle::control::UserBook::default(),
+                ramps: false,
+                next_control: 1,
+                pending: None,
+                sent: Vec::new(),
+                shut_down: false,
                 logs: Vec::new(),
                 logs_left: Vec::new(),
                 clock_second: None,
@@ -2449,5 +2934,186 @@ mod tests {
             !never.sends_logs(),
             "a worker that never started has no logs"
         );
+    }
+
+    /// A worker that refuses a change the manager accepted is lost, and the
+    /// reply names it; an answer to an older change moves nothing; and while
+    /// a change waits on its workers, a later control request stays queued.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_refused_change_loses_its_worker_and_names_it() {
+        use crate::controller::{ControlReply, ControllerCommand};
+        let test = async {
+            let manager = test_manager(2, Duration::from_secs(10)).await;
+            let configuration = crate::config::GooseConfiguration::parse_args_default(&[
+                "--host",
+                "http://127.0.0.1:9",
+                "--users",
+                "2",
+                "--no-telnet",
+                "--quiet",
+            ])
+            .unwrap();
+            let mut attack = GooseAttack::initialize_with_config(configuration)
+                .unwrap()
+                .register_scenario(crate::goose::Scenario::new("A").register_transaction(
+                    crate::goose::Transaction::new(std::sync::Arc::new(|_| {
+                        Box::pin(async { Ok(()) })
+                    })),
+                ));
+            attack.test_plan = crate::test_plan::TestPlan::build(&attack.configuration).unwrap();
+            attack.attack_mode = AttackMode::Manager;
+            let mut state = attack.initialize_attack().await.unwrap();
+            let (respond, reply) = tokio::sync::oneshot::channel();
+            let outcome = attack.control_outcome(&state, true, None, "users configured", Some(2));
+            let mut run = ManagerRun {
+                manager,
+                workers: vec![
+                    entry(),
+                    WorkerEntry {
+                        id: 1,
+                        name: "v".to_string(),
+                        ..entry()
+                    },
+                ],
+                book: crate::gaggle::control::UserBook::default(),
+                ramps: true,
+                next_control: 8,
+                pending: Some(crate::gaggle::control::PendingControl {
+                    id: 7,
+                    respond,
+                    outcome,
+                    lost: Vec::new(),
+                }),
+                sent: vec![crate::gaggle::control::SentControl {
+                    id: 7,
+                    what: "users".to_string(),
+                    sent: Instant::now(),
+                    workers: 2,
+                    unreceived: BTreeSet::from([0, 1]),
+                    unapplied: BTreeSet::from([0, 1]),
+                    applied: 0,
+                    warned: Instant::now(),
+                }],
+                shut_down: false,
+                logs: Vec::new(),
+                logs_left: Vec::new(),
+                clock_second: None,
+                stop_sent: false,
+                canceled_at_stop: false,
+                ending: false,
+                health: MergeHealth::default(),
+            };
+            // A worker says it received a change before it refuses it.
+            let received = Event::ControlAck {
+                id: 1,
+                control: 7,
+                error: None,
+                received: true,
+            };
+            attack.manager_event(&mut state, &mut run, received);
+            let refused = Event::ControlAck {
+                id: 1,
+                control: 7,
+                error: Some("x".to_string()),
+                received: false,
+            };
+            attack.manager_event(&mut state, &mut run, refused);
+            assert!(run.workers[1].lost.is_some());
+            let awaiting = |run: &ManagerRun| {
+                run.pending.as_ref().map(|_| {
+                    run.sent
+                        .iter()
+                        .map(|sent| sent.unreceived.clone())
+                        .collect::<Vec<_>>()
+                })
+            };
+            assert_eq!(awaiting(&run), Some(vec![BTreeSet::from([0])]));
+            // An answer to an older change.
+            let stale = Event::ControlAck {
+                id: 0,
+                control: 6,
+                error: None,
+                received: true,
+            };
+            attack.manager_event(&mut state, &mut run, stale);
+            assert_eq!(awaiting(&run), Some(vec![BTreeSet::from([0])]));
+            // A request sent meanwhile waits in the queue.
+            attack.gaggle.role = Some(GaggleRole::Manager(Box::new(run)));
+            let (requests, queue) = flume::unbounded();
+            state.controller_channel_rx = Some(queue);
+            let (queued, _queued_reply) = tokio::sync::oneshot::channel();
+            requests
+                .send((ControllerCommand::Users(3).into(), queued))
+                .unwrap();
+            attack.handle_control_requests(&mut state).await.unwrap();
+            assert_eq!(
+                requests.len(),
+                1,
+                "the request was taken while a change waited"
+            );
+            let Some(GaggleRole::Manager(mut run)) = attack.gaggle.role.take() else {
+                panic!("the manager's run");
+            };
+            // Received: the front end is answered, though the change is
+            // still being applied.
+            let received = Event::ControlAck {
+                id: 0,
+                control: 7,
+                error: None,
+                received: true,
+            };
+            attack.manager_event(&mut state, &mut run, received);
+            assert!(run.pending.is_none());
+            match reply.await {
+                Ok(ControlReply::Outcome(outcome)) => {
+                    assert!(outcome.ok);
+                    assert!(
+                        outcome.message.contains(
+                            "users configured; accepted by 1 of 2 workers; worker 1 (v) lost: it refused change 7, which the manager accepted: x"
+                        ),
+                        "{}",
+                        outcome.message
+                    );
+                }
+                _ => panic!("no reply"),
+            }
+            assert_eq!(run.sent.len(), 1, "the change is still being applied");
+            let applied = Event::ControlAck {
+                id: 0,
+                control: 7,
+                error: None,
+                received: false,
+            };
+            attack.manager_event(&mut state, &mut run, applied);
+            assert!(run.sent.is_empty(), "the change was applied");
+            // A worker that received changes it has yet to apply holds the
+            // next request back once it has MAX_UNAPPLIED of them, so its
+            // stream reader never fills its queue and stops saying received.
+            let unapplied = |id: u64| crate::gaggle::control::SentControl {
+                id,
+                what: "throttle".to_string(),
+                sent: Instant::now(),
+                workers: 1,
+                unreceived: BTreeSet::new(),
+                unapplied: BTreeSet::from([0]),
+                applied: 0,
+                warned: Instant::now(),
+            };
+            run.sent = (0..crate::gaggle::control::MAX_UNAPPLIED as u64)
+                .map(|id| unapplied(20 + id))
+                .collect();
+            attack.gaggle.role = Some(GaggleRole::Manager(run));
+            assert!(attack.gaggle_control_pending(), "the next request waits");
+            let Some(GaggleRole::Manager(mut run)) = attack.gaggle.role.take() else {
+                panic!("the manager's run");
+            };
+            run.sent.pop();
+            attack.gaggle.role = Some(GaggleRole::Manager(run));
+            assert!(!attack.gaggle_control_pending(), "one fewer: it goes ahead");
+        };
+        tokio::time::timeout(Duration::from_secs(30), Box::pin(test))
+            .await
+            .expect("within 30 seconds");
     }
 }

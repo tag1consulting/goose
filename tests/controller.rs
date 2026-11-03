@@ -53,6 +53,7 @@ enum Command {
     DecreaseRate,
     DecreaseTime,
     RunTime,
+    Throttle,
     Start,
     Config,
     ConfigJson,
@@ -567,6 +568,39 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
+                Command::Throttle => {
+                    match test_state.step {
+                        // A throttle past the bound is refused.
+                        0 => {
+                            make_request(&mut test_state, "throttle 1000001\r\n").await;
+                        }
+                        1 => {
+                            assert!(response.starts_with("throttle must be an integer"));
+
+                            // Set a throttle while idle, for the next Start.
+                            make_request(&mut test_state, "throttle 100000\r\n").await;
+                        }
+                        2 => {
+                            assert!(response.starts_with("throttle configured"));
+
+                            // 0 clears it while idle.
+                            make_request(&mut test_state, "throttle-requests 0\r\n").await;
+                        }
+                        3 => {
+                            assert!(response.starts_with("throttle cleared"));
+
+                            // Leave a throttle no request reaches, so the
+                            // run's counts are unchanged.
+                            make_request(&mut test_state, "throttle_requests 100000\r\n").await;
+                        }
+                        _ => {
+                            assert!(response.starts_with("throttle configured"));
+
+                            // Move onto the next command.
+                            test_state = update_state(Some(test_state), &test_type).await;
+                        }
+                    }
+                }
                 Command::RunTime => {
                     match test_state.step {
                         // Configure run_time using h:m:s format.
@@ -859,6 +893,7 @@ async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> Te
         Command::DecreaseRate,
         Command::DecreaseTime,
         Command::RunTime,
+        Command::Throttle,
         Command::Start,
         Command::Config,
         Command::ConfigJson,

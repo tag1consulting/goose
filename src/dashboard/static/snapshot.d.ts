@@ -171,7 +171,15 @@ start_second: number, rps: Array<number>, fps: Array<number>, users: Array<numbe
  * Response times of all requests by second, for the dashboard's
  * heatmap. Null when percentiles over time are off.
  */
-heatmap: Heatmap | null, };
+heatmap: Heatmap | null,
+/**
+ * On a Gaggle manager while a worker still runs, the first second, from
+ * the test start, whose figures may still be arriving from the workers:
+ * from it on each second holds what has arrived so far, and a second
+ * with nothing yet has no data rather than 0. Absent on one process and
+ * once every worker finished or was lost. Added in 0.20.
+ */
+provisional_from?: number, };
 
 type SnapshotFlags = { metrics_disabled: boolean,
 /**
@@ -262,6 +270,12 @@ run_time_secs: number | null,
  * step's duration in whole seconds.
  */
 test_plan: string | null,
+/**
+ * The most requests per second all users make together, `null` without
+ * a throttle. A running load test changes only its rate. Added in 0.20:
+ * optional in the types, so a snapshot shaped before it still checks.
+ */
+throttle?: number | null,
 /**
  * Seconds until the hold ends once it has a fixed end, 0 while a ramp
  * runs past it. `null` in Idle, during the first ramp up, once the

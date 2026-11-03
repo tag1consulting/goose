@@ -29,6 +29,7 @@ decrease-time TIME set total time to take decreasing users (0 clears)
 users INT          set number of simulated users (1 to 100000)
 runtime TIME       set how long to hold users after the ramp up, (ie 1h30m5s, 0 clears)
 test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)
+throttle INT       set most requests per second (1 to 1000000, 0 clears)
 
 config             display load test configuration
 config-json        display load test configuration in json format
@@ -39,7 +40,7 @@ goodbye!
 goose> Connection closed by foreign host.
 ```
 
-`exit`, `quit` and `q` end the session, and `help` and `?` print this list. Commands and values are not case sensitive, and most commands take aliases: `increase_rate` and `increase-rate` for `increaserate`, `increasetime` for `increase-time`, `run_time` for `runtime`, `testplan` and `plan` for `test-plan`, `stats` for `metrics`, and the like. A command takes its value after one space.
+`exit`, `quit` and `q` end the session, and `help` and `?` print this list. Commands and values are not case sensitive, and most commands take aliases: `increase_rate` and `increase-rate` for `increaserate`, `increasetime` for `increase-time`, `run_time` for `runtime`, `testplan` and `plan` for `test-plan`, `throttle_requests` and `throttle-requests` for `throttle`, `stats` for `metrics`, and the like. A command takes its value after one space.
 
 `config` prints the configuration, and `config-json` prints it as JSON, with an option that is not set shown as `null` and an output flag given without a path shown as `(the run's folder)`. Neither shows the dashboard auth token: one that is set reads `(set)`. `metrics` prints the metrics tables, and `metrics-json` prints the metrics as JSON. In that JSON each request's `raw_data` holds its response times in microsecond buckets, `times_us`, beside `minimum_time_us`, `maximum_time_us` and `total_time_us`, and the whole millisecond `minimum_time`, `maximum_time`, `total_time` and `counter`; each transaction and scenario holds the same as `times_us`, `min_time_us`, `max_time_us` and `total_time_us`, beside `min_time`, `max_time`, `total_time` and `counter`. Each request also holds `status_code_counts`, how many responses got each status code, and `status_code_timings`, each status code's `count`, `total_time_us`, `min_time_us` and `max_time_us`.
 
@@ -62,8 +63,18 @@ Telnet, WebSocket and the dashboard share these bounds:
 | `increaserate`, `decreaserate` | 0.01 to 100000 users per second |
 | `increase-time`, `decrease-time`, `runtime` | 1 second to 30 days; `0` clears the setting, so Goose's default applies (the dashboard takes `null` to clear, and refuses `0`) |
 | `test-plan` | At most 100 steps of 0 seconds to 30 days each, in at most 4096 bytes, starting 1 to 100000 users in total |
+| `throttle` | 1 to 1000000 requests per second; `0` clears it while idle (the dashboard takes `null` to clear, and refuses `0`) |
 
 `host`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `runtime`, `users` and `test-plan` also change a running load test. A `runtime` on a running users ramp moves the end of the hold in progress to its start plus the new run time, and starts the ramp down at once if that has passed. If the new run time puts the end of the hold earlier than the end of the ramp from a `users` change made during the hold, the run holds until stopped. Before the hold starts, a `runtime` replaces the hold ahead, and on a run holding until stopped it holds from now for the new run time, then ramps down. `runtime 0` on a running test holds until stopped, and is refused while a ramp down is configured. `runtime` is refused during the ramp down, while stopping and while a test plan runs, as the plan sets how long it runs. See [Run time on a running test](dashboard-reference.md#run-time-on-a-running-test). A `users` change on a running users ramp keeps its run time and ramp down: it ramps to the new count, holds, and ramps down from the new count. A change during the ramp up holds for the full run time; a change during the hold keeps the hold's end. If the new ramp outlasts the hold, or the new count is the one the run already has, it holds that count until stopped. A `users` change during the ramp down abandons it and holds the new count until stopped. `users` is refused while a test plan runs, as the plan sets users. See [Users on a running test](dashboard-reference.md#users-on-a-running-test).
+
+`throttle` sets `--throttle-requests`, the most requests every user makes together each second. In Idle it sets or clears the throttle for the next Start. A running load test changes the rate of the throttle it started with, within 10 milliseconds and without touching a user, anywhere from 1 to 1000000; `throttle 0` and a throttle on a run started without one are refused, as a running test can not turn its throttle on or off. After any change, the burst a quiet spell allows is one second of the current rate. See [The throttle on a running test](dashboard-reference.md#the-throttle-on-a-running-test).
+
+```bash
+goose> throttle 50
+throttle configured
+goose> throttle 0
+failed to clear throttle, a running load test keeps the throttle it started with: change its rate, or clear it when idle
+```
 
 The rates are accepted in Idle and on a running users ramp, and are refused during its ramp down, while stopping and while a test plan runs. On a running test, a rate is refused while its own time is set, since a time changes only in Idle; in Idle a rate clears its own time and a time clears its own rate. A decrease rate on a running users ramp regenerates the ramp down still ahead, or adds one where all users would stop at once when the hold ends; an increase rate is for the next `users` increase.
 

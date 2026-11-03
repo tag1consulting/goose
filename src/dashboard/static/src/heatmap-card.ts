@@ -94,6 +94,11 @@ let listed: SelectedRequest[] = [];
 /** The select's options, as one string, to rebuild them only on change. */
 let optionsKey = "";
 let layout: HeatmapLayout | null = null;
+/**
+ * On a Gaggle manager, the first second still arriving from the workers,
+ * drawn lighter; null when every second is complete.
+ */
+let provisionalFrom: number | null = null;
 let shownAdjusted = false;
 
 function sameRequest(a: SelectedRequest | null, b: SelectedRequest): boolean {
@@ -246,7 +251,7 @@ function draw(): void {
   noteEl.hidden = !adjusted;
   canvas.setAttribute("aria-label", ARIA_LABEL);
   const theme = chartTheme();
-  layout = drawHeatmap(canvas, view, theme.dark, theme);
+  layout = drawHeatmap(canvas, view, theme.dark, theme, provisionalFrom);
   showData(view);
   const stops: string[] = [];
   for (let i = 0; i <= 4; i++) stops.push(scaleColor(i / 4, theme.dark));
@@ -319,6 +324,8 @@ export function updateHeatmapCard(snap: DashboardSnapshot): boolean {
   }
   showHeatmap();
   coActive = snap.aggregate.co_active;
+  const from = snap.series.provisional_from;
+  provisionalFrom = from === undefined || from === null ? null : from;
   viewGroup.hidden = !coActive;
   const heatmap = snap.series.heatmap;
   if (heatmap !== null) {

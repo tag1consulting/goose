@@ -2,7 +2,7 @@
 
 The manager is your load test started with `--manager`, compiled with the `gaggle` [feature](technical.md#compile-time-feature). It runs no users itself: it waits for its workers, splits the load test between them, and merges what they measure. Every option that shapes the load, the metrics, the reports or the logs is given to the manager, never to a worker.
 
-`--expect-workers` is required: the manager waits for exactly that many workers before the run starts, at most `--gaggle-connect-timeout` (60 seconds by default). If fewer join in time, the manager tells those that did to exit, and exits with an error.
+`--expect-workers` is required: the manager waits for exactly that many workers before the run starts, at most `--gaggle-connect-timeout` (60 seconds by default). If fewer join in time, the manager tells those that did to exit, and exits with an error. With `--no-autostart`, the manager waits for its workers and then for a `start` from a Controller or the dashboard.
 
 ## Example
 
@@ -19,15 +19,38 @@ A manager that listens on any address but loopback needs `--gaggle-token`, or th
 ## How it splits the load test
 
 - Users are split as evenly as they go, the remainder one each to the first workers. Each worker's users are numbered as one process running every user would number them, and run the scenarios that process would give them, so the merged per scenario counts are the same.
-- Each step of the test plan, or the ramp `--users`, `--increase-rate` and `--run-time` give, is split the same way: every step's users add up to the step's. A worker may hold 0 users in a step.
-- `--throttle-requests` is split in proportion to each worker's users, never 0 for a worker that runs users, and 0 for one that runs none: the shares add up to the throttle, and a throttle smaller than the number of workers that run users is refused.
+- Each step of the test plan is split the same way: every step's users add up to the step's. A worker may hold 0 users in a step.
+- A users ramp, `--users` with `--increase-rate` or `--increase-time`, `--run-time` and a ramp down, runs as a users ramp on every worker when each has at least one user: its share of the users, each rate times its share of the users, and the same times, so every worker ramps up, holds and ramps down with the manager, and a Controller can change its users, rates and run time as one process's. With more workers than users, each worker runs its share of the ramp as a test plan instead, and a running users ramp's users, rates and run time can not change.
+- `--throttle-requests` is split in proportion to each worker's users, the remainder spread, never 0: a worker with no users keeps 1, as it may get users later. The shares add up to the throttle, and a throttle smaller than the number of workers is refused.
 - Custom data: see [Custom data for each worker](worker.md#custom-data-for-each-worker).
 
 ## While it runs
 
-The manager's phase, run time and test plan are the run's: its console, Controllers and dashboard show the merged metrics, and the users count is the one its plan calls for. Its telnet Controller, WebSocket Controller and dashboard answer `config`, `metrics` and their JSON forms, and the dashboard's report switches and Save report now work. Every command that changes the run is refused with the error code `gaggle_unsupported` and the message `not supported in Gaggle mode yet`.
+The manager's phase, run time and test plan are the run's: its console, Controllers and dashboard show the merged metrics, and the users count is the one its plan calls for. Ctrl-C on the manager stops every worker, waits for their final metrics, and writes the reports, as at the end of a run.
 
-Ctrl-C on the manager stops every worker, waits for their final metrics, and writes the reports, as at the end of a run.
+## Runtime control
+
+The manager's telnet Controller, WebSocket Controller and dashboard control change the whole Gaggle while it runs: users, the rates and times, the test plan, the host and the throttle, and `start`, `stop`, `shutdown` and the dashboard's Quit. Each change is applied as one process running the whole load test would apply it:
+
+1. The manager checks the change against the rules one process applies, the phase, the bounds and the settings it conflicts with, and against what a Gaggle needs, before it sends anything. A refused change reaches no worker.
+2. It applies the change to its own run, which keeps the run's clock.
+3. It sends each worker its share. Each worker says it received the change as soon as it reads it, and again once it applied it. The manager answers once every worker received it, within 10 seconds, inside the 15 a Controller or the dashboard waits, saying how many workers accepted it, such as `users configured; accepted by 3 of 3 workers`. A worker that has not said it received a change within 10 seconds is lost. Applying it has no deadline, as building thousands of users takes a while: a worker that received a change stays in the run while its stream and heartbeats are alive, the manager logs a warning every 30 seconds naming each worker still applying it, and logs when every worker applied it. A worker applies its throttle share before anything else in a change, so a new throttle never waits behind its users. Its main loop keeps running meanwhile, and a command sent after this one waits until every worker received this one, never until they applied it; every worker applies changes in the order they came, so a throttle sent after a large users change takes effect on each worker once that users change is applied. A worker with 8 changes it has yet to apply holds the next command back, `stop` and `shutdown` included, until it applies one, so its connection never stops reading. A worker that refuses a change the manager accepted is logged as a bug and lost; the reply names it when the refusal comes before every worker received the change, and the manager's log names the change either way.
+
+What each worker gets is in [Controlling a Gaggle](../controller/overview.md#controlling-a-gaggle). In short: `users` keeps the users one process would run, each user's ordinal and scenario included, an increase taking the next ordinals and a decrease stopping the highest; the rates follow each worker's share of the users; the times, host and run time are the same everywhere; a test plan is split step by step; and the throttle is split by each worker's share of the users. A change made in Idle is kept for the next Start, which hands every worker its share with it.
+
+A worker that does not answer within 10 seconds is marked lost, sent `Shutdown` and disconnected; the reply names it, and the change stands on the others. A worker refusing a change the manager accepted is a bug: the manager logs it, marks the worker lost the same way, and the reply names it.
+
+`--no-autostart` works on a manager: once every worker has joined it waits, and an accepted `start` answers first, then runs `test_start`, the worker data hook, each worker's share and the common start, as an autostarted run does. `stop` ends the run and keeps every worker connected and idle, waiting with the manager; the next `start` hands them new shares, a new host or throttle among them. `shutdown` and the dashboard's Quit tell every worker to exit with the manager; a worker told so before it was handed a share exits cleanly.
+
+The manager's Controllers listen on loopback, as on one process: from another machine, use an ssh forward, `--telnet-host`, or `--websocket` with `--websocket-host`. Neither Controller takes authentication, so anyone who reaches one controls the whole Gaggle's load; the dashboard's control takes its token.
+
+## The throttle across workers
+
+`--throttle-requests` is one limit for the whole Gaggle. Each worker throttles its share, in proportion to its share of the users and never 0, and the shares add up to the throttle. A `throttle` command splits the new rate the same way, refused below one request a second for each worker; each worker's share can go anywhere from 1 to 1000000. On a running Gaggle the throttle changes on its own: sent in one dashboard settings body with users or a test plan, it is refused with `conflicting_settings`. A change of users moves the shares with them. When a worker is lost, the manager splits the throttle again over the workers left and sends their new shares, so the run's limit holds; if the throttle is below the number of workers left, each keeps 1 request a second, and the manager logs it.
+
+## Rebalancing a lost worker's users
+
+By default a lost worker's users are gone for the rest of the run: the run goes on with the users the other workers run. With `--gaggle-rebalance` on the manager, its users move to the workers left, dealt to those running fewest, each keeping its ordinal and scenario, so the run keeps its users and its scenario mix; they start over a second, with the throttle split again over the workers left. Rebalancing moves the users of a users ramp until its ramp down starts; a test plan's are not moved, nor any once the ramp down has started, and the manager logs it.
 
 ## Lost workers
 

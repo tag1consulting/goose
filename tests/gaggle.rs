@@ -820,3 +820,239 @@ fn gaggle_run_from_the_command_line() {
         }
     });
 }
+
+/// A telnet line to the manager's Controller on `port`, and its reply.
+fn telnet(port: u16, command: &str) -> String {
+    use std::io::{Read, Write};
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut stream = loop {
+        match std::net::TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) => break stream,
+            Err(e) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the Controller never listened: {}",
+                    e
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    let read_reply = |stream: &mut std::net::TcpStream| {
+        let mut reply = Vec::new();
+        let mut buf = [0; 4096];
+        while !reply.ends_with(b"goose> ") {
+            let read = stream.read(&mut buf).expect("a reply");
+            assert!(read > 0, "the Controller closed");
+            reply.extend_from_slice(&buf[..read]);
+        }
+        String::from_utf8(reply).unwrap()
+    };
+    read_reply(&mut stream);
+    stream
+        .write_all(format!("{command}\r\n").as_bytes())
+        .unwrap();
+    read_reply(&mut stream)
+}
+
+/// A worker that stops reading its stream, frozen with SIGSTOP, never says
+/// it received a change, one that starts users: it is marked lost at the 10
+/// second deadline, and the change's reply names it, within the 15 seconds a
+/// Controller waits; the change stands on the other worker. Once thawed, it finds itself shut down and
+/// exits.
+#[test]
+#[serial_test::serial]
+fn gaggle_worker_missing_the_answer_deadline_is_lost() {
+    within(|| {
+        let server = MockServer::start();
+        let index = mock_simple(&server, Duration::ZERO);
+        let folder = scratch("missed-answer");
+        let host = server.base_url();
+        let simple = example("simple");
+        // Heartbeats that never run out first: only the received deadline
+        // finds the frozen worker.
+        let manager = Process::start(
+            &simple,
+            "manager",
+            &folder,
+            &[
+                "--manager",
+                "--expect-workers",
+                "2",
+                "--manager-bind-port",
+                "0",
+                "--host",
+                &host,
+                "--telnet-port",
+                "5246",
+                "--gaggle-heartbeat-timeout",
+                "60s",
+                "--gaggle-connect-timeout",
+                "20s",
+                "--users",
+                "20",
+                "--increase-rate",
+                "20",
+            ],
+        );
+        let port = manager.port();
+        let slow = [
+            "--gaggle-heartbeat-timeout",
+            "60s",
+            "--gaggle-connect-timeout",
+            "20s",
+        ];
+        let worker = |name| {
+            let mut args = vec![
+                "--worker",
+                "--manager-host",
+                "localhost",
+                "--manager-port",
+                &port,
+            ];
+            args.extend_from_slice(&slow);
+            Process::start(&simple, name, &folder, &args)
+        };
+        let mut first = worker("first");
+        std::thread::sleep(Duration::from_millis(500));
+        let mut second = worker("second");
+        let mut manager = manager;
+        until_load(|| index.calls(), Duration::from_secs(30));
+        signal(second.child.id(), nix::sys::signal::Signal::SIGSTOP);
+        let sent = Instant::now();
+        // A change that starts users: a frozen worker never says it received
+        // it, so it is lost at the 10 second deadline, however long applying
+        // the change would take.
+        let reply = telnet(5246, "users 30");
+        let took = sent.elapsed();
+        assert!(reply.starts_with("users configured"), "{}", reply);
+        assert!(
+            reply.contains("(second) lost: it did not receive a change within 10 seconds"),
+            "{}",
+            reply
+        );
+        assert!(took < Duration::from_secs(15), "answered after {:?}", took);
+        signal(second.child.id(), nix::sys::signal::Signal::SIGCONT);
+        second
+            .wait(Duration::from_secs(20))
+            .expect("the thawed worker exits");
+        let reply = telnet(5246, "shutdown");
+        assert!(reply.starts_with("load test shut down"), "{}", reply);
+        let (status, _) = manager
+            .wait(Duration::from_secs(60))
+            .expect("the manager finishes");
+        assert!(status.success(), "{}", manager.output());
+        first
+            .wait(Duration::from_secs(20))
+            .expect("the other worker exits");
+        // The change stood on the other worker: its 10 users up to 15.
+        assert!(
+            first
+                .output()
+                .lines()
+                .any(|line| line.contains("changing users from") && line.ends_with(" to 15")),
+            "{}",
+            first.output()
+        );
+    });
+}
+
+/// The requests per second `count` grew by over `window`.
+fn rate(count: impl Fn() -> usize, window: Duration) -> f64 {
+    let before = count();
+    let start = Instant::now();
+    std::thread::sleep(window);
+    (count() - before) as f64 / start.elapsed().as_secs_f64()
+}
+
+/// A worker killed under a throttle the users always reach: the worker
+/// left takes the whole throttle, so the run still makes as many requests
+/// a second; with `rebalance`, it also starts the lost worker's users.
+fn throttle_after_loss(rebalance: bool) {
+    let server = MockServer::start();
+    // Every request counts: under the throttle, the users are still logging
+    // in for the whole run.
+    let index = server.mock(|when, then| {
+        when.path_prefix("/");
+        then.status(200).body("ok");
+    });
+    let folder = scratch(if rebalance {
+        "rebalance"
+    } else {
+        "throttle-loss"
+    });
+    let host = server.base_url();
+    let simple = example("simple");
+    // 2000 users log in first, far more than the throttle lets through in
+    // the run, so the users always reach it.
+    let mut extra = vec![
+        "--users",
+        "2000",
+        "--increase-rate",
+        "2000",
+        "--run-time",
+        "30s",
+        "--throttle-requests",
+        "40",
+    ];
+    if rebalance {
+        extra.push("--gaggle-rebalance");
+    }
+    let mut manager = Process::start(
+        &simple,
+        "manager",
+        &folder,
+        &manager_args(&host, "2", &extra),
+    );
+    let port = manager.port();
+    let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &[]));
+    let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &[]));
+    until_load(|| index.calls(), Duration::from_secs(30));
+    std::thread::sleep(Duration::from_secs(2));
+    // Before the loss, the two workers together make the throttle's 40.
+    let before = rate(|| index.calls(), Duration::from_secs(3));
+    assert!(
+        (before - 40.0).abs() <= 40.0 * 0.15,
+        "{:.1} requests a second before the loss",
+        before
+    );
+    second.kill();
+    std::thread::sleep(Duration::from_secs(3));
+    let after = rate(|| index.calls(), Duration::from_secs(5));
+    assert!(
+        (after - 40.0).abs() <= 40.0 * 0.15,
+        "{after:.1} requests a second after the loss, not the throttle's 40: {}",
+        manager.output()
+    );
+    let (status, _) = manager
+        .wait(Duration::from_secs(60))
+        .expect("the manager finishes");
+    assert!(status.success(), "{}", manager.output());
+    first
+        .wait(Duration::from_secs(20))
+        .expect("the other worker exits");
+    // From wherever its own ramp stood: a slow machine may still ramp.
+    let moved = first
+        .output()
+        .lines()
+        .any(|line| line.contains("changing users from") && line.ends_with(" to 2000"));
+    assert_eq!(moved, rebalance, "{}", first.output());
+}
+
+/// A worker lost under a throttle: the other's share rises to the whole.
+#[test]
+#[serial_test::serial]
+fn gaggle_throttle_follows_a_lost_worker() {
+    within(|| throttle_after_loss(false));
+}
+
+/// With `--gaggle-rebalance`, the worker left also runs the lost worker's
+/// users.
+#[test]
+#[serial_test::serial]
+fn gaggle_rebalance_moves_a_lost_workers_users() {
+    within(|| throttle_after_loss(true));
+}

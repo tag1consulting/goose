@@ -506,15 +506,17 @@ Adding users ramps at the increase rate; removing them at the decrease rate, els
   "decrease_rate": 5,
   "decrease_time_secs": null,
   "run_time_secs": 600,
-  "test_plan": null
+  "test_plan": null,
+  "throttle": 400
 }
 ```
 
 - A field left out is left alone, and `null` clears it back to Goose's default. Clearing `host` goes back to each scenario's host, or the default host. A field that is not one of these is refused.
-- Values are bounded as the Controllers bound them: `host` an `http` or `https` url with no user name or password; `users` 1 to 100000; the rates 0.01 to 100000 users per second; the times whole seconds from 1 to 30 days (`0` is refused: send `null` to clear); `test_plan` in the `--test-plan` format, within the bounds of the [Controller commands](telnet.md#controller-commands): at most 100 steps of up to 30 days each, in at most 4096 bytes, starting 1 to 100000 users in total.
+- Values are bounded as the Controllers bound them: `host` an `http` or `https` url with no user name or password; `users` 1 to 100000; the rates 0.01 to 100000 users per second; the times whole seconds from 1 to 30 days (`0` is refused: send `null` to clear); `test_plan` in the `--test-plan` format, within the bounds of the [Controller commands](telnet.md#controller-commands): at most 100 steps of up to 30 days each, in at most 4096 bytes, starting 1 to 100000 users in total; `throttle` 1 to 1000000 requests per second (`0` is refused: send `null` to clear).
 - `test_plan` switches to a test plan and clears users, the ramp settings and the run time; `users` switches back and clears the test plan. `test_plan: null` is accepted only with `users`. While a test plan is configured, a ramp setting without `users` is refused with `"field": "users"`.
 - In Idle, a rate and its own time each replace the other, so a rate alone clears its time, and a time alone clears its rate; on a running test a rate is refused while its own time is set. The two cannot both be set in one body. A test plan cannot be sent with `users` or a ramp setting, though clearing a ramp setting beside it with `null` is accepted.
 - `users: null` is refused. On a running test `users` is refused in a settings body: change users on its own with `/api/v1/control/users`.
+- `throttle` sets `--throttle-requests`. A running load test changes the rate of the throttle it started with, anywhere from 1 to 1000000; turning the throttle on or off is refused with `invalid_phase`, naming `throttle`. See [The throttle on a running test](#the-throttle-on-a-running-test).
 
 Refusals are checked in this order, and the first one is answered:
 
@@ -523,12 +525,12 @@ Refusals are checked in this order, and the first one is answered:
 | 400 | `bad_request` | The body is not JSON, not an object, or has a field Goose does not know |
 | 400 | `invalid_value` | A value of the wrong type or out of bounds, and `users: null` |
 | 400 | `conflicting_settings` | Settings that never go together, whatever the state |
-| 200 | `invalid_phase` | A setting the phase cannot change, set or cleared |
-| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time, a decrease rate or time, and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users) |
+| 200 | `invalid_phase` | A setting the phase cannot change, set or cleared; a throttle turned on or off on a running test |
+| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time, a decrease rate or time, and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users); on a Gaggle manager, a throttle below one request a second for each worker |
 | 200 | `no_host` | `host: null` would leave a scenario, or a `test_start` or `test_stop` transaction, with no host |
 | 200 | `prepare_failed` | A Start that cannot prepare the load test, as without settings |
 
-When one setting is at fault, the refusal names it in `field` (`host`, `users`, `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`, `run_time` or `test_plan`); a `bad_request` has `"field": null`, and a Start refused for its phase, or a `prepare_failed` not caused by a missing host, has no `field`. A reply to new settings, sent to `settings` or with a Start, carries `settings` as the snapshot does, whether accepted or refused by the main loop, so the page that sent them has the settings before the next snapshot; after a 503 `timeout`, read them from the next snapshot.
+When one setting is at fault, the refusal names it in `field` (`host`, `users`, `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`, `run_time`, `test_plan` or `throttle`); a `bad_request` has `"field": null`, and a Start refused for its phase, or a `prepare_failed` not caused by a missing host, has no `field`. A reply to new settings, sent to `settings` or with a Start, carries `settings` as the snapshot does, whether accepted or refused by the main loop, so the page that sent them has the settings before the next snapshot; after a 503 `timeout`, read them from the next snapshot.
 
 Which settings each phase takes, by `settings.stage`: `ramp_up`, `hold` and `hold_until_stopped` are a running users ramp, `test_plan` a running test plan, `ramping_down` the configured ramp down, and `stopping` a Stop, `shutdown` or Ctrl-C:
 
@@ -541,8 +543,19 @@ Which settings each phase takes, by `settings.stage`: `ramp_up`, `hold` and `hol
 | `increase_time_secs`, `decrease_time_secs` | yes | no | no | no | no |
 | `run_time_secs` | yes | yes | no, the plan sets how long it runs | no | no |
 | `test_plan` | yes | yes, replaces the ramp | yes, restarts from its first step | yes, replaces the ramp down | no |
+| `throttle` | yes, set or clear | the rate of a throttle the run started with | the same | the same | the same |
 
 A test plan sent to a running test starts from its first step, ramping from the current user count.
+
+### The throttle on a running test
+
+`--throttle-requests` caps the requests every user makes together, each second. On a running test it is changed by `throttle` here, the `throttle` Controller command, or the `throttle` setting of a Start with settings, and takes effect within the throttle's next 10 milliseconds, without touching a user. The rules:
+
+- A running test changes only the rate of the throttle it started with. A run started without one can not turn one on, nor clear the one it has: both are for Idle, where they shape the next Start.
+- The rate can go anywhere from 1 to 1000000, whatever the run started with.
+- After any change, the burst a quiet spell allows is one second of the current rate: raising a throttle from 1000 to 4000 lets a quiet spell end with 4000 requests at once, and lowering it from 3000 to 10 lets one end with 10, never 3000. The throttle's channel holds 1000000 tokens whatever the rate, about 1 MB, and the throttle keeps its own filler tokens in all but one second of the current rate. The throttle drains every 10 milliseconds and makes up a late wake, so it holds its rate closely.
+
+On a Gaggle manager, the throttle is one limit across every worker: see [Runtime control](../gaggle/manager.md#runtime-control).
 
 ### Run time on a running test
 
@@ -571,6 +584,7 @@ Every snapshot carries `settings`: what the next Start runs, and where the runni
   "decrease_time_secs": null,
   "run_time_secs": 600,
   "test_plan": null,
+  "throttle": null,
   "hold_ends_in_secs": 412,
   "stage": "hold"
 }
@@ -587,6 +601,7 @@ Names are the command line's flags in snake case, durations are whole seconds wi
 | `increase_time_secs`, `decrease_time_secs` | The ramp up or ramp down as a time |
 | `run_time_secs` | The hold at full users after the ramp up, not the total run time |
 | `test_plan` | The test plan as `--test-plan` takes it, in canonical form: each step's duration in whole seconds, so `10,1h30m` reads `10,5400` |
+| `throttle` | The most requests per second every user makes together, `null` without a throttle; a running test changes only its rate. Added in 0.20, additive under `version` 1 |
 | `hold_ends_in_secs` | Seconds until the hold ends once it has a fixed end, `0` while a ramp runs past the hold's end, and still `0` once a users ramp outlasts the hold and the run holds until stopped (see [Users on a running test](#users-on-a-running-test)); `null` at any other time |
 | `stage` | Where the run is: `idle`, `ramp_up`, `hold`, `hold_until_stopped`, `ramping_down` or `stopping` for a users ramp; `idle`, `test_plan` or `stopping` for a test plan. When a users ramp outlasts the hold and the run holds until stopped, `stage` still reads `hold` |
 
@@ -635,7 +650,7 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **Phase badge**: `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
 - **Connection indicator**: green for SSE, yellow for poll fallback, red when disconnected, gray once Goose has exited
 - **KPI strip**: users, RPS, fail %, and the whole run p95 and average latency. The tiles share the row, and each value is sized to its tile, so it stays on one line. The users tile shows the active users, then the target, smaller. RPS shows whole requests a second at 100 and above, and two decimals below 100; hover the tile for the two decimals the tables show.
-- **Charts**: trailing series window (300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. Their colors follow the system's light or dark theme, and change with it while the page is open.
+- **Charts**: trailing series window (300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. On a [Gaggle](../gaggle/overview.md) manager the seconds from `series.provisional_from` on are still arriving from the workers: the charts draw them lighter and dashed, the heatmap's columns half as strong, with the note `last N s still arriving`, and a second with nothing yet as a gap, never 0; the summaries read the complete seconds. Their colors follow the system's light or dark theme, and change with it while the page is open.
 - **Whole run** card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times
 - **Sortable tables**: Scenarios, Transactions, Requests, Errors and Transaction errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request, error and transaction error tables show the top rows, 100 requests ranked by count and 50 of each kind of error ranked by occurrences (truncated server-side for large runs). The Transaction errors table counts each error a transaction returned that is not a request error, by transaction (numbered from 1), scenario, name and error. The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 503 44 · 500 40 · +2`, with every code on hover (empty with `--no-status-codes`)
 - **Hosts** in the header: the current or last run's hosts. In Idle, when the next Start would load test other hosts, they read `Last run: …`.
@@ -701,6 +716,8 @@ When coordinated omission mitigation is on and has recorded an event, two button
 ## Snapshot data
 
 ### Heatmap data
+
+The snapshot's `series.provisional_from`, on a Gaggle manager while any worker still runs, is the first second, from the start of the test, whose figures may still be arriving from the workers: from it on each second of `series` and of the heatmap holds what has arrived so far. It is absent on one process, and once every worker finished or was lost. It was added in 0.20; `version` stays 1.
 
 The snapshot's `series.heatmap` carries the heatmap, or `null` when percentiles over time are off:
 

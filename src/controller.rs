@@ -8,6 +8,7 @@
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
 use crate::test_plan::TestPlan;
+use crate::throttle::MAX_THROTTLE;
 use crate::GooseError;
 use crate::{AttackPhase, ControlOutcome, ControlStartBegin, GooseAttack, GooseAttackRunState};
 
@@ -68,7 +69,8 @@ const HELP: &str = concat!(
     "decrease-time TIME set total time to take decreasing users (0 clears)\n",
     "users INT          set number of simulated users (1 to 100000)\n",
     "runtime TIME       set how long to hold users after the ramp up, (ie 1h30m5s, 0 clears)\n",
-    "test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
+    "test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n",
+    "throttle INT       set most requests per second (1 to 1000000, 0 clears)\n\n",
     "config             display load test configuration\n",
     "config-json        display load test configuration in json format\n",
     "metrics            display metrics for current load test\n",
@@ -228,6 +230,19 @@ pub enum ControllerCommand {
     ///
     /// Can be configured on an idle or running load test.
     TestPlan(TestPlan),
+    /// Configure the most requests per second all users make together, 1 to
+    /// 1000000, or 0 to clear it.
+    ///
+    /// # Example
+    /// Tells Goose to make at most 50 requests a second.
+    /// ```notest
+    /// throttle 50
+    /// ```
+    ///
+    /// Goose can be idle or running when processing this command: a running
+    /// load test changes the rate of the throttle it started with, anywhere
+    /// from 1 to 1000000, and can not turn it on or off.
+    Throttle(usize),
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -290,20 +305,28 @@ pub(crate) struct RunSettings {
     pub(crate) decrease_time: Option<Option<usize>>,
     pub(crate) run_time: Option<Option<usize>>,
     pub(crate) test_plan: Option<Option<TestPlan>>,
+    /// `--throttle-requests`: a running load test changes only its rate.
+    pub(crate) throttle: Option<Option<usize>>,
 }
 
 impl RunSettings {
     /// The settings one Controller command sets: 0 clears a time.
-    fn from_command(command: ControllerCommand) -> Self {
-        let time = |seconds: usize| Some((seconds > 0).then_some(seconds));
+    pub(crate) fn from_command(command: ControllerCommand) -> Self {
+        // 0 clears a time or the throttle.
+        let zero_clears = |value: usize| Some((value > 0).then_some(value));
         let mut settings = Self::default();
         match command {
             ControllerCommand::Host(host) => settings.host = Some(Some(host)),
             ControllerCommand::IncreaseRate(rate) => settings.increase_rate = Some(Some(rate)),
             ControllerCommand::DecreaseRate(rate) => settings.decrease_rate = Some(Some(rate)),
-            ControllerCommand::IncreaseTime(seconds) => settings.increase_time = time(seconds),
-            ControllerCommand::DecreaseTime(seconds) => settings.decrease_time = time(seconds),
-            ControllerCommand::RunTime(seconds) => settings.run_time = time(seconds),
+            ControllerCommand::IncreaseTime(seconds) => {
+                settings.increase_time = zero_clears(seconds)
+            }
+            ControllerCommand::DecreaseTime(seconds) => {
+                settings.decrease_time = zero_clears(seconds)
+            }
+            ControllerCommand::RunTime(seconds) => settings.run_time = zero_clears(seconds),
+            ControllerCommand::Throttle(requests) => settings.throttle = zero_clears(requests),
             _ => {}
         }
         settings
@@ -321,6 +344,7 @@ impl RunSettings {
             ("decrease_time", self.decrease_time.is_some()),
             ("run_time", self.run_time.is_some()),
             ("test_plan", self.test_plan.is_some()),
+            ("throttle", self.throttle.is_some()),
         ]
         .iter()
         .filter_map(|&(field, sent)| sent.then_some(field))
@@ -402,6 +426,8 @@ fn settings_message(settings: &RunSettings) -> String {
         ["users"] => "users configured".to_string(),
         ["host"] if matches!(settings.host, Some(None)) => "host cleared".to_string(),
         ["host"] => "host configured".to_string(),
+        ["throttle"] if matches!(settings.throttle, Some(None)) => "throttle cleared".to_string(),
+        ["throttle"] => "throttle configured".to_string(),
         [field] if settings.ramp_values().contains(field) => format!("{field} configured"),
         [field] => format!("{field} cleared"),
         _ => "settings configured".to_string(),
@@ -460,6 +486,20 @@ pub(crate) const MAX_CONTROL_PLAN_BYTES: usize = 4 * 1024;
 /// user name or password.
 pub(crate) const INVALID_HOST_MSG: &str =
     "host must be a valid url starting with http:// or https://, without a user name or password";
+
+/// Refusal for a throttle outside the bounds.
+pub(crate) const INVALID_THROTTLE_MSG: &str =
+    "throttle must be an integer from 1 to 1000000 requests per second, or 0 to clear";
+
+/// A throttle in requests per second, up to [`MAX_THROTTLE`]; 0
+/// means unset.
+pub(crate) fn bounded_throttle(requests: u64) -> Result<usize, &'static str> {
+    if requests <= MAX_THROTTLE as u64 {
+        Ok(requests as usize)
+    } else {
+        Err(INVALID_THROTTLE_MSG)
+    }
+}
 
 /// Refusal for a test plan outside the bounds.
 pub(crate) const INVALID_PLAN_MSG: &str = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total";
@@ -595,6 +635,13 @@ impl FromStr for ControllerCommand {
                 time(value, INVALID_RUN_TIME_MSG).map(Self::RunTime)
             }
             "testplan" | "test_plan" | "test-plan" | "plan" => test_plan(value).map(Self::TestPlan),
+            "throttle" | "throttle_requests" | "throttle-requests" => {
+                grammar(&USERS, value, INVALID_THROTTLE_MSG)?
+                    .parse()
+                    .map_err(|_| INVALID_THROTTLE_MSG)
+                    .and_then(bounded_throttle)
+                    .map(Self::Throttle)
+            }
             _ => Err(UNRECOGNIZED),
         }
     }
@@ -639,26 +686,23 @@ pub(crate) enum ControlCommand {
     SaveReportNow,
 }
 
-/// The error code a Gaggle manager answers a command that changes the run
-/// with.
-#[cfg(feature = "gaggle")]
-pub(crate) const GAGGLE_UNSUPPORTED: &str = "gaggle_unsupported";
-
 impl ControlCommand {
-    /// Whether the command changes the run, rather than reading it or the
-    /// dashboard's report switches.
+    /// Whether a Gaggle manager sends the command to its workers as their
+    /// shares: every command that changes the run but a Start, which hands
+    /// them their shares as the run begins.
     #[cfg(feature = "gaggle")]
-    fn changes_the_run(&self) -> bool {
+    fn fans_out(&self) -> bool {
         match self {
             Self::Command(command) => !matches!(
                 command,
-                ControllerCommand::Config
+                ControllerCommand::Start
+                    | ControllerCommand::Config
                     | ControllerCommand::ConfigJson
                     | ControllerCommand::Metrics
                     | ControllerCommand::MetricsJson
             ),
             #[cfg(feature = "dashboard")]
-            Self::Settings { .. } => true,
+            Self::Settings { start, .. } => !start,
             #[cfg(feature = "dashboard")]
             Self::Report { .. } | Self::SaveReportNow => false,
         }
@@ -765,6 +809,13 @@ impl GooseAttack {
                 };
             let mut answered = 0;
             while answered < MAX_DRAIN {
+                // A Gaggle manager's change waits until every worker received
+                // it, and a worker with too many changes still to apply holds
+                // the next back: what came after stays queued until then.
+                #[cfg(feature = "gaggle")]
+                if self.gaggle_control_pending() {
+                    break 'drain;
+                }
                 // The dashboard's next request, else in the Controllers' turn
                 // theirs, so no queued Controller command runs ahead of a
                 // dashboard command.
@@ -835,19 +886,14 @@ impl GooseAttack {
             }
             ControlStartBegin::Rejected(outcome) => outcome,
         };
-        // A Gaggle manager answers what it can read; a command that changes
-        // the run is refused until runtime control reaches the workers.
+        // A Gaggle manager applies a change to its own run and sends each
+        // worker its share; a Start, and what reads the run, go on as on one
+        // process.
         #[cfg(feature = "gaggle")]
-        if self.is_gaggle_manager() && command.changes_the_run() {
-            let refused = self.control_outcome(
-                goose_attack_run_state,
-                false,
-                Some(GAGGLE_UNSUPPORTED),
-                "not supported in Gaggle mode yet",
-                None,
-            );
-            let _ = respond.send(ControlReply::Outcome(refused));
-            return Ok(());
+        if self.is_gaggle_manager() && command.fans_out() {
+            return self
+                .gaggle_control(goose_attack_run_state, command, respond)
+                .await;
         }
         // The dashboard's settings commands answer with the settings.
         #[cfg(feature = "dashboard")]
@@ -948,7 +994,7 @@ impl GooseAttack {
     /// applied as settings of its own, so every front end decides alike.
     /// Hard error: `weight_scenario_users` when a test plan replaces a
     /// running test's.
-    fn control_settings(
+    pub(crate) fn control_settings(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
         settings: RunSettings,
@@ -1013,11 +1059,19 @@ impl GooseAttack {
     ///    the settings as they would be.
     /// 6. `no_host`: clearing host leaves a scenario, or a `test_start` or
     ///    `test_stop` transaction, with no host.
-    fn refuse_settings(
+    ///
+    /// The throttle is checked first: anything but Idle and Shutdown changes
+    /// only its rate, refused as `invalid_phase` to turn it on or off.
+    pub(crate) fn refuse_settings(
         &self,
         goose_attack_run_state: &GooseAttackRunState,
         settings: &RunSettings,
     ) -> Option<ControlOutcome> {
+        // A Gaggle manager's own rules first: none on any other process.
+        #[cfg(feature = "gaggle")]
+        if let Some(refused) = self.gaggle_refuse(goose_attack_run_state, settings) {
+            return Some(refused);
+        }
         let refuse = |error, field, message: String| {
             Some(
                 self.control_outcome(goose_attack_run_state, false, Some(error), message, None)
@@ -1028,8 +1082,34 @@ impl GooseAttack {
         let stopping =
             goose_attack_run_state.stopping || self.attack_phase == AttackPhase::Shutdown;
 
+        // A running throttle changes only its rate.
+        if let (false, Some(throttle)) = (idle, settings.throttle) {
+            let started = goose_attack_run_state.throttle_started;
+            let refused = match throttle {
+                _ if self.attack_phase == AttackPhase::Shutdown => Some((
+                    "invalid_phase",
+                    "failed to configure throttle, load test is shutting down".to_string(),
+                )),
+                None => Some((
+                    "invalid_phase",
+                    "failed to clear throttle, a running load test keeps the throttle it started with: change its rate, or clear it when idle".to_string(),
+                )),
+                Some(_) if started == 0 => Some((
+                    "invalid_phase",
+                    "failed to configure throttle, the load test started without one: set it when idle".to_string(),
+                )),
+                Some(_) => None,
+            };
+            if let Some((error, message)) = refused {
+                return refuse(error, "throttle", message);
+            }
+        }
+
         // The phase.
         for field in settings.fields() {
+            if field == "throttle" {
+                continue;
+            }
             let ramp = !matches!(field, "host" | "users" | "test_plan");
             let message = if idle {
                 None
@@ -1157,7 +1237,9 @@ impl GooseAttack {
         if settings.sets_test_plan() {
             let flag = if candidate.iterations() > 0 {
                 Some("--iterations")
-            } else if candidate.no_reset_metrics {
+            // A Gaggle worker never resets its metrics itself: its manager
+            // does, and checked this against its own.
+            } else if candidate.no_reset_metrics && !self.is_gaggle_worker() {
                 Some("--no-reset-metrics")
             } else {
                 None
@@ -1269,6 +1351,9 @@ impl GooseAttack {
         if let Some(run_time) = secs(settings.run_time) {
             configuration.run_time = run_time;
         }
+        if let Some(throttle) = settings.throttle {
+            configuration.throttle_requests = throttle;
+        }
         configuration
     }
 
@@ -1284,6 +1369,13 @@ impl GooseAttack {
         self.configuration = self.candidate_configuration(&settings);
         if self.attack_phase == AttackPhase::Idle {
             return Ok(());
+        }
+        // The throttle thread reads its rate each tick.
+        if let (Some(Some(requests)), Some(rate)) = (
+            settings.throttle,
+            goose_attack_run_state.throttle_rate.as_ref(),
+        ) {
+            rate.store(requests, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(Some(plan)) = settings.test_plan {
             return self.run_test_plan(goose_attack_run_state, plan);
@@ -1337,7 +1429,7 @@ impl GooseAttack {
 
     /// Shut the load test down: from Idle at once, as Ctrl-C does there,
     /// otherwise by canceling the run. Nothing to do once shutting down.
-    async fn control_shutdown(
+    pub(crate) async fn control_shutdown(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<ControlOutcome, GooseError> {
@@ -1843,6 +1935,8 @@ pub(crate) mod tests {
         const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
         const RUN_TIME: &str =
             "run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
+        const THROTTLE: &str =
+            "throttle must be an integer from 1 to 1000000 requests per second, or 0 to clear";
         const FORTY_DIGITS: &str = "increaserate 1000000000000000000000000000000000000000";
         const TEST_PLAN: &str = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total";
         // 100 steps of 1,1s are accepted and 101 refused; so is a plan of
@@ -1913,6 +2007,10 @@ pub(crate) mod tests {
             ("run_time 1h2s", "RunTime(3602)"),
             ("run-time 10s", "RunTime(10)"),
             ("runtime 1H2M3S", "RunTime(3723)"),
+            ("throttle 50", "Throttle(50)"),
+            ("throttle_requests 1000000", "Throttle(1000000)"),
+            ("throttle-requests 0", "Throttle(0)"),
+            ("THROTTLE 7", "Throttle(7)"),
             (
                 "testplan 10,5s;10,30s;0,5s",
                 "TestPlan(TestPlan { steps: [(10, 5000), (10, 30000), (0, 5000)], current: 0 })",
@@ -1951,6 +2049,12 @@ pub(crate) mod tests {
             ("users", USERS),
             ("users 0", USERS),
             ("users 100001", USERS),
+            ("throttle 1000001", THROTTLE),
+            ("throttle -1", THROTTLE),
+            ("throttle 1.5", THROTTLE),
+            ("throttle", THROTTLE),
+            ("throttle ١", THROTTLE),
+            ("throttle 99999999999999999999", THROTTLE),
             ("users 1.1", USERS),
             ("users -1", USERS),
             ("users 99999999999999999999", USERS),
@@ -2716,12 +2820,12 @@ pub(crate) mod tests {
         });
     }
 
-    /// A Gaggle manager refuses a command that changes the run with the
-    /// documented code and message, changing nothing, and answers metrics.
+    /// A Gaggle manager applies a change as one process does, answering at
+    /// once with no worker to wait for, and answers metrics.
     #[cfg(feature = "gaggle")]
     #[test]
     #[serial_test::serial]
-    fn test_control_gaggle_manager_refuses_changes_and_answers_metrics() {
+    fn test_control_gaggle_manager_applies_changes_and_answers_metrics() {
         use crate::controller::{ControlReply, ControllerCommand};
 
         finishes(|| async {
@@ -2752,13 +2856,12 @@ pub(crate) mod tests {
                 .unwrap();
             match users_reply.await {
                 Ok(ControlReply::Outcome(outcome)) => {
-                    assert!(!outcome.ok);
-                    assert_eq!(outcome.error, Some("gaggle_unsupported"));
-                    assert_eq!(outcome.message, "not supported in Gaggle mode yet");
+                    assert!(outcome.ok, "{}", outcome.message);
+                    assert_eq!(outcome.message, "users configured");
                 }
                 other => panic!("users 5 was answered with {}", other.is_ok()),
             }
-            assert_eq!(goose_attack.configuration.users, None);
+            assert_eq!(goose_attack.configuration.users, Some(5));
             assert!(matches!(metrics_reply.await, Ok(ControlReply::Metrics(_))));
         });
     }

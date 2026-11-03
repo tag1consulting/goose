@@ -900,9 +900,10 @@ pub struct GooseConfiguration {
     ///
     /// Waits for --expect-workers workers to connect, splits the load test's users
     /// between them, starts them together, and merges their metrics into its own
-    /// reports, dashboard and threshold checks. The manager runs no users itself. A
-    /// --throttle-requests below the number of workers that run users is refused. Can't
-    /// be used with --worker, --no-autostart or --gaggle-shadow-merge.
+    /// reports, dashboard and threshold checks. The manager runs no users itself, and
+    /// its Controllers and dashboard control change the whole load test while it runs. A
+    /// --throttle-requests below the number of workers is refused. Can't be used with
+    /// --worker or --gaggle-shadow-merge.
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long)]
     pub manager: bool,
@@ -998,6 +999,15 @@ pub struct GooseConfiguration {
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long, value_name = "TIME")]
     pub gaggle_heartbeat_timeout: Option<String>,
+    /// Move a lost worker's users
+    ///
+    /// When a worker is lost during a run, the manager hands its users to the workers
+    /// left, each user keeping its scenario, so the run goes on with as many users as
+    /// before. Without it the run goes on with the users the other workers run. The
+    /// throttle follows the workers left either way.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long)]
+    pub gaggle_rebalance: bool,
     /// A Gaggle worker keeps per second graph data when its manager's reports or
     /// dashboard need it, though the worker writes no report itself.
     #[cfg(feature = "gaggle")]
@@ -1141,6 +1151,8 @@ impl std::fmt::Debug for GooseConfiguration {
             #[cfg(feature = "gaggle")]
             gaggle_heartbeat_timeout,
             #[cfg(feature = "gaggle")]
+            gaggle_rebalance,
+            #[cfg(feature = "gaggle")]
             gaggle_records_graph,
             #[cfg(feature = "gaggle")]
             gaggle_log_gzip,
@@ -1238,6 +1250,7 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("gaggle_token", &shown_token(gaggle_token))
             .field("no_hash_check", no_hash_check)
             .field("gaggle_heartbeat_timeout", gaggle_heartbeat_timeout)
+            .field("gaggle_rebalance", gaggle_rebalance)
             .field("gaggle_records_graph", gaggle_records_graph)
             .field("gaggle_log_gzip", gaggle_log_gzip);
         debug.finish()
@@ -5102,7 +5115,7 @@ impl GooseConfiguration {
         // A throttle of 0 means no throttle.
         if self.throttle_requests() > 0 {
             // Be sure throttle_requests is in allowed range.
-            if self.throttle_requests() > 1_000_000 {
+            if self.throttle_requests() > crate::throttle::MAX_THROTTLE {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.throttle_requests`".to_string(),
                     value: self.throttle_requests().to_string(),

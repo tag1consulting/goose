@@ -432,6 +432,36 @@ test("the RPS chart leaves out the newest second, still counting", () => {
   assert.deepEqual(charts.completeSeconds([10, 10, 3]), [10, 10]);
 });
 
+test("a Gaggle manager's provisional seconds with no data are gaps, never 0", () => {
+  const series = { start_second: 100, rps: [5, 0, 4, 0, 0], provisional_from: 102 };
+  assert.equal(charts.provisionalIndex(series), 2);
+  assert.equal(charts.provisionalIndex({ start_second: 100, rps: [] }), null);
+  assert.equal(charts.provisionalIndex({ start_second: 100, rps: [], provisional_from: 90 }), 0);
+  const empty = (i) => series.rps[i] === 0;
+  // A complete second of 0 stays 0; a provisional one is a gap.
+  assert.deepEqual(charts.provisionalValues(series.rps, 2, empty), [5, 0, 4, null, null]);
+  assert.deepEqual(charts.provisionalValues(series.rps, null, empty), [5, 0, 4, 0, 0]);
+  assert.equal(charts.provisionalSeconds(5, 2), 3);
+  assert.equal(charts.provisionalSeconds(5, null), 0);
+  assert.equal(charts.lighter("#3d8bfd"), "#3d8bfd80");
+});
+
+test("the RPS chart's provisional tail is lighter and dashed", () => {
+  const datasets = charts.rpsDatasets({
+    rps: "#3d8bfd",
+    fps: "#f07178",
+    users: "#3dd68c",
+    latency: "#e6b450",
+    grid: "#000000",
+    tick: "#000000",
+    percentile: "#000000",
+  });
+  for (const dataset of datasets) {
+    assert.equal(typeof dataset.segment.borderDash, "function", dataset.label);
+    assert.equal(typeof dataset.segment.borderColor, "function", dataset.label);
+  }
+});
+
 test("the failures line is dashed and the RPS line solid", () => {
   const datasets = charts.rpsDatasets({
     rps: "#3d8bfd",

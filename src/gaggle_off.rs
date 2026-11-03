@@ -20,13 +20,17 @@ impl GooseConfiguration {
 }
 
 impl GooseAttack {
-    pub(crate) async fn gaggle_worker_join(&mut self) -> Result<(), GooseError> {
-        Ok(())
+    pub(crate) async fn gaggle_worker_join(&mut self) -> Result<bool, GooseError> {
+        Ok(true)
     }
 
     pub(crate) fn gaggle_worker_prepared(&self, _error: Option<&GooseError>) {}
 
     pub(crate) async fn gaggle_worker_exit(&self) {}
+
+    pub(crate) fn gaggle_worker_holds(&self) -> bool {
+        false
+    }
 
     pub(crate) async fn gaggle_worker_idle(
         &mut self,

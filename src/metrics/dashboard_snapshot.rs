@@ -133,6 +133,11 @@ pub(crate) struct SnapshotSettings {
     /// The test plan as `--test-plan` takes it, in canonical form: each
     /// step's duration in whole seconds.
     pub test_plan: Option<String>,
+    /// The most requests per second all users make together, `null` without
+    /// a throttle. A running load test changes only its rate. Added in 0.20:
+    /// optional in the types, so a snapshot shaped before it still checks.
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub throttle: Option<u64>,
     /// Seconds until the hold ends once it has a fixed end, 0 while a ramp
     /// runs past it. `null` in Idle, during the first ramp up, once the
     /// ramp down starts, with no run time, and with a test plan.
@@ -164,6 +169,7 @@ impl SnapshotSettings {
             decrease_time_secs: None,
             run_time_secs: None,
             test_plan: None,
+            throttle: None,
             hold_ends_in_secs: None,
             stage: "idle".to_string(),
         }
@@ -297,6 +303,14 @@ pub(crate) struct SeriesWindow {
     /// Response times of all requests by second, for the dashboard's
     /// heatmap. Null when percentiles over time are off.
     pub heatmap: Option<Heatmap>,
+    /// On a Gaggle manager while a worker still runs, the first second, from
+    /// the test start, whose figures may still be arriving from the workers:
+    /// from it on each second holds what has arrived so far, and a second
+    /// with nothing yet has no data rather than 0. Absent on one process and
+    /// once every worker finished or was lost. Added in 0.20.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub provisional_from: Option<u64>,
 }
 
 impl SeriesWindow {
@@ -309,6 +323,7 @@ impl SeriesWindow {
             users: Vec::new(),
             avg_latency_ms: Vec::new(),
             heatmap: None,
+            provisional_from: None,
         }
     }
 }
@@ -1239,6 +1254,7 @@ mod tests {
             users: vec![1, 2],
             avg_latency_ms: vec![10.0, 20.0],
             heatmap: None,
+            provisional_from: None,
         };
 
         let snap = build_dashboard_snapshot(DashboardSnapshotInput {
@@ -1594,15 +1610,26 @@ mod tests {
         // from the fields as declared. ts-rs does not model attributes such as
         // `serialize_with`, and cannot see a hand-written `impl Serialize`, so
         // either could change the JSON without changing the declarations.
-        // `serde(` also catches one inside `cfg_attr`. `serde(skip)` is the one
-        // exception: ts-rs drops a skipped field too, which
-        // `dashboard_types_match_rust` checks.
+        // `serde(` also catches one inside `cfg_attr`. Two exceptions:
+        // `serde(skip)`, as ts-rs drops a skipped field too, which
+        // `dashboard_types_match_rust` checks; and an `Option` left out when
+        // `None`, which ts-rs writes as an optional field, `field?: T`, the
+        // JSON exactly, when the field also carries `ts(optional)`, checked
+        // below.
         let source = include_str!("dashboard_snapshot.rs");
-        let structs = source
-            .split("\nmod tests {")
-            .next()
-            .expect("source")
-            .replace("#[serde(skip)]", "");
+        const LEFT_OUT: &str = "#[serde(skip_serializing_if = \"Option::is_none\")]";
+        let structs = source.split("\nmod tests {").next().expect("source");
+        let lines: Vec<&str> = structs.lines().collect();
+        for (at, line) in lines.iter().enumerate() {
+            if line.trim() == LEFT_OUT {
+                assert_eq!(
+                    lines.get(at + 1).map(|next| next.trim()),
+                    Some("#[cfg_attr(test, ts(optional))]"),
+                    "a field left out when None must be optional in the types"
+                );
+            }
+        }
+        let structs = structs.replace("#[serde(skip)]", "").replace(LEFT_OUT, "");
         for pattern in ["serde(", "impl Serialize", "impl serde::Serialize"] {
             assert!(
                 !structs.contains(pattern),

@@ -4,11 +4,12 @@ Each of these options needs Goose built with the `gaggle` feature. In this previ
 
 ## Manager
 
-* `--manager`: run as the manager. Can't be used with `--worker`, `--no-autostart` or `--gaggle-shadow-merge`. A `--throttle-requests` below the number of workers that run users is refused.
+* `--manager`: run as the manager. Can't be used with `--worker` or `--gaggle-shadow-merge`. A `--throttle-requests` below the number of workers is refused. With `--no-autostart`, it waits for a `start` once every worker has joined.
 * `--expect-workers <N>`: how many workers to wait for, at least 1 and at most 2048. Required with `--manager`.
 * `--manager-bind-host <HOST>`: the address the manager listens on, `127.0.0.1` by default. Any address but loopback needs `--gaggle-token`.
 * `--manager-bind-port <PORT>`: the port the manager listens on, `5115` by default.
 * `--no-hash-check`: let a worker whose load test differs from the manager's join. Not recommended: the merged results then mix two load tests. Only the manager checks, so a worker refuses it.
+* `--gaggle-rebalance`: when a worker is lost during a run, move its users to the workers left, each keeping its ordinal and scenario, so the run keeps its users. Off by default: the run goes on with the users the other workers run. See [Rebalancing a lost worker's users](manager.md#rebalancing-a-lost-workers-users).
 
 ## Worker
 

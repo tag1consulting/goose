@@ -56,6 +56,14 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) test_plan: Vec<(usize, usize)>,
     /// Its share of `--throttle-requests`, 0 without a throttle.
     pub(crate) throttle_requests: usize,
+    /// Its users ramp, when the manager runs one and every worker has a
+    /// user: it then runs `test_plan` as one process runs a users ramp, so
+    /// a Controller can change its users, rates and run time as it runs.
+    pub(crate) ramp: Option<WorkerRamp>,
+    /// Whether the whole load test's test plan holds until stopped, its last
+    /// step running users: a worker whose share of that step is none then
+    /// waits for its manager rather than ending its run.
+    pub(crate) holds: bool,
     pub(crate) iterations: Option<usize>,
     pub(crate) co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     pub(crate) timeout: Option<String>,
@@ -80,6 +88,60 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) logs: Vec<LogSpec>,
     /// The bytes the load test's worker data hook returned for it.
     pub(crate) custom_data: Vec<u8>,
+}
+
+/// A worker's share of a users ramp: its users, each rate scaled by its
+/// share of the users, and the same times, each as the command line gives
+/// it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WorkerRamp {
+    pub(crate) users: usize,
+    pub(crate) increase_rate: Option<String>,
+    pub(crate) increase_time: Option<String>,
+    pub(crate) decrease_rate: Option<String>,
+    pub(crate) decrease_time: Option<String>,
+    pub(crate) run_time: Option<String>,
+}
+
+impl WorkerRamp {
+    /// Each worker's ramp for a manager configured with `configuration`,
+    /// running `users` each: `None` with a test plan, or when a worker has
+    /// no users, which a users ramp can not start.
+    fn shares(configuration: &GooseConfiguration, users: &[usize]) -> Option<Vec<WorkerRamp>> {
+        if configuration.test_plan.is_some() || configuration.users.is_none() {
+            return None;
+        }
+        if users.contains(&0) {
+            return None;
+        }
+        let rates = |rate: &Option<String>| {
+            rate.as_deref()
+                .and_then(|rate| rate.parse::<f32>().ok())
+                .map(|rate| super::control::rate_shares(rate, users))
+        };
+        // With neither an increase rate nor time, one process ramps at 1
+        // user a second: each worker takes its share of that rate.
+        let increase_rate = match (&configuration.increase_rate, &configuration.increase_time) {
+            (None, None) => Some("1".to_string()),
+            (rate, _) => rate.clone(),
+        };
+        let increase = rates(&increase_rate);
+        let decrease = rates(&configuration.decrease_rate);
+        Some(
+            users
+                .iter()
+                .enumerate()
+                .map(|(worker, &users)| WorkerRamp {
+                    users,
+                    increase_rate: increase.as_ref().map(|rates| rates[worker].to_string()),
+                    increase_time: configuration.increase_time.clone(),
+                    decrease_rate: decrease.as_ref().map(|rates| rates[worker].to_string()),
+                    decrease_time: configuration.decrease_time.clone(),
+                    run_time: configuration.run_time.clone(),
+                })
+                .collect(),
+        )
+    }
 }
 
 /// The most test plan steps a worker runs: a plan of more fails `Prepare`.
@@ -172,7 +234,7 @@ pub(crate) fn peak_users(steps: &[(usize, usize)]) -> usize {
 /// `throttle` split in proportion to `users`, the remainder spread: every
 /// worker with users gets at least 1, and a worker with none gets 0, so the
 /// shares add up to `throttle` whenever any worker has users and `throttle`
-/// is at least the number that do ([`workers_with_users`]). Each share is
+/// is at least the number that do. Each share is
 /// its proportion rounded down, raised to 1; the rest goes one at a time
 /// to the largest remainders, the first worker first among equals; and
 /// what raising shares to 1 put past `throttle` is taken back one at a time
@@ -218,14 +280,6 @@ pub(crate) fn throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
         sum -= 1;
     }
     shares
-}
-
-/// How many of `workers` workers a load test of `steps` hands users to.
-pub(crate) fn workers_with_users(steps: &[(usize, usize)], workers: usize) -> usize {
-    plans(steps, workers)
-        .iter()
-        .filter(|plan| users_started(plan) > 0)
-        .count()
 }
 
 /// The logs the manager's flags ask for, as each worker writes them.
@@ -276,7 +330,13 @@ pub(crate) fn worker_specs(
     // for a plan that goes up, down and up again, the users it starts over
     // the run would count some twice.
     let peaks: Vec<usize> = plans.iter().map(|plan| peak_users(plan)).collect();
-    let throttles = throttle_shares(configuration.throttle_requests(), &peaks);
+    // Every worker gets a share, one with no users too, as a running
+    // throttle can change but not turn on.
+    let throttles = match configuration.throttle_requests() {
+        0 => vec![0; workers],
+        throttle => super::control::live_throttle_shares(throttle, &peaks),
+    };
+    let mut ramps = WorkerRamp::shares(configuration, &users).map(Vec::into_iter);
     let logs = log_specs(configuration);
     let mut offset = 0usize;
     plans
@@ -296,6 +356,8 @@ pub(crate) fn worker_specs(
                 slice: order[start..end].to_vec(),
                 test_plan,
                 throttle_requests: throttles[worker],
+                ramp: ramps.as_mut().and_then(Iterator::next),
+                holds: steps.last().is_some_and(|&(users, _)| users > 0),
                 iterations: configuration.iterations,
                 co_mitigation: configuration.co_mitigation.clone(),
                 timeout: configuration.timeout.clone(),
@@ -335,10 +397,23 @@ impl WorkerRunSpec {
         configuration.run_time = None;
         configuration.decrease_rate = None;
         configuration.decrease_time = None;
-        configuration.test_plan = Some(crate::test_plan::TestPlan {
-            steps: self.test_plan.clone(),
-            current: 0,
-        });
+        match &self.ramp {
+            Some(ramp) => {
+                configuration.users = Some(ramp.users);
+                configuration.increase_rate.clone_from(&ramp.increase_rate);
+                configuration.increase_time.clone_from(&ramp.increase_time);
+                configuration.decrease_rate.clone_from(&ramp.decrease_rate);
+                configuration.decrease_time.clone_from(&ramp.decrease_time);
+                configuration.run_time.clone_from(&ramp.run_time);
+                configuration.test_plan = None;
+            }
+            None => {
+                configuration.test_plan = Some(crate::test_plan::TestPlan {
+                    steps: self.test_plan.clone(),
+                    current: 0,
+                })
+            }
+        }
         configuration.scenarios = (!self.scenarios.is_empty()).then(|| crate::config::Scenarios {
             active: self.scenarios.clone(),
         });
@@ -583,8 +658,6 @@ mod tests {
                 }
             });
         }
-        assert_eq!(workers_with_users(&[(2, 1_000), (0, 0)], 3), 2);
-        assert_eq!(workers_with_users(&[(9, 1_000)], 3), 3);
         // A plan that goes up, down and up again: each worker's share
         // follows the users it runs at its peak, 4, 4 and 3, giving 8, 8
         // and 6, never the users it starts over the run, 7, 6 and 5,
@@ -809,9 +882,117 @@ mod tests {
         assert!(worker.transaction_log.is_none() && worker.error_log.is_none());
         assert!(worker.no_reset_metrics);
         assert!(worker.gaggle_records_graph);
+        // A users ramp's worker runs a users ramp of its own.
+        assert_eq!(spec.ramp.as_ref().map(|ramp| ramp.users), Some(2));
+        assert!(worker.test_plan.is_none());
+        // A test plan's worker runs its share of the plan.
+        let manager = GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://example.com",
+            "--test-plan",
+            "5,1s;0,0s",
+        ])
+        .unwrap();
+        let spec = worker_specs(
+            &manager,
+            CommandLineClientOptions::default(),
+            &[(5, 1_000), (0, 0)],
+            &[0; 5],
+            2,
+            true,
+        )
+        .remove(1);
+        assert!(spec.ramp.is_none());
+        spec.configure(&mut worker);
         assert_eq!(
             worker.test_plan.as_ref().map(|plan| plan.steps.clone()),
             Some(vec![(2, 1_000), (0, 0)])
         );
+    }
+
+    /// A users ramp's workers each run their share of the users, each rate
+    /// scaled by that share and the same times; none does once a worker
+    /// would have no users.
+    #[test]
+    fn a_users_ramp_is_shared_as_ramps() {
+        let manager = GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://example.com",
+            "--users",
+            "9",
+            "--increase-rate",
+            "3",
+            "--decrease-time",
+            "10s",
+            "--run-time",
+            "1m",
+            "--throttle-requests",
+            "10",
+        ])
+        .unwrap();
+        let steps = [(9, 3_000), (9, 60_000), (0, 10_000)];
+        let specs = worker_specs(
+            &manager,
+            CommandLineClientOptions::default(),
+            &steps,
+            &[0; 9],
+            3,
+            true,
+        );
+        let ramps: Vec<WorkerRamp> = specs
+            .iter()
+            .map(|spec| spec.ramp.clone().unwrap())
+            .collect();
+        assert!(ramps.iter().all(|ramp| ramp.users == 3));
+        assert!(ramps
+            .iter()
+            .all(|ramp| ramp.increase_rate.as_deref() == Some("1")));
+        assert!(ramps
+            .iter()
+            .all(|ramp| ramp.decrease_time.as_deref() == Some("10s")));
+        assert!(ramps
+            .iter()
+            .all(|ramp| ramp.run_time.as_deref() == Some("1m")));
+        let throttles: Vec<usize> = specs.iter().map(|spec| spec.throttle_requests).collect();
+        assert_eq!(throttles.iter().sum::<usize>(), 10);
+        // With neither an increase rate nor time, the workers share one
+        // user a second.
+        let default =
+            GooseConfiguration::parse_args_default(&["--host", "http://h", "--users", "4"])
+                .unwrap();
+        let specs = worker_specs(
+            &default,
+            CommandLineClientOptions::default(),
+            &[(4, 4_000)],
+            &[0; 4],
+            4,
+            true,
+        );
+        let rate: f32 = specs
+            .iter()
+            .map(|spec| {
+                spec.ramp
+                    .as_ref()
+                    .unwrap()
+                    .increase_rate
+                    .as_deref()
+                    .unwrap()
+                    .parse::<f32>()
+                    .unwrap()
+            })
+            .sum();
+        assert!((rate - 1.0).abs() < 1e-5, "{}", rate);
+        // Four workers for three users: the shares run test plans.
+        let specs = worker_specs(
+            &manager,
+            CommandLineClientOptions::default(),
+            &[(3, 1_000)],
+            &[0; 3],
+            4,
+            true,
+        );
+        assert!(specs.iter().all(|spec| spec.ramp.is_none()));
+        // A worker with no users still takes a share of the throttle.
+        assert!(specs.iter().all(|spec| spec.throttle_requests > 0));
     }
 }

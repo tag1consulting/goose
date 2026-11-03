@@ -968,6 +968,42 @@ test("each summary follows the data: value, then rising, falling or steady", asy
   assert.equal(latency.textContent, "No data yet.");
 });
 
+test("a Gaggle manager with only provisional seconds says no second is complete, not 0", async () => {
+  const page = await livePage();
+  const rps = el(page, "chart-rps-summary");
+  const latency = el(page, "chart-latency-summary");
+  const note = el(page, "chart-rps-provisional");
+  const values = seriesOf(0, 30, () => 50);
+  const series = { ...lineSeries(0, values, values.map(() => 0), values, values), provisional_from: 0 };
+  await send(page, snapshotWith({ series }, { percentiles_over_time: false }));
+  assert.equal(rps.textContent, "No complete seconds yet.");
+  assert.equal(latency.textContent, "No complete seconds yet.");
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, "last 29 s still arriving");
+  // Ten complete seconds: the summary reads them.
+  await send(page, snapshotWith(
+    { series: { ...series, provisional_from: 10 } },
+    { percentiles_over_time: false }
+  ));
+  assert.equal(rps.textContent, "RPS " + rate(50) + "; failures " + rate(0) + "/s.");
+  assert.equal(note.textContent, "last 19 s still arriving");
+  // One second on one process, with no provisional seconds: the summary
+  // reads as it always has, never "No complete seconds yet."
+  const one = [5];
+  await send(page, snapshotWith(
+    { series: lineSeries(0, one, [0], one, one) },
+    { percentiles_over_time: false }
+  ));
+  assert.equal(rps.textContent, "RPS " + rate(0) + "; failures " + rate(0) + "/s.");
+  assert.equal(latency.textContent, "Average " + int(0) + " ms.");
+  // Every second complete: no note.
+  await send(page, snapshotWith(
+    { series: lineSeries(0, values, values.map(() => 0), values, values) },
+    { percentiles_over_time: false }
+  ));
+  assert.equal(note.hidden, true);
+});
+
 test("the heatmap summary gives recent percentiles and the p95 trend", async () => {
   const page = await livePage();
   const latency = el(page, "chart-latency-summary");

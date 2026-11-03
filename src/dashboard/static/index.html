@@ -164,6 +164,7 @@
     <div class="card chart-card">
       <h2>Requests / failures per second</h2>
       <canvas id="chart-rps" role="img" aria-label="RPS and failures chart"></canvas>
+      <p id="chart-rps-provisional" class="note" hidden></p>
       <p id="chart-rps-summary" class="chart-summary">No data yet.</p>
       <details id="chart-rps-details" class="chart-data">
         <summary>Show data</summary>
@@ -223,6 +224,7 @@
       <div id="chart-latency-wrap" hidden>
         <canvas id="chart-latency" role="img" aria-label="Average latency chart"></canvas>
       </div>
+      <p id="chart-latency-provisional" class="note" hidden></p>
       <p id="chart-latency-summary" class="chart-summary">No data yet.</p>
       <!-- The table follows the chart the card shows. -->
       <details id="chart-latency-details" class="chart-data">

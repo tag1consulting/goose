@@ -99,7 +99,11 @@ impl MetricsProcessor {
                 bytes,
             } => {
                 let seq = delta.seq;
-                let applied = merge.accumulator.apply(worker, *delta);
+                // Its rows for the provisional seconds go into the graph
+                // data at once, so a live view shows them.
+                let applied = merge
+                    .accumulator
+                    .apply_live(worker, *delta, &mut self.graph_data);
                 // The delta is merged or refused: its share of the budget
                 // is free again.
                 drop(bytes);
@@ -128,6 +132,10 @@ impl MetricsProcessor {
             MetricsCommand::GaggleClock { second } => {
                 merge.accumulator.set_max_second(second);
                 merge.clock = second;
+                false
+            }
+            MetricsCommand::GaggleMaxUsers { max_users } => {
+                merge.accumulator.set_max_users(max_users);
                 false
             }
             // Save report: the merge builds the report heatmap's columns, or

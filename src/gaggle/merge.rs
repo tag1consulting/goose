@@ -257,8 +257,46 @@ impl GaggleAccumulator {
     /// sequence numbers partly applied already, or would take the worker
     /// past [`DeltaLimits::max_names`] or [`Bounds::WORKER`] is refused,
     /// and changes nothing.
+    ///
+    /// With no graph data to add to, as here, a delta's rows for seconds the
+    /// last build left provisional have the next build start from nothing:
+    /// a manager's processor, which holds the graph data, takes deltas with
+    /// [`Self::apply_live`] instead.
     pub(crate) fn apply(&mut self, from: u32, delta: GaggleDelta) -> Result<(), DeltaError> {
+        self.apply_into(from, delta, None)
+    }
+
+    /// [`Self::apply`], adding the delta's rows for every second from the
+    /// last build's complete point on to `graph`, the graph data that build
+    /// returned, which the caller holds between builds: in place, by
+    /// addition, as the delta arrives, so each provisional second is
+    /// updated, never built again from nothing, and no build walks every
+    /// worker's rows to show them. The work is the delta's own rows, at most
+    /// a few seconds of one worker's; the provisional seconds the graph data
+    /// then holds are the lag ([`Self::set_lag`]) and a second or two
+    /// while every worker keeps sending; a worker that stalls without being
+    /// lost holds the complete point back, and the span grows until it
+    /// sends again or is lost, each delta still costing only its own rows. Rows for a second before the complete point still build the
+    /// graph data again from nothing, at most once a lag window for each
+    /// worker.
+    pub(crate) fn apply_live(
+        &mut self,
+        from: u32,
+        delta: GaggleDelta,
+        graph: &mut GraphData,
+    ) -> Result<(), DeltaError> {
+        self.apply_into(from, delta, Some(graph))
+    }
+
+    /// [`Self::apply`] and [`Self::apply_live`].
+    fn apply_into(
+        &mut self,
+        from: u32,
+        delta: GaggleDelta,
+        graph: Option<&mut GraphData>,
+    ) -> Result<(), DeltaError> {
         let run_epoch = self.epoch;
+        let settings = self.settings;
         let known = self.workers.contains_key(&from);
         let taken = self.take(from, &delta)?;
         let merged = self.merged.get_mut();
@@ -312,8 +350,31 @@ impl GaggleAccumulator {
                         .map_or(0, |co| co.events.len())
                 });
                 let new = delta.metrics.co.as_ref().map_or(0, |co| co.events.len());
-                if !excluded && !merged.follow(&delta, from, held.saturating_sub(new)) {
+                if excluded {
+                    return Ok(());
+                }
+                if !merged.follow(&delta, from, held.saturating_sub(new)) {
                     merged.current = false;
+                    return Ok(());
+                }
+                // Followed: its rows for the provisional seconds go into the
+                // graph data the last build returned, if it still holds.
+                if let Some(built) = merged.built.as_ref() {
+                    match graph {
+                        Some(graph) => {
+                            graph.gaggle_extend(
+                                &delta.graph,
+                                &BTreeMap::new(),
+                                settings,
+                                built.before,
+                                None,
+                            );
+                            if settings.records {
+                                graph.gaggle_take_back_failures(&delta.graph, built.before);
+                            }
+                        }
+                        None => merged.built = None,
+                    }
                 }
             }
         }
@@ -504,6 +565,12 @@ impl GaggleAccumulator {
         self.limits.max_second = second.min(self.cap_second);
     }
 
+    /// Take user ordinals below `max_users` from now on, never fewer than
+    /// before: the users a Controller added on the workers.
+    pub(crate) fn set_max_users(&mut self, max_users: u64) {
+        self.limits.max_users = self.limits.max_users.max(max_users);
+    }
+
     /// Build whole run columns for the report's heatmap, or not, as Save
     /// report is turned on or off.
     pub(crate) fn set_columns(&mut self, keep: bool) {
@@ -604,8 +671,8 @@ impl GaggleAccumulator {
     }
 
     /// The metrics and graph data of every worker merged: the metrics of
-    /// the manager's own epoch, and the graphs' complete
-    /// seconds only. Every derived figure is worked out again from the
+    /// the manager's own epoch, and the graphs' seconds, the provisional
+    /// ones as far as their rows have arrived. Every derived figure is worked out again from the
     /// merged counts. A worker left out is named by
     /// [`Self::merged_and_excluded`] (tests).
     #[cfg(test)]
@@ -652,14 +719,19 @@ impl GaggleAccumulator {
         // build's `before` is unchanged, or the cache was dropped.
         // Once every worker is done, nothing is left out of it.
         let excluded: Vec<u32> = merged.excluded.iter().map(|&(id, _)| id).collect();
+        // Once every worker is done the graph data is built from nothing,
+        // once, so the final graph equals a build from nothing exactly,
+        // though its provisional seconds were added a delta at a time.
         let reusable = merged.built.take().filter(|built| {
             built.series_origin == series_origin
                 && built.columns == self.settings.columns
                 && built.excluded == excluded
                 && complete.is_none_or(|complete| complete >= built.before)
                 && !(merged.late && complete.is_none())
+                && !(complete.is_none() && built.before != Second::MAX)
         });
-        if reusable.is_none() {
+        let fresh = reusable.is_none();
+        if fresh {
             merged.late = false;
         }
         #[cfg(test)]
@@ -686,10 +758,25 @@ impl GaggleAccumulator {
             ),
         };
         let users = self.users_levels(built.before, complete, &merged.excluded);
-        graph.gaggle_extend(&merged.graph, &users, self.settings, built.before, complete);
+        if fresh {
+            // From nothing: every row merged, the provisional seconds' too.
+            graph.gaggle_extend(&merged.graph, &users, self.settings, 0, None);
+        } else {
+            // Every row from the last build's complete point on went into
+            // the graph data as it arrived (see [`Self::apply_live`]): only
+            // the users levels of the seconds completed since are added.
+            graph.gaggle_extend(
+                &GraphPart::default(),
+                &users,
+                self.settings,
+                built.before,
+                complete,
+            );
+        }
         // With every worker done, nothing later can be added but by a
         // delta, which builds again.
         built.before = complete.unwrap_or(Second::MAX);
+        graph.set_provisional_from(complete);
         built.users = Some(graph.merged_users());
         // Finished each build: a later extend writes a second's response
         // times to the heatmap's columns once its ring slot is packed.
