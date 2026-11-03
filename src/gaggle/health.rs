@@ -630,10 +630,8 @@ impl GaggleHealth {
                     // A metrics reset: its totals, rates and live window
                     // start again, from the start of this delta's span.
                     let secs = sample.as_ref().map_or(0, |(_, secs)| *secs);
-                    worker.totals_since = Some(
-                        now.checked_sub(Duration::from_secs(secs))
-                            .unwrap_or(now),
-                    );
+                    worker.totals_since =
+                        Some(now.checked_sub(Duration::from_secs(secs)).unwrap_or(now));
                     worker.window.clear();
                 }
                 worker.totals = fold;
@@ -745,8 +743,7 @@ impl GaggleHealth {
                 worker.longest_gap = worker.longest_gap.max(gap);
             }
             let mut live = worker.merge_flags();
-            live.saturated = worker.is_running()
-                && worker.saturated_for() >= SATURATED_FOR;
+            live.saturated = worker.is_running() && worker.saturated_for() >= SATURATED_FOR;
             live.lagging = worker.delta_gap(now).is_some_and(|gap| gap > LAGGING_AFTER);
             if let Some((rate, p95)) = outliers.get(&worker.id) {
                 live.rate_outlier = *rate;
@@ -1197,7 +1194,11 @@ mod tests {
         assert!(!health.worker(0).unwrap().live.saturated);
         assert!(kinds(&health).is_empty(), "{:?}", kinds(&health));
         let ran = record(&health, 0, at + secs(10.0));
-        assert!(!ran.flags.contains(&GaggleWorkerFlag::Saturated), "{:?}", ran);
+        assert!(
+            !ran.flags.contains(&GaggleWorkerFlag::Saturated),
+            "{:?}",
+            ran
+        );
     }
 
     #[test]
@@ -1319,9 +1320,19 @@ mod tests {
         let at = Instant::now();
         let mut health = running(1, Some(1), at);
         // Epoch 1, the ramp: 10 seconds of 50 requests a second.
-        health.applied(0, Some((fold(50, 5), 1)), Some((fold(500, 5), 1)), at + secs(10.0));
+        health.applied(
+            0,
+            Some((fold(50, 5), 1)),
+            Some((fold(500, 5), 1)),
+            at + secs(10.0),
+        );
         // The reset, at 10 s: epoch 2, then 10 seconds of 100 a second.
-        health.applied(0, Some((fold(100, 5), 1)), Some((fold(100, 5), 2)), at + secs(11.0));
+        health.applied(
+            0,
+            Some((fold(100, 5), 1)),
+            Some((fold(100, 5), 2)),
+            at + secs(11.0),
+        );
         for second in 12..=20 {
             health.applied(0, Some((fold(100, 5), 1)), None, at + secs(second as f64));
         }

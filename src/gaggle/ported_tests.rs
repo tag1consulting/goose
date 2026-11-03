@@ -641,7 +641,10 @@ async fn no_reset_metrics_default_reaches_every_worker() {
     };
     let (merged, _folder) = two_workers(build, &server.base_url(), "reset-default", &args).await;
     assert_eq!(pre.calls_async().await, 4);
-    let counted = merged.requests.get("GET /pre").map_or(0, |pre| pre.success_count);
+    let counted = merged
+        .requests
+        .get("GET /pre")
+        .map_or(0, |pre| pre.success_count);
     assert_eq!(counted, 4);
 }
 
