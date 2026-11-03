@@ -20,7 +20,9 @@ struct Markdown<'m, 'w, W: Write> {
     gaggle: Option<&'w GaggleRecord>,
 }
 
-/// The Markdown report of `data`, with no Gaggle sections.
+/// The Markdown report of `data`, with no Gaggle sections: the dashboard's
+/// compare.
+#[cfg(any(test, feature = "dashboard"))]
 pub(crate) fn write_markdown_report<W: Write>(
     w: &mut W,
     data: ReportData,

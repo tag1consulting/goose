@@ -412,6 +412,7 @@ impl GaggleRecord {
 impl GaggleRecord {
     /// The most events a record keeps: older ones are counted in
     /// `events_dropped`.
+    #[cfg(any(test, feature = "gaggle"))]
     pub(crate) const MAX_EVENTS: usize = 1_000;
 }
 

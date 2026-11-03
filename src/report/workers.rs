@@ -10,6 +10,7 @@ use crate::runs::{
 use std::fmt::Write;
 
 /// The most worker rows the console print shows.
+#[cfg(any(test, feature = "gaggle"))]
 pub(crate) const CONSOLE_ROWS: usize = 20;
 
 /// The Workers table's headings.
@@ -292,6 +293,7 @@ pub(crate) fn html(record: Option<&GaggleRecord>, escape: fn(&str) -> String) ->
 
 /// The console print's Gaggle sections: the intro sentences, at most
 /// [`CONSOLE_ROWS`] workers, worst first, and the events.
+#[cfg(any(test, feature = "gaggle"))]
 pub(crate) fn console(record: &GaggleRecord) -> String {
     let mut text = String::new();
     if record.workers.is_empty() {

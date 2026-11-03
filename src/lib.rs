@@ -592,11 +592,13 @@ pub(crate) struct ControlOutcome {
     pub settings: Option<Box<metrics::dashboard_snapshot::SnapshotSettings>>,
     /// How many Gaggle workers acknowledged the change, of how many, and
     /// how long that took: filled on a manager only.
+    #[cfg(feature = "gaggle")]
     pub acks: Option<ControlAcks>,
 }
 
 /// How many of a Gaggle's workers said they received a change, of how
 /// many it was sent to, and how long after it was sent the last did.
+#[cfg(feature = "gaggle")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ControlAcks {
     pub acknowledged: usize,
@@ -3459,6 +3461,7 @@ impl GooseAttack {
             field: None,
             #[cfg(feature = "dashboard")]
             settings: None,
+            #[cfg(feature = "gaggle")]
             acks: None,
         }
     }
