@@ -336,6 +336,9 @@ pub(crate) struct WorkerHealth {
     /// Its requests over the run, and the epoch they are of.
     totals: Fold,
     totals_epoch: Option<u64>,
+    /// When its totals' epoch began, when a metrics reset started them
+    /// again during the run: its run rates are over the time since.
+    totals_since: Option<Instant>,
     /// Its last deltas' requests, newest last, covering at most
     /// [`WINDOW_SECS`] seconds. Each sample holds one histogram of every
     /// request name's times, its buckets each 16 bytes: Goose's bucket
@@ -370,7 +373,14 @@ impl WorkerHealth {
     /// Its figures over the whole run, as of `now`.
     pub(crate) fn run_figures(&self, now: Instant) -> Figures {
         let users = self.users_started.max(self.users);
-        Figures::of(&self.totals, self.running_for(now).as_secs_f64(), users)
+        let secs = match (self.running_since, self.totals_since) {
+            (Some(since), Some(reset)) => self
+                .running_until
+                .unwrap_or(now)
+                .saturating_duration_since(since.max(reset)),
+            _ => self.running_for(now),
+        };
+        Figures::of(&self.totals, secs.as_secs_f64(), users)
     }
 
     /// Its figures over the live window.
@@ -616,6 +626,16 @@ impl GaggleHealth {
         worker.last_delta = Some(now);
         match totals {
             Some((fold, epoch)) => {
+                if worker.totals_epoch.is_some_and(|held| held != epoch) {
+                    // A metrics reset: its totals, rates and live window
+                    // start again, from the start of this delta's span.
+                    let secs = sample.as_ref().map_or(0, |(_, secs)| *secs);
+                    worker.totals_since = Some(
+                        now.checked_sub(Duration::from_secs(secs))
+                            .unwrap_or(now),
+                    );
+                    worker.window.clear();
+                }
                 worker.totals = fold;
                 worker.totals_epoch = Some(epoch);
             }
@@ -1273,6 +1293,25 @@ mod tests {
         health.applied(0, None, Some((fold(5, 1), 2)), at + secs(15.0));
         assert_eq!(record(&health, 0, at + secs(15.0)).requests, Some(5));
         assert_eq!(health.totals_epoch(0), Some(2));
+    }
+
+    #[test]
+    fn a_metrics_reset_starts_the_run_rates_again() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        // Epoch 1, the ramp: 10 seconds of 50 requests a second.
+        health.applied(0, Some((fold(50, 5), 1)), Some((fold(500, 5), 1)), at + secs(10.0));
+        // The reset, at 10 s: epoch 2, then 10 seconds of 100 a second.
+        health.applied(0, Some((fold(100, 5), 1)), Some((fold(100, 5), 2)), at + secs(11.0));
+        for second in 12..=20 {
+            health.applied(0, Some((fold(100, 5), 1)), None, at + secs(second as f64));
+        }
+        let ran = record(&health, 0, at + secs(20.0));
+        assert_eq!(ran.requests, Some(1_000));
+        // Over the 10 seconds since the reset, not the 20 of the run.
+        assert_eq!(ran.requests_per_second, Some(100.0));
+        // The live window holds only the new epoch.
+        assert_eq!(health.worker(0).unwrap().window_figures().requests, 1_000);
     }
 
     #[test]
