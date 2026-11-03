@@ -590,6 +590,18 @@ pub(crate) struct ControlOutcome {
     /// not, so the page that sent it has them before the next snapshot.
     #[cfg(feature = "dashboard")]
     pub settings: Option<Box<metrics::dashboard_snapshot::SnapshotSettings>>,
+    /// How many Gaggle workers acknowledged the change, of how many, and
+    /// how long that took: filled on a manager only.
+    pub acks: Option<ControlAcks>,
+}
+
+/// How many of a Gaggle's workers said they received a change, of how
+/// many it was sent to, and how long after it was sent the last did.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ControlAcks {
+    pub acknowledged: usize,
+    pub workers: usize,
+    pub secs: f64,
 }
 
 impl ControlOutcome {
@@ -2040,6 +2052,8 @@ impl GooseAttack {
                 self.metrics.duration
             );
             self.metrics.print(false);
+            #[cfg(feature = "gaggle")]
+            self.gaggle_print_workers();
         }
 
         // Every report is written: fail the run when a threshold failed.
@@ -3321,6 +3335,8 @@ impl GooseAttack {
                         self.metrics.duration
                     );
                     self.metrics.print(false);
+                    #[cfg(feature = "gaggle")]
+                    self.gaggle_print_workers();
                 }
                 return Err(e);
             }
@@ -3331,6 +3347,8 @@ impl GooseAttack {
                 // Print metrics, if enabled.
                 if self.metrics.display_metrics {
                     self.metrics.print(true);
+                    #[cfg(feature = "gaggle")]
+                    self.gaggle_print_workers();
                 }
                 #[cfg(feature = "dashboard")]
                 if wait_for_dashboard {
@@ -3441,6 +3459,7 @@ impl GooseAttack {
             field: None,
             #[cfg(feature = "dashboard")]
             settings: None,
+            acks: None,
         }
     }
 

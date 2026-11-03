@@ -18,7 +18,10 @@ use crate::controller::{
     ControlCommand, ControlReply, ControllerCommand, RunSettings, MIN_CONTROL_RATE,
 };
 use crate::metrics::MetricsCommand;
-use crate::{AttackPhase, ControlOutcome, GooseAttack, GooseAttackRunState, GooseError};
+use crate::runs::GaggleEventKind;
+use crate::{
+    AttackPhase, ControlAcks, ControlOutcome, GooseAttack, GooseAttackRunState, GooseError,
+};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
@@ -352,6 +355,9 @@ pub(crate) struct PendingControl {
     pub(super) outcome: ControlOutcome,
     /// Each worker lost before it applied the change, and why.
     pub(super) lost: Vec<String>,
+    /// The events the change makes once every worker received it, each
+    /// with its sentence, to which the acknowledgements are added.
+    pub(super) events: Vec<(GaggleEventKind, String)>,
 }
 
 /// A change sent to the workers, until each has applied it or was lost.
@@ -439,6 +445,7 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         #[cfg(feature = "dashboard")]
         let with_settings = matches!(command, ControlCommand::Settings { .. });
+        let events = self.change_events(&command);
         let (outcome, controls) = match self.gaggle_change(goose_attack_run_state, command).await {
             Ok(change) => change,
             Err(e) => {
@@ -461,8 +468,9 @@ impl GooseAttack {
             },
             false => outcome,
         };
+        let events = if outcome.ok { events } else { Vec::new() };
         match controls {
-            Some(controls) => self.fan_out(outcome, controls, respond),
+            Some(controls) => self.fan_out(outcome, controls, respond, events),
             None => {
                 let _ = respond.send(ControlReply::Outcome(outcome));
             }
@@ -536,6 +544,59 @@ impl GooseAttack {
                 unreachable!("the report switches never fan out")
             }
         })
+    }
+
+    /// The events `command` makes once applied and received by every
+    /// worker: its users, throttle and host changes, and a stop, each as a
+    /// sentence, the users as they were before it.
+    fn change_events(&self, command: &ControlCommand) -> Vec<(GaggleEventKind, String)> {
+        let settings = match command {
+            ControlCommand::Command(ControllerCommand::Stop) => {
+                return vec![(GaggleEventKind::Stop, "stop".to_string())]
+            }
+            ControlCommand::Command(ControllerCommand::Users(users)) => RunSettings {
+                users: Some(*users),
+                ..RunSettings::default()
+            },
+            ControlCommand::Command(command) => RunSettings::from_command(command.clone()),
+            #[cfg(feature = "dashboard")]
+            ControlCommand::Settings { settings, .. } => (**settings).clone(),
+            #[cfg(feature = "dashboard")]
+            _ => return Vec::new(),
+        };
+        let mut events = Vec::new();
+        if let Some(users) = settings.users {
+            let before = match self.manager_run() {
+                Some(run) if run.book.total() > 0 => run.book.total(),
+                _ => self.configuration.users.unwrap_or(0),
+            };
+            events.push((
+                GaggleEventKind::UsersChanged,
+                format!(
+                    "users {} to {}",
+                    crate::metrics::format_number(before),
+                    crate::metrics::format_number(users)
+                ),
+            ));
+        }
+        if let Some(throttle) = settings.throttle {
+            let text = match throttle {
+                Some(throttle) => format!(
+                    "throttle set to {} req/s",
+                    crate::metrics::format_number(throttle)
+                ),
+                None => "throttle removed".to_string(),
+            };
+            events.push((GaggleEventKind::ThrottleChanged, text));
+        }
+        if let Some(host) = settings.host {
+            let text = match host {
+                Some(host) => format!("host set to {host}"),
+                None => "host cleared".to_string(),
+            };
+            events.push((GaggleEventKind::HostChanged, text));
+        }
+        events
     }
 
     /// Send each worker its control, no front end waiting.
@@ -805,6 +866,7 @@ impl GooseAttack {
         outcome: ControlOutcome,
         controls: Vec<(u32, WorkerControl)>,
         respond: oneshot::Sender<ControlReply>,
+        events: Vec<(GaggleEventKind, String)>,
     ) {
         let Some(run) = self.manager_run_mut() else {
             let _ = respond.send(ControlReply::Outcome(outcome));
@@ -819,6 +881,7 @@ impl GooseAttack {
             respond,
             outcome,
             lost: Vec::new(),
+            events,
         });
     }
 
@@ -856,7 +919,22 @@ impl GooseAttack {
                     users.len(),
                     ids.len()
                 );
+                let moved = users.len();
                 took = run.book.deal(users, &mask(run));
+                let name = run
+                    .workers
+                    .get(id as usize)
+                    .map_or_else(String::new, |worker| worker.name.clone());
+                if let Ok(mut health) = run.health.lock() {
+                    health.event(
+                        GaggleEventKind::UsersRebalanced,
+                        Some(&name),
+                        format!(
+                            "{name}'s {moved} users moved to the {} workers left",
+                            ids.len()
+                        ),
+                    );
+                }
             } else {
                 warn!("gaggle: worker {id}'s users are not moved: --gaggle-rebalance moves the users of a users ramp before its ramp down, not of a test plan");
             }
@@ -901,6 +979,17 @@ impl GooseAttack {
             .collect();
         if let Some(shares) = shares.as_ref() {
             info!("gaggle: throttle shares over the workers left: {shares:?}");
+            if let Ok(mut health) = run.health.lock() {
+                health.event(
+                    GaggleEventKind::ThrottleSharesRescaled,
+                    None,
+                    format!(
+                        "throttle shares of {} req/s rescaled over {} workers",
+                        crate::metrics::format_number(throttle),
+                        ids.len()
+                    ),
+                );
+            }
         }
         // Answered as any change is, but no front end waits on it.
         let _ = send_controls(run, controls);
@@ -948,10 +1037,27 @@ impl GooseAttack {
                     .find(|sent| sent.id == pending.id)
                     .map_or(0, |sent| sent.workers);
                 let mut outcome = pending.outcome;
+                let acknowledged = workers.saturating_sub(pending.lost.len());
+                let secs = run
+                    .sent
+                    .iter()
+                    .find(|sent| sent.id == pending.id)
+                    .map_or(0.0, |sent| now.duration_since(sent.sent).as_secs_f64());
+                outcome.acks = Some(ControlAcks {
+                    acknowledged,
+                    workers,
+                    secs,
+                });
+                if let Ok(mut health) = run.health.lock() {
+                    for (kind, text) in pending.events {
+                        let text = format!("{text}, {}", acks_text(acknowledged, workers, secs, pending.lost.len()));
+                        health.event(kind, None, text);
+                    }
+                }
                 outcome.message = format!(
                     "{}; accepted by {} of {} workers",
                     outcome.message,
-                    workers.saturating_sub(pending.lost.len()),
+                    acknowledged,
                     workers
                 );
                 if !pending.lost.is_empty() {
@@ -1005,6 +1111,21 @@ impl GooseAttack {
             false
         });
     }
+}
+
+/// How a change's acknowledgements read in its event: `acknowledged by 48
+/// of 48 in 0.4 s`, and how many workers were lost before they received it.
+pub(crate) fn acks_text(acknowledged: usize, workers: usize, secs: f64, lost: usize) -> String {
+    let mut text = format!(
+        "acknowledged by {} of {} in {:.1} s",
+        crate::metrics::format_number(acknowledged),
+        crate::metrics::format_number(workers),
+        secs
+    );
+    if lost > 0 {
+        text.push_str(&format!(" ({} lost)", crate::metrics::format_number(lost)));
+    }
+    text
 }
 
 /// The workers neither lost nor gone, by id.

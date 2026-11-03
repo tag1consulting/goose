@@ -2,8 +2,9 @@ use crate::{
     metrics::{format_number, format_value, ReportData},
     report::{
         common::OrEmpty, ErrorMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
-        TransactionErrorMetric, TransactionMetric,
+        workers, TransactionErrorMetric, TransactionMetric,
     },
+    runs::GaggleRecord,
     test_plan::TestPlanStepAction,
     GooseError,
 };
@@ -15,14 +16,35 @@ struct Markdown<'m, 'w, W: Write> {
     data: ReportData<'m>,
     /// Paragraphs under the title, such as the run's notes.
     intro: &'w [String],
+    /// A Gaggle run's workers and events.
+    gaggle: Option<&'w GaggleRecord>,
 }
 
+/// The Markdown report of `data` (tests: every run writes it with
+/// [`write_markdown_report_with`]).
+#[cfg(test)]
 pub(crate) fn write_markdown_report<W: Write>(
     w: &mut W,
     data: ReportData,
     intro: &[String],
 ) -> Result<(), GooseError> {
-    Markdown { w, data, intro }.write()
+    write_markdown_report_with(w, data, intro, None)
+}
+
+/// [`write_markdown_report`], with a Gaggle run's Workers and Events.
+pub(crate) fn write_markdown_report_with<W: Write>(
+    w: &mut W,
+    data: ReportData,
+    intro: &[String],
+    gaggle: Option<&GaggleRecord>,
+) -> Result<(), GooseError> {
+    Markdown {
+        w,
+        data,
+        intro,
+        gaggle,
+    }
+    .write()
 }
 
 impl<W: Write> Markdown<'_, '_, W> {
@@ -30,6 +52,7 @@ impl<W: Write> Markdown<'_, '_, W> {
         self.write_header()?;
         self.write_plan_overview()?;
         self.write_thresholds()?;
+        self.write_workers()?;
         self.write_request_metrics()?;
         self.write_response_metrics()?;
         self.write_status_code_metrics()?;
@@ -108,6 +131,56 @@ impl<W: Write> Markdown<'_, '_, W> {
             )?;
         }
 
+        Ok(())
+    }
+
+    /// A Gaggle run's Workers and Events sections.
+    fn write_workers(&mut self) -> Result<(), GooseError> {
+        let Some(record) = self.gaggle.filter(|record| !record.workers.is_empty()) else {
+            return Ok(());
+        };
+        write!(
+            self.w,
+            "\n## Workers\n\n{}\n\n| {} |\n|",
+            markdown_cell(&workers::summary(record)),
+            workers::HEADINGS.join(" | ")
+        )?;
+        for at in 0..workers::HEADINGS.len() {
+            // Text left, numbers right.
+            let rule = match at {
+                0 | 1 | 11 => " ------ |",
+                _ => " -----: |",
+            };
+            write!(self.w, "{rule}")?;
+        }
+        writeln!(self.w)?;
+        for worker in workers::sorted(record) {
+            let cells: Vec<String> = workers::row(worker)
+                .cells
+                .iter()
+                .map(|cell| markdown_cell(cell))
+                .collect();
+            writeln!(self.w, "| {} |", cells.join(" | "))?;
+        }
+        if record.events.is_empty() && record.events_dropped == 0 {
+            return Ok(());
+        }
+        write!(self.w, "\n## Events\n\n| Time | Event |\n| ---- | ----- |\n")?;
+        for event in &record.events {
+            writeln!(
+                self.w,
+                "| {} | {} |",
+                workers::clock(event.second),
+                markdown_cell(&event.text)
+            )?;
+        }
+        if record.events_dropped > 0 {
+            writeln!(
+                self.w,
+                "\n{}",
+                markdown_paragraph(&workers::dropped_text(record.events_dropped))
+            )?;
+        }
         Ok(())
     }
 

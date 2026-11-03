@@ -2,13 +2,16 @@
 mod common;
 mod markdown;
 pub mod print;
+pub(crate) mod workers;
 
 #[cfg(feature = "pdf-reports")]
 pub(crate) mod chrome;
 #[cfg(feature = "pdf-reports")]
 pub mod pdf;
 
+#[cfg(test)]
 pub(crate) use markdown::write_markdown_report;
+pub(crate) use markdown::write_markdown_report_with;
 
 use crate::{
     metrics::{
@@ -35,6 +38,8 @@ pub(crate) struct GooseReportTemplates<'a> {
     pub transaction_errors_template: &'a str,
     /// The thresholds table, or nothing without thresholds.
     pub thresholds_template: &'a str,
+    /// A Gaggle run's Workers and Events sections, or nothing.
+    pub workers_template: &'a str,
     pub graph_rps_template: &'a str,
     pub graph_average_response_time_template: &'a str,
     pub graph_latency_heatmap_template: &'a str,
@@ -971,7 +976,7 @@ pub(crate) fn build_report(
                         {steps_rows}
                     </tbody>
                 </table>
-        </div>{thresholds_template}
+        </div>{thresholds_template}{workers_template}
 
         <div class="requests">
             <h2>Request Metrics</h2>
@@ -1066,6 +1071,7 @@ pub(crate) fn build_report(
         errors_template = templates.errors_template,
         transaction_errors_template = templates.transaction_errors_template,
         thresholds_template = templates.thresholds_template,
+        workers_template = templates.workers_template,
         thresholds_style = if templates.thresholds_template.is_empty() {
             ""
         } else {
