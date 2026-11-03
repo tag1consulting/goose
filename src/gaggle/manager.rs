@@ -206,6 +206,12 @@ pub(crate) struct WorkerHandle {
     outbound: Arc<Mutex<Option<Outbound>>>,
     /// Set once the worker is lost or shut down: nothing more is sent.
     closed: Arc<AtomicBool>,
+    /// Set at the end of the run, once it was sent `Shutdown`: its
+    /// reader closes its stream as the worker closes its own side, having
+    /// read it.
+    draining: Arc<AtomicBool>,
+    /// Set once its reader has stopped.
+    read_done: Arc<AtomicBool>,
     /// Set once its response stream has ended, everything queued sent.
     ended: Arc<AtomicBool>,
     /// Woken when it is closed, so its reader stops at once.
@@ -245,6 +251,20 @@ impl WorkerHandle {
     fn shut_down(&self) {
         let _ = self.send(ToWorker::Shutdown(Default::default()));
         self.close();
+    }
+
+    /// Send `Shutdown` at the end of the run, and keep the stream open
+    /// until the worker closes its own side, having read it: a stream the
+    /// manager ended first is reset, which can reach the worker before the
+    /// `Shutdown` queued ahead of it is read, and the worker then takes its
+    /// manager for lost. A worker whose reader already stopped is closed at
+    /// once.
+    fn shut_down_draining(&self) {
+        let _ = self.send(ToWorker::Shutdown(Default::default()));
+        self.draining.store(true, Ordering::Relaxed);
+        if self.read_done.load(Ordering::Relaxed) {
+            self.close();
+        }
     }
 
     /// Send nothing more, and end the stream once what is queued has left.
@@ -503,6 +523,8 @@ impl Shared {
             cores: None,
             outbound: Arc::new(Mutex::new(Some(outbound))),
             closed: Arc::new(AtomicBool::new(false)),
+            draining: Arc::default(),
+            read_done: Arc::default(),
             ended: Arc::new(AtomicBool::new(false)),
             closing: Default::default(),
         };
@@ -1063,6 +1085,13 @@ async fn read_worker(
             break;
         }
     }
+    worker.read_done.store(true, Ordering::Relaxed);
+    // Told to shut down at the end of the run, and the worker closed its
+    // side: its stream ends now, `Shutdown` read.
+    if worker.draining.load(Ordering::Relaxed) {
+        worker.close();
+        return;
+    }
     // A worker that stopped as told, then went away, is not lost: the
     // manager's main loop knows it stopped and keeps it so. Either way the
     // event ends any wait for it, its logs among them.
@@ -1332,13 +1361,14 @@ impl Manager {
     pub(crate) async fn shut_down_all(&mut self) {
         if let Ok(joined) = self.shared.joined.lock() {
             for worker in joined.iter() {
-                worker.shut_down();
+                worker.shut_down_draining();
             }
         }
-        // Each stream ends once its `Shutdown` has left: wait for that
-        // before the service stops, at most SHUTDOWN_DRAIN. A loaded machine
-        // can take over a second to get there, and a service stopped first
-        // closes a worker's stream with its `Shutdown` unsent.
+        // Each stream ends once its worker has read its `Shutdown` and
+        // closed its side: wait for that before the service stops, at most
+        // SHUTDOWN_DRAIN. A loaded machine can take over a second to get
+        // there, and a service stopped first closes a worker's stream with
+        // its `Shutdown` unsent or unread.
         let deadline = tokio::time::Instant::now() + SHUTDOWN_DRAIN;
         loop {
             // Created before the check, so a stream ending between them
@@ -1349,6 +1379,12 @@ impl Manager {
             });
             if drained || tokio::time::timeout_at(deadline, ending).await.is_err() {
                 break;
+            }
+        }
+        // A worker that never closed its side is closed now.
+        if let Ok(joined) = self.shared.joined.lock() {
+            for worker in joined.iter() {
+                worker.close();
             }
         }
         if let Some(stop) = self.stop_server.take() {
@@ -1574,6 +1610,8 @@ mod tests {
             cores: None,
             outbound: Arc::new(Mutex::new(Some(outbound))),
             closed: Arc::new(AtomicBool::new(false)),
+            draining: Arc::default(),
+            read_done: Arc::default(),
             ended: Arc::new(AtomicBool::new(false)),
             closing: Default::default(),
         };
@@ -1996,6 +2034,43 @@ pub(crate) mod handshake_tests {
 
     /// The messages a worker's stream brings until it ends, within 5
     /// seconds.
+    /// At the end of a run a worker's stream stays open after `Shutdown`
+    /// until the worker closes its own side, so no reset can reach it
+    /// before it has read `Shutdown`; then the stream ends cleanly, and the
+    /// manager stops at once, without waiting out the drain.
+    #[tokio::test]
+    async fn shut_down_all_waits_for_the_worker_to_close() {
+        let test = async {
+            let mut manager = test_manager(1, Duration::from_secs(30)).await;
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let mut inbound = inbound.unwrap();
+            let started = std::time::Instant::now();
+            let shutting = tokio::spawn(async move {
+                manager.shut_down_all().await;
+            });
+            let mut kinds = Vec::new();
+            while kinds.last() != Some(&"Shutdown") {
+                let message = inbound.message().await.unwrap().unwrap();
+                kinds.push(message_kind(&message));
+            }
+            // Read, the stream stays open while the worker's side does.
+            let next = tokio::time::timeout(Duration::from_millis(500), inbound.message()).await;
+            assert!(next.is_err(), "the stream ended first: {:?}", next.map(|m| m.map(|m| m.is_some())));
+            assert!(!shutting.is_finished());
+            // The worker closes its side: the stream ends cleanly.
+            drop(tx);
+            let end = tokio::time::timeout(Duration::from_secs(5), inbound.message())
+                .await
+                .expect("the stream ends");
+            assert!(matches!(end, Ok(None)), "{:?}", end.map(|m| m.is_some()));
+            shutting.await.unwrap();
+            assert!(started.elapsed() < SHUTDOWN_DRAIN, "{:?}", started.elapsed());
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     async fn until_it_ends(inbound: &mut tonic::Streaming<ManagerMessage>) -> Vec<&'static str> {
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut kinds = Vec::new();
