@@ -299,7 +299,8 @@ pub(crate) struct GaggleWorkerRecord {
     pub p95_ms: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub p99_ms: Option<f64>,
-    /// Its requests per second over its running time.
+    /// Its requests per second over its running time since its metrics
+    /// were last reset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requests_per_second: Option<f64>,
     /// Its requests per second for each of its users.

@@ -179,11 +179,14 @@ async fn gaggle_timed(
         &count_text,
         "--manager-bind-port",
         "0",
-        "--no-telnet",
         "--quiet",
         "--host",
         &host,
     ];
+    // The telnet Controller stays off unless a test names its port.
+    if !manager_args.contains(&"--telnet-port") {
+        args.push("--no-telnet");
+    }
     // A folder for the manager's run when it writes anything: one that would
     // hold nothing is refused.
     if manager_args
@@ -3354,6 +3357,7 @@ async fn gaggle_worker_health_in_one_process() {
                 ..Default::default()
             },
         ];
+        let markdown_path = folder.join("report.md").display().to_string();
         let args = [
             "--users",
             "6",
@@ -3367,7 +3371,7 @@ async fn gaggle_worker_health_in_one_process() {
             &telnet_port,
             "--report-file",
             "--report-file",
-            "report.md",
+            &markdown_path,
         ];
         let run = gaggle(standard, 3, server.base_url(), &folder, &args, &[], &faults);
         let control = async {
