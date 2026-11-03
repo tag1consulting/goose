@@ -50,7 +50,7 @@ fn reports() -> Vec<(&'static str, Vec<u8>)> {
     let configuration = crate::GooseConfiguration::default();
     let record = crate::runs::RunRecord {
         goose_version: "golden".to_string(),
-        test: Some("golden".to_string()),
+        test: "golden".to_string(),
         started: Some("2026-11-03T10:00:00Z".to_string()),
         ended: Some("2026-11-03T10:01:00Z".to_string()),
         ..Default::default()
