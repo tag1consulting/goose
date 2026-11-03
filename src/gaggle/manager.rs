@@ -2148,9 +2148,18 @@ pub(crate) mod handshake_tests {
                 !shutting.is_finished(),
                 "the finished worker was not waited for"
             );
+            // Its stream stays open until it closes its side.
+            while message_kind(&finished.message().await.unwrap().unwrap()) != "Shutdown" {}
+            assert!(
+                tokio::time::timeout(Duration::from_millis(500), finished.message())
+                    .await
+                    .is_err(),
+                "the finished worker's stream ended before it closed its side"
+            );
             drop(finished_tx);
+            // Then it ends, nothing after Shutdown.
             let kinds = until_it_ends(&mut finished).await;
-            assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
+            assert!(kinds.is_empty(), "{:?}", kinds);
             shutting.await.unwrap();
         };
         tokio::time::timeout(Duration::from_secs(30), test)

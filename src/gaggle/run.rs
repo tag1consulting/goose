@@ -2053,7 +2053,6 @@ impl Incoming {
     }
 }
 
-/// Where worker `id` of `workers` keeps `log`, which stays on it.
 /// The workers the manager waits for at shutdown, each reading its
 /// `Shutdown` before the manager stops: those still connected that stopped,
 /// or that never ran, as before the first run, every log sent. None after a
@@ -2078,6 +2077,7 @@ fn finished_workers(
         .collect()
 }
 
+/// Where worker `id` of `workers` keeps `log`, which stays on it.
 fn log_left(workers: &[WorkerEntry], id: u32, log: &LogSpec) -> GaggleLogLeft {
     let worker = super::worker(workers, id);
     GaggleLogLeft {
@@ -2489,7 +2489,6 @@ mod tests {
         }
     }
 
-    /// A worker is found by its own id, never by a position alone.
     /// At shutdown the manager waits only for a worker that stopped and is
     /// still connected, every log sent: never after a cancel, nor for one
     /// lost, gone, still running, or with a log left on it.
@@ -2531,6 +2530,7 @@ mod tests {
         assert_eq!(finished_workers(&workers, &left, false, true), vec![0, 3]);
     }
 
+    /// A worker is found by its own id, never by a position alone.
     #[test]
     fn workers_are_found_by_their_id() {
         let workers = vec![entry(), WorkerEntry { id: 5, ..entry() }];

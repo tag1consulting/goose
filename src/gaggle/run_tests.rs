@@ -3269,11 +3269,6 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
         )
         .await;
         let mut telnet = Telnet::connect(IDLE_TELNET).await;
-        // The Controller listens once every worker joined. A moment for the
-        // workers to settle: a manager shutting down within a second of
-        // joining, on a loaded machine, can close a stream before its worker
-        // read the Shutdown, which the manager waits for at most 5 seconds.
-        tokio::time::sleep(Duration::from_millis(500)).await;
         let reply = telnet.send("shutdown").await;
         assert!(reply.starts_with("load test shut down"), "{}", reply);
         manager.await.unwrap().expect("the manager exits cleanly");
