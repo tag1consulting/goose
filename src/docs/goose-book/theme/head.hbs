@@ -1,0 +1,12 @@
+<!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+<script>
+(function () {
+    if (location.hostname !== "book.goose.rs") {
+        return;
+    }
+    var s = document.createElement("script");
+    s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+    s.defer = true;
+    document.head.appendChild(s);
+})();
+</script>

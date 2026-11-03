@@ -47,8 +47,9 @@
     o a worker can run a share of the users, numbered from a global ordinal, with the scenarios one process running them all would give them, so each scenario's user count and coordinated omission events name users the same way on every worker
  - [#796](https://github.com/tag1consulting/goose/pull/796) **behavior change**: the load test hash (`GooseMetrics::hash`, in the JSON report) is a 64 bit FNV-1a over the plan's scenarios, transactions and scheduler, the same on every build, where it was Rust's `DefaultHasher`, whose output may change between Rust releases; every plan's hash changes once
 
-## 0.19.1-dev
+## 0.19.1 November 3, 2026
 
+ - [#803](https://github.com/tag1consulting/goose/pull/803) the Goose Book loads Rybbit page view analytics when served from `book.goose.rs`, through `theme/head.hbs`, and nowhere else
  - [#794](https://github.com/tag1consulting/goose/pull/794) `examples/umami` runs against a stock Drupal 11.4 Umami site, with CSS and JS aggregation on or off; it targets 11.4 only
     o the contact form and search transactions are removed: 11.4's Umami installs neither the contact module nor node search, so they only got 404s
     o the mushroom article is requested at its 11.4 alias, `the-umami-guide-to-our-favorite-mushrooms`, not `favourite`
