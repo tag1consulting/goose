@@ -765,7 +765,10 @@ fn manager_canceled(name: &str, plan: &[&str]) {
         let logins = 10;
         assert!(
             requests <= seen + logins && requests + 10 >= seen,
-            "merged {requests}, the server saw {seen}: {gaggle}"
+            "merged {}, the server saw {}: {}",
+            requests,
+            seen,
+            gaggle
         );
     });
 }
