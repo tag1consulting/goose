@@ -3396,7 +3396,8 @@ async fn gaggle_worker_health_in_one_process() {
         // did, and the two left are told apart by their CPU.
         let all = gaggle["workers"].as_array().unwrap();
         assert_eq!(all.len(), 3, "{:?}", all);
-        let (lost, finished): (Vec<_>, Vec<_>) =
+        type Workers<'a> = Vec<&'a serde_json::Value>;
+        let (lost, finished): (Workers, Workers) =
             all.iter().partition(|worker| worker["state"] == "lost");
         assert_eq!(lost.len(), 1, "the worker that exits mid run: {:?}", all);
         assert_eq!(lost[0]["flags"][0], "lost", "{}", lost[0]);
@@ -3411,8 +3412,8 @@ async fn gaggle_worker_health_in_one_process() {
             assert!(worker["cores"].as_u64().unwrap() > 0, "{}", worker);
         }
         // The busy worker claims 150% of its cores: the manager shows 100.
-        let (busy, real): (Vec<_>, Vec<_>) = finished
-            .iter()
+        let (busy, real): (Workers, Workers) = finished
+            .into_iter()
             .partition(|worker| worker["peak_cpu_percent"].as_u64() == Some(100));
         assert_eq!(busy.len(), 1, "one busy worker: {:?}", finished);
         let busy = busy[0];
