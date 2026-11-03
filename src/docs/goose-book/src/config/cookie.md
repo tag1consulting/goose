@@ -37,7 +37,7 @@ async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-Goose builds each user's client with the user agent `goose/0.19.0`, the `--timeout`, gzip unless `--no-gzip`, invalid certificates accepted only with `--accept-invalid-certs`, and a cookie store when the `cookies` feature is enabled. Every user has a client of its own whether or not it keeps cookies. In a run of `examples/simple`, 1,000 users used about 65 MB more memory than 10 users.
+Goose builds each user's client with the user agent `goose/0.19.1`, the `--timeout`, gzip unless `--no-gzip`, invalid certificates accepted only with `--accept-invalid-certs`, and a cookie store when the `cookies` feature is enabled. Every user has a client of its own whether or not it keeps cookies. In a run of `examples/simple`, 1,000 users used about 65 MB more memory than 10 users.
 
 ## A Client Without Cookies
 
@@ -146,7 +146,7 @@ fn main() -> Result<(), GooseError> {
 
 With either setter:
 
-- The builder's user agent replaces `goose/0.19.0`.
+- The builder's user agent replaces `goose/0.19.1`.
 - The timeout, gzip and invalid certificate settings each come from the first of: the option given on the command line (`--timeout`, `--no-gzip`, `--accept-invalid-certs`), the builder, a `GooseDefault` for the option, and Goose's built in default. A setting the builder was not given keeps its `GooseDefault` or built in default.
 - The users that run the `test_start` and `test_stop` transactions, and users a Controller adds, get the builder's clients too.
 - The two setters replace each other, so the last call wins.
