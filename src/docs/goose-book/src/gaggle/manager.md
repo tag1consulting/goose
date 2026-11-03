@@ -46,7 +46,7 @@ The manager's Controllers listen on loopback, as on one process: from another ma
 
 ## The throttle across workers
 
-`--throttle-requests` is one limit for the whole Gaggle. Each worker throttles its share, in proportion to its share of the users and never 0, and the shares add up to the throttle. A `throttle` command splits the new rate the same way, refused below one request a second for each worker, or when it would raise a worker's share past 100 times the share it started with. On a running Gaggle the throttle changes on its own: sent in one dashboard settings body with users or a test plan, it is refused with `conflicting_settings`. A change of users moves the shares with them. When a worker is lost, the manager splits the throttle again over the workers left and sends their new shares, so the run's limit holds; if the throttle is below the number of workers left, each keeps 1 request a second, and the manager logs it.
+`--throttle-requests` is one limit for the whole Gaggle. Each worker throttles its share, in proportion to its share of the users and never 0, and the shares add up to the throttle. A `throttle` command splits the new rate the same way, refused below one request a second for each worker; each worker's share can go anywhere from 1 to 1000000. On a running Gaggle the throttle changes on its own: sent in one dashboard settings body with users or a test plan, it is refused with `conflicting_settings`. A change of users moves the shares with them. When a worker is lost, the manager splits the throttle again over the workers left and sends their new shares, so the run's limit holds; if the throttle is below the number of workers left, each keeps 1 request a second, and the manager logs it.
 
 ## Rebalancing a lost worker's users
 

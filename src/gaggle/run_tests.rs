@@ -2716,8 +2716,12 @@ async fn runtime_control_in_one_process() {
             "{}",
             reply
         );
-        let reply = telnet.send("throttle 100002").await;
-        assert!(reply.contains("more than 100 times the 500"), "{}", reply);
+        let reply = telnet.send("throttle 1000001").await;
+        assert!(
+            reply.contains("throttle must be an integer from 1 to 1000000"),
+            "{}",
+            reply
+        );
         let body = dashboard_post(DASHBOARD, "settings", r#"{"host": "http://127.0.0.1:9"}"#).await;
         assert_eq!(
             (&body["ok"], &body["field"]),

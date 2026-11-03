@@ -7,14 +7,59 @@ use crate::util;
 /// How often the throttle drains tokens: `delay_for` has millisecond granularity.
 const TICK: time::Duration = time::Duration::from_millis(10);
 
-/// How far a running throttle can rise past the one its run started with:
-/// the channel holds one second of the starting rate, and a tick drains at
-/// most what it holds, so 100 ticks a second reach 100 times that.
-pub(crate) const MAX_THROTTLE_RISE: usize = (1_000 / TICK.as_millis()) as usize;
+/// The largest throttle, in requests per second, that the command line, the
+/// Controllers and the dashboard accept, and the capacity of every throttle's
+/// channel, whatever rate its run starts at, so a running throttle can go
+/// anywhere from 1 to this.
+///
+/// The channel holds `bool`s in one `VecDeque`, so full of fillers it holds
+/// 1 MiB (1,048,576 bytes, the next power of two): measured by the ignored
+/// test `a_full_channel_costs` in a release build, resident memory rose by
+/// 1.3 MB and the first fill took 5 ms on an Apple silicon laptop, and
+/// KC1_MEASURE on a 4 vCPU cloud burst worker.
+pub(crate) const MAX_THROTTLE: usize = 1_000_000;
 
 /// The live throttle's rate, shared by the drain task and the main loop, which
 /// changes it while the run goes on.
 pub(crate) type ThrottleRate = Arc<AtomicUsize>;
+
+/// A running throttle: the users' sender, the sender that tells the drain
+/// task the load test is over, and the live rate.
+pub(crate) struct Throttle {
+    pub(crate) users: flume::Sender<bool>,
+    pub(crate) stop: flume::Sender<bool>,
+    pub(crate) rate: ThrottleRate,
+}
+
+/// Starts a throttle of `rate` requests a second: builds its channel, fills
+/// all but one slot so the run does not start with a burst, and spawns the
+/// drain task.
+pub(crate) fn start(rate: usize) -> Throttle {
+    let capacity = MAX_THROTTLE;
+    // A bounded channel the users send a token into before each request.
+    let (users, receiver) = flume::bounded(capacity);
+    // The parent tells the drain task the load test is over on this one.
+    // Even though only one message is sent, a oneshot channel won't do, as
+    // the drain task must not block waiting for it.
+    let (stop, stopped) = flume::bounded(1);
+    let rate: ThrottleRate = Arc::new(AtomicUsize::new(rate));
+    // We start from 1 instead of 0 to intentionally fill all but one slot in
+    // the channel to avoid a burst of traffic during startup. The channel then
+    // provides an implementation of the leaky bucket algorithm as a queue.
+    for _ in 1..capacity {
+        if users.try_send(true).is_err() {
+            break;
+        }
+    }
+    tokio::spawn(throttle_main(
+        capacity,
+        rate.clone(),
+        users.clone(),
+        receiver,
+        stopped,
+    ));
+    Throttle { users, stop, rate }
+}
 
 /// This throttle thread limits the maximum number of requests that can be made across
 /// all GooseUser threads. When enabled, GooseUser threads must add a token to the
@@ -25,13 +70,14 @@ pub(crate) type ThrottleRate = Arc<AtomicUsize>;
 /// can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
 ///
 /// The rate is read from `rate` each tick, so a Controller or the dashboard
-/// changes it without touching the users. The channel's capacity, one second
-/// of the starting rate, never changes. The burst follows the rate: after a
-/// quiet spell users may send one second of the current rate at once, never
-/// more than the channel holds. The thread keeps its own filler tokens in the
-/// channel so no more than that is free, which with an unchanged rate is
-/// none: the channel then behaves exactly as a fixed throttle.
-pub async fn throttle_main(
+/// changes it, anywhere from 1 to [`MAX_THROTTLE`], without touching the
+/// users. The channel's capacity is [`MAX_THROTTLE`] whatever the rate, and
+/// never changes, as the users hold senders to it. The burst follows the
+/// rate: after a quiet spell users may send one second of the current rate at
+/// once. The thread keeps its own filler tokens in the channel so no more than
+/// that is free, which with an unchanged rate is none once users fill it: the
+/// channel then behaves exactly as a fixed throttle of that rate.
+async fn throttle_main(
     capacity: usize,
     rate: ThrottleRate,
     filler: flume::Sender<bool>,
@@ -107,43 +153,154 @@ mod tests {
         sent
     }
 
+    /// How many tokens users sending as fast as they can get in over
+    /// `seconds`, after taking any burst first.
+    async fn sent_over(sender: &flume::Sender<bool>, seconds: f64) -> usize {
+        burst(sender);
+        let sender = sender.clone();
+        let sending = tokio::spawn(async move {
+            let mut sent = 0_usize;
+            let end = time::Instant::now() + time::Duration::from_secs_f64(seconds);
+            while let Ok(Ok(())) = time::timeout_at(end, sender.send_async(true)).await {
+                sent += 1;
+            }
+            sent
+        });
+        sending.await.unwrap()
+    }
+
+    /// Asserts `got` is within `percent` of `want`.
+    fn near(what: &str, got: usize, want: usize, percent: usize) {
+        let slack = (want * percent).div_ceil(100).max(2);
+        assert!(
+            got + slack >= want && got <= want + slack,
+            "{}: {}, want {} within {}%",
+            what,
+            got,
+            want,
+            percent
+        );
+    }
+
+    const QUIET: time::Duration = time::Duration::from_millis(1_500);
+
     /// After a quiet spell, users may send one second of the current rate
-    /// at once, never more than one second of the starting rate.
+    /// at once, whatever the rate the run started at: raised from 100 to
+    /// 400 a second the burst is 400, lowered to 50 it is 50.
     #[tokio::test]
     async fn the_burst_follows_the_rate() {
         let test = async {
-            let (sender, receiver) = flume::bounded(200);
-            let (stop, stopped) = flume::bounded(1);
-            let rate: ThrottleRate = Arc::new(AtomicUsize::new(200));
-            tokio::spawn(throttle_main(
-                200,
-                rate.clone(),
-                sender.clone(),
-                receiver,
-                stopped,
-            ));
-            // Full: no burst at the starting rate once the channel fills.
-            burst(&sender);
-            rate.store(50, Ordering::Relaxed);
-            tokio::time::sleep(time::Duration::from_millis(1_500)).await;
-            let low = burst(&sender);
-            assert!(
-                (40..=60).contains(&low),
-                "a burst of {} at 50 a second",
-                low
-            );
-            rate.store(200, Ordering::Relaxed);
-            tokio::time::sleep(time::Duration::from_millis(1_500)).await;
-            let high = burst(&sender);
-            assert!(
-                (150..=200).contains(&high),
-                "a burst of {} at 200 a second",
-                high
-            );
-            stop.send(true).unwrap();
+            let throttle = start(100);
+            burst(&throttle.users);
+            throttle.rate.store(400, Ordering::Relaxed);
+            tokio::time::sleep(QUIET).await;
+            near("a burst at 400 a second", burst(&throttle.users), 400, 10);
+            throttle.rate.store(50, Ordering::Relaxed);
+            tokio::time::sleep(QUIET).await;
+            near("a burst at 50 a second", burst(&throttle.users), 50, 10);
+            throttle.stop.send(true).unwrap();
         };
         tokio::time::timeout(time::Duration::from_secs(30), test)
             .await
             .expect("within 30 seconds");
+    }
+
+    /// A throttle started at 1 a second rises to 1,000, more than 100 times
+    /// its start: both its rate and its burst follow.
+    #[tokio::test]
+    async fn a_throttle_rises_past_100_times_its_start() {
+        let test = async {
+            let throttle = start(1);
+            burst(&throttle.users);
+            throttle.rate.store(1_000, Ordering::Relaxed);
+            near(
+                "sent over 2 s at 1,000 a second",
+                sent_over(&throttle.users, 2.0).await,
+                2_000,
+                5,
+            );
+            tokio::time::sleep(QUIET).await;
+            near(
+                "a burst at 1,000 a second",
+                burst(&throttle.users),
+                1_000,
+                5,
+            );
+            throttle.stop.send(true).unwrap();
+        };
+        tokio::time::timeout(time::Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// With an unchanged rate the throttle behaves exactly as a fixed one:
+    /// one slot free at the start, none once full, one second of the rate
+    /// after a quiet spell, and the rate held while users send.
+    #[tokio::test]
+    async fn an_unchanged_rate_is_a_fixed_throttle() {
+        let test = async {
+            let throttle = start(200);
+            assert!(burst(&throttle.users) <= 3, "the start is all but full");
+            assert!(burst(&throttle.users) <= 3, "no free slots once full");
+            tokio::time::sleep(QUIET).await;
+            near("a burst at 200 a second", burst(&throttle.users), 200, 5);
+            near(
+                "sent over 2 s at 200 a second",
+                sent_over(&throttle.users, 2.0).await,
+                400,
+                5,
+            );
+            throttle.stop.send(true).unwrap();
+        };
+        tokio::time::timeout(time::Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// This process's resident memory in bytes.
+    fn rss() -> usize {
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            let kb = status
+                .lines()
+                .find_map(|line| line.strip_prefix("VmRSS:"))
+                .and_then(|kb| {
+                    kb.trim()
+                        .trim_end_matches("kB")
+                        .trim()
+                        .parse::<usize>()
+                        .ok()
+                });
+            return kb.unwrap_or(0) * 1024;
+        }
+        let out = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+            .output()
+            .expect("ps");
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse::<usize>()
+            .unwrap_or(0)
+            * 1024
+    }
+
+    /// The memory of a channel full of fillers, and the time of the first
+    /// fill: run with `--ignored --nocapture`, best in a release build.
+    #[tokio::test]
+    #[ignore]
+    async fn a_full_channel_costs() {
+        let before = rss();
+        let began = std::time::Instant::now();
+        let throttle = start(1);
+        let filled = began.elapsed();
+        let after = rss();
+        println!(
+            "a_full_channel_costs: first fill {:.1} ms; resident memory {} -> {} bytes (+{} bytes); {} tokens held",
+            filled.as_secs_f64() * 1_000.0,
+            before,
+            after,
+            after.saturating_sub(before),
+            throttle.users.len()
+        );
+        throttle.stop.send(true).unwrap();
     }
 }

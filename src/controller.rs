@@ -8,7 +8,7 @@
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
 use crate::test_plan::TestPlan;
-use crate::throttle::MAX_THROTTLE_RISE;
+use crate::throttle::MAX_THROTTLE;
 use crate::GooseError;
 use crate::{AttackPhase, ControlOutcome, ControlStartBegin, GooseAttack, GooseAttackRunState};
 
@@ -240,8 +240,8 @@ pub enum ControllerCommand {
     /// ```
     ///
     /// Goose can be idle or running when processing this command: a running
-    /// load test changes the rate of the throttle it started with, up to 100
-    /// times that, and can not turn it on or off.
+    /// load test changes the rate of the throttle it started with, anywhere
+    /// from 1 to 1000000, and can not turn it on or off.
     Throttle(usize),
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
@@ -487,17 +487,14 @@ pub(crate) const MAX_CONTROL_PLAN_BYTES: usize = 4 * 1024;
 pub(crate) const INVALID_HOST_MSG: &str =
     "host must be a valid url starting with http:// or https://, without a user name or password";
 
-/// Most requests per second `--throttle-requests` and any front end can set.
-pub(crate) const MAX_CONTROL_THROTTLE: usize = 1_000_000;
-
 /// Refusal for a throttle outside the bounds.
 pub(crate) const INVALID_THROTTLE_MSG: &str =
     "throttle must be an integer from 1 to 1000000 requests per second, or 0 to clear";
 
-/// A throttle in requests per second, up to [`MAX_CONTROL_THROTTLE`]; 0
+/// A throttle in requests per second, up to [`MAX_THROTTLE`]; 0
 /// means unset.
 pub(crate) fn bounded_throttle(requests: u64) -> Result<usize, &'static str> {
-    if requests <= MAX_CONTROL_THROTTLE as u64 {
+    if requests <= MAX_THROTTLE as u64 {
         Ok(requests as usize)
     } else {
         Err(INVALID_THROTTLE_MSG)
@@ -1063,9 +1060,7 @@ impl GooseAttack {
     ///    `test_stop` transaction, with no host.
     ///
     /// The throttle is checked first: anything but Idle and Shutdown changes
-    /// only its rate, refused as `invalid_phase` to turn it on or off, and as
-    /// `conflicting_settings` past [`MAX_THROTTLE_RISE`] times the throttle
-    /// the run started with.
+    /// only its rate, refused as `invalid_phase` to turn it on or off.
     pub(crate) fn refuse_settings(
         &self,
         goose_attack_run_state: &GooseAttackRunState,
@@ -1101,10 +1096,6 @@ impl GooseAttack {
                 Some(_) if started == 0 => Some((
                     "invalid_phase",
                     "failed to configure throttle, the load test started without one: set it when idle".to_string(),
-                )),
-                Some(requests) if requests > started.saturating_mul(MAX_THROTTLE_RISE) => Some((
-                    "conflicting_settings",
-                    format!("failed to configure throttle, a running load test's throttle can rise to at most {MAX_THROTTLE_RISE} times the {started} it started with"),
                 )),
                 Some(_) => None,
             };

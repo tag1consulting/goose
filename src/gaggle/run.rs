@@ -182,10 +182,6 @@ pub(crate) struct ManagerRun {
     /// its users, rates and run time: false with a test plan, and when a
     /// worker had no users as the run started.
     pub(super) ramps: bool,
-    /// Each worker's share of the throttle as the run started, 0 without
-    /// one: a running share rises to at most
-    /// [`crate::throttle::MAX_THROTTLE_RISE`] times it.
-    pub(super) throttle_started: Vec<usize>,
     /// The id the next `Control` takes.
     pub(super) next_control: u64,
     /// The change a front end waits on, until every worker answered it.
@@ -634,7 +630,6 @@ impl GooseAttack {
             workers,
             book: super::control::UserBook::default(),
             ramps: false,
-            throttle_started: vec![0; expected],
             next_control: 1,
             pending: None,
             builds_users: false,
@@ -746,7 +741,6 @@ impl GooseAttack {
             book[id as usize] = (0..peak)
                 .map(|at| (spec.user_offset + at, spec.slice[at]))
                 .collect();
-            run.throttle_started[id as usize] = spec.throttle_requests;
             let encoded = spec.encode();
             drop(spec);
             let bytes =
@@ -2283,7 +2277,6 @@ mod tests {
             }],
             book: crate::gaggle::control::UserBook::default(),
             ramps: false,
-            throttle_started: vec![0],
             next_control: 1,
             pending: None,
             builds_users: false,
@@ -2831,7 +2824,6 @@ mod tests {
                 }],
                 book: crate::gaggle::control::UserBook::default(),
                 ramps: false,
-                throttle_started: vec![0],
                 next_control: 1,
                 pending: None,
                 builds_users: false,
@@ -2936,7 +2928,6 @@ mod tests {
                 ],
                 book: crate::gaggle::control::UserBook::default(),
                 ramps: true,
-                throttle_started: vec![0, 0],
                 next_control: 8,
                 pending: Some(crate::gaggle::control::PendingControl {
                     id: 7,

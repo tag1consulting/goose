@@ -674,8 +674,7 @@ struct GooseAttackRunState {
     /// changes while the run goes on, if enabled.
     throttle_rate: Option<throttle::ThrottleRate>,
     /// The throttle the run started with, 0 without one: a running throttle
-    /// changes only its rate, up to [`throttle::MAX_THROTTLE_RISE`] times
-    /// this.
+    /// changes only its rate.
     throttle_started: usize,
     /// The channel telnet and WebSocket send commands on, when either is
     /// enabled.
@@ -2237,43 +2236,13 @@ impl GooseAttack {
             return (None, None, None);
         }
 
-        // Create a bounded channel allowing single-sender multi-receiver to throttle
-        // [`GooseUser`](./goose/struct.GooseUser.html) threads.
-        let (all_threads_throttle, throttle_receiver): (
-            flume::Sender<bool>,
-            flume::Receiver<bool>,
-        ) = flume::bounded(throttle_requests);
-
-        // Create a channel allowing the parent to inform the throttle thread when the
-        // load test is finished. Even though we only send one message, we can't use a
-        // oneshot channel as we don't want to block waiting for a message.
-        let (parent_to_throttle_tx, throttle_rx) = flume::bounded(1);
-
-        // Launch a new thread for throttling, no need to rejoin it.
-        let throttle_rate = Arc::new(std::sync::atomic::AtomicUsize::new(throttle_requests));
-        let _ = Some(tokio::spawn(throttle::throttle_main(
-            throttle_requests,
-            throttle_rate.clone(),
-            all_threads_throttle.clone(),
-            throttle_receiver,
-            throttle_rx,
-        )));
-
-        let sender = all_threads_throttle.clone();
-        // We start from 1 instead of 0 to intentionally fill all but one slot in the
-        // channel to avoid a burst of traffic during startup. The channel then provides
-        // an implementation of the leaky bucket algorithm as a queue. Requests have to
-        // add a token to the bucket before making a request, and are blocked until this
-        // throttle thread "leaks out" a token thereby creating space. More information
-        // can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
-        for _ in 1..throttle_requests {
-            let _ = sender.send_async(true).await;
-        }
-
+        // The users send a token into the throttle's channel before each
+        // request; the throttle drains it at the live rate.
+        let throttle = throttle::start(throttle_requests);
         (
-            Some(all_threads_throttle),
-            Some(parent_to_throttle_tx),
-            Some(throttle_rate),
+            Some(throttle.users),
+            Some(throttle.stop),
+            Some(throttle.rate),
         )
     }
 

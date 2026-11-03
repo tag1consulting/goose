@@ -186,10 +186,12 @@ async fn a_running_throttle_follows_the_controller_and_dashboard() {
         let (status, body) = settings(r#"{"throttle": null}"#).await;
         assert_eq!((status, &body["ok"]), (200, &false.into()), "{body}");
         assert_eq!(body["field"], "throttle", "{body}");
-        // Nor raises it past 100 times its start.
-        let (_, body) = settings(r#"{"throttle": 20001}"#).await;
-        assert_eq!(body["error"], "conflicting_settings", "{body}");
-        assert_eq!(body["field"], "throttle", "{body}");
+        // A running throttle goes past 100 times its start, up to 1000000.
+        let (status, body) = settings(r#"{"throttle": 1000000}"#).await;
+        assert_eq!((status, &body["ok"]), (200, &true.into()), "{body}");
+        assert_eq!(body["settings"]["throttle"], 1_000_000, "{body}");
+        let (status, body) = settings(r#"{"throttle": 400}"#).await;
+        assert_eq!((status, &body["ok"]), (200, &true.into()), "{body}");
 
         let config = telnet.send("config-json").await;
         assert!(config.contains(r#""throttle_requests":400"#), "{}", config);

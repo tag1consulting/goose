@@ -14,7 +14,6 @@ use crate::controller::{
     ControlCommand, ControlReply, ControllerCommand, RunSettings, MIN_CONTROL_RATE,
 };
 use crate::metrics::MetricsCommand;
-use crate::throttle::MAX_THROTTLE_RISE;
 use crate::{AttackPhase, ControlOutcome, GooseAttack, GooseAttackRunState, GooseError};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -509,8 +508,7 @@ impl GooseAttack {
 
     /// Why `settings` can not be applied to this Gaggle, before the rules
     /// one process applies: a running throttle below one request a second
-    /// for each worker, or one that would raise a worker's share past
-    /// [`MAX_THROTTLE_RISE`] times its start; and a running users ramp whose
+    /// for each worker; and a running users ramp whose
     /// workers run test plans of their own, as one had no users at the
     /// start, can not change its users, rates or run time.
     pub(crate) fn gaggle_refuse(
@@ -564,23 +562,6 @@ impl GooseAttack {
                         live.len()
                     ),
                 );
-            }
-            if running && goose_attack_run_state.throttle_started > 0 {
-                let users: Vec<usize> = live
-                    .iter()
-                    .map(|&id| run.book.users(id as usize).len())
-                    .collect();
-                let shares = live_throttle_shares(throttle, &users);
-                for (&id, share) in live.iter().zip(shares) {
-                    let started = run.throttle_started[id as usize];
-                    if share > started.saturating_mul(MAX_THROTTLE_RISE) {
-                        return refuse(
-                            "conflicting_settings",
-                            "throttle",
-                            format!("failed to configure throttle, worker {id}'s share would be {share}, more than {MAX_THROTTLE_RISE} times the {started} it started with"),
-                        );
-                    }
-                }
             }
         }
         None
@@ -704,7 +685,7 @@ impl GooseAttack {
                 .into_iter()
                 .map(|share| Some(Some(share)))
                 .collect(),
-            None if moved && throttle > 0 => follow_throttle(run, &ids, &counts, throttle)
+            None if moved && throttle > 0 => follow_throttle(&ids, &counts, throttle)
                 .into_iter()
                 .map(|share| Some(Some(share)))
                 .collect(),
@@ -829,7 +810,7 @@ impl GooseAttack {
             .iter()
             .map(|&id| run.book.users(id as usize).len())
             .collect();
-        let shares = (throttle > 0).then(|| follow_throttle(run, &ids, &counts, throttle));
+        let shares = (throttle > 0).then(|| follow_throttle(&ids, &counts, throttle));
         let controls = ids
             .iter()
             .enumerate()
@@ -912,10 +893,9 @@ fn mask(run: &ManagerRun) -> Vec<bool> {
         .collect()
 }
 
-/// The throttle's shares over workers `ids` running `counts` users, each
-/// kept to [`MAX_THROTTLE_RISE`] times its start, and to 1 a worker when
-/// `throttle` is fewer than the workers: either is logged.
-fn follow_throttle(run: &ManagerRun, ids: &[u32], counts: &[usize], throttle: usize) -> Vec<usize> {
+/// The throttle's shares over workers `ids` running `counts` users, kept to
+/// 1 a worker when `throttle` is fewer than the workers, which is logged.
+fn follow_throttle(ids: &[u32], counts: &[usize], throttle: usize) -> Vec<usize> {
     if throttle < ids.len() {
         warn!(
             "gaggle: the throttle of {throttle} is fewer than the {} workers left: each keeps 1 request per second",
@@ -924,14 +904,7 @@ fn follow_throttle(run: &ManagerRun, ids: &[u32], counts: &[usize], throttle: us
     }
     live_throttle_shares(throttle, counts)
         .into_iter()
-        .zip(ids)
-        .map(|(share, &id)| {
-            let most = run.throttle_started[id as usize].saturating_mul(MAX_THROTTLE_RISE);
-            if share > most {
-                warn!("gaggle: worker {id}'s throttle share {share} is kept to {most}, {MAX_THROTTLE_RISE} times its start");
-            }
-            share.min(most).max(1)
-        })
+        .map(|share| share.max(1))
         .collect()
 }
 

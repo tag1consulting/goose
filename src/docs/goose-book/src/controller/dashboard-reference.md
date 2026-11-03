@@ -516,7 +516,7 @@ Adding users ramps at the increase rate; removing them at the decrease rate, els
 - `test_plan` switches to a test plan and clears users, the ramp settings and the run time; `users` switches back and clears the test plan. `test_plan: null` is accepted only with `users`. While a test plan is configured, a ramp setting without `users` is refused with `"field": "users"`.
 - In Idle, a rate and its own time each replace the other, so a rate alone clears its time, and a time alone clears its rate; on a running test a rate is refused while its own time is set. The two cannot both be set in one body. A test plan cannot be sent with `users` or a ramp setting, though clearing a ramp setting beside it with `null` is accepted.
 - `users: null` is refused. On a running test `users` is refused in a settings body: change users on its own with `/api/v1/control/users`.
-- `throttle` sets `--throttle-requests`. A running load test changes the rate of the throttle it started with, up to 100 times that rate; turning the throttle on or off is refused with `invalid_phase`, and a rate past 100 times the start with `conflicting_settings`, each naming `throttle`. See [The throttle on a running test](#the-throttle-on-a-running-test).
+- `throttle` sets `--throttle-requests`. A running load test changes the rate of the throttle it started with, anywhere from 1 to 1000000; turning the throttle on or off is refused with `invalid_phase`, naming `throttle`. See [The throttle on a running test](#the-throttle-on-a-running-test).
 
 Refusals are checked in this order, and the first one is answered:
 
@@ -526,7 +526,7 @@ Refusals are checked in this order, and the first one is answered:
 | 400 | `invalid_value` | A value of the wrong type or out of bounds, and `users: null` |
 | 400 | `conflicting_settings` | Settings that never go together, whatever the state |
 | 200 | `invalid_phase` | A setting the phase cannot change, set or cleared; a throttle turned on or off on a running test |
-| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time, a decrease rate or time, and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users); a throttle past 100 times the one the running test started with; on a Gaggle manager, a throttle below one request a second for each worker |
+| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time, a decrease rate or time, and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users); on a Gaggle manager, a throttle below one request a second for each worker |
 | 200 | `no_host` | `host: null` would leave a scenario, or a `test_start` or `test_stop` transaction, with no host |
 | 200 | `prepare_failed` | A Start that cannot prepare the load test, as without settings |
 
@@ -552,8 +552,8 @@ A test plan sent to a running test starts from its first step, ramping from the 
 `--throttle-requests` caps the requests every user makes together, each second. On a running test it is changed by `throttle` here, the `throttle` Controller command, or the `throttle` setting of a Start with settings, and takes effect within the throttle's next 10 milliseconds, without touching a user. The rules:
 
 - A running test changes only the rate of the throttle it started with. A run started without one can not turn one on, nor clear the one it has: both are for Idle, where they shape the next Start.
-- The rate can rise to 100 times the one the run started with: the throttle holds one second of its starting rate, and drains at most that every 10 milliseconds.
-- After a change, the burst a quiet spell allows is one second of the new rate, never more than one second of the starting rate. Lowering a throttle from 3000 to 10 lets a quiet spell end with 10 requests at once, never 3000. The throttle drains every 10 milliseconds and makes up a late wake, so it holds its rate closely.
+- The rate can go anywhere from 1 to 1000000, whatever the run started with.
+- After any change, the burst a quiet spell allows is one second of the current rate: raising a throttle from 1000 to 4000 lets a quiet spell end with 4000 requests at once, and lowering it from 3000 to 10 lets one end with 10, never 3000. The throttle's channel holds 1000000 tokens whatever the rate, about 1 MB, and the throttle keeps its own filler tokens in all but one second of the current rate. The throttle drains every 10 milliseconds and makes up a late wake, so it holds its rate closely.
 
 On a Gaggle manager, the throttle is one limit across every worker: see [Runtime control](../gaggle/manager.md#runtime-control).
 
