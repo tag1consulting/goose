@@ -3413,7 +3413,8 @@ async fn gaggle_worker_health_in_one_process() {
         }
         // The busy worker claims 150% of its cores: the manager shows 100.
         let (busy, real): (Workers, Workers) = finished
-            .into_iter()
+            .iter()
+            .copied()
             .partition(|worker| worker["peak_cpu_percent"].as_u64() == Some(100));
         assert_eq!(busy.len(), 1, "one busy worker: {:?}", finished);
         let busy = busy[0];
