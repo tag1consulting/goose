@@ -255,12 +255,10 @@ impl WorkerHandle {
         self.close();
     }
 
-    /// Send `Shutdown` at the end of the run, and keep the stream open
-    /// until the worker closes its own side, having read it: a stream the
-    /// manager ended first is reset, which can reach the worker before the
-    /// `Shutdown` queued ahead of it is read, and the worker then takes its
-    /// manager for lost. A worker whose reader already stopped is closed at
-    /// once.
+    /// Send `Shutdown` at the end of a clean run, and keep the stream open
+    /// until the worker closes its own side, having read it (see
+    /// [`Manager::shut_down_all_waiting`]). A worker whose reader already
+    /// stopped is closed at once.
     fn shut_down_draining(&self) {
         let _ = self.send(ToWorker::Shutdown(Default::default()));
         self.draining.store(true, Ordering::Relaxed);
@@ -1361,9 +1359,24 @@ impl Manager {
     /// Send every worker `Shutdown`, give the messages a moment to leave,
     /// and stop listening.
     pub(crate) async fn shut_down_all(&mut self) {
+        self.shut_down_all_waiting(&[]).await;
+    }
+
+    /// [`Self::shut_down_all`], keeping the stream of each worker of
+    /// `finished`, workers that ended their run cleanly, open after its
+    /// `Shutdown` until it closes its own side, having read it: a stream the
+    /// service ends first can be reset before the worker reads `Shutdown`,
+    /// and the worker then takes its manager for lost. Every other worker's
+    /// stream ends once its `Shutdown` has left, as a worker that is stuck,
+    /// or still sending what it was told to give up, may never close its
+    /// side. Either way the wait is at most [`SHUTDOWN_DRAIN`].
+    pub(crate) async fn shut_down_all_waiting(&mut self, finished: &[u32]) {
         if let Ok(joined) = self.shared.joined.lock() {
             for worker in joined.iter() {
-                worker.shut_down_draining();
+                match finished.contains(&worker.id) {
+                    true => worker.shut_down_draining(),
+                    false => worker.shut_down(),
+                }
             }
         }
         // Each stream ends once its worker has read its `Shutdown` and
@@ -2048,7 +2061,7 @@ pub(crate) mod handshake_tests {
             let mut inbound = inbound.unwrap();
             let started = std::time::Instant::now();
             let shutting = tokio::spawn(async move {
-                manager.shut_down_all().await;
+                manager.shut_down_all_waiting(&[0]).await;
             });
             let mut kinds = Vec::new();
             while kinds.last() != Some(&"Shutdown") {

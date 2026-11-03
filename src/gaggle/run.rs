@@ -1966,7 +1966,23 @@ impl GooseAttack {
         if let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_mut() {
             if !run.shut_down {
                 run.shut_down = true;
-                run.manager.shut_down_all().await;
+                // The workers that ended their run cleanly, every log sent:
+                // each reads its Shutdown before the manager stops. None
+                // after a cancel, which ends at once.
+                let finished: Vec<u32> = match crate::killswitch_reason() {
+                    Some(_) => Vec::new(),
+                    None => run
+                        .workers
+                        .iter()
+                        .filter(|worker| {
+                            worker.is_live()
+                                && worker.stopped.is_some()
+                                && !run.logs_left.iter().any(|left| left.worker == worker.name)
+                        })
+                        .map(|worker| worker.id)
+                        .collect(),
+                };
+                run.manager.shut_down_all_waiting(&finished).await;
             }
         }
     }
