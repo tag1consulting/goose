@@ -2735,6 +2735,19 @@ async fn runtime_control_in_one_process() {
             "a refused change reached a worker"
         );
 
+        // A running Gaggle's throttle goes past 100 times each worker's
+        // start, 500, uncapped.
+        let reply = telnet.send("throttle 100002").await;
+        assert!(reply.starts_with("throttle configured"), "{}", reply);
+        let raised = applied(&mut reports, 2).await;
+        assert_eq!(
+            raised.iter().map(|r| r.throttle).collect::<Vec<_>>(),
+            super::control::live_throttle_shares(100_002, &counts)
+        );
+        let reply = telnet.send("throttle 1000").await;
+        assert!(reply.starts_with("throttle configured"), "{}", reply);
+        let _ = applied(&mut reports, 2).await;
+
         // The rates follow each worker's users; the run time is the same.
         let reply = telnet.send("increase-rate 21").await;
         assert!(reply.starts_with("increase_rate configured"), "{}", reply);
@@ -3047,7 +3060,10 @@ async fn gaggle_start_keeps_an_idle_change_s_answer() {
         let reply = telnet.send("start").await;
         assert!(reply.starts_with("load test started"), "{}", reply);
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while super::faults::CHANGES_DONE.load(SeqCst) < 1 {
+        // Both idle changes: `users 6`, whose slow answer comes after the
+        // count was reset and may land before the Start or in its prepare,
+        // and `users 10`, whose answer always lands in the prepare.
+        while super::faults::CHANGES_DONE.load(SeqCst) < 2 {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the idle change was never logged as applied"

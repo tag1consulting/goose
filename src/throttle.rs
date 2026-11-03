@@ -15,8 +15,9 @@ const TICK: time::Duration = time::Duration::from_millis(10);
 /// The channel holds `bool`s in one `VecDeque`, so full of fillers it holds
 /// 1 MiB (1,048,576 bytes, the next power of two): measured by the ignored
 /// test `a_full_channel_costs` in a release build, resident memory rose by
-/// 1.3 MB and the first fill took 5 ms on an Apple silicon laptop, and
-/// KC1_MEASURE on a 4 vCPU cloud burst worker.
+/// 1.3 MB and the first fill took 5 ms on an Apple silicon laptop, and by
+/// 1.5 MB in 17.7 ms on a 4 vCPU cloud burst worker. The fill runs once, at
+/// the start, before any user.
 pub(crate) const MAX_THROTTLE: usize = 1_000_000;
 
 /// The live throttle's rate, shared by the drain task and the main loop, which

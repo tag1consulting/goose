@@ -671,8 +671,8 @@ impl GaggleAccumulator {
     }
 
     /// The metrics and graph data of every worker merged: the metrics of
-    /// the manager's own epoch, and the graphs' complete
-    /// seconds only. Every derived figure is worked out again from the
+    /// the manager's own epoch, and the graphs' seconds, the provisional
+    /// ones as far as their rows have arrived. Every derived figure is worked out again from the
     /// merged counts. A worker left out is named by
     /// [`Self::merged_and_excluded`] (tests).
     #[cfg(test)]
