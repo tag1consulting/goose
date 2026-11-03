@@ -120,20 +120,30 @@ async fn throttle_main(
         owed -= tokens as f64;
         debug!("[throttle]: removing {tokens} token(s) from channel");
 
-        // Remove tokens from the channel, freeing spots for request to be made.
-        for token in 0..tokens {
-            // If the channel is empty, we will get an error, so stop trying to remove tokens.
-            if throttle_receiver.try_recv().is_err() {
-                debug!("[throttle]: empty channel, exit after removing {token} tokens");
-                owed = 0.0;
+        // Keep no more than one second of the current rate free: the
+        // fillers first, as after the rate was lowered, so no user takes a
+        // slot past that between this and the drain.
+        let held = capacity.saturating_sub(per_second.min(capacity));
+        while throttle_receiver.len() < held {
+            if filler.try_send(true).is_err() {
                 break;
             }
         }
 
-        // Keep no more than one second of the current rate free.
-        let held = capacity.saturating_sub(per_second.min(capacity));
-        while throttle_receiver.len() < held {
-            if filler.try_send(true).is_err() {
+        // Remove tokens from the channel, freeing spots for requests to be
+        // made, but never below the fillers held: those slots stay taken, so
+        // a quiet spell frees one second of the current rate and no more.
+        // Users only add to the channel meanwhile, so it never goes below.
+        // With the fillers held, the channel is as empty as a fixed throttle
+        // of this rate is when it has nothing left to drain.
+        let drainable = throttle_receiver.len().saturating_sub(held);
+        if tokens > drainable {
+            debug!("[throttle]: empty channel, exit after removing {drainable} tokens");
+            owed = 0.0;
+        }
+        for _ in 0..tokens.min(drainable) {
+            if throttle_receiver.try_recv().is_err() {
+                owed = 0.0;
                 break;
             }
         }
