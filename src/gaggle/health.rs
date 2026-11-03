@@ -624,7 +624,7 @@ impl GaggleHealth {
         let count = worker.merge.refused;
         worker.merge.refusal = Some(why.clone());
         let name = worker.name.clone();
-        if count == 1 || count % 10 == 0 {
+        if count == 1 || count.is_multiple_of(10) {
             let deltas = if count == 1 { "delta" } else { "deltas" };
             self.event(
                 GaggleEventKind::DeltasRefused,

@@ -391,7 +391,7 @@ async fn collected(kinds: &[(&str, &str, &str)]) {
         let csv = *format == "csv";
         if *format == "pretty" {
             for log in worker_logs(&folder, file) {
-                assert!(!log.is_empty(), "{kind}");
+                assert!(!log.is_empty(), "{}", kind);
             }
             continue;
         }
@@ -645,7 +645,7 @@ async fn metrics_reset_reaches_every_worker() {
         match reset {
             false => assert_eq!(counted, 4),
             // Only each worker's last user may race the reset with its /pre.
-            true => assert!(counted <= 2, "the reset clears the ramp: {counted}"),
+            true => assert!(counted <= 2, "the reset clears the ramp: {}", counted),
         }
     }
 }
@@ -726,9 +726,9 @@ async fn throttle_is_split_between_workers() {
     let (slow, ran) = made[0];
     // At most the throttle over the whole time the run took, and well short
     // of twice it, which a throttle each worker took whole would make.
-    assert!(slow as f64 <= 10.0 * ran + 5.0, "{slow} in {ran:.1} s");
-    assert!(slow >= 20 && slow <= 45, "{slow} in {ran:.1} s");
-    assert!(made[1].0 > slow * 2, "{made:?}");
+    assert!(slow as f64 <= 10.0 * ran + 5.0, "{} in {:.1} s", slow, ran);
+    assert!((20..=45).contains(&slow), "{} in {:.1} s", slow, ran);
+    assert!(made[1].0 > slow * 2, "{:?}", made);
 }
 
 /// Each user GETs /a.
