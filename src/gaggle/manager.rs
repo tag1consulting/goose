@@ -2093,7 +2093,11 @@ pub(crate) mod handshake_tests {
             }
             // Read, the stream stays open while the worker's side does.
             let next = tokio::time::timeout(Duration::from_millis(500), inbound.message()).await;
-            assert!(next.is_err(), "the stream ended first: {:?}", next.map(|m| m.map(|m| m.is_some())));
+            assert!(
+                next.is_err(),
+                "the stream ended first: {:?}",
+                next.map(|m| m.map(|m| m.is_some()))
+            );
             assert!(!shutting.is_finished());
             // The worker closes its side: the stream ends cleanly.
             drop(tx);
@@ -2102,7 +2106,11 @@ pub(crate) mod handshake_tests {
                 .expect("the stream ends");
             assert!(matches!(end, Ok(None)), "{:?}", end.map(|m| m.is_some()));
             shutting.await.unwrap();
-            assert!(started.elapsed() < SHUTDOWN_DRAIN, "{:?}", started.elapsed());
+            assert!(
+                started.elapsed() < SHUTDOWN_DRAIN,
+                "{:?}",
+                started.elapsed()
+            );
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
@@ -2136,7 +2144,10 @@ pub(crate) mod handshake_tests {
             .await
             .expect("the stuck worker's stream ends without waiting out the drain");
             assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
-            assert!(!shutting.is_finished(), "the finished worker was not waited for");
+            assert!(
+                !shutting.is_finished(),
+                "the finished worker was not waited for"
+            );
             drop(finished_tx);
             let kinds = until_it_ends(&mut finished).await;
             assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
@@ -2169,7 +2180,11 @@ pub(crate) mod handshake_tests {
             drop(inbound);
             drop(tx);
             shutting.await.unwrap();
-            assert!(started.elapsed() < SHUTDOWN_DRAIN, "{:?}", started.elapsed());
+            assert!(
+                started.elapsed() < SHUTDOWN_DRAIN,
+                "{:?}",
+                started.elapsed()
+            );
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
@@ -2229,7 +2244,11 @@ pub(crate) mod handshake_tests {
             // No worker is waited for: their open sides cost no time.
             let started = std::time::Instant::now();
             manager.shut_down_all().await;
-            assert!(started.elapsed() < SHUTDOWN_DRAIN, "{:?}", started.elapsed());
+            assert!(
+                started.elapsed() < SHUTDOWN_DRAIN,
+                "{:?}",
+                started.elapsed()
+            );
             for (_tx, inbound) in streams.iter_mut() {
                 let kinds = until_it_ends(inbound).await;
                 assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);

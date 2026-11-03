@@ -2523,7 +2523,10 @@ mod tests {
             path: "requests.json".to_string(),
         }];
         assert_eq!(finished_workers(&workers, &left, false, false), vec![0]);
-        assert_eq!(finished_workers(&workers, &left, true, false), Vec::<u32>::new());
+        assert_eq!(
+            finished_workers(&workers, &left, true, false),
+            Vec::<u32>::new()
+        );
         // Before the first run, a worker that never ran is waited for too.
         assert_eq!(finished_workers(&workers, &left, false, true), vec![0, 3]);
     }
