@@ -49,7 +49,14 @@ pub(crate) struct RequestMetric {
     pub name: String,
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
+    /// The mean, in milliseconds, as the reports show it. The JSON report
+    /// writes [`response_time_average_us`](Self::response_time_average_us)
+    /// in its place.
+    #[serde(skip_serializing)]
     pub response_time_average: Value<MillisFloat>,
+    /// The mean, in microseconds, from the total and the count, rounded to
+    /// the nearest microsecond.
+    pub response_time_average_us: u64,
     #[serde(rename = "response_time_minimum_us")]
     pub response_time_minimum: Value<Millis>,
     #[serde(rename = "response_time_maximum_us")]
@@ -86,8 +93,24 @@ impl DeltaTo for RequestMetric {
 pub(crate) struct CORequestMetric {
     pub method: String,
     pub name: String,
+    /// The mean, in milliseconds, as the reports show it. The JSON report
+    /// writes [`response_time_average_us`](Self::response_time_average_us)
+    /// in its place.
+    #[serde(skip_serializing)]
     pub response_time_average: Value<MillisFloat>,
+    /// The mean, in microseconds, from the total and the count, rounded to
+    /// the nearest microsecond.
+    pub response_time_average_us: u64,
+    /// The standard deviation of the measured and the mitigated mean, in
+    /// milliseconds, as the reports show it. The JSON report writes
+    /// [`response_time_standard_deviation_us`](Self::response_time_standard_deviation_us)
+    /// in its place.
+    #[serde(skip_serializing)]
     pub response_time_standard_deviation: Value<MillisFloat>,
+    /// The standard deviation of the measured and the mitigated mean, in
+    /// microseconds, from each one's total and count, rounded to the
+    /// nearest microsecond.
+    pub response_time_standard_deviation_us: u64,
     #[serde(rename = "response_time_maximum_us")]
     pub response_time_maximum: Value<Millis>,
 }
@@ -145,7 +168,15 @@ pub(crate) struct TransactionMetric {
     pub name: String,
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
+    /// The mean, in milliseconds, as the reports show it. The JSON report
+    /// writes [`response_time_average_us`](Self::response_time_average_us)
+    /// in its place.
+    #[serde(skip_serializing)]
     pub response_time_average: Option<Value<MillisFloat>>,
+    /// The mean, in microseconds, from the total and the count, rounded to
+    /// the nearest microsecond;
+    /// `None` on a scenario's heading row.
+    pub response_time_average_us: Option<u64>,
     #[serde(rename = "response_time_minimum_us")]
     pub response_time_minimum: Value<Millis>,
     #[serde(rename = "response_time_maximum_us")]
@@ -172,7 +203,14 @@ pub(crate) struct ScenarioMetric {
     pub name: String,
     pub users: Value<usize>,
     pub count: Value<usize>,
+    /// The mean, in milliseconds, as the reports show it. The JSON report
+    /// writes [`response_time_average_us`](Self::response_time_average_us)
+    /// in its place.
+    #[serde(skip_serializing)]
     pub response_time_average: Value<MillisFloat>,
+    /// The mean, in microseconds, from the total and the count, rounded to
+    /// the nearest microsecond.
+    pub response_time_average_us: u64,
     #[serde(rename = "response_time_minimum_us")]
     pub response_time_minimum: Value<Millis>,
     #[serde(rename = "response_time_maximum_us")]
@@ -195,9 +233,11 @@ impl DeltaTo for ScenarioMetric {
 
 // The five row types above derive `Serialize`: a field added to one is
 // written to the JSON report unless it is marked `#[serde(skip_serializing)]`,
-// which says why it is left out, as `is_breakdown` is. Each minimum, maximum
-// and percentile is written once, in microseconds, under its name with `_us`
-// added.
+// which says why it is left out, as `is_breakdown` is. Each time is written
+// once, as an integer number of microseconds, under its name with `_us`
+// added: each minimum, maximum and percentile through `Millis`, and each
+// mean and standard deviation from a `_us` field of its own, beside the
+// millisecond float the reports show, which is not written.
 
 /// Defines the metrics reported about status codes.
 /// Note: status_codes is a plain String, not Value<String>, since String is not Copy.

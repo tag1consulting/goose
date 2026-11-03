@@ -214,7 +214,11 @@ async fn render_report_refuses_a_0_18_1_report() {
 }
 
 /// The time fields of each table's rows.
-const TIMES: &[&str] = &["response_time_minimum", "response_time_maximum"];
+const TIMES: &[&str] = &[
+    "response_time_average",
+    "response_time_minimum",
+    "response_time_maximum",
+];
 const PERCENTILES: &[&str] = &[
     "percentile_50",
     "percentile_60",
@@ -226,8 +230,10 @@ const PERCENTILES: &[&str] = &[
     "percentile_100",
 ];
 
-/// Every row of the JSON report `report` writes each time once, in
-/// microseconds under its `_us` name, and never under its old name.
+/// Every row of the JSON report `report` writes each time once, as an
+/// integer number of microseconds under its `_us` name, and never under its
+/// old name. A scenario's heading row in the transactions table has no
+/// average, so writes `null`.
 fn assert_microsecond_rows_only(report: &serde_json::Value) {
     for (table, fields) in [
         ("raw_request_metrics", TIMES),
@@ -241,7 +247,14 @@ fn assert_microsecond_rows_only(report: &serde_json::Value) {
             for field in fields {
                 assert!(row.get(*field).is_none(), "{} {}: {}", table, field, row);
                 let field_us = format!("{field}_us");
-                assert!(row[&field_us].is_u64(), "{} {}: {}", table, field_us, row);
+                let heading = row["is_scenario"] == true && *field == "response_time_average";
+                assert!(
+                    row[&field_us].is_u64() || (heading && row[&field_us].is_null()),
+                    "{} {}: {}",
+                    table,
+                    field_us,
+                    row
+                );
             }
         }
     }

@@ -1,7 +1,7 @@
 use super::{
-    delta::*, iterations_per_user, per_second_calculations, prepare_status_codes, CoMetricsSummary,
-    GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData, Millis, MillisFloat,
-    NullableFloat,
+    delta::*, iterations_per_user, per_second_calculations, prepare_status_codes,
+    standard_deviation_us, CoMetricsSummary, GooseMetrics, GooseRequestMetricAggregate,
+    GooseRequestMetricTimingData, Millis, MillisFloat, NullableFloat,
 };
 
 use crate::{
@@ -38,8 +38,20 @@ where
     serializer.collect_seq(rows.iter().filter(|row| !row.is_breakdown))
 }
 
+/// Write the raw metrics as the JSON report holds them: each timing data in
+/// microseconds only.
+fn serialize_report_metrics<S>(metrics: &GooseMetrics, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serde::Serialize::serialize(&super::ReportMetrics(metrics), serializer)
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ReportData<'m> {
+    /// The metrics the rows are built from, written with each timing data
+    /// in microseconds only.
+    #[serde(serialize_with = "serialize_report_metrics")]
     pub raw_metrics: Cow<'m, GooseMetrics>,
 
     /// Each request's row, followed by its per status code breakdown rows,
@@ -198,6 +210,7 @@ impl<'m> Prepare<'m> {
                 number_of_requests: total_request_count.into(),
                 number_of_failures: request.fail_count.into(),
                 response_time_average: request.raw_data.average_ms_or_zero().into(),
+                response_time_average_us: request.raw_data.average_us_or_zero(),
                 response_time_minimum: Millis(request.raw_data.minimum_time_us).into(),
                 response_time_maximum: Millis(request.raw_data.maximum_time_us).into(),
                 requests_per_second: requests_per_second.into(),
@@ -214,6 +227,7 @@ impl<'m> Prepare<'m> {
                         number_of_requests: b.count.into(),
                         number_of_failures: 0usize.into(),
                         response_time_average: b.average.into(),
+                        response_time_average_us: b.average_us,
                         response_time_minimum: Millis(b.min_time_us).into(),
                         response_time_maximum: Millis(b.max_time_us).into(),
                         requests_per_second: 0.0f32.into(),
@@ -248,6 +262,7 @@ impl<'m> Prepare<'m> {
             number_of_requests: raw_aggregate_total_count.into(),
             number_of_failures: raw_aggregate_fail_count.into(),
             response_time_average: raw_aggregate.average_ms_or_zero().into(),
+            response_time_average_us: raw_aggregate.average_us_or_zero(),
             response_time_minimum: Millis(raw_aggregate.minimum_time_us).into(),
             response_time_maximum: Millis(raw_aggregate.maximum_time_us).into(),
             requests_per_second: raw_aggregate_requests_per_second.into(),
@@ -302,11 +317,16 @@ impl<'m> Prepare<'m> {
                     method: method.to_string(),
                     name: name.to_string(),
                     response_time_average: co_average.into(),
+                    response_time_average_us: coordinated_omission_data.average_us_or_zero(),
                     response_time_standard_deviation: util::standard_deviation(
                         raw_average as f32,
                         co_average as f32,
                     )
                     .into(),
+                    response_time_standard_deviation_us: standard_deviation_us(
+                        &request.raw_data,
+                        coordinated_omission_data,
+                    ),
                     response_time_maximum: Millis(coordinated_omission_data.maximum_time_us).into(),
                 });
 
@@ -324,11 +344,16 @@ impl<'m> Prepare<'m> {
             method: "".to_string(),
             name: "Aggregated".to_string(),
             response_time_average: co_average.into(),
+            response_time_average_us: co_aggregate.average_us_or_zero(),
             response_time_standard_deviation: util::standard_deviation(
                 raw_average as f32,
                 co_average as f32,
             )
             .into(),
+            response_time_standard_deviation_us: standard_deviation_us(
+                &intermediate.raw_aggregate,
+                &co_aggregate,
+            ),
             response_time_maximum: Millis(co_aggregate.maximum_time_us).into(),
         });
 
@@ -359,6 +384,7 @@ impl<'m> Prepare<'m> {
                         number_of_requests: 0usize.into(),
                         number_of_failures: 0usize.into(),
                         response_time_average: None,
+                        response_time_average_us: None,
                         response_time_minimum: 0usize.into(),
                         response_time_maximum: 0usize.into(),
                         requests_per_second: None,
@@ -382,6 +408,7 @@ impl<'m> Prepare<'m> {
                     number_of_requests: total_run_count.into(),
                     number_of_failures: transaction.fail_count.into(),
                     response_time_average: Some(times.average_ms_or_zero().into()),
+                    response_time_average_us: Some(times.average_us_or_zero()),
                     response_time_minimum: Millis(times.minimum_time_us).into(),
                     response_time_maximum: Millis(times.maximum_time_us).into(),
                     requests_per_second: Some(requests_per_second.into()),
@@ -407,6 +434,7 @@ impl<'m> Prepare<'m> {
             number_of_requests: aggregate_total_count.into(),
             number_of_failures: aggregate_fail_count.into(),
             response_time_average: Some(aggregate_times.average_ms_or_zero().into()),
+            response_time_average_us: Some(aggregate_times.average_us_or_zero()),
             response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
             response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             requests_per_second: Some(aggregate_requests_per_second.into()),
@@ -435,6 +463,7 @@ impl<'m> Prepare<'m> {
                 users: scenario.users.len().into(),
                 count: times.counter.into(),
                 response_time_average: times.average_ms_or_zero().into(),
+                response_time_average_us: times.average_us_or_zero(),
                 response_time_minimum: Millis(times.minimum_time_us).into(),
                 response_time_maximum: Millis(times.maximum_time_us).into(),
                 count_per_second: count_per_second.into(),
@@ -452,6 +481,7 @@ impl<'m> Prepare<'m> {
             users: aggregate_users.into(),
             count: aggregate_times.counter.into(),
             response_time_average: aggregate_times.average_ms_or_zero().into(),
+            response_time_average_us: aggregate_times.average_us_or_zero(),
             response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
             response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             count_per_second: aggregate_count_per_second.into(),
@@ -827,6 +857,66 @@ struct VersionProbe {
     goose_version: Option<serde::de::IgnoredAny>,
 }
 
+/// The raw timing data of a JSON report, enough to name an entry that has no
+/// `times_us`, which every entry Goose 0.19.0 and later writes has.
+#[derive(Deserialize)]
+struct TimesProbe {
+    raw_metrics: RawTimesProbe,
+}
+
+/// The entries of [`TimesProbe`]: each request's, with its coordinated
+/// omission data when it has some, each transaction's and each scenario's.
+#[derive(Deserialize)]
+struct RawTimesProbe {
+    requests: std::collections::BTreeMap<String, RequestTimesProbe>,
+    transactions: Vec<Vec<HasTimesUs>>,
+    scenarios: Vec<HasTimesUs>,
+}
+
+#[derive(Deserialize)]
+struct RequestTimesProbe {
+    raw_data: HasTimesUs,
+    coordinated_omission_data: Option<HasTimesUs>,
+}
+
+#[derive(Deserialize)]
+struct HasTimesUs {
+    times_us: Option<serde::de::IgnoredAny>,
+}
+
+impl RawTimesProbe {
+    /// The first entry without `times_us`, as its table and key.
+    fn missing_times_us(&self) -> Option<String> {
+        for (key, request) in &self.requests {
+            if request.raw_data.times_us.is_none() {
+                return Some(format!("raw_metrics.requests {key:?} raw_data"));
+            }
+            if let Some(None) = request
+                .coordinated_omission_data
+                .as_ref()
+                .map(|data| &data.times_us)
+            {
+                return Some(format!(
+                    "raw_metrics.requests {key:?} coordinated_omission_data"
+                ));
+            }
+        }
+        for (scenario, transactions) in self.transactions.iter().enumerate() {
+            for (transaction, entry) in transactions.iter().enumerate() {
+                if entry.times_us.is_none() {
+                    return Some(format!(
+                        "raw_metrics.transactions \"{scenario}.{transaction}\""
+                    ));
+                }
+            }
+        }
+        self.scenarios
+            .iter()
+            .position(|entry| entry.times_us.is_none())
+            .map(|scenario| format!("raw_metrics.scenarios \"{scenario}\""))
+    }
+}
+
 /// A JSON report read back, as a baseline or to render. Its request,
 /// coordinated omission, transaction and scenario rows are rebuilt from its
 /// raw timing data, as a live report's are, so the times in its rows are
@@ -841,6 +931,15 @@ fn read_report(mut reader: impl Read) -> Result<ReportData<'static>, ReadReportE
         .is_none()
     {
         return Err(ReadReportError::Goose018);
+    }
+    // Timing data is read from `times_us` only; an entry without it is named.
+    if let Some(entry) = serde_json::from_str::<TimesProbe>(&text)?
+        .raw_metrics
+        .missing_times_us()
+    {
+        return Err(ReadReportError::Json(serde::de::Error::custom(format!(
+            "{entry} has no times_us"
+        ))));
     }
     let mut report = serde_json::from_str::<BaselineReportData>(&text)?.into_report_data();
     // The rows are rebuilt as a live report's are, which takes each
@@ -990,12 +1089,12 @@ fn replace_rows<T, K: Eq + Hash + std::fmt::Debug>(
 
 /// Intermediate structure for deserializing baseline data with plain values
 /// that need to be converted to Value<T> enum format. The row structs read
-/// no minimum, maximum or percentile: `read_report` rebuilds every timed row
-/// from the raw timing data, so each is left at zero here, and the report
-/// loads whether its rows hold whole milliseconds, microseconds or both.
+/// no time: `read_report` rebuilds every timed row from the raw timing data,
+/// so each is left at zero here, and the report loads whether its rows hold
+/// the times of Goose 0.19 or of Goose 0.20.
 #[derive(Debug, Deserialize)]
 struct BaselineReportData {
-    pub raw_metrics: BaselineGooseMetrics,
+    pub raw_metrics: GooseMetrics,
     pub raw_request_metrics: Vec<BaselineRequestMetric>,
     pub raw_response_metrics: Vec<BaselineResponseMetric>,
     pub co_request_metrics: Option<Vec<BaselineCORequestMetric>>,
@@ -1009,64 +1108,10 @@ struct BaselineReportData {
     pub coordinated_omission_metrics: Option<CoMetricsSummary>,
 }
 
-/// Baseline GooseMetrics structure that handles missing history field
-#[derive(Debug, Deserialize)]
-struct BaselineGooseMetrics {
-    pub hash: u64,
-    #[serde(default)]
-    pub history: Vec<crate::test_plan::TestPlanHistory>,
-    pub duration: usize,
-    pub maximum_users: usize,
-    pub total_users: usize,
-    pub requests: super::GooseRequestMetrics,
-    pub transactions: super::TransactionMetrics,
-    #[serde(default)]
-    pub scenarios: super::ScenarioMetrics,
-    pub errors: super::GooseErrorMetrics,
-    #[serde(default)]
-    pub transaction_errors: super::GooseTransactionErrorMetrics,
-    #[serde(default)]
-    pub hosts: std::collections::HashSet<String>,
-    pub coordinated_omission_metrics: Option<super::CoordinatedOmissionMetrics>,
-    #[serde(default)]
-    pub final_metrics: bool,
-    #[serde(default)]
-    pub display_status_codes: bool,
-    #[serde(default)]
-    pub display_metrics: bool,
-    #[serde(default)]
-    pub thresholds: Vec<crate::threshold::ThresholdResult>,
-}
-
-impl From<BaselineGooseMetrics> for GooseMetrics {
-    fn from(baseline: BaselineGooseMetrics) -> Self {
-        GooseMetrics {
-            hash: baseline.hash,
-            history: baseline.history,
-            duration: baseline.duration,
-            maximum_users: baseline.maximum_users,
-            total_users: baseline.total_users,
-            requests: baseline.requests,
-            transactions: baseline.transactions,
-            scenarios: baseline.scenarios,
-            errors: baseline.errors,
-            transaction_errors: baseline.transaction_errors,
-            hosts: baseline.hosts,
-            coordinated_omission_metrics: baseline.coordinated_omission_metrics,
-            final_metrics: baseline.final_metrics,
-            display_status_codes: baseline.display_status_codes,
-            display_metrics: baseline.display_metrics,
-            thresholds: baseline.thresholds,
-            threshold_abort: None,
-            rps_window: Default::default(),
-        }
-    }
-}
-
 impl BaselineReportData {
     fn into_report_data(self) -> ReportData<'static> {
         ReportData {
-            raw_metrics: Cow::Owned(self.raw_metrics.into()),
+            raw_metrics: Cow::Owned(self.raw_metrics),
             raw_request_metrics: self
                 .raw_request_metrics
                 .into_iter()
@@ -1109,8 +1154,6 @@ struct BaselineRequestMetric {
     pub number_of_requests: usize,
     pub number_of_failures: usize,
     #[serde(deserialize_with = "deserialize_nullable_f64")]
-    pub response_time_average: f64,
-    #[serde(deserialize_with = "deserialize_nullable_f64")]
     pub requests_per_second: f64,
     #[serde(deserialize_with = "deserialize_nullable_f64")]
     pub failures_per_second: f64,
@@ -1123,7 +1166,8 @@ impl From<BaselineRequestMetric> for RequestMetric {
             name: baseline.name,
             number_of_requests: Value::Plain(baseline.number_of_requests),
             number_of_failures: Value::Plain(baseline.number_of_failures),
-            response_time_average: Value::Plain(MillisFloat(baseline.response_time_average)),
+            response_time_average: Value::Plain(MillisFloat(0.0)),
+            response_time_average_us: 0,
             response_time_minimum: Value::Plain(Millis::default()),
             response_time_maximum: Value::Plain(Millis::default()),
             requests_per_second: Value::Plain(NullableFloat(baseline.requests_per_second)),
@@ -1162,8 +1206,6 @@ impl From<BaselineResponseMetric> for ResponseMetric {
 struct BaselineCORequestMetric {
     pub method: String,
     pub name: String,
-    pub response_time_average: f64,
-    pub response_time_standard_deviation: f64,
 }
 
 impl From<BaselineCORequestMetric> for CORequestMetric {
@@ -1171,10 +1213,10 @@ impl From<BaselineCORequestMetric> for CORequestMetric {
         CORequestMetric {
             method: baseline.method,
             name: baseline.name,
-            response_time_average: Value::Plain(MillisFloat(baseline.response_time_average)),
-            response_time_standard_deviation: Value::Plain(MillisFloat(
-                baseline.response_time_standard_deviation,
-            )),
+            response_time_average: Value::Plain(MillisFloat(0.0)),
+            response_time_average_us: 0,
+            response_time_standard_deviation: Value::Plain(MillisFloat(0.0)),
+            response_time_standard_deviation_us: 0,
             response_time_maximum: Value::Plain(Millis::default()),
         }
     }
@@ -1188,7 +1230,6 @@ struct BaselineTransactionMetric {
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
-    pub response_time_average: Option<f64>,
     pub requests_per_second: Option<f64>,
     pub failures_per_second: Option<f64>,
 }
@@ -1201,9 +1242,8 @@ impl From<BaselineTransactionMetric> for TransactionMetric {
             name: baseline.name,
             number_of_requests: Value::Plain(baseline.number_of_requests),
             number_of_failures: Value::Plain(baseline.number_of_failures),
-            response_time_average: baseline
-                .response_time_average
-                .map(|v| Value::Plain(MillisFloat(v))),
+            response_time_average: None,
+            response_time_average_us: None,
             response_time_minimum: Value::Plain(Millis::default()),
             response_time_maximum: Value::Plain(Millis::default()),
             requests_per_second: baseline
@@ -1222,7 +1262,6 @@ struct BaselineScenarioMetric {
     pub name: String,
     pub users: usize,
     pub count: usize,
-    pub response_time_average: Option<f64>,
     pub count_per_second: f64,
     pub iterations: Option<f64>,
 }
@@ -1233,9 +1272,8 @@ impl From<BaselineScenarioMetric> for ScenarioMetric {
             name: baseline.name,
             users: Value::Plain(baseline.users),
             count: Value::Plain(baseline.count),
-            response_time_average: Value::Plain(MillisFloat(
-                baseline.response_time_average.unwrap_or(f64::NAN),
-            )),
+            response_time_average: Value::Plain(MillisFloat(0.0)),
+            response_time_average_us: 0,
             response_time_minimum: Value::Plain(Millis::default()),
             response_time_maximum: Value::Plain(Millis::default()),
             count_per_second: Value::Plain(NullableFloat(baseline.count_per_second)),
@@ -1440,6 +1478,7 @@ mod test {
                 number_of_requests: 200usize.into(),
                 number_of_failures: 5usize.into(),
                 response_time_average: 50.0f32.into(),
+                response_time_average_us: 50_000,
                 response_time_minimum: 10usize.into(),
                 response_time_maximum: 500usize.into(),
                 requests_per_second: 20.0f32.into(),
@@ -1452,6 +1491,7 @@ mod test {
                 number_of_requests: 100usize.into(),
                 number_of_failures: 2usize.into(),
                 response_time_average: 80.0f32.into(),
+                response_time_average_us: 80_000,
                 response_time_minimum: 20usize.into(),
                 response_time_maximum: 800usize.into(),
                 requests_per_second: 10.0f32.into(),
@@ -1466,6 +1506,7 @@ mod test {
             number_of_requests: 150usize.into(),
             number_of_failures: 3usize.into(),
             response_time_average: 40.0f32.into(),
+            response_time_average_us: 40_000,
             response_time_minimum: 8usize.into(),
             response_time_maximum: 400usize.into(),
             requests_per_second: 15.0f32.into(),
@@ -1605,6 +1646,7 @@ mod test {
                 number_of_requests: 200usize.into(),
                 number_of_failures: 5usize.into(),
                 response_time_average: 50.0f32.into(),
+                response_time_average_us: 50_000,
                 response_time_minimum: 10usize.into(),
                 response_time_maximum: 500usize.into(),
                 requests_per_second: 20.0f32.into(),
@@ -1627,7 +1669,9 @@ mod test {
                 method: "GET".into(),
                 name: "/".into(),
                 response_time_average: 55.0f32.into(),
+                response_time_average_us: 55_000,
                 response_time_standard_deviation: 5.0f32.into(),
+                response_time_standard_deviation_us: 5_000,
                 response_time_maximum: 600usize.into(),
             }]),
             co_response_metrics: Some(vec![ResponseMetric {
@@ -1649,6 +1693,7 @@ mod test {
                 number_of_requests: 200usize.into(),
                 number_of_failures: 5usize.into(),
                 response_time_average: Some(50.0f32.into()),
+                response_time_average_us: Some(50_000),
                 response_time_minimum: 10usize.into(),
                 response_time_maximum: 500usize.into(),
                 requests_per_second: Some(20.0f32.into()),
@@ -1659,6 +1704,7 @@ mod test {
                 users: 10usize.into(),
                 count: 200usize.into(),
                 response_time_average: 50.0f32.into(),
+                response_time_average_us: 50_000,
                 response_time_minimum: 10usize.into(),
                 response_time_maximum: 500usize.into(),
                 count_per_second: 20.0f32.into(),
@@ -1684,6 +1730,7 @@ mod test {
                 number_of_requests: 150usize.into(),
                 number_of_failures: 3usize.into(),
                 response_time_average: 40.0f32.into(),
+                response_time_average_us: 40_000,
                 response_time_minimum: 8usize.into(),
                 response_time_maximum: 400usize.into(),
                 requests_per_second: 15.0f32.into(),
@@ -1706,7 +1753,9 @@ mod test {
                 method: "GET".into(),
                 name: "/".into(),
                 response_time_average: 45.0f32.into(),
+                response_time_average_us: 45_000,
                 response_time_standard_deviation: 4.0f32.into(),
+                response_time_standard_deviation_us: 4_000,
                 response_time_maximum: 500usize.into(),
             }]),
             co_response_metrics: Some(vec![ResponseMetric {
@@ -1728,6 +1777,7 @@ mod test {
                 number_of_requests: 150usize.into(),
                 number_of_failures: 3usize.into(),
                 response_time_average: Some(40.0f32.into()),
+                response_time_average_us: Some(40_000),
                 response_time_minimum: 8usize.into(),
                 response_time_maximum: 400usize.into(),
                 requests_per_second: Some(15.0f32.into()),
@@ -1738,6 +1788,7 @@ mod test {
                 users: 8usize.into(),
                 count: 150usize.into(),
                 response_time_average: 40.0f32.into(),
+                response_time_average_us: 40_000,
                 response_time_minimum: 8usize.into(),
                 response_time_maximum: 400usize.into(),
                 count_per_second: 15.0f32.into(),
@@ -1881,12 +1932,19 @@ mod test {
                 "goose_version": "0.20.0-dev",
                 "raw_metrics": {
                     "hash": 0,
+                    "history": [],
                     "duration": 10,
                     "maximum_users": 1,
                     "total_users": 1,
                     "requests": {},
                     "transactions": [],
-                    "errors": {}
+                    "scenarios": [],
+                    "errors": {},
+                    "hosts": [],
+                    "coordinated_omission_metrics": null,
+                    "final_metrics": true,
+                    "display_status_codes": false,
+                    "display_metrics": true
                 },
                 "raw_request_metrics": [],
                 "raw_response_metrics": []

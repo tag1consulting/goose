@@ -1074,7 +1074,6 @@ pub struct GooseRequestMetricAggregate {
     ///
     /// Empty for standard HTTP requests. When non-empty, used in metrics output
     /// instead of the [`GooseMethod`] display.
-    #[serde(default)]
     pub custom_method: String,
 }
 impl GooseRequestMetricAggregate {
@@ -1201,6 +1200,7 @@ impl GooseRequestMetricAggregate {
                 } else {
                     0.0
                 },
+                average_us: mean_us(summary.total_time_us, summary.count),
                 min_time_us: summary.min_time_us,
                 max_time_us: summary.max_time_us,
                 count: summary.count,
@@ -1261,6 +1261,8 @@ pub struct StatusCodeBreakdown {
     pub percentage: f32,
     /// The average response time, in milliseconds.
     pub average: f32,
+    /// The average response time, in microseconds, rounded to the nearest.
+    pub average_us: u64,
     /// The fastest response, in microseconds.
     pub min_time_us: u64,
     /// The slowest response, in microseconds.
@@ -1298,12 +1300,12 @@ impl PartialOrd for GooseRequestMetricAggregate {
 /// [`TimeBuckets`], and the fastest, slowest and total. Only the buckets
 /// that hold a time are kept.
 ///
-/// It serializes, in a JSON report, with each bucket once, in
-/// `times_us`, beside the fastest, slowest and total in microseconds and in
-/// whole milliseconds; an earlier Goose, which reads whole millisecond
-/// `times`, can not read it. A report from an earlier Goose, with only
-/// whole millisecond `times`, reads as whole milliseconds.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+/// It serializes with each bucket once, in `times_us`, and the fastest,
+/// slowest and total in microseconds, beside the same in whole milliseconds,
+/// as the Controller's `metrics-json` and the WebSocket Controller's
+/// `metrics` write it. The JSON report writes the microseconds only. It is
+/// read from its microseconds and count, each of which it needs.
+#[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize)]
 pub struct GooseRequestMetricTimingData {
     /// How many times fell in each bucket, keyed by the bucket's fastest
     /// time in microseconds.
@@ -1429,25 +1431,37 @@ impl GooseRequestMetricTimingData {
             _ => self.average_ms(),
         }
     }
+
+    /// The mean time in microseconds, from the total and the count, rounded
+    /// to the nearest microsecond, half up; 0 without times.
+    pub(crate) fn average_us_or_zero(&self) -> u64 {
+        mean_us(self.total_time_us, self.counter)
+    }
 }
 
-/// The buckets of whole millisecond `times`, as a file without microseconds
-/// holds them: each in the bucket of its time.
-fn microsecond_times(times: &BTreeMap<usize, usize>) -> TimeBuckets {
-    times
-        .iter()
-        .map(|(&ms, &count)| {
-            (
-                buckets::bucket_floor((ms as u64).saturating_mul(1000)),
-                count,
-            )
-        })
-        .collect()
+/// The mean of `count` times totalling `total_us` microseconds, rounded to
+/// the nearest microsecond, half up; 0 when `count` is 0.
+pub(crate) fn mean_us(total_us: u64, count: usize) -> u64 {
+    match count as u128 {
+        0 => 0,
+        count => ((total_us as u128 * 2 + count) / (count * 2)) as u64,
+    }
 }
 
-/// Whole milliseconds as microseconds.
-fn ms_to_us(ms: usize) -> u64 {
-    (ms as u64).saturating_mul(1000)
+/// [`util::standard_deviation`] of the mean measured time and the mean time
+/// with coordinated omission mitigation, in microseconds, from each one's
+/// total and count, rounded to the nearest microsecond.
+pub(crate) fn standard_deviation_us(
+    raw: &GooseRequestMetricTimingData,
+    co: &GooseRequestMetricTimingData,
+) -> u64 {
+    let mean = |data: &GooseRequestMetricTimingData| match data.counter {
+        0 => 0.0,
+        count => data.total_time_us as f64 / count as f64,
+    };
+    // Of two values, the standard deviation is their difference over the
+    // square root of 2.
+    ((mean(raw) - mean(co)).abs() / std::f64::consts::SQRT_2).round() as u64
 }
 
 /// Microseconds as whole milliseconds, truncated.
@@ -1456,13 +1470,16 @@ fn us_to_ms(us: u64) -> usize {
 }
 
 /// [`GooseRequestMetricTimingData`] as it is written: the fastest, slowest
-/// and total in whole milliseconds and the count, then the buckets and the
-/// same times in microseconds.
+/// and total in whole milliseconds, unless they are left out, and the count,
+/// then the buckets and the times in microseconds.
 #[derive(Serialize)]
 struct TimingDataOut<'a> {
-    minimum_time: usize,
-    maximum_time: usize,
-    total_time: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_time: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maximum_time: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_time: Option<usize>,
     counter: usize,
     times_us: &'a TimeBuckets,
     minimum_time_us: u64,
@@ -1470,61 +1487,28 @@ struct TimingDataOut<'a> {
     total_time_us: u64,
 }
 
-/// [`GooseRequestMetricTimingData`] as it is read: with microseconds, or
-/// only the whole milliseconds of a file written before them.
-#[derive(Deserialize)]
-struct TimingDataIn {
-    #[serde(default)]
-    times: BTreeMap<usize, usize>,
-    #[serde(default)]
-    minimum_time: usize,
-    #[serde(default)]
-    maximum_time: usize,
-    #[serde(default)]
-    total_time: usize,
-    #[serde(default)]
-    counter: usize,
-    times_us: Option<TimeBuckets>,
-    #[serde(default)]
-    minimum_time_us: Option<u64>,
-    #[serde(default)]
-    maximum_time_us: Option<u64>,
-    #[serde(default)]
-    total_time_us: Option<u64>,
+impl<'a> TimingDataOut<'a> {
+    /// `data`, with its whole milliseconds when `whole_ms` is set.
+    fn of(data: &'a GooseRequestMetricTimingData, whole_ms: bool) -> Self {
+        TimingDataOut {
+            minimum_time: whole_ms.then(|| data.minimum_time_ms()),
+            maximum_time: whole_ms.then(|| data.maximum_time_ms()),
+            total_time: whole_ms.then(|| us_to_ms(data.total_time_us)),
+            counter: data.counter,
+            times_us: &data.times_us,
+            minimum_time_us: data.minimum_time_us,
+            maximum_time_us: data.maximum_time_us,
+            total_time_us: data.total_time_us,
+        }
+    }
 }
 
 impl Serialize for GooseRequestMetricTimingData {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        TimingDataOut {
-            minimum_time: self.minimum_time_ms(),
-            maximum_time: self.maximum_time_ms(),
-            total_time: us_to_ms(self.total_time_us),
-            counter: self.counter,
-            times_us: &self.times_us,
-            minimum_time_us: self.minimum_time_us,
-            maximum_time_us: self.maximum_time_us,
-            total_time_us: self.total_time_us,
-        }
-        .serialize(serializer)
+        TimingDataOut::of(self, true).serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for GooseRequestMetricTimingData {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let data = TimingDataIn::deserialize(deserializer)?;
-        Ok(run_times(
-            data.times,
-            [data.minimum_time, data.maximum_time, data.total_time],
-            data.counter,
-            data.times_us,
-            [
-                data.minimum_time_us,
-                data.maximum_time_us,
-                data.total_time_us,
-            ],
-        ))
-    }
-}
 /// The per-scenario metrics collected each time a scenario is run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioMetric {
@@ -1651,8 +1635,9 @@ impl TransactionMetric {
 ///
 /// It serializes its [`run_times`](Self::run_times) flat: `min_time`,
 /// `max_time` and `total_time` in whole milliseconds, `counter`, and
-/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; an
-/// earlier Goose, which reads whole millisecond `times`, can not read it.
+/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`. The JSON
+/// report leaves out the whole milliseconds. It is read from its
+/// microseconds and count, each of which it needs.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TransactionMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
@@ -1730,39 +1715,33 @@ struct TransactionAggregateIn {
     scenario_name: Arc<str>,
     transaction_index: usize,
     transaction_name: TransactionName,
-    #[serde(default)]
-    times: BTreeMap<usize, usize>,
-    #[serde(default)]
-    min_time: usize,
-    #[serde(default)]
-    max_time: usize,
-    #[serde(default)]
-    total_time: usize,
-    #[serde(default)]
     counter: usize,
-    times_us: Option<TimeBuckets>,
-    #[serde(default)]
-    min_time_us: Option<u64>,
-    #[serde(default)]
-    max_time_us: Option<u64>,
-    #[serde(default)]
-    total_time_us: Option<u64>,
+    times_us: TimeBuckets,
+    min_time_us: u64,
+    max_time_us: u64,
+    total_time_us: u64,
     success_count: usize,
     fail_count: usize,
 }
 
+impl<'a> TransactionAggregateOut<'a> {
+    /// `aggregate`, with its whole milliseconds when `whole_ms` is set.
+    fn of(aggregate: &'a TransactionMetricAggregate, whole_ms: bool) -> Self {
+        TransactionAggregateOut {
+            scenario_index: aggregate.scenario_index,
+            scenario_name: &aggregate.scenario_name,
+            transaction_index: aggregate.transaction_index,
+            transaction_name: &aggregate.transaction_name,
+            times: RunTimesOut::of(&aggregate.run_times, whole_ms),
+            success_count: aggregate.success_count,
+            fail_count: aggregate.fail_count,
+        }
+    }
+}
+
 impl Serialize for TransactionMetricAggregate {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        TransactionAggregateOut {
-            scenario_index: self.scenario_index,
-            scenario_name: &self.scenario_name,
-            transaction_index: self.transaction_index,
-            transaction_name: &self.transaction_name,
-            times: RunTimesOut::of(&self.run_times),
-            success_count: self.success_count,
-            fail_count: self.fail_count,
-        }
-        .serialize(serializer)
+        TransactionAggregateOut::of(self, true).serialize(serializer)
     }
 }
 
@@ -1774,13 +1753,13 @@ impl<'de> Deserialize<'de> for TransactionMetricAggregate {
             scenario_name: data.scenario_name,
             transaction_index: data.transaction_index,
             transaction_name: data.transaction_name,
-            run_times: run_times(
-                data.times,
-                [data.min_time, data.max_time, data.total_time],
-                data.counter,
-                data.times_us,
-                [data.min_time_us, data.max_time_us, data.total_time_us],
-            ),
+            run_times: GooseRequestMetricTimingData {
+                times_us: data.times_us,
+                minimum_time_us: data.min_time_us,
+                maximum_time_us: data.max_time_us,
+                total_time_us: data.total_time_us,
+                counter: data.counter,
+            },
             success_count: data.success_count,
             fail_count: data.fail_count,
         })
@@ -1788,13 +1767,16 @@ impl<'de> Deserialize<'de> for TransactionMetricAggregate {
 }
 
 /// Run times as transaction and scenario aggregates write them: the fastest,
-/// slowest and total in whole milliseconds and the count, then the buckets
-/// and the same times in microseconds.
+/// slowest and total in whole milliseconds, unless they are left out, and
+/// the count, then the buckets and the times in microseconds.
 #[derive(Serialize)]
 struct RunTimesOut<'a> {
-    min_time: usize,
-    max_time: usize,
-    total_time: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_time: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_time: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_time: Option<usize>,
     counter: usize,
     times_us: &'a TimeBuckets,
     min_time_us: u64,
@@ -1803,45 +1785,18 @@ struct RunTimesOut<'a> {
 }
 
 impl<'a> RunTimesOut<'a> {
-    fn of(data: &'a GooseRequestMetricTimingData) -> Self {
+    /// `data`, with its whole milliseconds when `whole_ms` is set.
+    fn of(data: &'a GooseRequestMetricTimingData, whole_ms: bool) -> Self {
         RunTimesOut {
-            min_time: data.minimum_time_ms(),
-            max_time: data.maximum_time_ms(),
-            total_time: us_to_ms(data.total_time_us),
+            min_time: whole_ms.then(|| data.minimum_time_ms()),
+            max_time: whole_ms.then(|| data.maximum_time_ms()),
+            total_time: whole_ms.then(|| us_to_ms(data.total_time_us)),
             counter: data.counter,
             times_us: &data.times_us,
             min_time_us: data.minimum_time_us,
             max_time_us: data.maximum_time_us,
             total_time_us: data.total_time_us,
         }
-    }
-}
-
-/// A request's, transaction's or scenario's timing data as read from a file:
-/// with microseconds (`times_us` and the fastest, slowest and total), or only
-/// the whole milliseconds of a file from an earlier Goose.
-fn run_times(
-    times: BTreeMap<usize, usize>,
-    [min, max, total]: [usize; 3],
-    counter: usize,
-    times_us: Option<TimeBuckets>,
-    [min_us, max_us, total_us]: [Option<u64>; 3],
-) -> GooseRequestMetricTimingData {
-    match times_us {
-        Some(times_us) => GooseRequestMetricTimingData {
-            times_us,
-            minimum_time_us: min_us.unwrap_or(0),
-            maximum_time_us: max_us.unwrap_or(0),
-            total_time_us: total_us.unwrap_or(0),
-            counter,
-        },
-        None => GooseRequestMetricTimingData {
-            times_us: microsecond_times(&times),
-            minimum_time_us: ms_to_us(min),
-            maximum_time_us: ms_to_us(max),
-            total_time_us: ms_to_us(total),
-            counter,
-        },
     }
 }
 
@@ -1853,8 +1808,9 @@ fn run_times(
 ///
 /// It serializes its [`run_times`](Self::run_times) flat: `min_time`,
 /// `max_time` and `total_time` in whole milliseconds, `counter`, and
-/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; an
-/// earlier Goose, which reads whole millisecond `times`, can not read it.
+/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`. The JSON
+/// report leaves out the whole milliseconds. It is read from its
+/// microseconds and count, each of which it needs.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ScenarioMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
@@ -1920,34 +1876,200 @@ struct ScenarioAggregateIn {
     #[serde(with = "arc_str_serde")]
     name: Arc<str>,
     users: HashSet<usize>,
-    #[serde(default)]
-    times: BTreeMap<usize, usize>,
-    #[serde(default)]
-    min_time: usize,
-    #[serde(default)]
-    max_time: usize,
-    #[serde(default)]
-    total_time: usize,
-    #[serde(default)]
     counter: usize,
-    times_us: Option<TimeBuckets>,
-    #[serde(default)]
-    min_time_us: Option<u64>,
-    #[serde(default)]
-    max_time_us: Option<u64>,
-    #[serde(default)]
-    total_time_us: Option<u64>,
+    times_us: TimeBuckets,
+    min_time_us: u64,
+    max_time_us: u64,
+    total_time_us: u64,
+}
+
+impl<'a> ScenarioAggregateOut<'a> {
+    /// `aggregate`, with its whole milliseconds when `whole_ms` is set.
+    fn of(aggregate: &'a ScenarioMetricAggregate, whole_ms: bool) -> Self {
+        ScenarioAggregateOut {
+            index: aggregate.index,
+            name: &aggregate.name,
+            users: &aggregate.users,
+            times: RunTimesOut::of(&aggregate.run_times, whole_ms),
+        }
+    }
 }
 
 impl Serialize for ScenarioMetricAggregate {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        ScenarioAggregateOut {
-            index: self.index,
-            name: &self.name,
-            users: &self.users,
-            times: RunTimesOut::of(&self.run_times),
+        ScenarioAggregateOut::of(self, true).serialize(serializer)
+    }
+}
+
+/// [`GooseMetrics`] as the JSON report writes it, in its `raw_metrics`: as
+/// `GooseMetrics` serializes, but with each request's, transaction's and
+/// scenario's timing data in microseconds only, without the whole
+/// milliseconds the Controller's `metrics-json` writes beside them.
+pub(crate) struct ReportMetrics<'a>(pub(crate) &'a GooseMetrics);
+
+impl Serialize for ReportMetrics<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Every field is named, so one added to `GooseMetrics` is not left
+        // out of the JSON report unnoticed.
+        let GooseMetrics {
+            hash,
+            history,
+            duration,
+            maximum_users,
+            total_users,
+            requests,
+            transactions,
+            scenarios,
+            errors,
+            transaction_errors,
+            hosts,
+            coordinated_omission_metrics,
+            thresholds,
+            threshold_abort: _,
+            rps_window: _,
+            final_metrics,
+            display_status_codes,
+            display_metrics,
+        } = self.0;
+        ReportMetricsOut {
+            hash: *hash,
+            history,
+            duration: *duration,
+            maximum_users: *maximum_users,
+            total_users: *total_users,
+            requests: ReportRequests(requests),
+            transactions: ReportTransactions(transactions),
+            scenarios: ReportScenarios(scenarios),
+            errors,
+            transaction_errors,
+            hosts,
+            coordinated_omission_metrics,
+            thresholds,
+            final_metrics: *final_metrics,
+            display_status_codes: *display_status_codes,
+            display_metrics: *display_metrics,
         }
         .serialize(serializer)
+    }
+}
+
+/// [`ReportMetrics`] as it is written, in the order of [`GooseMetrics`]'s
+/// fields, leaving out what `GooseMetrics` leaves out.
+#[derive(Serialize)]
+struct ReportMetricsOut<'a> {
+    hash: u64,
+    history: &'a [TestPlanHistory],
+    duration: usize,
+    maximum_users: usize,
+    total_users: usize,
+    requests: ReportRequests<'a>,
+    transactions: ReportTransactions<'a>,
+    scenarios: ReportScenarios<'a>,
+    errors: &'a GooseErrorMetrics,
+    #[serde(skip_serializing_if = "no_transaction_errors")]
+    transaction_errors: &'a GooseTransactionErrorMetrics,
+    hosts: &'a HashSet<String>,
+    coordinated_omission_metrics: &'a Option<CoordinatedOmissionMetrics>,
+    #[serde(skip_serializing_if = "no_thresholds")]
+    thresholds: &'a [ThresholdResult],
+    final_metrics: bool,
+    display_status_codes: bool,
+    display_metrics: bool,
+}
+
+fn no_transaction_errors(errors: &&GooseTransactionErrorMetrics) -> bool {
+    errors.is_empty()
+}
+
+fn no_thresholds(thresholds: &&[ThresholdResult]) -> bool {
+    thresholds.is_empty()
+}
+
+/// The requests of [`ReportMetrics`], each in microseconds only.
+struct ReportRequests<'a>(&'a GooseRequestMetrics);
+
+impl Serialize for ReportRequests<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(key, request)| {
+            // Every field is named, as in `ReportMetrics`.
+            let GooseRequestMetricAggregate {
+                path,
+                method,
+                raw_data,
+                coordinated_omission_data,
+                status_code_counts,
+                status_code_timings,
+                success_count,
+                fail_count,
+                load_test_hash,
+                custom_method,
+            } = request;
+            (
+                key,
+                ReportRequestOut {
+                    path,
+                    method,
+                    raw_data: TimingDataOut::of(raw_data, false),
+                    coordinated_omission_data: coordinated_omission_data
+                        .as_ref()
+                        .map(|data| TimingDataOut::of(data, false)),
+                    status_code_counts,
+                    status_code_timings,
+                    success_count: *success_count,
+                    fail_count: *fail_count,
+                    load_test_hash: *load_test_hash,
+                    custom_method,
+                },
+            )
+        }))
+    }
+}
+
+/// A request of [`ReportRequests`] as it is written, in the order of
+/// [`GooseRequestMetricAggregate`]'s fields.
+#[derive(Serialize)]
+struct ReportRequestOut<'a> {
+    path: &'a str,
+    method: &'a GooseMethod,
+    raw_data: TimingDataOut<'a>,
+    coordinated_omission_data: Option<TimingDataOut<'a>>,
+    status_code_counts: &'a HashMap<u16, usize>,
+    #[serde(skip_serializing_if = "no_status_code_timings")]
+    status_code_timings: &'a HashMap<u16, StatusCodeTimingSummary>,
+    success_count: usize,
+    fail_count: usize,
+    load_test_hash: u64,
+    custom_method: &'a str,
+}
+
+fn no_status_code_timings(timings: &&HashMap<u16, StatusCodeTimingSummary>) -> bool {
+    timings.is_empty()
+}
+
+/// The transactions of [`ReportMetrics`], each in microseconds only.
+struct ReportTransactions<'a>(&'a TransactionMetrics);
+
+impl Serialize for ReportTransactions<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter().map(|scenario| {
+            scenario
+                .iter()
+                .map(|transaction| TransactionAggregateOut::of(transaction, false))
+                .collect::<Vec<_>>()
+        }))
+    }
+}
+
+/// The scenarios of [`ReportMetrics`], each in microseconds only.
+struct ReportScenarios<'a>(&'a ScenarioMetrics);
+
+impl Serialize for ReportScenarios<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(
+            self.0
+                .iter()
+                .map(|scenario| ScenarioAggregateOut::of(scenario, false)),
+        )
     }
 }
 
@@ -1958,13 +2080,13 @@ impl<'de> Deserialize<'de> for ScenarioMetricAggregate {
             index: data.index,
             name: data.name,
             users: data.users,
-            run_times: run_times(
-                data.times,
-                [data.min_time, data.max_time, data.total_time],
-                data.counter,
-                data.times_us,
-                [data.min_time_us, data.max_time_us, data.total_time_us],
-            ),
+            run_times: GooseRequestMetricTimingData {
+                times_us: data.times_us,
+                minimum_time_us: data.min_time_us,
+                maximum_time_us: data.max_time_us,
+                total_time_us: data.total_time_us,
+                counter: data.counter,
+            },
         })
     }
 }
@@ -2077,7 +2199,6 @@ pub struct GooseMetrics {
     /// are running the same load test.
     pub hash: u64,
     /// A vector recording the history of each load test step.
-    #[serde(default)]
     pub history: Vec<TestPlanHistory>,
     /// Total number of seconds the load test ran.
     pub duration: usize,

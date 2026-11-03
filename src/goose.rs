@@ -4039,21 +4039,11 @@ impl<'de> Deserialize<'de> for TransactionName {
             TransactionOnly(String),
         }
 
-        /// Goose 0.18 and earlier wrote a transaction's name as a plain
-        /// string, the name its requests took too.
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum WrittenName {
-            Named(TransactionNameHelper),
-            Plain(String),
-        }
-
-        Ok(match WrittenName::deserialize(deserializer)? {
-            WrittenName::Named(TransactionNameHelper::InheritNameByRequests(s))
-            | WrittenName::Plain(s) => {
+        Ok(match TransactionNameHelper::deserialize(deserializer)? {
+            TransactionNameHelper::InheritNameByRequests(s) => {
                 TransactionName::InheritNameByRequests(Arc::from(s.as_str()))
             }
-            WrittenName::Named(TransactionNameHelper::TransactionOnly(s)) => {
+            TransactionNameHelper::TransactionOnly(s) => {
                 TransactionName::TransactionOnly(Arc::from(s.as_str()))
             }
         })

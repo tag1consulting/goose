@@ -1,6 +1,6 @@
 use super::delta::{DeltaValue, Value};
 use num_format::{Locale, ToFormattedString};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 
 /// A response time kept in microseconds and shown in milliseconds, rounded
@@ -129,9 +129,10 @@ impl DeltaValue for Millis {
 
 /// A time in milliseconds worked out from measured times, such as a mean or
 /// a standard deviation, held as an `f64`; NaN without times. It shows as a
-/// [`Millis`] does and serializes as the `f64`.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize)]
-#[serde(transparent)]
+/// [`Millis`] does. It is neither serialized nor deserialized: the JSON
+/// report writes each such time as an integer number of microseconds from a
+/// `_us` field of its own, worked out from the microseconds measured.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub(crate) struct MillisFloat(pub f64);
 
 impl MillisFloat {
@@ -174,15 +175,6 @@ impl Display for MillisFloat {
     /// As Goose shows a time.
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.pad(&format_ms(self.0, false))
-    }
-}
-
-impl<'de> Deserialize<'de> for MillisFloat {
-    /// From a number, or `null` as NaN.
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(MillisFloat(
-            Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::NAN),
-        ))
     }
 }
 
@@ -275,10 +267,6 @@ mod test {
         assert_eq!(MillisFloat(1_436.69).to_string(), "1437");
         assert_eq!(MillisFloat(1_436.69).formatted(), "1,437");
         assert_eq!(MillisFloat(f64::NAN).to_string(), "NaN");
-        assert_eq!(
-            serde_json::to_string(&MillisFloat(1_436.69)).unwrap(),
-            "1436.69"
-        );
         let mut mean = Value::Plain(MillisFloat(1_436.69));
         mean.diff(MillisFloat(1_436.2));
         assert_eq!(mean.to_string(), "1437 (+1)");
