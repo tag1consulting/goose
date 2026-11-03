@@ -174,7 +174,9 @@ impl<W: Write> Markdown<'_, '_, W> {
                 self.w,
                 "| {} | {} |",
                 workers::clock(event.second),
-                markdown_cell(&event.text)
+                // A worker's words can hold a line break, which would end
+                // the row.
+                markdown_cell(&event.text.replace(['\n', '\r'], " "))
             )?;
         }
         if record.events_dropped > 0 {

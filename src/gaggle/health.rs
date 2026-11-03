@@ -384,6 +384,16 @@ impl WorkerHealth {
         Figures::of(&fold, secs as f64, self.users)
     }
 
+    /// How long its CPU use has stayed at or above [`SATURATED_PERCENT`],
+    /// measured to its last CPU sample: a worker that goes quiet is not
+    /// taken as saturated for want of samples.
+    fn saturated_for(&self) -> Duration {
+        match (self.above_since, self.cpu_sample) {
+            (Some((since, _)), Some((last, _))) => last.saturating_duration_since(since),
+            _ => Duration::ZERO,
+        }
+    }
+
     /// Whether it runs its share.
     fn is_running(&self) -> bool {
         self.state == WorkerState::Running
@@ -562,7 +572,10 @@ impl GaggleHealth {
         }
         worker.cpu_sample = Some((now, micros));
         let used = micros.saturating_sub(before) as f64;
-        let percent = used * 100.0 / (span.as_micros() as f64 * f64::from(cores));
+        // The samples are timed as they arrive: a late one squeezes the
+        // worker's time into a shorter span, and a worker's CPU time is
+        // untrusted, so the percent never passes 100.
+        let percent = (used * 100.0 / (span.as_micros() as f64 * f64::from(cores))).min(100.0);
         worker.cpu_percent = Some(percent);
         worker.cpu_peak = Some(worker.cpu_peak.map_or(percent, |peak| peak.max(percent)));
         if percent >= SATURATED_PERCENT {
@@ -640,7 +653,7 @@ impl GaggleHealth {
     /// The merge left out `excluded` workers, and no others: an event for
     /// each newly left out.
     pub(crate) fn excluded(&mut self, excluded: Vec<(u32, String)>) {
-        let before: Vec<u32> = self
+        let before: std::collections::BTreeSet<u32> = self
             .workers
             .values()
             .filter(|worker| worker.merge.excluded.is_some())
@@ -713,9 +726,7 @@ impl GaggleHealth {
             }
             let mut live = worker.merge_flags();
             live.saturated = worker.is_running()
-                && worker.above_since.is_some_and(|(since, _)| {
-                    now.saturating_duration_since(since) >= SATURATED_FOR
-                });
+                && worker.saturated_for() >= SATURATED_FOR;
             live.lagging = worker.delta_gap(now).is_some_and(|gap| gap > LAGGING_AFTER);
             if let Some((rate, p95)) = outliers.get(&worker.id) {
                 live.rate_outlier = *rate;
@@ -724,9 +735,7 @@ impl GaggleHealth {
             let name = &worker.name;
             if live.saturated && !worker.live.saturated {
                 let percent = worker.cpu_percent.unwrap_or(0.0).round();
-                let secs = worker.above_since.map_or(0, |(since, _)| {
-                    now.saturating_duration_since(since).as_secs()
-                });
+                let secs = worker.saturated_for().as_secs();
                 events.push((
                     GaggleEventKind::WorkerSaturated,
                     name.clone(),
@@ -920,7 +929,7 @@ pub(crate) fn sample_of(delta: &GaggleDelta) -> Option<(Fold, u64)> {
         super::delta::DeltaKind::Final => None,
         super::delta::DeltaKind::Delta => Some((
             Fold::of(delta.metrics.requests.values()),
-            delta.seq.saturating_sub(delta.first_seq) + 1,
+            delta.seq.saturating_sub(delta.first_seq).saturating_add(1),
         )),
     }
 }

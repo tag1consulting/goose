@@ -368,6 +368,22 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     let gaggle = &report["gaggle"];
     assert_eq!(gaggle["degraded"], false, "{gaggle}");
     assert_eq!(gaggle["workers"].as_array().map(Vec::len), Some(2));
+
+    // The Workers table's requests add up to the merged totals, after the
+    // reset swapped every worker's totals for its new epoch's.
+    let rows: u64 = gaggle["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|worker| worker["requests"].as_u64().unwrap_or(0))
+        .sum();
+    let merged: usize = metrics
+        .requests
+        .iter()
+        .filter(|(name, _)| name.as_str() != "GET /start" && name.as_str() != "GET /stop")
+        .map(|(_, request)| request.success_count + request.fail_count)
+        .sum();
+    assert_eq!(rows as usize, merged, "{}", gaggle);
 }
 
 /// More workers than users, with --iterations: the worker holding none is

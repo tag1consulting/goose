@@ -1971,7 +1971,6 @@ impl GooseAttack {
         }
     }
 
-    /// The Gaggle section of the manager's run record.
     /// On a manager, print its workers and events after the metrics.
     pub(crate) fn gaggle_print_workers(&self) {
         if let Some(record) = self.gaggle_run_record() {
@@ -1979,6 +1978,7 @@ impl GooseAttack {
         }
     }
 
+    /// The Gaggle section of the manager's run record.
     pub(crate) fn gaggle_run_record(&self) -> Option<GaggleRecord> {
         let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_ref() else {
             return None;

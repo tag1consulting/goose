@@ -444,7 +444,7 @@ pub(crate) fn secs_text(secs: f64) -> String {
 fn from_median(percent: i32) -> String {
     match percent >= 0 {
         true => format!("{percent}% above"),
-        false => format!("{}% below", -percent),
+        false => format!("{}% below", percent.unsigned_abs()),
     }
 }
 

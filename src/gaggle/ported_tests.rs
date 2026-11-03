@@ -604,7 +604,8 @@ async fn sticky(args: &[&str], defaults: bool, sticky: bool) {
         true => assert_eq!(seen, (2, 6, 2)),
         false => assert_eq!(seen, (8, 0, 8)),
     }
-    // Without a reset, as set, every /pre stays counted.
+    // Every /pre stays counted: --no-reset-metrics, or with one user a
+    // worker its /pre may race the reset; the default has its own test.
     assert_eq!(pre.calls_async().await, 2);
     let counted = merged
         .requests
@@ -629,12 +630,60 @@ async fn defaults_set_in_code_reach_every_worker() {
     sticky(&two_users_twice(true), true, true).await;
 }
 
+/// `--no-reset-metrics` set as a default in code reaches every worker:
+/// with two users on each worker, a reset would clear at least one /pre on
+/// each.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
-async fn options_on_the_command_line_reach_every_worker() {
-    let mut args = two_users_twice(false);
-    args.push("--sticky-follow");
-    sticky(&args, false, true).await;
+async fn no_reset_metrics_default_reaches_every_worker() {
+    let server = MockServer::start_async().await;
+    let pre = answer(&server, "/pre", 200, None).await;
+    answer(&server, "/a", 200, None).await;
+    let args = ["--users", "4", "--increase-rate", "8", "--run-time", "2"];
+    let build = |configuration, place| {
+        *ramped(configuration, place)
+            .set_default(GooseDefault::NoResetMetrics, true)
+            .unwrap()
+    };
+    let (merged, _folder) = two_workers(build, &server.base_url(), "reset-default", &args).await;
+    assert_eq!(pre.calls_async().await, 4);
+    let counted = merged.requests.get("GET /pre").map_or(0, |pre| pre.success_count);
+    assert_eq!(counted, 4);
+}
+
+// no_normal_tasks.rs
+
+/// A scenario of only on_start and on_stop: every user on every worker runs
+/// each once, the on_stop when the manager's run ends, and the merged
+/// metrics count them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn on_stop_runs_once_per_user_on_every_worker() {
+    let server = MockServer::start_async().await;
+    let login = answer(&server, "/login", 200, None).await;
+    let logout = answer(&server, "/logout", 200, None).await;
+    let build = |configuration, _: Option<usize>| {
+        GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(
+                Scenario::new("LoadTest")
+                    .register_transaction(get("/login").set_on_start())
+                    .register_transaction(get("/logout").set_on_stop()),
+            )
+    };
+    let args = [
+        "--users",
+        "4",
+        "--increase-rate",
+        "20",
+        "--run-time",
+        "2",
+        "--no-reset-metrics",
+    ];
+    let (merged, _folder) = two_workers(build, &server.base_url(), "on-stop", &args).await;
+    let calls = (login.calls_async().await, logout.calls_async().await);
+    assert_eq!(calls, (4, 4));
+    assert_eq!(counts(&merged).get("GET /logout"), Some(&4));
 }
 
 /// Each user: on start GET /pre, then GET /a, for 2 seconds.
