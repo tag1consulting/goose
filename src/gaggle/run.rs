@@ -1523,10 +1523,7 @@ impl GooseAttack {
                         });
                     }
                     #[cfg(test)]
-                    if self.gaggle.test_faults.cancel_on_stop {
-                        *LOG_FAULT_AT.lock().unwrap() = Some(std::time::Instant::now());
-                        crate::trigger_killswitch("a test's Ctrl-C as the run stops");
-                    }
+                    self.gaggle.test_faults.on_stop();
                     if running && !goose_attack_run_state.stopping {
                         info!("gaggle: the manager stopped the run: {reason}");
                         self.set_ended_by(EndedBy::Stopped, None);
