@@ -1185,6 +1185,22 @@ mod tests {
     }
 
     #[test]
+    fn a_worker_whose_cpu_samples_stop_is_not_taken_as_saturated() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        // 95% for two seconds, then its deltas go on without CPU samples.
+        let _ = burn(&mut health, at, 0, 2, 95, 0);
+        for second in 3..=10 {
+            health.applied(0, None, None, at + secs(second as f64));
+            health.tick(at + secs(second as f64));
+        }
+        assert!(!health.worker(0).unwrap().live.saturated);
+        assert!(kinds(&health).is_empty(), "{:?}", kinds(&health));
+        let ran = record(&health, 0, at + secs(10.0));
+        assert!(!ran.flags.contains(&GaggleWorkerFlag::Saturated), "{:?}", ran);
+    }
+
+    #[test]
     fn cpu_is_a_percent_of_the_cores_and_absent_without_them() {
         let at = Instant::now();
         let mut health = running(1, Some(4), at);
@@ -1195,6 +1211,9 @@ mod tests {
         // Samples closer than the span are not taken against each other.
         health.cpu(0, Some(3_000_000), at + secs(1.1));
         assert_eq!(health.worker(0).unwrap().cpu_percent, Some(50.0));
+        // A late sample, or an untrusted CPU time, is never past 100%.
+        health.cpu(0, Some(u64::MAX), at + secs(2.0));
+        assert_eq!(health.worker(0).unwrap().cpu_percent, Some(100.0));
         // Without CPU time, or without cores, nothing is worked out.
         for cores in [Some(4), None] {
             let mut health = running(1, cores, at);

@@ -724,7 +724,6 @@ fn manager_canceled(name: &str, plan: &[&str]) {
             "10",
             "--increase-rate",
             "20",
-            "--no-reset-metrics",
             "--report-file",
             "--output-dir",
             &manager_folder,
@@ -784,14 +783,17 @@ fn manager_canceled(name: &str, plan: &[&str]) {
 #[test]
 #[serial_test::serial]
 fn gaggle_manager_canceled_before_its_run_time() {
-    manager_canceled("cancel-run-time", &["--run-time", "60s"]);
+    manager_canceled(
+        "cancel-run-time",
+        &["--run-time", "60s", "--no-reset-metrics"],
+    );
 }
 
 /// With no --run-time, canceled as the only way it ends.
 #[test]
 #[serial_test::serial]
 fn gaggle_manager_canceled_without_a_run_time() {
-    manager_canceled("cancel-no-run-time", &[]);
+    manager_canceled("cancel-no-run-time", &["--no-reset-metrics"]);
 }
 
 /// With --iterations, canceled before the users finish them.

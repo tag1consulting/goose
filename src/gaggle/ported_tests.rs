@@ -91,7 +91,8 @@ async fn ok_server() -> MockServer {
 }
 
 /// Deterministic counts: every user runs its scenario `iterations` times,
-/// none of it reset away.
+/// none of it reset away, as a run of `--iterations` never resets its
+/// metrics (and refuses `--no-reset-metrics`).
 fn iterations<'a>(users: &'a str, iterations: &'a str) -> Vec<&'a str> {
     vec![
         "--users",
@@ -100,7 +101,6 @@ fn iterations<'a>(users: &'a str, iterations: &'a str) -> Vec<&'a str> {
         "20",
         "--iterations",
         iterations,
-        "--no-reset-metrics",
     ]
 }
 
@@ -507,7 +507,7 @@ async fn no_error_summary_reaches_the_merge() {
 // redirect.rs, defaults.rs, one_taskset.rs
 
 /// Each user: on start, GET /pre; then GET /a twice; with `defaults`,
-/// sticky follow and no metrics reset set as defaults in code.
+/// sticky follow set as a default in code.
 fn redirected(configuration: GooseConfiguration, defaults: bool) -> GooseAttack {
     let attack = GooseAttack::initialize_with_config(configuration)
         .unwrap()
@@ -522,8 +522,6 @@ fn redirected(configuration: GooseConfiguration, defaults: bool) -> GooseAttack 
     }
     *attack
         .set_default(GooseDefault::StickyFollow, true)
-        .unwrap()
-        .set_default(GooseDefault::NoResetMetrics, true)
         .unwrap()
 }
 
@@ -546,13 +544,10 @@ async fn answer<'a>(
         .await
 }
 
-/// 2 users, each running its scenario twice: deterministic counts.
-fn two_users_twice(reset: bool) -> Vec<&'static str> {
-    let mut args = vec!["--users", "2", "--increase-rate", "20", "--iterations", "2"];
-    if !reset {
-        args.push("--no-reset-metrics");
-    }
-    args
+/// 2 users, each running its scenario twice: deterministic counts, as a
+/// run of `--iterations` never resets its metrics.
+fn two_users_twice() -> Vec<&'static str> {
+    vec!["--users", "2", "--increase-rate", "20", "--iterations", "2"]
 }
 
 /// A chain of redirects on one server, followed by every worker: the merged
@@ -566,7 +561,7 @@ async fn redirects_are_followed_on_every_worker() {
     let hop = answer(&server, "/redirect", 301, Some("/final".to_string())).await;
     let last = answer(&server, "/final", 200, None).await;
     let host = server.base_url();
-    let args = two_users_twice(false);
+    let args = two_users_twice();
     let build = |configuration, _| redirected(configuration, false);
     let (merged, _folder) = two_workers(build, &host, "redirect", &args).await;
     let seen = (pre.calls_async().await, a.calls_async().await);
@@ -604,8 +599,7 @@ async fn sticky(args: &[&str], defaults: bool, sticky: bool) {
         true => assert_eq!(seen, (2, 6, 2)),
         false => assert_eq!(seen, (8, 0, 8)),
     }
-    // Every /pre stays counted: --no-reset-metrics, or with one user a
-    // worker its /pre may race the reset; the default has its own test.
+    // Every /pre stays counted: a run of --iterations never resets.
     assert_eq!(pre.calls_async().await, 2);
     let counted = merged
         .requests
@@ -617,17 +611,17 @@ async fn sticky(args: &[&str], defaults: bool, sticky: bool) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn sticky_redirects_reach_every_worker() {
-    let mut args = two_users_twice(false);
+    let mut args = two_users_twice();
     args.push("--sticky-follow");
     sticky(&args, false, true).await;
     // Without it, every /a starts on the first server.
-    sticky(&two_users_twice(false), false, false).await;
+    sticky(&two_users_twice(), false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn defaults_set_in_code_reach_every_worker() {
-    sticky(&two_users_twice(true), true, true).await;
+    sticky(&two_users_twice(), true, true).await;
 }
 
 /// `--no-reset-metrics` set as a default in code reaches every worker:
@@ -749,7 +743,7 @@ async fn hooks(start: bool, stop: bool) {
     let stops = answer(&server, "/stop", 200, None).await;
     let a = answer(&server, "/a", 200, None).await;
     let build = |configuration, _| hooked(configuration, start, stop);
-    let _ = two_workers(build, &server.base_url(), "hooks", &two_users_twice(false)).await;
+    let _ = two_workers(build, &server.base_url(), "hooks", &two_users_twice()).await;
     assert_eq!(starts.calls_async().await, usize::from(start));
     assert_eq!(stops.calls_async().await, usize::from(stop));
     assert_eq!(a.calls_async().await, 4);

@@ -174,9 +174,7 @@ impl<W: Write> Markdown<'_, '_, W> {
                 self.w,
                 "| {} | {} |",
                 workers::clock(event.second),
-                // A worker's words can hold a line break, which would end
-                // the row.
-                markdown_cell(&event.text.replace(['\n', '\r'], " "))
+                event_cell(&event.text)
             )?;
         }
         if record.events_dropped > 0 {
@@ -572,6 +570,12 @@ fn markdown_paragraph(text: &str) -> String {
 /// `text` as the text of one table cell, with a backslash before every `\`, `<`,
 /// `>` and `|`, as [`escape_line`] adds, and every backtick, `*`, `_`, `[`, `]` and
 /// `&`, so it holds no HTML tag, cell break, code span, emphasis, link or entity.
+/// An event's text as one table cell: a worker's words can hold a line
+/// break, which would end the row.
+fn event_cell(text: &str) -> String {
+    markdown_cell(&text.replace(['\n', '\r'], " "))
+}
+
 fn markdown_cell(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 8);
     for c in text.chars() {
@@ -616,6 +620,11 @@ mod tests {
 
     /// A threshold cell is plain text: a backtick, `|` or `<` in a request name
     /// starts no code span, cell or tag.
+    #[test]
+    fn an_event_with_a_line_break_stays_one_row() {
+        assert_eq!(event_cell("w lost: a\r\nb|c"), "w lost: a  b\\|c");
+    }
+
     #[test]
     fn threshold_cells_are_escaped() {
         assert_eq!(
