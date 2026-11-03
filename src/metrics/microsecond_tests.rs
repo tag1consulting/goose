@@ -3,7 +3,10 @@
 //! minimums under a millisecond (#585, #737, #366).
 
 use super::buckets::{bucket_end, bucket_index, bucket_value};
-use super::common::{load_baseline_file, prepare_data_with_baseline, ReportData, ReportOptions};
+use super::common::{
+    load_baseline_file, prepare_data_with_baseline, LoadedReport, ReportData, ReportOptions,
+    GOOSE_0_18_REPORT,
+};
 use super::dashboard_snapshot::{
     build_dashboard_snapshot, DashboardSnapshotInput, SeriesWindow, SnapshotReport,
     SnapshotSettings,
@@ -202,6 +205,266 @@ fn json_report_writes_each_bucket_once() {
     assert_eq!(scenario["times_us"].as_object().unwrap().len(), 1);
 }
 
+/// The raw timing data of a JSON report holds microseconds only: each
+/// request's, its coordinated omission data's, each transaction's and each
+/// scenario's buckets in `times_us`, and its fastest, slowest and total in
+/// microseconds, with no whole millisecond `times` map, minimum, maximum or
+/// total beside them.
+#[test]
+fn raw_timing_data_writes_microseconds_only() {
+    let metrics = sub_millisecond_metrics_with_coordinated_omission();
+    let report = report_json(&report_of(&metrics, None));
+    let raw = &report["raw_metrics"];
+    let mut entries: Vec<(String, &serde_json::Value)> = Vec::new();
+    for (key, request) in raw["requests"].as_object().unwrap() {
+        entries.push((format!("{key} raw_data"), &request["raw_data"]));
+        if !request["coordinated_omission_data"].is_null() {
+            entries.push((
+                format!("{key} coordinated_omission_data"),
+                &request["coordinated_omission_data"],
+            ));
+        }
+    }
+    let request_fields = [
+        "counter",
+        "maximum_time_us",
+        "minimum_time_us",
+        "times_us",
+        "total_time_us",
+    ];
+    assert_eq!(entries.len(), 3, "{}", raw);
+    for (entry, data) in &entries {
+        let mut fields: Vec<&str> = data
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort();
+        assert_eq!(fields, request_fields, "{}", entry);
+    }
+    let run_fields = [
+        "counter",
+        "max_time_us",
+        "min_time_us",
+        "times_us",
+        "total_time_us",
+    ];
+    let transaction = &raw["transactions"][0][0];
+    let scenario = &raw["scenarios"][0];
+    for (entry, data) in [("transaction", transaction), ("scenario", scenario)] {
+        for field in run_fields {
+            assert!(data.get(field).is_some(), "{} {}: {}", entry, field, data);
+        }
+        for field in ["times", "min_time", "max_time", "total_time"] {
+            assert!(data.get(field).is_none(), "{} {}: {}", entry, field, data);
+        }
+    }
+    assert!(transaction["times_us"].as_object().unwrap().len() == 3);
+}
+
+/// `GooseMetrics` serializes as the Controller's `metrics-json` and the
+/// WebSocket Controller's `metrics` send it, unchanged: each timing data's
+/// whole milliseconds beside its microseconds. Only the JSON report leaves
+/// the whole milliseconds out.
+#[test]
+fn controller_metrics_json_keeps_whole_milliseconds() {
+    let metrics = sub_millisecond_metrics_with_coordinated_omission();
+    let json = serde_json::to_value(&metrics).unwrap();
+    let request = &json["requests"]["GET /about"];
+    for data in [&request["raw_data"], &request["coordinated_omission_data"]] {
+        let mut fields: Vec<&str> = data
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort();
+        assert_eq!(
+            fields,
+            [
+                "counter",
+                "maximum_time",
+                "maximum_time_us",
+                "minimum_time",
+                "minimum_time_us",
+                "times_us",
+                "total_time",
+                "total_time_us"
+            ],
+            "{}",
+            data
+        );
+    }
+    assert_eq!(request["raw_data"]["maximum_time"], 1);
+    assert_eq!(request["raw_data"]["maximum_time_us"], 1_240);
+    for data in [&json["transactions"][0][0], &json["scenarios"][0]] {
+        for field in ["min_time", "max_time", "total_time", "counter", "times_us"] {
+            assert!(data.get(field).is_some(), "{}: {}", field, data);
+        }
+    }
+    assert_eq!(json["scenarios"][0]["max_time"], 1);
+    assert_eq!(json["scenarios"][0]["max_time_us"], 1_870);
+}
+
+/// Every time in every row of the JSON report `report` is an integer number
+/// of microseconds under a name ending `_us`: each minimum, maximum,
+/// percentile, average and standard deviation, in all five row types. A
+/// scenario's heading row in the transactions table has no times, so its
+/// average is `null`.
+fn assert_rows_write_microseconds_only(report: &serde_json::Value) {
+    let tables = [
+        "raw_request_metrics",
+        "raw_response_metrics",
+        "co_request_metrics",
+        "co_response_metrics",
+        "transaction_metrics",
+        "scenario_metrics",
+    ];
+    for table in tables {
+        let rows = report[table]
+            .as_array()
+            .unwrap_or_else(|| panic!("{} has no rows", table));
+        assert!(!rows.is_empty(), "{}", table);
+        for row in rows {
+            for (field, value) in row.as_object().unwrap() {
+                if !(field.starts_with("response_time") || field.starts_with("percentile")) {
+                    continue;
+                }
+                assert!(field.ends_with("_us"), "{} {}: {}", table, field, row);
+                let heading = row["is_scenario"] == true;
+                assert!(
+                    value.is_u64() || (heading && value.is_null()),
+                    "{} {}: {}",
+                    table,
+                    field,
+                    row
+                );
+            }
+        }
+    }
+    for (table, fields) in [
+        ("raw_request_metrics", &["response_time_average_us"][..]),
+        (
+            "co_request_metrics",
+            &[
+                "response_time_average_us",
+                "response_time_standard_deviation_us",
+            ][..],
+        ),
+        ("transaction_metrics", &["response_time_average_us"][..]),
+        ("scenario_metrics", &["response_time_average_us"][..]),
+    ] {
+        for row in report[table].as_array().unwrap() {
+            for field in fields {
+                assert!(row.get(*field).is_some(), "{} {}: {}", table, field, row);
+                assert!(
+                    row.get(field.trim_end_matches("_us")).is_none(),
+                    "{} {}: {}",
+                    table,
+                    field,
+                    row
+                );
+            }
+        }
+    }
+}
+
+/// A JSON report from this build writes each average, in all five row
+/// types, as an integer number of microseconds under
+/// `response_time_average_us`, and no `response_time_average`; the response
+/// rows have no average, and write their percentiles the same way.
+#[test]
+fn a_report_writes_each_average_as_integer_microseconds() {
+    let metrics = sub_millisecond_metrics_with_coordinated_omission();
+    let configuration = crate::GooseConfiguration::default();
+    let record = crate::runs::RunRecord::default();
+    let graph_data = crate::graph::GraphData::new();
+    let source = report_source(&metrics, &configuration, &record, &graph_data);
+    let mut json = Vec::new();
+    source.write_json(&mut json, None).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_rows_write_microseconds_only(&report);
+    let text = String::from_utf8(json).unwrap();
+    assert!(!text.contains("\"response_time_average\""), "{}", text);
+    assert!(
+        !text.contains("\"response_time_standard_deviation\""),
+        "{}",
+        text
+    );
+    let aggregated = report["raw_request_metrics"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(aggregated["name"], "Aggregated");
+    // 17 measured times totalling 11,230 µs: 660.59 µs, rounded to 661.
+    assert_eq!(aggregated["response_time_average_us"], 661);
+}
+
+/// The average a JSON report writes is the mean of the microseconds,
+/// rounded to the nearest microsecond, half up, worked out from the total
+/// and the count.
+#[test]
+fn response_time_average_us_is_the_rounded_mean() {
+    // (times, mean): 1.5 and 10.5 round up, 1.33 down and 2.67 up.
+    for (times, mean) in [
+        (&[1, 2][..], 2),
+        (&[10, 11][..], 11),
+        (&[1, 1, 2][..], 1),
+        (&[2, 3, 3][..], 3),
+        (&[400, 2_350, 37_999][..], 13_583),
+        (&[999_999, 1_000_000][..], 1_000_000),
+    ] {
+        assert_eq!(recorded(times).average_us_or_zero(), mean, "{:?}", times);
+        assert_eq!(
+            mean_us(times.iter().sum(), times.len()),
+            mean,
+            "{:?}",
+            times
+        );
+        let metrics = request_metrics(&[("GET /", times)]);
+        let report = report_json(&report_of(&metrics, None));
+        for row in report["raw_request_metrics"].as_array().unwrap() {
+            assert_eq!(
+                row["response_time_average_us"], mean,
+                "{:?}: {}",
+                times, row
+            );
+        }
+    }
+    assert_eq!(
+        GooseRequestMetricTimingData::default().average_us_or_zero(),
+        0
+    );
+    // The transaction's 590, 640 and 720 µs average 650; the scenario's
+    // 1,230 and 1,870 µs average 1,550.
+    let report = report_json(&report_of(&sub_millisecond_metrics(), None));
+    let transaction = report["transaction_metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "index")
+        .unwrap();
+    assert_eq!(transaction["response_time_average_us"], 650);
+    assert_eq!(
+        report["scenario_metrics"][0]["response_time_average_us"],
+        1_550
+    );
+    // The coordinated omission standard deviation: mitigated times averaging
+    // 1,150 µs against measured times averaging 650 µs differ by 500 µs, a
+    // standard deviation of 500 / 2^0.5, 353.55 µs, rounded to 354.
+    let measured = recorded(&[650; 10]);
+    let mitigated = recorded(&[1_150; 10]);
+    assert_eq!(standard_deviation_us(&measured, &mitigated), 354);
+    assert_eq!(standard_deviation_us(&mitigated, &measured), 354);
+    // Without measured times, the measured mean is 0: 1,150 / 2^0.5.
+    assert_eq!(
+        standard_deviation_us(&GooseRequestMetricTimingData::default(), &mitigated),
+        813
+    );
+}
+
 #[test]
 fn sub_millisecond_request_is_kept_and_shown() {
     let data = recorded(&[400]);
@@ -213,8 +476,8 @@ fn sub_millisecond_request_is_kept_and_shown() {
     assert_eq!(Millis(400).to_string(), "0.4");
     assert_eq!(format_micros(400, false), "0.4");
 
-    // Through the report: minimum 0.4, not 1, and the JSON row keeps whole
-    // milliseconds.
+    // Through the report: minimum 0.4, not 1, and the JSON row writes it in
+    // microseconds only.
     let metrics = request_metrics(&[("GET /", &[400])]);
     let report = report_of(&metrics, None);
     let row = &report.raw_request_metrics[0];
@@ -225,8 +488,9 @@ fn sub_millisecond_request_is_kept_and_shown() {
         "0.40"
     );
     let json = serde_json::to_value(row).unwrap();
-    assert_eq!(json["response_time_minimum"], 0);
-    assert_eq!(json["response_time_maximum"], 0);
+    assert_eq!(json["response_time_minimum_us"], 400);
+    assert_eq!(json["response_time_maximum_us"], 400);
+    assert_time_fields(&json, REQUEST_TIMES, false, true);
     assert_eq!(
         report.raw_response_metrics[0].percentile_50.to_string(),
         "0.4"
@@ -272,22 +536,23 @@ fn one_point_four_and_one_point_six_seconds_are_told_apart() {
     let metrics = request_metrics(&[("GET /slow", &slow), ("GET /slower", &slower)]);
     let report = report_of(&metrics, None);
     let p50 = |row: usize| {
-        serde_json::to_value(&report.raw_response_metrics[row]).unwrap()["percentile_50"]
+        serde_json::to_value(&report.raw_response_metrics[row]).unwrap()["percentile_50_us"]
             .as_u64()
             .unwrap()
     };
     let (a, b) = (p50(0), p50(1));
     assert_ne!(a, b);
     for value in [a, b] {
-        assert!(value != 1000 && value != 2000, "p50 {}", value);
+        assert!(value != 1_000_000 && value != 2_000_000, "p50 {}", value);
     }
-    assert!(within_one_percent(a, 1400), "{}", a);
-    assert!(within_one_percent(b, 1600), "{}", b);
+    assert!(within_one_percent(a, 1_400_000), "{}", a);
+    assert!(within_one_percent(b, 1_600_000), "{}", b);
 }
 
-/// 37,999 µs prints rounded, as 38, and serializes truncated, as 37.
+/// 37,999 µs prints rounded, as 38, and serializes as 37999 microseconds,
+/// under the `_us` name only.
 #[test]
-fn thirty_seven_point_999_milliseconds_prints_38_and_serializes_as_37() {
+fn thirty_seven_point_999_milliseconds_prints_38_and_serializes_as_37_999_microseconds() {
     let metrics = request_metrics(&[("GET /", &[37_000, 37_999])]);
     let report = report_of(&metrics, None);
     let row = &report.raw_request_metrics[0];
@@ -295,10 +560,13 @@ fn thirty_seven_point_999_milliseconds_prints_38_and_serializes_as_37() {
     assert_eq!(row.response_time_maximum.to_string(), "38");
     assert_eq!(Millis(37_999).to_string(), "38");
     let json = serde_json::to_value(row).unwrap();
-    assert_eq!(json["response_time_minimum"], 37);
-    assert_eq!(json["response_time_maximum"], 37);
+    assert_eq!(json["response_time_minimum_us"], 37_000);
+    assert_eq!(json["response_time_maximum_us"], 37_999);
+    assert_time_fields(&json, REQUEST_TIMES, false, true);
     let percentiles = serde_json::to_value(&report.raw_response_metrics[0]).unwrap();
-    assert_eq!(percentiles["percentile_100"], 37);
+    let p100 = percentiles["percentile_100_us"].as_u64().unwrap();
+    assert!(within_one_percent(p100, 37_999), "{}", p100);
+    assert_time_fields(&percentiles, RESPONSE_TIMES, false, true);
 }
 
 #[test]
@@ -354,58 +622,168 @@ fn merging_batches_equals_recording_once() {
     }
 }
 
-/// Loads the report `fixture` as a baseline and checks the deltas that a
-/// report with 400 µs `fast` requests, 1,410 ms `slow` requests and a
-/// 400 µs `index` transaction shows against it. `fast` and `slow` name the
-/// baseline's sub millisecond and 1.4 s requests; `index_minimum` is how the
-/// `index` transaction's minimum should read.
-fn baseline_deltas(fixture: &str, fast: &str, slow: &str, index_minimum: &str) {
-    let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
-    let baseline = load_baseline_file(&path).expect("the old report loads as a baseline");
-    let mut metrics = request_metrics(&[(fast, &[400; 5]), (slow, &[1_410_000; 10])]);
-    let mut index = TransactionMetricAggregate::new(
-        0,
-        Arc::from("Fast"),
-        0,
-        TransactionName::TransactionOnly(Arc::from("index")),
+/// The path of the report `fixture` in tests/fixtures.
+fn fixture_path(fixture: &str) -> String {
+    format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The JSON report a run writes of `data`: its tables, with the record of
+/// its run, which gives it `goose_version`.
+fn report_json(data: &ReportData) -> serde_json::Value {
+    let mut json = serde_json::to_value(data).unwrap();
+    json["goose_version"] = env!("CARGO_PKG_VERSION").into();
+    json
+}
+
+/// `--baseline-file`, `--render-report` and the dashboard's compare each
+/// refuse the report `fixture` with the one error for a report from Goose
+/// 0.18 or earlier, which gives the command that converts it.
+fn assert_refused_as_goose_0_18(fixture: &str) {
+    let path = fixture_path(fixture);
+    match load_baseline_file(&path) {
+        Err(crate::GooseError::InvalidOption { option, detail, .. }) => {
+            assert_eq!(option, "--baseline-file");
+            assert_eq!(detail, GOOSE_0_18_REPORT);
+        }
+        other => panic!("{} as a baseline: {:?}", fixture, other),
+    }
+    match LoadedReport::read(std::path::Path::new(&path)) {
+        Err(error) => assert_eq!(error, GOOSE_0_18_REPORT),
+        Ok(_) => panic!("{} was rendered", fixture),
+    }
+    #[cfg(feature = "dashboard")]
+    {
+        let current = fixture_path("report-0.19.0.json");
+        let compared = super::common::compare_reports(
+            std::path::Path::new(&current),
+            "current",
+            std::path::Path::new(&path),
+            "old",
+        );
+        assert_eq!(compared.unwrap_err(), GOOSE_0_18_REPORT);
+    }
+    assert!(
+        GOOSE_0_18_REPORT.contains("--render-report <old.json> --report-file <new.json>"),
+        "{}",
+        GOOSE_0_18_REPORT
     );
-    index.set_time_us(400, true);
-    metrics.transactions = vec![vec![index]];
-    let report = report_of(&metrics, Some(&baseline));
-    let row = |key: &str| {
-        let name = key.strip_prefix("GET ").unwrap();
-        report
-            .raw_request_metrics
-            .iter()
-            .position(|row| row.name == name)
-            .unwrap()
-    };
-    let slow_row = &report.raw_request_metrics[row(slow)];
-    assert_eq!(slow_row.number_of_requests.to_string(), "10 (+2)");
-    assert_eq!(slow_row.response_time_minimum.to_string(), "1410 (+10)");
-    assert_eq!(slow_row.response_time_maximum.to_string(), "1410 (+8)");
-    assert_eq!(
-        report.raw_response_metrics[row(slow)]
-            .percentile_50
-            .to_string(),
-        "1410 (+10)"
-    );
-    let fast_row = &report.raw_request_metrics[row(fast)];
-    assert_eq!(fast_row.response_time_minimum.to_string(), "0.4 (+0.4)");
-    let transactions = report.transaction_metrics.unwrap();
-    let index = transactions.iter().find(|row| row.name == "index").unwrap();
-    assert_eq!(index.response_time_minimum.to_string(), index_minimum);
+}
+
+/// A report from Goose 0.19.0 or later whose raw timing data has an entry
+/// without `times_us` is refused, the error naming the entry's table and
+/// key: timing data is read from `times_us` only, never from whole
+/// millisecond `times`.
+#[test]
+fn a_timing_data_entry_without_times_us_is_refused_naming_it() {
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture_path("report-0.20.json")).unwrap())
+            .unwrap();
+    let mut with_co_data = report.clone();
+    let mut co_data = with_co_data["raw_metrics"]["requests"]["GET /"]["raw_data"].clone();
+    co_data.as_object_mut().unwrap().remove("times_us");
+    with_co_data["raw_metrics"]["requests"]["GET /"]["coordinated_omission_data"] = co_data;
+    let cases: [(serde_json::Value, &[&str], &str); 4] = [
+        (
+            report.clone(),
+            &["raw_metrics", "requests", "GET /", "raw_data"],
+            r#"raw_metrics.requests "GET /" raw_data has no times_us"#,
+        ),
+        (
+            with_co_data,
+            &[],
+            r#"raw_metrics.requests "GET /" coordinated_omission_data has no times_us"#,
+        ),
+        (
+            report.clone(),
+            &["raw_metrics", "transactions", "0", "0"],
+            r#"raw_metrics.transactions "0.0" has no times_us"#,
+        ),
+        (
+            report.clone(),
+            &["raw_metrics", "scenarios", "0"],
+            r#"raw_metrics.scenarios "0" has no times_us"#,
+        ),
+    ];
+    for (mut json, entry, expected) in cases {
+        if !entry.is_empty() {
+            let mut target = &mut json;
+            for key in entry {
+                target = match key.parse::<usize>() {
+                    Ok(index) => &mut target[index],
+                    Err(_) => &mut target[*key],
+                };
+            }
+            assert!(
+                target.as_object_mut().unwrap().remove("times_us").is_some(),
+                "{:?}",
+                entry
+            );
+        }
+        let text = json.to_string();
+        match LoadedReport::parse(&text) {
+            Err(error) => assert_eq!(error.describe(|e| e.to_string()), expected),
+            Ok(_) => panic!("{} was read", expected),
+        }
+        let path = std::env::temp_dir().join(format!(
+            "goose-no-times-us-{}-{}.json",
+            std::process::id(),
+            expected.len()
+        ));
+        std::fs::write(&path, &text).unwrap();
+        let baseline = load_baseline_file(&path);
+        std::fs::remove_file(&path).unwrap();
+        match baseline {
+            Err(crate::GooseError::InvalidOption { detail, .. }) => {
+                assert!(detail.contains(expected), "{}", detail)
+            }
+            other => panic!("{} as a baseline: {:?}", expected, other),
+        }
+    }
 }
 
 #[test]
-fn a_0_18_1_report_loads_as_a_baseline() {
-    // The 0.18.1 report names its transactions with plain strings.
-    baseline_deltas("report-0.18.1.json", "GET index", "GET slow", "0.4 (+0.4)");
+fn a_0_18_1_report_is_refused() {
+    assert_refused_as_goose_0_18("report-0.18.1.json");
 }
 
+/// A report from main before Goose 0.19.0 kept microseconds, which, as a
+/// 0.18 report, has no `goose_version`.
 #[test]
-fn a_report_from_main_before_microseconds_loads_as_a_baseline() {
-    baseline_deltas("report-main.json", "GET /", "GET /delay/1400", "0.4 (-0.6)");
+fn a_report_from_main_before_microseconds_is_refused() {
+    assert_refused_as_goose_0_18("report-main.json");
+}
+
+/// A 0.19 report of a run with no requests, transactions or scenarios has
+/// no `times_us`, as a 0.18 report has none; its `goose_version` tells them
+/// apart, so it is read, not refused. Without `goose_version` it is refused.
+#[test]
+fn a_0_19_report_with_no_timing_data_is_not_taken_for_a_0_18_report() {
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture_path("report-0.19.0.json")).unwrap())
+            .unwrap();
+    json["raw_metrics"]["requests"] = serde_json::json!({});
+    json["raw_metrics"]["transactions"] = serde_json::json!([]);
+    json["raw_metrics"]["scenarios"] = serde_json::json!([]);
+    for table in [
+        "raw_request_metrics",
+        "raw_response_metrics",
+        "transaction_metrics",
+        "scenario_metrics",
+        "status_code_metrics",
+    ] {
+        json[table] = serde_json::json!([]);
+    }
+    let text = json.to_string();
+    assert!(!text.contains("times_us"), "{}", text);
+    let loaded = LoadedReport::parse(&text).expect("a 0.19 report with no timing data is read");
+    assert!(loaded.data.raw_request_metrics.is_empty());
+    assert_eq!(loaded.record.goose_version, "0.19.0");
+
+    json.as_object_mut().unwrap().remove("goose_version");
+    match LoadedReport::parse(&json.to_string()) {
+        Err(error) => assert_eq!(error.describe(|e| e.to_string()), GOOSE_0_18_REPORT),
+        Ok(_) => panic!("a report without goose_version was read"),
+    }
 }
 
 #[test]
@@ -415,11 +793,11 @@ fn a_report_with_microseconds_round_trips_as_a_baseline() {
     let dir = std::env::temp_dir().join(format!("goose-us-baseline-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("report.json");
-    std::fs::write(&path, serde_json::to_string(&report).unwrap()).unwrap();
+    std::fs::write(&path, report_json(&report).to_string()).unwrap();
     let baseline = load_baseline_file(&path).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
-    // The JSON rows are whole milliseconds; the raw timing data keeps every
-    // microsecond bucket, and the rows are rebuilt from it.
+    // The raw timing data keeps every microsecond bucket, and the rows are
+    // rebuilt from it.
     let raw = &baseline.raw_metrics.requests["GET /"].raw_data;
     assert_eq!(raw, &metrics.requests["GET /"].raw_data);
     assert_eq!(
@@ -432,7 +810,7 @@ fn a_report_with_microseconds_round_trips_as_a_baseline() {
 
 /// A report with microseconds, loaded as a baseline, gives no delta to the
 /// same times: its rows are rebuilt from its microsecond buckets, not read
-/// from its whole millisecond rows.
+/// from its rows.
 #[test]
 fn a_report_with_microseconds_gives_no_delta_to_the_same_times() {
     let mut metrics = request_metrics(&[("GET /", &[2_350; 5])]);
@@ -452,11 +830,7 @@ fn a_report_with_microseconds_gives_no_delta_to_the_same_times() {
     let dir = std::env::temp_dir().join(format!("goose-us-no-delta-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("report.json");
-    std::fs::write(
-        &path,
-        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&path, report_json(&report_of(&metrics, None)).to_string()).unwrap();
     let baseline = load_baseline_file(&path).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
@@ -495,11 +869,7 @@ fn a_report_with_microseconds_gives_no_coordinated_omission_delta_to_the_same_ti
     let dir = std::env::temp_dir().join(format!("goose-us-co-no-delta-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("report.json");
-    std::fs::write(
-        &path,
-        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&path, report_json(&report_of(&metrics, None)).to_string()).unwrap();
     let baseline = load_baseline_file(&path).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
@@ -535,11 +905,7 @@ fn a_report_with_microseconds_and_no_requests_gives_no_delta_to_the_same_times()
     let dir = std::env::temp_dir().join(format!("goose-us-no-requests-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("report.json");
-    std::fs::write(
-        &path,
-        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&path, report_json(&report_of(&metrics, None)).to_string()).unwrap();
     let baseline = load_baseline_file(&path).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
@@ -556,7 +922,7 @@ fn a_report_with_microseconds_and_no_requests_gives_no_delta_to_the_same_times()
 #[test]
 fn a_report_with_microseconds_and_a_key_without_its_method_is_refused() {
     let metrics = request_metrics(&[("GET /", &[2_350; 5])]);
-    let mut json = serde_json::to_value(report_of(&metrics, None)).unwrap();
+    let mut json = report_json(&report_of(&metrics, None));
     let requests = json["raw_metrics"]["requests"].as_object_mut().unwrap();
     let request = requests.remove("GET /").unwrap();
     requests.insert("/".to_string(), request);
@@ -1044,11 +1410,7 @@ fn reports_with_microseconds_compare_by_their_microseconds() {
     let dir = std::env::temp_dir().join(format!("goose-us-compare-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("report.json");
-    std::fs::write(
-        &path,
-        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&path, report_json(&report_of(&metrics, None)).to_string()).unwrap();
     let markdown = super::common::compare_reports(&path, "run", &path, "baseline").unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     let markdown = String::from_utf8(markdown).unwrap();
@@ -1111,6 +1473,20 @@ fn sub_millisecond_metrics() -> GooseMetrics {
     scenario.update_us(1_230, 0);
     scenario.update_us(1_870, 1);
     metrics.scenarios = vec![scenario];
+    metrics
+}
+
+/// [`sub_millisecond_metrics`], with `GET /about`'s times also taken with
+/// coordinated omission mitigation: its five measured times and five
+/// synthetic ones.
+fn sub_millisecond_metrics_with_coordinated_omission() -> GooseMetrics {
+    let mut metrics = sub_millisecond_metrics();
+    let about = metrics.requests.get_mut("GET /about").unwrap();
+    let mut mitigated = about.raw_data.clone();
+    for us in [1_100, 1_200, 1_300, 1_400, 1_500] {
+        mitigated.record_time_us(us);
+    }
+    about.coordinated_omission_data = Some(mitigated);
     metrics
 }
 
@@ -1243,18 +1619,19 @@ fn json_report_times_agree_with_the_html_report_under_a_millisecond() {
     );
 }
 
-/// Every whole millisecond time of a JSON report row and, when `us` is set,
-/// the microseconds beside each.
-fn assert_time_fields(row: &serde_json::Value, fields: &[&str], us: bool) {
+/// Each time `fields` names in a JSON report row: in whole milliseconds
+/// under its own name when `ms` is set, absent from the row otherwise, and
+/// in microseconds under its name with `_us` added when `us` is set, absent
+/// otherwise.
+fn assert_time_fields(row: &serde_json::Value, fields: &[&str], ms: bool, us: bool) {
     for field in fields {
-        assert!(
-            row[field].is_u64(),
-            "{} is whole milliseconds: {}",
-            field,
-            row
-        );
         let field_us = format!("{field}_us");
-        assert_eq!(row[&field_us].is_u64(), us, "{field_us}: {row}");
+        for (name, written) in [(field.to_string(), ms), (field_us, us)] {
+            match row.get(&name) {
+                Some(value) => assert!(written && value.is_u64(), "{}: {}", name, row),
+                None => assert!(!written, "{} is missing: {}", name, row),
+            }
+        }
     }
 }
 
@@ -1271,51 +1648,129 @@ const RESPONSE_TIMES: &[&str] = &[
     "percentile_100",
 ];
 
-/// A JSON report written by Goose 0.19.0, from `sub_millisecond_metrics`,
-/// through the tag's own `ReportSource::write_json`: its rows hold only
-/// whole milliseconds, a 0.59 ms p50 as 0. It loads as a baseline, its rows
-/// rebuilt from its microsecond buckets, and gives no delta to the same
-/// times.
-#[test]
-fn a_0_19_0_report_loads_as_a_baseline_with_its_microseconds() {
-    let path = format!(
-        "{}/tests/fixtures/report-0.19.0.json",
-        env!("CARGO_MANIFEST_DIR")
-    );
+/// Each time in every row of a JSON report, by the rule of
+/// `assert_time_fields`.
+fn assert_report_time_fields(report: &serde_json::Value, ms: bool, us: bool) {
+    for (table, fields) in [
+        ("raw_request_metrics", REQUEST_TIMES),
+        ("raw_response_metrics", RESPONSE_TIMES),
+        ("transaction_metrics", REQUEST_TIMES),
+        ("scenario_metrics", REQUEST_TIMES),
+    ] {
+        let rows = report[table].as_array().unwrap();
+        assert!(!rows.is_empty(), "{}", table);
+        for row in rows {
+            assert_time_fields(row, fields, ms, us);
+        }
+    }
+}
+
+/// The JSON report `fixture`, written from `sub_millisecond_metrics` by
+/// Goose `version` through its own `ReportSource::write_json`, with its
+/// times written as `ms` and `us` say. It loads as a baseline and renders,
+/// its rows rebuilt from its microsecond buckets whatever its rows hold, and
+/// gives no delta to the same times.
+fn assert_fixture_loads(fixture: &str, version: &str, ms: bool, us: bool) {
+    let path = fixture_path(fixture);
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(json["goose_version"], "0.19.0");
-    for row in json["raw_request_metrics"].as_array().unwrap() {
-        assert_time_fields(row, REQUEST_TIMES, false);
-    }
-    for row in json["raw_response_metrics"].as_array().unwrap() {
-        assert_time_fields(row, RESPONSE_TIMES, false);
-    }
+    assert_eq!(json["goose_version"], version);
+    assert_report_time_fields(&json, ms, us);
     let aggregated = json["raw_response_metrics"]
         .as_array()
         .unwrap()
         .last()
         .unwrap();
     assert_eq!(aggregated["name"], "Aggregated");
-    assert_eq!(aggregated["percentile_50"], 0);
+    if ms {
+        // Whole milliseconds, truncated: a 0.59 ms p50 is 0.
+        assert_eq!(aggregated["percentile_50"], 0);
+    }
+    if us {
+        let p50 = aggregated["percentile_50_us"].as_u64().unwrap();
+        assert!(within_one_percent(p50, 590), "{}", p50);
+    }
 
-    let baseline = load_baseline_file(&path).expect("a 0.19.0 report loads as a baseline");
     let metrics = sub_millisecond_metrics();
+    let baseline = load_baseline_file(&path)
+        .unwrap_or_else(|e| panic!("{} loads as a baseline: {:?}", fixture, e));
     let report = report_of(&metrics, Some(&baseline));
     let aggregated = report.raw_response_metrics.last().unwrap();
     assert_eq!(aggregated.percentile_50.to_string(), "0.59 (+0)");
     assert_eq!(aggregated.percentile_100.to_string(), "1.24 (+0)");
     let aggregated = report.raw_request_metrics.last().unwrap();
     assert_eq!(aggregated.response_time_minimum.to_string(), "0.38 (+0)");
+    let transactions = report.transaction_metrics.unwrap();
+    let index = transactions.iter().find(|row| row.name == "index").unwrap();
+    assert_eq!(index.response_time_minimum.to_string(), "0.59 (+0)");
+    assert_eq!(index.response_time_maximum.to_string(), "0.72 (+0)");
+    let scenario = &report.scenario_metrics.unwrap()[0];
+    assert_eq!(scenario.response_time_minimum.to_string(), "1.23 (+0)");
+    assert_eq!(scenario.response_time_maximum.to_string(), "1.87 (+0)");
+
+    let loaded = LoadedReport::read(std::path::Path::new(&path))
+        .unwrap_or_else(|e| panic!("{} renders: {}", fixture, e));
+    let aggregated = loaded.data.raw_response_metrics.last().unwrap();
+    assert_eq!(aggregated.percentile_50.to_string(), "0.59");
+    let aggregated = loaded.data.raw_request_metrics.last().unwrap();
+    assert_eq!(aggregated.response_time_minimum.to_string(), "0.38");
 }
 
-/// A JSON report from this build keeps every field a 0.19.0 report has,
-/// with its type: each whole millisecond time is still an integer, with its
-/// microseconds beside it in a new field. Goose 0.19.0 reads a baseline
-/// with `BaselineReportData`, unchanged since, which ignores the new
-/// fields, so the report loads there as it does here.
+/// A JSON report written by Goose 0.19.0: its rows hold only whole
+/// milliseconds, a 0.59 ms p50 as 0.
 #[test]
-fn a_report_with_microsecond_rows_loads_as_a_baseline() {
+fn a_0_19_0_report_loads_as_a_baseline_with_its_microseconds() {
+    assert_fixture_loads("report-0.19.0.json", "0.19.0", true, false);
+}
+
+/// A JSON report written by Goose 0.19.1 (release-0.19, `0.19.1-dev`): its
+/// rows hold each time twice, in whole milliseconds and in microseconds.
+#[test]
+fn a_0_19_1_report_loads_as_a_baseline_with_its_microseconds() {
+    assert_fixture_loads("report-0.19.1.json", "0.19.1-dev", true, true);
+}
+
+/// A JSON report written by Goose 0.20 (`0.20.0-dev`): its rows hold each
+/// time once, in microseconds.
+#[test]
+fn a_0_20_report_loads_as_a_baseline_with_its_microseconds() {
+    assert_fixture_loads("report-0.20.json", "0.20.0-dev", false, true);
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture_path("report-0.20.json")).unwrap())
+            .unwrap();
+    for (table, field) in [
+        ("raw_request_metrics", "response_time_average_us"),
+        ("transaction_metrics", "response_time_average_us"),
+        ("scenario_metrics", "response_time_average_us"),
+    ] {
+        for row in json[table].as_array().unwrap() {
+            assert!(row.get("response_time_average").is_none(), "{}", row);
+            let heading = row["is_scenario"] == true;
+            assert!(
+                row[field].is_u64() || (heading && row[field].is_null()),
+                "{}",
+                row
+            );
+        }
+    }
+    for request in json["raw_metrics"]["requests"]
+        .as_object()
+        .unwrap()
+        .values()
+    {
+        for field in ["times", "minimum_time", "maximum_time", "total_time"] {
+            assert!(request["raw_data"].get(field).is_none(), "{}", request);
+        }
+    }
+}
+
+/// A JSON report from this build writes every time once, in microseconds,
+/// under its `_us` name, and never under the old millisecond name; it loads
+/// as a baseline. Goose 0.19.x
+/// cannot load it as a baseline, as its rows lack the whole millisecond
+/// fields 0.19.x requires.
+#[test]
+fn a_report_writes_microsecond_rows_only_and_loads_as_a_baseline() {
     let metrics = sub_millisecond_metrics();
     let configuration = crate::GooseConfiguration::default();
     let record = crate::runs::RunRecord::default();
@@ -1324,23 +1779,15 @@ fn a_report_with_microsecond_rows_loads_as_a_baseline() {
     let mut json = Vec::new();
     source.write_json(&mut json, None).unwrap();
     let report: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_report_time_fields(&report, false, true);
     for row in report["raw_request_metrics"].as_array().unwrap() {
-        assert_time_fields(row, REQUEST_TIMES, true);
-    }
-    for row in report["raw_response_metrics"].as_array().unwrap() {
-        assert_time_fields(row, RESPONSE_TIMES, true);
-    }
-    for table in ["transaction_metrics", "scenario_metrics"] {
-        for row in report[table].as_array().unwrap() {
-            assert_time_fields(row, REQUEST_TIMES, true);
-        }
+        assert!(row.get("is_breakdown").is_none(), "{}", row);
     }
     let aggregated = report["raw_response_metrics"]
         .as_array()
         .unwrap()
         .last()
         .unwrap();
-    assert_eq!(aggregated["percentile_50"], 0);
     let p50 = aggregated["percentile_50_us"].as_u64().unwrap();
     assert!(within_one_percent(p50, 590), "{}", p50);
 
@@ -1356,18 +1803,48 @@ fn a_report_with_microsecond_rows_loads_as_a_baseline() {
     assert_eq!(aggregated.percentile_50.to_string(), "0.59 (+0)");
 }
 
-/// The coordinated omission rows write their microseconds too.
+/// Writes the JSON report of `sub_millisecond_metrics` to `$FIXTURE`, as
+/// each fixture `assert_fixture_loads` reads was written by its release:
+/// `FIXTURE=... cargo test --lib write_fixture -- --ignored`.
+#[test]
+#[ignore]
+fn write_fixture() {
+    let metrics = sub_millisecond_metrics();
+    let configuration = crate::GooseConfiguration::default();
+    let record = crate::runs::RunRecord {
+        goose_version: env!("CARGO_PKG_VERSION").to_string(),
+        test: "fixture".to_string(),
+        ..Default::default()
+    };
+    let graph_data = crate::graph::GraphData::new();
+    let source = report_source(&metrics, &configuration, &record, &graph_data);
+    let mut json = Vec::new();
+    source.write_json(&mut json, None).unwrap();
+    std::fs::write(std::env::var("FIXTURE").unwrap(), json).unwrap();
+}
+
+/// The coordinated omission rows write their microseconds, and only those:
+/// the maximum, the average and the standard deviation.
 #[test]
 fn coordinated_omission_rows_write_their_microseconds() {
     let row = crate::report::CORequestMetric {
         method: "GET".to_string(),
         name: "/".to_string(),
         response_time_average: 0.59f64.into(),
-        response_time_standard_deviation: 0.0f64.into(),
+        response_time_average_us: 590,
+        response_time_standard_deviation: 0.02f64.into(),
+        response_time_standard_deviation_us: 21,
         response_time_maximum: Millis(590).into(),
     };
     let json = serde_json::to_value(&row).unwrap();
-    assert_eq!(json["response_time_maximum"], 0);
+    for name in [
+        "response_time_maximum",
+        "response_time_average",
+        "response_time_standard_deviation",
+    ] {
+        assert!(json.get(name).is_none(), "{}: {}", name, json);
+    }
     assert_eq!(json["response_time_maximum_us"], 590);
-    assert!(json["response_time_average"].is_f64(), "{}", json);
+    assert_eq!(json["response_time_average_us"], 590);
+    assert_eq!(json["response_time_standard_deviation_us"], 21);
 }
