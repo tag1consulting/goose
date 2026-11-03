@@ -1966,22 +1966,11 @@ impl GooseAttack {
         if let Some(GaggleRole::Manager(run)) = self.gaggle.role.as_mut() {
             if !run.shut_down {
                 run.shut_down = true;
-                // The workers that ended their run cleanly, every log sent:
-                // each reads its Shutdown before the manager stops. None
-                // after a cancel, which ends at once.
-                let finished: Vec<u32> = match crate::killswitch_reason() {
-                    Some(_) => Vec::new(),
-                    None => run
-                        .workers
-                        .iter()
-                        .filter(|worker| {
-                            worker.is_live()
-                                && worker.stopped.is_some()
-                                && !run.logs_left.iter().any(|left| left.worker == worker.name)
-                        })
-                        .map(|worker| worker.id)
-                        .collect(),
-                };
+                let finished = finished_workers(
+                    &run.workers,
+                    &run.logs_left,
+                    crate::killswitch_reason().is_some(),
+                );
                 run.manager.shut_down_all_waiting(&finished).await;
             }
         }
@@ -2064,6 +2053,24 @@ impl Incoming {
 }
 
 /// Where worker `id` of `workers` keeps `log`, which stays on it.
+/// The workers the manager waits for at shutdown, each reading its
+/// `Shutdown` before the manager stops: those that stopped and are still
+/// connected, every log sent. None after a cancel, which ends at once.
+fn finished_workers(workers: &[WorkerEntry], logs_left: &[GaggleLogLeft], canceled: bool) -> Vec<u32> {
+    if canceled {
+        return Vec::new();
+    }
+    workers
+        .iter()
+        .filter(|worker| {
+            worker.is_live()
+                && worker.stopped.is_some()
+                && !logs_left.iter().any(|left| left.worker == worker.name)
+        })
+        .map(|worker| worker.id)
+        .collect()
+}
+
 fn log_left(workers: &[WorkerEntry], id: u32, log: &LogSpec) -> GaggleLogLeft {
     let worker = super::worker(workers, id);
     GaggleLogLeft {
@@ -2476,6 +2483,42 @@ mod tests {
     }
 
     /// A worker is found by its own id, never by a position alone.
+    /// At shutdown the manager waits only for a worker that stopped and is
+    /// still connected, every log sent: never after a cancel, nor for one
+    /// lost, gone, still running, or with a log left on it.
+    #[test]
+    fn shutdown_waits_only_for_finished_workers() {
+        let stopped = |id: u32, name: &str| WorkerEntry {
+            id,
+            name: name.to_string(),
+            stopped: Some(Reason::Stopped),
+            ..entry()
+        };
+        let workers = vec![
+            stopped(0, "clean"),
+            WorkerEntry {
+                lost: Some((chrono::Utc::now(), "went quiet".to_string())),
+                ..stopped(1, "lost")
+            },
+            WorkerEntry {
+                gone: true,
+                ..stopped(2, "gone")
+            },
+            WorkerEntry {
+                id: 3,
+                name: "running".to_string(),
+                ..entry()
+            },
+            stopped(4, "log-left"),
+        ];
+        let left = vec![GaggleLogLeft {
+            worker: "log-left".to_string(),
+            path: "requests.json".to_string(),
+        }];
+        assert_eq!(finished_workers(&workers, &left, false), vec![0]);
+        assert_eq!(finished_workers(&workers, &left, true), Vec::<u32>::new());
+    }
+
     #[test]
     fn workers_are_found_by_their_id() {
         let workers = vec![entry(), WorkerEntry { id: 5, ..entry() }];

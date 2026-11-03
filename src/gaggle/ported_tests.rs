@@ -350,6 +350,30 @@ fn failing(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack {
         )
 }
 
+/// A transaction that returns a custom error every time: a transaction
+/// error, with no request.
+async fn boom(_user: &mut GooseUser) -> TransactionResult {
+    Err(Box::new(crate::goose::TransactionError::Custom(
+        "boom".to_string(),
+    )))
+}
+
+/// [`failing`], and a transaction error each iteration as well.
+fn failing_both(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack {
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(
+            Scenario::new("LoadTest")
+                .register_transaction(get("/index"))
+                .register_transaction(Transaction::new(Arc::new(|user| {
+                    Box::pin(async move { get_error(user).await })
+                })))
+                .register_transaction(Transaction::new(Arc::new(|user| {
+                    Box::pin(async move { boom(user).await })
+                }))),
+        )
+}
+
 /// A server answering /index with 200 and /error with 503.
 async fn failing_server() -> MockServer {
     let server = MockServer::start_async().await;
@@ -475,8 +499,8 @@ async fn error_summary(summary: bool) {
     if !summary {
         args.push("--no-error-summary");
     }
-    let (merged, _folder) = two_workers(failing, &host, "errors", &args).await;
-    let single = one_process(failing, &host, &args).await;
+    let (merged, _folder) = two_workers(failing_both, &host, "errors", &args).await;
+    let single = one_process(failing_both, &host, &args).await;
     assert_eq!(merged.requests["GET /error"].fail_count, 8);
     let occurrences = |metrics: &GooseMetrics| -> Vec<usize> {
         metrics
@@ -489,6 +513,25 @@ async fn error_summary(summary: bool) {
     match summary {
         true => assert_eq!(occurrences(&merged), vec![8]),
         false => assert!(merged.errors.is_empty(), "{:?}", merged.errors),
+    }
+    let transaction_occurrences = |metrics: &GooseMetrics| -> Vec<usize> {
+        metrics
+            .transaction_errors
+            .values()
+            .map(|error| error.occurrences)
+            .collect()
+    };
+    assert_eq!(
+        transaction_occurrences(&merged),
+        transaction_occurrences(&single)
+    );
+    match summary {
+        true => assert_eq!(transaction_occurrences(&merged), vec![8]),
+        false => assert!(
+            merged.transaction_errors.is_empty(),
+            "{:?}",
+            merged.transaction_errors
+        ),
     }
 }
 

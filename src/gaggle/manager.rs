@@ -2109,6 +2109,44 @@ pub(crate) mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// A worker not named finished, stuck or canceled, is not waited for:
+    /// its stream ends once its `Shutdown` has left though its own side
+    /// stays open, while a finished worker's stays open until it closes it.
+    #[tokio::test]
+    async fn shut_down_all_waits_only_for_finished_workers() {
+        let test = async {
+            let mut manager = test_manager(2, Duration::from_secs(30)).await;
+            let (finished_tx, finished) = open(channel(&manager).await, hello(), None).await;
+            let (_stuck_tx, stuck) = open(channel(&manager).await, hello(), None).await;
+            let (mut finished, mut stuck) = (finished.unwrap(), stuck.unwrap());
+            let id = match finished.message().await.unwrap().and_then(|m| m.message) {
+                Some(ToWorker::Welcome(welcome)) => welcome.worker_id,
+                other => panic!("no Welcome first: {:?}", other),
+            };
+            let shutting = tokio::spawn(async move {
+                manager.shut_down_all_waiting(&[id]).await;
+            });
+            let kinds = tokio::time::timeout(Duration::from_secs(2), async {
+                let mut kinds = Vec::new();
+                while let Ok(Some(message)) = stuck.message().await {
+                    kinds.push(message_kind(&message));
+                }
+                kinds
+            })
+            .await
+            .expect("the stuck worker's stream ends without waiting out the drain");
+            assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
+            assert!(!shutting.is_finished(), "the finished worker was not waited for");
+            drop(finished_tx);
+            let kinds = until_it_ends(&mut finished).await;
+            assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
+            shutting.await.unwrap();
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// As a real worker does it: it stops reading the moment it reads
     /// `Shutdown`, dropping its side of the response, and closes its own
     /// side; the manager stops at once, not after the drain.
@@ -2188,7 +2226,10 @@ pub(crate) mod handshake_tests {
                 let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
                 streams.push((tx, inbound.unwrap()));
             }
+            // No worker is waited for: their open sides cost no time.
+            let started = std::time::Instant::now();
             manager.shut_down_all().await;
+            assert!(started.elapsed() < SHUTDOWN_DRAIN, "{:?}", started.elapsed());
             for (_tx, inbound) in streams.iter_mut() {
                 let kinds = until_it_ends(inbound).await;
                 assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
