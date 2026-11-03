@@ -391,6 +391,12 @@ impl GaggleHealth {
         self.workers.get(id).map(|worker| &worker.merge)
     }
 
+    /// The merge's view of every worker (tests).
+    #[cfg(test)]
+    pub(crate) fn values(&self) -> impl Iterator<Item = &WorkerMerge> {
+        self.workers.values().map(|worker| &worker.merge)
+    }
+
     /// Worker `id`.
     pub(crate) fn worker(&self, id: u32) -> Option<&WorkerHealth> {
         self.workers.get(&id)

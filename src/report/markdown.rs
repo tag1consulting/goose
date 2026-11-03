@@ -20,9 +20,7 @@ struct Markdown<'m, 'w, W: Write> {
     gaggle: Option<&'w GaggleRecord>,
 }
 
-/// The Markdown report of `data` (tests: every run writes it with
-/// [`write_markdown_report_with`]).
-#[cfg(test)]
+/// The Markdown report of `data`, with no Gaggle sections.
 pub(crate) fn write_markdown_report<W: Write>(
     w: &mut W,
     data: ReportData,

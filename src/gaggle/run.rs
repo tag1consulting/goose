@@ -1406,6 +1406,7 @@ impl GooseAttack {
                     }
                     Ok(reason) => reason,
                 };
+                let health = run.health.clone();
                 let Some(worker) = run.worker(id) else {
                     return;
                 };
@@ -1415,7 +1416,7 @@ impl GooseAttack {
                         Reason::UsersExited => WorkerState::UsersExited,
                         _ => WorkerState::Finished,
                     };
-                    if let Ok(mut health) = run.health.lock() {
+                    if let Ok(mut health) = health.lock() {
                         health.set_state(id, state, Instant::now());
                     }
                 }
@@ -1440,10 +1441,11 @@ impl GooseAttack {
                 }
             }
             Event::UsersStopped { id } => {
+                let health = run.health.clone();
                 if let Some(worker) = run.worker(id) {
                     worker.users_stopped.get_or_insert_with(Instant::now);
                     if worker.lost.is_none() && worker.stopped.is_none() {
-                        if let Ok(mut health) = run.health.lock() {
+                        if let Ok(mut health) = health.lock() {
                             health.set_state(id, WorkerState::Stopping, Instant::now());
                         }
                     }
@@ -3073,6 +3075,7 @@ mod tests {
                     respond,
                     outcome,
                     lost: Vec::new(),
+                    events: Vec::new(),
                 }),
                 sent: vec![crate::gaggle::control::SentControl {
                     id: 7,

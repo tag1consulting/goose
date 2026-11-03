@@ -1036,13 +1036,13 @@ impl GooseAttack {
                     .iter()
                     .find(|sent| sent.id == pending.id)
                     .map_or(0, |sent| sent.workers);
-                let mut outcome = pending.outcome;
                 let acknowledged = workers.saturating_sub(pending.lost.len());
                 let secs = run
                     .sent
                     .iter()
                     .find(|sent| sent.id == pending.id)
                     .map_or(0.0, |sent| now.duration_since(sent.sent).as_secs_f64());
+                let mut outcome = pending.outcome;
                 outcome.acks = Some(ControlAcks {
                     acknowledged,
                     workers,

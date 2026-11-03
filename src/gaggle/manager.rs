@@ -1571,6 +1571,7 @@ mod tests {
         let worker = WorkerHandle {
             id: 3,
             name: "w".to_string(),
+            cores: None,
             outbound: Arc::new(Mutex::new(Some(outbound))),
             closed: Arc::new(AtomicBool::new(false)),
             ended: Arc::new(AtomicBool::new(false)),

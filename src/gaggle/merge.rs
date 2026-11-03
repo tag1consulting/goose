@@ -16,7 +16,9 @@ use crate::metrics::{
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-pub(crate) use super::health::{MergeHealth, WorkerMerge};
+pub(crate) use super::health::MergeHealth;
+#[cfg(test)]
+pub(crate) use super::health::WorkerMerge;
 
 /// A delta that did not follow the one before it from the same worker.
 #[derive(Clone, Debug, PartialEq, Eq)]
