@@ -105,26 +105,47 @@ pub(crate) struct Fold {
 }
 
 impl Fold {
-    /// Every request name of `requests` together.
+    /// Every request name of `requests` together: each name's buckets are
+    /// counted into one array indexed by bucket, so the work is the buckets
+    /// given and the span of buckets they reach, never a sort.
     pub(crate) fn of<'a>(requests: impl IntoIterator<Item = &'a RequestPart>) -> Self {
         let mut fold = Fold::default();
-        let mut buckets: Vec<(u64, u64)> = Vec::new();
-        for request in requests {
-            fold.success = fold.success.saturating_add(request.success);
-            fold.fail = fold.fail.saturating_add(request.fail);
-            add_times(&mut fold.times, &request.raw, &mut buckets);
-        }
-        fold.times.buckets = sorted_sums(buckets);
+        SCRATCH.with(|scratch| {
+            let mut counts = scratch.borrow_mut();
+            let (mut low, mut high) = (usize::MAX, 0);
+            for request in requests {
+                fold.success = fold.success.saturating_add(request.success);
+                fold.fail = fold.fail.saturating_add(request.fail);
+                add_counts(&mut fold.times, &request.raw);
+                for &(bucket, count) in &request.raw.buckets {
+                    let index = buckets::bucket_index(bucket);
+                    counts[index] = counts[index].saturating_add(count);
+                    low = low.min(index);
+                    high = high.max(index);
+                }
+            }
+            if low <= high {
+                let held = counts[low..=high].iter().filter(|&&count| count > 0).count();
+                let mut buckets = Vec::with_capacity(held);
+                for (index, count) in counts[low..=high].iter_mut().enumerate() {
+                    if *count > 0 {
+                        buckets.push((buckets::bucket_at(low + index), *count));
+                        *count = 0;
+                    }
+                }
+                fold.times.buckets = buckets;
+            }
+        });
         fold
     }
 
-    /// Add `other`'s requests.
+    /// Add `other`'s requests: both bucket lists are sorted, so they merge
+    /// in one pass.
     fn add(&mut self, other: &Fold) {
         self.success = self.success.saturating_add(other.success);
         self.fail = self.fail.saturating_add(other.fail);
-        let mut buckets = std::mem::take(&mut self.times.buckets);
-        add_times(&mut self.times, &other.times, &mut buckets);
-        self.times.buckets = sorted_sums(buckets);
+        add_counts(&mut self.times, &other.times);
+        self.times.buckets = merge_sorted(&self.times.buckets, &other.times.buckets);
     }
 
     /// Requests, never below 0.
@@ -163,9 +184,19 @@ impl Fold {
     }
 }
 
-/// Add `from`'s times to `to`, its buckets to `buckets`, which
-/// [`sorted_sums`] then sorts and adds up.
-fn add_times(to: &mut Timing, from: &Timing, buckets: &mut Vec<(u64, u64)>) {
+/// The most buckets a time can fall in: [`buckets::bucket_index`] of the
+/// longest time, `u64::MAX` microseconds, is below it.
+const BUCKETS: usize = 3_840;
+
+std::thread_local! {
+    /// A count for every bucket, all 0 between folds: [`Fold::of`] counts
+    /// a delta's buckets into it, 30 KB a thread, once.
+    static SCRATCH: std::cell::RefCell<Vec<u64>> = std::cell::RefCell::new(vec![0; BUCKETS]);
+}
+
+/// Add `from`'s count, total and extremes to `to`; its buckets are the
+/// caller's.
+fn add_counts(to: &mut Timing, from: &Timing) {
     if from.count == 0 {
         return;
     }
@@ -175,21 +206,33 @@ fn add_times(to: &mut Timing, from: &Timing, buckets: &mut Vec<(u64, u64)>) {
     to.maximum_us = to.maximum_us.max(from.maximum_us);
     to.total_us = to.total_us.saturating_add(from.total_us);
     to.count = to.count.saturating_add(from.count);
-    buckets.extend_from_slice(&from.buckets);
 }
 
-/// `buckets` sorted, each bucket once, its counts added up.
-fn sorted_sums(mut buckets: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    buckets.sort_unstable_by_key(|&(bucket, _)| bucket);
-    buckets.dedup_by(|later, kept| {
-        if later.0 == kept.0 {
-            kept.1 = kept.1.saturating_add(later.1);
-            true
-        } else {
-            false
+/// Two sorted bucket lists as one, each bucket once, its counts added.
+fn merge_sorted(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let mut merged = Vec::with_capacity(a.len() + b.len());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].0.cmp(&b[j].0) {
+            std::cmp::Ordering::Less => {
+                merged.push(a[i]);
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                merged.push(b[j]);
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                merged.push((a[i].0, a[i].1.saturating_add(b[j].1)));
+                i += 1;
+                j += 1;
+            }
         }
-    });
-    buckets
+    }
+    merged.extend_from_slice(&a[i..]);
+    merged.extend_from_slice(&b[j..]);
+    merged.shrink_to_fit();
+    merged
 }
 
 /// One delta's requests in the live window, and the seconds it covers: one,
@@ -1036,6 +1079,7 @@ mod tests {
     /// the CPU time after.
     fn burn(health: &mut GaggleHealth, at: Instant, from: u64, to: u64, percent: u64, mut micros: u64) -> u64 {
         for second in from..=to {
+            health.applied(0, None, None, at + secs(second as f64));
             health.cpu(0, Some(micros), at + secs(second as f64));
             health.tick(at + secs(second as f64));
             micros += percent * 10_000;
@@ -1077,6 +1121,7 @@ mod tests {
             health.cpu(0, Some(micros), at);
             for second in 1..=seconds * 2 {
                 micros += if second % 2 == 1 { 950_000 } else { 100_000 };
+                health.applied(0, None, None, at + secs(second as f64));
                 health.cpu(0, Some(micros), at + secs(second as f64));
                 health.tick(at + secs(second as f64));
             }
@@ -1266,7 +1311,8 @@ mod tests {
             delta.metrics.requests.insert(format!("GET /page/{name}"), part);
         }
         let mut second = Duration::ZERO;
-        for tick in 1..=12u64 {
+        // Past the first 30 seconds, so the outliers are judged too.
+        for tick in 31..=42u64 {
             let now = at + secs(tick as f64);
             let started = Instant::now();
             for id in 0..WORKERS {
@@ -1278,7 +1324,7 @@ mod tests {
         }
         let started = Instant::now();
         let record = GaggleRecord {
-            workers: health.records(at + secs(12.0)),
+            workers: health.records(at + secs(42.0)),
             ..GaggleRecord::default()
         };
         let records = started.elapsed();
