@@ -69,7 +69,7 @@ If the `HOST` variable and the `--host` option are not set, Goose will display t
 21:04:11 [INFO] Output verbosity level: INFO
 21:04:11 [INFO] Logfile verbosity level: WARN
 21:04:11 [INFO] users defaulted to number of CPUs = 18
-Error: InvalidOption { option: "--host", value: "", detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions)." }
+Error: invalid option or value specified (--host "": A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions).)
 ```
 
 ## Command Line Arguments

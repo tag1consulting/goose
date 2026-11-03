@@ -35,11 +35,10 @@ You can also use [Goose Eggs](https://github.com/tag1consulting/goose-eggs), a h
 
 `main` is the next minor release (`0.20.0-dev`); `release-0.19` is the maintenance branch for 0.19.x.
 
-* **Bug fixes** merge to `main` first, with their CHANGELOG line under the open patch section (`## 0.19.1-dev` now).
-* Then a backport pull request against `release-0.19` cherry picks the fix with `git cherry-pick -x` and carries the same CHANGELOG line.
-* A fix whose code `main` has already rewritten goes to `release-0.19` directly, with a note in its pull request saying why.
+* **A fix for 0.19.x** is made against `release-0.19` first, with its CHANGELOG line under `## 0.19.1-dev`.
+* It is then **forward ported** to `main` in its own pull request with `git cherry-pick -x`, carrying the same line under main's `## 0.19.1-dev`. If `main` has rewritten that code, the forward port fixes it there by hand and says so.
+* **Work merged to `main`** is for 0.20 and is not backported unless its pull request asks for it. A CHANGELOG line under `## 0.20.0-dev` means `main` only.
 * **Patch releases** (0.19.1, 0.19.2, ...) are tagged from `release-0.19`.
-* **New features and breaking changes** go to `main` only.
 
 CI runs on pull requests against `main` and any `release-*` branch.
 

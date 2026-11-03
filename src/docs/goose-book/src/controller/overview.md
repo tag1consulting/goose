@@ -51,7 +51,7 @@ A Controller that can't listen on its port, because another process already hold
 With `--no-autostart`, if no Controller could listen and dashboard control is off, nothing could start the load test, so Goose refuses to run:
 
 ```text
-Error: InvalidOption { option: "`configuration.no_autostart`", value: "true", detail: "`configuration.no_autostart` requires a Controller or dashboard control, and no Controller could listen on its port." }
+Error: invalid option or value specified (`configuration.no_autostart` "true": `configuration.no_autostart` requires a Controller or dashboard control, and no Controller could listen on its port.)
 ```
 
 ## Controlling a Gaggle

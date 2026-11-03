@@ -5196,8 +5196,7 @@ impl GooseConfiguration {
         if !cfg!(feature = "dashboard") {
             return Err(GooseError::FeatureNotEnabled {
                 feature: "dashboard".to_string(),
-                detail: "dashboard support not compiled in (rebuild with `--features dashboard`)"
-                    .to_string(),
+                detail: "rebuild with `--features dashboard`".to_string(),
             });
         }
 
