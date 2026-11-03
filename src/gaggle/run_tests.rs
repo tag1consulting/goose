@@ -3478,7 +3478,7 @@ async fn gaggle_worker_health_in_one_process() {
         ] {
             assert!(html.contains(text), "{}", text);
         }
-        let markdown = std::fs::read_to_string(folder.join("manager").join("report.md")).unwrap();
+        let markdown = std::fs::read_to_string(folder.join("report.md")).unwrap();
         for text in ["## Workers", "## Events", "Check: "] {
             assert!(markdown.contains(text), "{}: {}", text, markdown);
         }
