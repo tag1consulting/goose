@@ -77,9 +77,17 @@ The same flags are judged live, over the last 10 seconds, where saturated means 
 
 The HTML, Markdown and PDF reports have a Workers section after the plan overview and thresholds. It opens with a line such as `47 of 48 workers finished, 1 lost, 1 saturated, 1 lagging`, then a table of every worker, the most severe first (lost, excluded, saturated, lagging, outlier, refused or missing, then healthy) and then by name: its state, users, requests, requests per second over its running time, failure percent, average and p95 response time over every request name, requests per user per second, peak CPU, the longest gap between its metrics, and its flags in words, such as `lost 03:05`, `saturated 42 s` or `p95 +35%`. The console print shows at most 20 workers.
 
+![The Workers section of a manager's HTML report: four workers, one lost at 04:03, one CPU saturated for 8 seconds, three whose metrics arrived late](gaggle-workers.png)
+
+*A 10 minute run of four workers on a Kubernetes cluster. One worker's pod was deleted at four minutes; adding 2,400 users at once at eight minutes saturated one worker's CPU and held back every worker's metrics for a few seconds.*
+
 An Events section follows, oldest first, each with its time from the start of the run: the run starting, a worker lost and why, a worker's metrics left out or refused, a worker becoming saturated or lagging and recovering, a change of users, throttle or host with how many workers acknowledged it and how long that took (`users 600 to 900, acknowledged by 48 of 48 in 0.4 s`), a stop or start, the throttle's shares made again over the workers left after a loss, and a lost worker's users moved with `--gaggle-rebalance`. The manager keeps the newest 1,000 events and counts older ones, which the section says it left out.
 
 When a worker carries the saturated, lagging or outlier flag, the reports open with a "Check:" sentence for it, after any "Degraded:" sentences, for example: `Check: load-17 was CPU saturated for 42 s in total (peak 97% of 4 cores); its share of requests may be capped and its response times inflated by the generator, not the target.`
+
+![The top of the same report: a Degraded sentence for the lost worker, then a Check sentence for the saturated worker and one for the three whose metrics arrived late](gaggle-check.png)
+
+A worker's CPU is its own process's: another process on the same machine taking the CPU lowers it rather than raising it, so a worker starved by a neighbour shows as lagging or an outlier, not as saturated.
 
 `report.json`'s `gaggle` section carries the same: each worker gains `cores`, `peak_cpu_percent`, `saturated_secs`, `longest_delta_gap_secs`, `running_secs`, `requests`, `failures`, `average_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `requests_per_second`, `requests_per_user_per_second`, `rate_vs_median_percent` and `p95_vs_median_percent` (only when past 25%), `lost_second` and `flags`, and the section gains `events` (each with its `second`, `time`, `kind`, `worker` when about one, and `text`) and `events_dropped`. Every new field is optional, so a report of an earlier Goose still loads. No report holds a worker's address, host name, port or token: a worker appears only under the name the manager gave it.
 
