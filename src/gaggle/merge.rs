@@ -273,8 +273,10 @@ impl GaggleAccumulator {
     /// updated, never built again from nothing, and no build walks every
     /// worker's rows to show them. The work is the delta's own rows, at most
     /// a few seconds of one worker's; the provisional seconds the graph data
-    /// then holds are at most the lag ([`Self::set_lag`]) and a second or
-    /// two. Rows for a second before the complete point still build the
+    /// then holds are the lag ([`Self::set_lag`]) and a second or two
+    /// while every worker keeps sending; a worker that stalls without being
+    /// lost holds the complete point back, and the span grows until it
+    /// sends again or is lost, each delta still costing only its own rows. Rows for a second before the complete point still build the
     /// graph data again from nothing, at most once a lag window for each
     /// worker.
     pub(crate) fn apply_live(

@@ -349,6 +349,31 @@ fn put_back_cancel(reason: Option<String>) {
     }
 }
 
+/// Note in `sent` a worker's answer to a change, when `event` is one: every
+/// loop that takes the manager's events calls this, so no answer is lost to
+/// a loop waiting for something else, which would leave the change open,
+/// warned about and holding later requests back. Taking an answer twice
+/// changes nothing.
+fn note_answer(sent: &mut [super::control::SentControl], event: &Event) {
+    if let Event::ControlAck {
+        id,
+        control,
+        received,
+        error,
+    } = event
+    {
+        if let Some(sent) = sent.iter_mut().find(|sent| sent.id == *control) {
+            match error {
+                // Refused: never applied, and never waited on again.
+                Some(_) => {
+                    sent.forget(*id);
+                }
+                None => sent.answered(*id, *received),
+            }
+        }
+    }
+}
+
 /// The manager's next event before `deadline`, `None` at the deadline, or
 /// the canceled error once the killswitch is triggered: it is checked every
 /// [`KILLSWITCH_POLL`].
@@ -777,18 +802,8 @@ impl GooseAttack {
                     )))
                 }
                 // An answer to a change made while idle, which this share
-                // carries: kept, or the change would stay open for good,
-                // warned about and holding the next requests back.
-                Some(Event::ControlAck {
-                    id,
-                    control,
-                    received,
-                    ..
-                }) => {
-                    if let Some(sent) = run.sent.iter_mut().find(|sent| sent.id == control) {
-                        sent.answered(id, received);
-                    }
-                }
+                // carries.
+                Some(event @ Event::ControlAck { .. }) => note_answer(&mut run.sent, &event),
                 Some(_) => {}
                 None => {
                     return Err(gaggle_error(format!(
@@ -1363,16 +1378,7 @@ impl GooseAttack {
                     format!("it refused change {control}, which the manager accepted: {error}");
                 self.lose_worker(goose_attack_run_state, run, id, why);
             }
-            Event::ControlAck {
-                id,
-                control,
-                received,
-                ..
-            } => {
-                if let Some(sent) = run.sent.iter_mut().find(|sent| sent.id == control) {
-                    sent.answered(id, received);
-                }
-            }
+            event @ Event::ControlAck { .. } => note_answer(&mut run.sent, &event),
             Event::Joined | Event::PrepareAck { .. } | Event::Log { .. } => {}
         }
         self.gaggle_settle(goose_attack_run_state, run);
@@ -2208,12 +2214,18 @@ async fn collect_logs_into(run: &mut ManagerRun, folder: Option<PathBuf>) {
             }
             Event::Lost { id, why } => {
                 warn!("gaggle: worker {id} lost while sending its logs: {why}");
+                // No change waits on it any longer.
+                for sent in run.sent.iter_mut() {
+                    sent.forget(id);
+                }
                 if let Some(files) = pending.get_mut(&id) {
                     for log in std::mem::take(files).into_values() {
                         give_up(run, &mut open, id, &log).await;
                     }
                 }
             }
+            // An answer to a change sent before the run ended.
+            event @ Event::ControlAck { .. } => note_answer(&mut run.sent, &event),
             _ => {}
         }
     }
