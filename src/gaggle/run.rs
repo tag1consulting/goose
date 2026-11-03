@@ -1338,7 +1338,8 @@ impl GooseAttack {
             } => {
                 // It refused what the manager accepted and the others took.
                 error!("gaggle: worker {id} refused change {control}, which the manager accepted: {error}");
-                let why = format!("it refused a change the manager accepted: {error}");
+                let why =
+                    format!("it refused change {control}, which the manager accepted: {error}");
                 self.lose_worker(goose_attack_run_state, run, id, why);
             }
             Event::ControlAck {
@@ -3039,7 +3040,7 @@ mod tests {
                     assert!(outcome.ok);
                     assert!(
                         outcome.message.contains(
-                            "users configured; accepted by 1 of 2 workers; worker 1 (v) lost: it refused a change the manager accepted: x"
+                            "users configured; accepted by 1 of 2 workers; worker 1 (v) lost: it refused change 7, which the manager accepted: x"
                         ),
                         "{}",
                         outcome.message
@@ -3056,6 +3057,30 @@ mod tests {
             };
             attack.manager_event(&mut state, &mut run, applied);
             assert!(run.sent.is_empty(), "the change was applied");
+            // A worker that received changes it has yet to apply holds the
+            // next request back once it has MAX_UNAPPLIED of them, so its
+            // stream reader never fills its queue and stops saying received.
+            let unapplied = |id: u64| crate::gaggle::control::SentControl {
+                id,
+                what: "throttle".to_string(),
+                sent: Instant::now(),
+                workers: 1,
+                unreceived: BTreeSet::new(),
+                unapplied: BTreeSet::from([0]),
+                applied: 0,
+                warned: Instant::now(),
+            };
+            run.sent = (0..crate::gaggle::control::MAX_UNAPPLIED as u64)
+                .map(|id| unapplied(20 + id))
+                .collect();
+            attack.gaggle.role = Some(GaggleRole::Manager(run));
+            assert!(attack.gaggle_control_pending(), "the next request waits");
+            let Some(GaggleRole::Manager(mut run)) = attack.gaggle.role.take() else {
+                panic!("the manager's run");
+            };
+            run.sent.pop();
+            attack.gaggle.role = Some(GaggleRole::Manager(run));
+            assert!(!attack.gaggle_control_pending(), "one fewer: it goes ahead");
         };
         tokio::time::timeout(Duration::from_secs(30), Box::pin(test))
             .await

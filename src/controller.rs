@@ -809,8 +809,9 @@ impl GooseAttack {
                 };
             let mut answered = 0;
             while answered < MAX_DRAIN {
-                // A Gaggle manager's change waits for its workers' answers:
-                // what came after it stays queued until then.
+                // A Gaggle manager's change waits until every worker received
+                // it, and a worker with too many changes still to apply holds
+                // the next back: what came after stays queued until then.
                 #[cfg(feature = "gaggle")]
                 if self.gaggle_control_pending() {
                     break 'drain;

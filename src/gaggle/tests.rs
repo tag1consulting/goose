@@ -3079,6 +3079,7 @@ mod built_as_it_goes {
     #[test]
     fn a_failure_taken_back_later_leaves_the_live_graph() {
         let (mut built, mut fresh) = (lagged(10), lagged(10));
+        super::super::merge::FRESH_BUILDS.with(|builds| builds.set(0));
         let mut graph = built.merged_and_excluded(GraphData::new()).1;
         let key = "GET /0".to_string();
         let mut first = second(0, 1, 1, 0..1, 1);
@@ -3100,6 +3101,13 @@ mod built_as_it_goes {
             fresh.apply(0, delta).unwrap();
             graph = built.merged_and_excluded(graph).1;
         }
+        // The empty start and the worker's first delta, which builds every
+        // figure again: the later delta was added in place.
+        assert_eq!(
+            super::super::merge::FRESH_BUILDS.with(std::cell::Cell::get),
+            2,
+            "the later delta was built from nothing"
+        );
         let series = graph.export_series_window(300);
         assert_eq!(series.provisional_from, Some(0));
         assert_eq!(series.fps.first(), Some(&1.0), "{:?}", series.fps);

@@ -128,7 +128,7 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
     rpsSummary,
     series.rps.length === 0
       ? "No data yet."
-      : rpsComplete.length === 0
+      : provisional !== null && rpsComplete.length === 0
       ? NO_COMPLETE
       : withTrend("RPS " + formatRate(rps.mean), rps.trend) +
           "; failures " + formatRate(recentTrend(fpsComplete).mean) + "/s."
@@ -157,7 +157,7 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
     setLatencySummary(
       series.avg_latency_ms.length === 0
         ? "No data yet."
-        : latComplete.length === 0
+        : provisional !== null && latComplete.length === 0
         ? NO_COMPLETE
         : withTrend("Average " + formatMs(lat.mean) + " ms", lat.trend) + "."
     );

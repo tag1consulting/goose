@@ -196,7 +196,8 @@ mod tests {
 
     /// After a quiet spell, users may send one second of the current rate
     /// at once, whatever the rate the run started at: raised from 100 to
-    /// 400 a second the burst is 400, lowered to 50 it is 50.
+    /// 400 a second the burst is 400, and lowered to 50 after a quiet spell,
+    /// with 400 slots free, the fillers take back all but 50 of them.
     #[tokio::test]
     async fn the_burst_follows_the_rate() {
         let test = async {
@@ -205,6 +206,7 @@ mod tests {
             throttle.rate.store(400, Ordering::Relaxed);
             tokio::time::sleep(QUIET).await;
             near("a burst at 400 a second", burst(&throttle.users), 400, 10);
+            tokio::time::sleep(QUIET).await;
             throttle.rate.store(50, Ordering::Relaxed);
             tokio::time::sleep(QUIET).await;
             near("a burst at 50 a second", burst(&throttle.users), 50, 10);
@@ -215,8 +217,9 @@ mod tests {
             .expect("within 30 seconds");
     }
 
-    /// A throttle started at 1 a second rises to 1,000, more than 100 times
-    /// its start: both its rate and its burst follow.
+    /// A throttle started at 1 a second rises to 1,000, 1,000 times its
+    /// start, past the 100 times a channel of one second of the starting
+    /// rate allowed: both its rate and its burst follow.
     #[tokio::test]
     async fn a_throttle_rises_past_100_times_its_start() {
         let test = async {

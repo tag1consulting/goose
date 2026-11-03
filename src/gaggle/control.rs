@@ -326,6 +326,14 @@ pub(crate) const ACK_TIMEOUT: Duration = if cfg!(test) {
 };
 const _: () = assert!(ACK_TIMEOUT.as_millis() < crate::controller::CONTROL_TIMEOUT.as_millis());
 
+/// The most changes a worker may hold that it has yet to apply before the
+/// next control request waits for it: below the 16 events its stream reader
+/// queues ([`super::link`]'s `EVENT_QUEUE`), with room for a Stop, a metrics
+/// reset and the changes the manager sends after a loss, so the reader never
+/// stops reading, and a worker applying a long change is never lost for not
+/// saying it received the next.
+pub(crate) const MAX_UNAPPLIED: usize = 8;
+
 /// How often the manager warns that a worker received a change and has yet
 /// to apply it: every 30 seconds. Applying a change has no deadline.
 const APPLY_WARNING: Duration = Duration::from_secs(30);
@@ -400,11 +408,21 @@ impl GooseAttack {
         }
     }
 
-    /// Whether a change waits for its workers to say they received it: until
-    /// then, every other control request stays queued, in the order it came.
-    /// None waits for a change to be applied.
+    /// Whether the next control request waits: until every worker said it
+    /// received the change before it, and while a worker has
+    /// [`MAX_UNAPPLIED`] changes it received and has yet to apply. Every
+    /// other request stays queued meanwhile, in the order it came.
     pub(crate) fn gaggle_control_pending(&self) -> bool {
-        self.manager_run().is_some_and(|run| run.pending.is_some())
+        self.manager_run().is_some_and(|run| {
+            run.pending.is_some()
+                || run.workers.iter().any(|worker| {
+                    run.sent
+                        .iter()
+                        .filter(|sent| sent.unapplied.contains(&worker.id))
+                        .count()
+                        >= MAX_UNAPPLIED
+                })
+        })
     }
 
     /// A Gaggle manager's command that changes the run, other than a Start:
