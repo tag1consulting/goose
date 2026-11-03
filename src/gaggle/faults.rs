@@ -49,6 +49,10 @@ pub(crate) struct TestFaults {
     pub(crate) oversize_delta: u64,
     /// Make the final delta larger than a message may be.
     pub(crate) oversize_final: bool,
+    /// Take this long to apply the first users change of a running load
+    /// test, after reading it: its main loop waits, as one building many
+    /// users does.
+    pub(crate) slow_apply: Option<Duration>,
 }
 
 impl TestFaults {
@@ -186,6 +190,15 @@ pub(crate) fn hold_threshold_check(has_requests: bool) {
         std::thread::sleep(Duration::from_millis(300));
     });
 }
+
+/// The warnings the manager logged for a change a worker received but had
+/// not yet applied.
+pub(crate) static DONE_WARNINGS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// The changes every worker the manager sent them to has applied.
+pub(crate) static CHANGES_DONE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// The workers' `Stopped`, which follows their final metrics, the manager
 /// has taken.

@@ -6,7 +6,7 @@ use crate::goose::{Scenario, Transaction};
 use crate::metrics::GooseMetrics;
 use crate::GooseAttack;
 use httpmock::{Method::GET, MockServer};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -2940,6 +2940,22 @@ async fn telnet_gaggle(
     Vec<tokio::task::JoinHandle<Result<GooseMetrics, crate::GooseError>>>,
     tokio::sync::mpsc::UnboundedReceiver<super::run::WorkerApplied>,
 ) {
+    telnet_gaggle_with(telnet, host, folder, args, &[]).await
+}
+
+/// [`telnet_gaggle`], worker `n` given `faults[n]`.
+#[allow(clippy::type_complexity)]
+async fn telnet_gaggle_with(
+    telnet: u16,
+    host: &str,
+    folder: &Path,
+    args: &[&str],
+    faults: &[TestFaults],
+) -> (
+    tokio::task::JoinHandle<Result<GooseMetrics, crate::GooseError>>,
+    Vec<tokio::task::JoinHandle<Result<GooseMetrics, crate::GooseError>>>,
+    tokio::sync::mpsc::UnboundedReceiver<super::run::WorkerApplied>,
+) {
     no_token_from_the_environment();
     let telnet_port = telnet.to_string();
     let mut all = vec![
@@ -2977,10 +2993,152 @@ async fn telnet_gaggle(
             "--output-dir",
             &worker_folder,
         ];
-        let attack = quick(configuration(&args), Some(worker)).report_applied(report.clone());
+        let attack = quick(configuration(&args), Some(worker))
+            .report_applied(report.clone())
+            .gaggle_test_faults(faults.get(worker).copied().unwrap_or_default());
         workers.push(tokio::spawn(attack.execute()));
     }
     (manager, workers, reports)
+}
+
+/// The telnet port of [`gaggle_slow_apply_keeps_its_worker`].
+const SLOW_TELNET: u16 = 5238;
+
+/// How long the slow worker of [`gaggle_slow_apply_keeps_its_worker`]
+/// takes to apply its users change: past the manager's first warning, at
+/// 30 seconds, so the warning is logged before the change is applied.
+const SLOW_APPLY: Duration = Duration::from_secs(33);
+
+/// A worker that takes 33 seconds to apply a users change says it received
+/// the change at once, so it is not lost: the reply comes within the 15
+/// seconds a client waits, saying every worker accepted it, the manager
+/// warns at 30 seconds that the change is still being applied, and logs
+/// when both workers applied it. A second change sent while the first is
+/// still applying is answered as soon as both received it, and every worker
+/// applies the two in the order sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_slow_apply_keeps_its_worker() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("slow-apply");
+        let manager_folder = folder.join("manager").display().to_string();
+        let slow = TestFaults {
+            slow_apply: Some(SLOW_APPLY),
+            ..TestFaults::default()
+        };
+        let (manager, workers, mut reports) = telnet_gaggle_with(
+            SLOW_TELNET,
+            &server.base_url(),
+            &folder,
+            &[
+                "--users",
+                "4",
+                "--increase-rate",
+                "100",
+                "--report-file",
+                "--output-dir",
+                &manager_folder,
+            ],
+            &[slow],
+        )
+        .await;
+        let mut telnet = Telnet::connect(SLOW_TELNET).await;
+        // Each worker took its share, 2 users, and runs.
+        let start = applied(&mut reports, 2).await;
+        assert_eq!(
+            start.iter().map(|r| r.users).collect::<Vec<_>>(),
+            [Some(2), Some(2)]
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        super::faults::DONE_WARNINGS.store(0, SeqCst);
+        super::faults::CHANGES_DONE.store(0, SeqCst);
+
+        let sent = std::time::Instant::now();
+        let reply = telnet.send("users 10").await;
+        let took = sent.elapsed();
+        assert!(reply.starts_with("users configured"), "{}", reply);
+        assert!(!reply.contains("lost"), "{}", reply);
+        assert!(reply.contains("accepted by 2 of 2 workers"), "{}", reply);
+        assert!(
+            took < crate::controller::CONTROL_TIMEOUT,
+            "answered after {:?}",
+            took
+        );
+        // The second change, while the slow worker still applies the first.
+        let reply = telnet.send("users 6").await;
+        let took = sent.elapsed();
+        assert!(reply.starts_with("users configured"), "{}", reply);
+        assert!(!reply.contains("lost"), "{}", reply);
+        assert!(
+            took < crate::controller::CONTROL_TIMEOUT,
+            "the second answered {:?} after the first was sent",
+            took
+        );
+
+        // Every worker applies 5 users, then 3, in the order sent: the fast
+        // one at once, the slow one after its 33 seconds.
+        let mut seen: BTreeMap<u32, Vec<(Option<usize>, Duration)>> = BTreeMap::new();
+        while seen.values().map(Vec::len).sum::<usize>() < 4 {
+            let report = tokio::time::timeout(SLOW_APPLY + Duration::from_secs(10), reports.recv())
+                .await
+                .expect("every worker applies both changes")
+                .expect("a report");
+            assert!(!report.refused, "{:?}", report);
+            seen.entry(report.worker)
+                .or_default()
+                .push((report.users, sent.elapsed()));
+        }
+        let mut slowest: Vec<Duration> = Vec::new();
+        for (worker, applied) in &seen {
+            let users: Vec<Option<usize>> = applied.iter().map(|(users, _)| *users).collect();
+            assert_eq!(
+                users,
+                [Some(5), Some(3)],
+                "worker {}: {:?}",
+                worker,
+                applied
+            );
+            slowest.push(applied[0].1);
+        }
+        slowest.sort_unstable();
+        assert!(slowest[0] < Duration::from_secs(5), "{:?}", seen);
+        assert!(slowest[1] >= SLOW_APPLY, "{:?}", seen);
+        assert!(
+            super::faults::DONE_WARNINGS.load(SeqCst) >= 1,
+            "no warning while the slow worker applied its change"
+        );
+        // Both changes were logged as applied by every worker.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while super::faults::CHANGES_DONE.load(SeqCst) < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{} changes logged as applied",
+                super::faults::CHANGES_DONE.load(SeqCst)
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let reply = telnet.send("shutdown").await;
+        assert!(reply.starts_with("load test shut down"), "{}", reply);
+        manager
+            .await
+            .expect("the manager task ends")
+            .expect("the manager ends cleanly");
+        for worker in workers {
+            worker
+                .await
+                .expect("the worker task ends")
+                .expect("no worker was lost");
+        }
+        let (gaggle, _) = record(&folder);
+        let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+        assert!(lost.is_empty(), "{}", gaggle);
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
 }
 
 /// The telnet port of [`telnet_gaggle`].

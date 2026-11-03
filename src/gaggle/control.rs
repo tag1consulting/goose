@@ -5,8 +5,12 @@
 //!
 //! The manager checks a change against the rules one process applies, applies
 //! it to its own run, the run's clock, and sends each worker its share in a
-//! `Control`. A worker applies its share through the same checks and answers
-//! with a `ControlAck`; the front end hears once every worker answered.
+//! `Control`. A worker answers twice, each time with a `ControlAck`: that it
+//! received the change, as soon as it reads it, then that it applied its share
+//! through the same checks, or refused it. The front end hears once every
+//! worker received the change; a worker that does not receive it within
+//! [`ACK_TIMEOUT`] is lost, and one that received it stays in the run, however
+//! long applying it takes, while its stream and heartbeats are alive.
 
 use super::proto::{manager_message::Message as ToWorker, Control};
 use super::run::{GaggleRole, ManagerRun};
@@ -38,6 +42,37 @@ pub(crate) enum WorkerControl {
 }
 
 impl WorkerControl {
+    /// What the control changes, for the log: `stop`, `shutdown`, or the
+    /// settings it sets, such as `users, throttle`.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            WorkerControl::Stop => "stop".to_string(),
+            WorkerControl::Shutdown => "shutdown".to_string(),
+            WorkerControl::Settings(settings) => {
+                let fields = [
+                    ("host", settings.host.is_some()),
+                    ("users", settings.users.is_some()),
+                    ("increase_rate", settings.increase_rate.is_some()),
+                    ("increase_time", settings.increase_time.is_some()),
+                    ("decrease_rate", settings.decrease_rate.is_some()),
+                    ("decrease_time", settings.decrease_time.is_some()),
+                    ("run_time", settings.run_time.is_some()),
+                    ("test_plan", settings.test_plan.is_some()),
+                    ("throttle", settings.throttle.is_some()),
+                ];
+                let set: Vec<&str> = fields
+                    .iter()
+                    .filter(|(_, set)| *set)
+                    .map(|(name, _)| *name)
+                    .collect();
+                match set.is_empty() {
+                    true => "settings".to_string(),
+                    false => set.join(", "),
+                }
+            }
+        }
+    }
+
     /// The control as it travels, postcard encoded.
     pub(crate) fn encode(&self) -> Result<Vec<u8>, postcard::Error> {
         postcard::to_stdvec(self)
@@ -282,8 +317,8 @@ pub(crate) fn rate_shares(rate: f32, users: &[usize]) -> Vec<f32> {
 /// manager applied it.
 type Change = (ControlOutcome, Option<Vec<(u32, WorkerControl)>>);
 
-/// How long the manager waits for every worker to answer a change: 10
-/// seconds, inside the 15 a front end waits.
+/// How long the manager waits for every worker to say it received a change:
+/// 10 seconds, inside the 15 a front end waits.
 pub(crate) const ACK_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(5)
 } else {
@@ -291,22 +326,61 @@ pub(crate) const ACK_TIMEOUT: Duration = if cfg!(test) {
 };
 const _: () = assert!(ACK_TIMEOUT.as_millis() < crate::controller::CONTROL_TIMEOUT.as_millis());
 
+/// How often the manager warns that a worker received a change and has yet
+/// to apply it: every 30 seconds. Applying a change has no deadline.
+const APPLY_WARNING: Duration = Duration::from_secs(30);
+
 /// How long a lost worker's users take to start on the workers left, with
 /// `--gaggle-rebalance`.
 const REBALANCE_RAMP_MS: usize = 1_000;
 
-/// A change sent to the workers, which its front end hears about once every
-/// worker answered, or was lost.
+/// A change a front end waits on: answered once every worker it was sent to
+/// received it, or was lost.
 pub(crate) struct PendingControl {
+    /// The [`SentControl`] it waits on.
     pub(super) id: u64,
-    /// The workers yet to answer.
-    pub(super) awaiting: BTreeSet<u32>,
-    pub(super) deadline: Instant,
     pub(super) respond: oneshot::Sender<ControlReply>,
     /// The manager's own outcome, which the reply carries.
     pub(super) outcome: ControlOutcome,
-    /// Each worker lost meanwhile, and why.
+    /// Each worker lost before it received the change, and why.
     pub(super) lost: Vec<String>,
+}
+
+/// A change sent to the workers, until each has applied it or was lost.
+pub(crate) struct SentControl {
+    pub(super) id: u64,
+    /// What it changes, for the log.
+    pub(super) what: String,
+    pub(super) sent: Instant,
+    /// How many workers it was sent to.
+    pub(super) workers: usize,
+    /// The workers yet to say they received it, each lost at
+    /// [`ACK_TIMEOUT`].
+    pub(super) unreceived: BTreeSet<u32>,
+    /// The workers yet to apply it.
+    pub(super) unapplied: BTreeSet<u32>,
+    /// How many applied it.
+    pub(super) applied: usize,
+    /// When the manager last warned it is still being applied.
+    pub(super) warned: Instant,
+}
+
+impl SentControl {
+    /// A worker's answer: it received the change, or, `received` false, it
+    /// applied it, which says it received it too.
+    pub(super) fn answered(&mut self, worker: u32, received: bool) {
+        self.unreceived.remove(&worker);
+        if !received && self.unapplied.remove(&worker) {
+            self.applied += 1;
+        }
+    }
+
+    /// A worker lost: never waited on again. Whether it had yet to receive
+    /// the change.
+    pub(super) fn forget(&mut self, worker: u32) -> bool {
+        self.unapplied.remove(&worker);
+        self.unreceived.remove(&worker)
+    }
 }
 
 impl GooseAttack {
@@ -326,9 +400,9 @@ impl GooseAttack {
         }
     }
 
-    /// Whether a change waits for its workers' answers: until it is
-    /// answered, every other control request stays queued, in the order it
-    /// came.
+    /// Whether a change waits for its workers to say they received it: until
+    /// then, every other control request stays queued, in the order it came.
+    /// None waits for a change to be applied.
     pub(crate) fn gaggle_control_pending(&self) -> bool {
         self.manager_run().is_some_and(|run| run.pending.is_some())
     }
@@ -336,7 +410,7 @@ impl GooseAttack {
     /// A Gaggle manager's command that changes the run, other than a Start:
     /// checked as one process checks it, and against what a Gaggle needs,
     /// applied to the manager's own run, then sent to every worker as its
-    /// share; the front end hears once every worker answered. A Start is
+    /// share; the front end hears once every worker received it. A Start is
     /// answered as one process answers it, and its workers are handed their
     /// shares as the run begins.
     pub(crate) async fn gaggle_control(
@@ -446,7 +520,7 @@ impl GooseAttack {
         })
     }
 
-    /// Send each worker its control, waiting for no answer.
+    /// Send each worker its control, no front end waiting.
     fn tell_workers(&mut self, controls: Vec<(u32, WorkerControl)>) {
         if let Some(run) = self.manager_run_mut() {
             let _ = send_controls(run, controls);
@@ -614,12 +688,6 @@ impl GooseAttack {
         };
         let mut shares = vec![WorkerSettings::default(); workers];
         let mut moved = false;
-        // Whether a worker builds users: one gets more, or a test plan.
-        let before: Vec<usize> = ids
-            .iter()
-            .map(|&id| run.book.users(id as usize).len())
-            .collect();
-        run.builds_users = matches!(settings.test_plan, Some(Some(_)));
         if let Some(users) = settings.users {
             run.book.set_users(users, &mask, order.clone());
             for &id in &ids {
@@ -659,10 +727,6 @@ impl GooseAttack {
             .iter()
             .map(|&id| run.book.users(id as usize).len())
             .collect();
-        run.builds_users |= counts
-            .iter()
-            .zip(&before)
-            .any(|(after, before)| after > before);
         let rates = |rate: Option<Option<f32>>| -> Vec<Option<Option<f32>>> {
             match rate {
                 Some(Some(rate)) => rate_shares(rate, &counts)
@@ -717,7 +781,7 @@ impl GooseAttack {
     }
 
     /// Send each worker its control, as one change: the front end hears
-    /// `outcome` once every worker answered or was lost.
+    /// `outcome` once every worker received it or was lost.
     fn fan_out(
         &mut self,
         outcome: ControlOutcome,
@@ -728,22 +792,12 @@ impl GooseAttack {
             let _ = respond.send(ControlReply::Outcome(outcome));
             return;
         };
-        let id = send_controls(run, controls);
-        let awaiting = id.1;
-        if awaiting.is_empty() {
+        let Some(id) = send_controls(run, controls) else {
             let _ = respond.send(ControlReply::Outcome(outcome));
             return;
-        }
-        // Building users takes as long as a Prepare may, on one process as
-        // here: one process's own large users change also answers late.
-        let wait = match std::mem::take(&mut run.builds_users) {
-            true => super::run::PREPARE_TIMEOUT.max(ACK_TIMEOUT),
-            false => ACK_TIMEOUT,
         };
         run.pending = Some(PendingControl {
-            id: id.0,
-            awaiting,
-            deadline: Instant::now() + wait,
+            id,
             respond,
             outcome,
             lost: Vec::new(),
@@ -834,43 +888,104 @@ impl GooseAttack {
         let _ = send_controls(run, controls);
     }
 
-    /// The manager's change waiting on its workers: answered once none is
-    /// left to answer, and each still silent at its deadline is lost.
+    /// The changes sent to the workers: a worker that has not said it
+    /// received one within [`ACK_TIMEOUT`] is lost; the change a front end
+    /// waits on is answered once every worker received it; a change some
+    /// worker received and has yet to apply is warned about every
+    /// [`APPLY_WARNING`]; and one every worker applied is logged.
     pub(super) fn gaggle_settle(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut ManagerRun,
     ) {
-        let late: Vec<u32> = match run.pending.as_ref() {
-            Some(pending) if Instant::now() >= pending.deadline => {
-                pending.awaiting.iter().copied().collect()
-            }
-            _ => Vec::new(),
-        };
+        let now = Instant::now();
+        let late: BTreeSet<u32> = run
+            .sent
+            .iter()
+            .filter(|sent| now.duration_since(sent.sent) >= ACK_TIMEOUT)
+            .flat_map(|sent| sent.unreceived.iter().copied())
+            .collect();
         for id in late {
             let why = format!(
-                "it did not answer a change within {} seconds",
+                "it did not receive a change within {} seconds",
                 ACK_TIMEOUT.as_secs()
             );
             self.lose_worker(goose_attack_run_state, run, id, why);
             // Never waited on again, however it was marked.
-            if let Some(pending) = run.pending.as_mut() {
-                pending.awaiting.remove(&id);
+            for sent in run.sent.iter_mut() {
+                sent.forget(id);
             }
         }
-        if run
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.awaiting.is_empty())
-        {
+        let received = run.pending.as_ref().map(|pending| {
+            run.sent
+                .iter()
+                .find(|sent| sent.id == pending.id)
+                .is_none_or(|sent| sent.unreceived.is_empty())
+        });
+        if received == Some(true) {
             if let Some(pending) = run.pending.take() {
+                let workers = run
+                    .sent
+                    .iter()
+                    .find(|sent| sent.id == pending.id)
+                    .map_or(0, |sent| sent.workers);
                 let mut outcome = pending.outcome;
+                outcome.message = format!(
+                    "{}; accepted by {} of {} workers",
+                    outcome.message,
+                    workers.saturating_sub(pending.lost.len()),
+                    workers
+                );
                 if !pending.lost.is_empty() {
                     outcome.message = format!("{}; {}", outcome.message, pending.lost.join("; "));
                 }
                 let _ = pending.respond.send(ControlReply::Outcome(outcome));
             }
         }
+        for sent in run.sent.iter_mut() {
+            if now.duration_since(sent.warned) < APPLY_WARNING {
+                continue;
+            }
+            let applying: Vec<u32> = sent
+                .unapplied
+                .difference(&sent.unreceived)
+                .copied()
+                .collect();
+            if applying.is_empty() {
+                continue;
+            }
+            sent.warned = now;
+            for id in applying {
+                let name = run
+                    .workers
+                    .get(id as usize)
+                    .map_or("", |worker| worker.name.as_str());
+                warn!(
+                    "gaggle: worker {id} ({name}) received change {} ({}) and has yet to apply it, {} seconds after it was sent",
+                    sent.id,
+                    sent.what,
+                    now.duration_since(sent.sent).as_secs()
+                );
+                #[cfg(test)]
+                super::faults::DONE_WARNINGS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        run.sent.retain(|sent| {
+            if !sent.unapplied.is_empty() {
+                return true;
+            }
+            info!(
+                "gaggle: change {} ({}) applied by {} of {} workers, {:.1} seconds after it was sent",
+                sent.id,
+                sent.what,
+                sent.applied,
+                sent.workers,
+                now.duration_since(sent.sent).as_secs_f64()
+            );
+            #[cfg(test)]
+            super::faults::CHANGES_DONE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            false
+        });
     }
 }
 
@@ -908,26 +1023,41 @@ fn follow_throttle(ids: &[u32], counts: &[usize], throttle: usize) -> Vec<usize>
         .collect()
 }
 
-/// Send each worker its control under one new id: the id, and the workers
-/// it was sent to.
-fn send_controls(
-    run: &mut ManagerRun,
-    controls: Vec<(u32, WorkerControl)>,
-) -> (u64, BTreeSet<u32>) {
+/// Send each worker its control under one new id, kept in
+/// [`ManagerRun::sent`] until every worker applied it: the id, `None` when
+/// it went to no worker.
+fn send_controls(run: &mut ManagerRun, controls: Vec<(u32, WorkerControl)>) -> Option<u64> {
     let id = run.next_control;
     run.next_control += 1;
-    let mut sent = BTreeSet::new();
+    let what = controls
+        .first()
+        .map_or_else(String::new, |(_, control)| control.describe());
+    let mut to = BTreeSet::new();
     for (worker, control) in controls {
         match control.encode() {
             Ok(command) => {
                 run.manager
                     .send(worker, ToWorker::Control(Control { id, command }));
-                sent.insert(worker);
+                to.insert(worker);
             }
             Err(e) => warn!("gaggle: could not encode a change for worker {worker}: {e}"),
         }
     }
-    (id, sent)
+    if to.is_empty() {
+        return None;
+    }
+    let now = Instant::now();
+    run.sent.push(SentControl {
+        id,
+        what,
+        sent: now,
+        workers: to.len(),
+        unreceived: to.clone(),
+        unapplied: to,
+        applied: 0,
+        warned: now,
+    });
+    Some(id)
 }
 
 #[cfg(test)]

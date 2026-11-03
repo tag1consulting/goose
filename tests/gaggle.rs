@@ -858,10 +858,10 @@ fn telnet(port: u16, command: &str) -> String {
     read_reply(&mut stream)
 }
 
-/// A worker that stops reading its stream, frozen with SIGSTOP, misses the
-/// deadline for answering a change: it is marked lost, and the change's
-/// reply names it, within the 15 seconds a Controller waits; the change
-/// stands on the other worker. Once thawed, it finds itself shut down and
+/// A worker that stops reading its stream, frozen with SIGSTOP, never says
+/// it received a change, one that starts users: it is marked lost at the 10
+/// second deadline, and the change's reply names it, within the 15 seconds a
+/// Controller waits; the change stands on the other worker. Once thawed, it finds itself shut down and
 /// exits.
 #[test]
 #[serial_test::serial]
@@ -872,7 +872,7 @@ fn gaggle_worker_missing_the_answer_deadline_is_lost() {
         let folder = scratch("missed-answer");
         let host = server.base_url();
         let simple = example("simple");
-        // Heartbeats that never run out first: only the answer deadline
+        // Heartbeats that never run out first: only the received deadline
         // finds the frozen worker.
         let manager = Process::start(
             &simple,
@@ -923,13 +923,14 @@ fn gaggle_worker_missing_the_answer_deadline_is_lost() {
         until_load(|| index.calls(), Duration::from_secs(30));
         signal(second.child.id(), nix::sys::signal::Signal::SIGSTOP);
         let sent = Instant::now();
-        // A change that starts no user, so the 10 second deadline applies:
-        // one that starts users waits as long as a Prepare.
-        let reply = telnet(5246, "users 6");
+        // A change that starts users: a frozen worker never says it received
+        // it, so it is lost at the 10 second deadline, however long applying
+        // the change would take.
+        let reply = telnet(5246, "users 30");
         let took = sent.elapsed();
         assert!(reply.starts_with("users configured"), "{}", reply);
         assert!(
-            reply.contains("(second) lost: it did not answer a change within 10 seconds"),
+            reply.contains("(second) lost: it did not receive a change within 10 seconds"),
             "{}",
             reply
         );
@@ -947,12 +948,12 @@ fn gaggle_worker_missing_the_answer_deadline_is_lost() {
         first
             .wait(Duration::from_secs(20))
             .expect("the other worker exits");
-        // The change stood on the other worker: its 10 users down to 6.
+        // The change stood on the other worker: its 10 users up to 15.
         assert!(
             first
                 .output()
                 .lines()
-                .any(|line| line.contains("changing users from") && line.ends_with(" to 6")),
+                .any(|line| line.contains("changing users from") && line.ends_with(" to 15")),
             "{}",
             first.output()
         );

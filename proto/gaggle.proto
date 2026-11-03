@@ -83,12 +83,18 @@ message Stopped {
 // `Stopped` follow.
 message UsersStopped {}
 
-// A worker's answer to `Control`, once it applied the change or refused it.
+// A worker's answers to `Control`, two for each: one with `received` as soon
+// as it reads the change, before applying it, then one without once it
+// applied the change or refused it. A worker applies changes in the order it
+// received them.
 message ControlAck {
   // The `Control` it answers.
   uint64 id = 1;
-  // Empty when the change was applied; otherwise why it was refused.
+  // Empty when the change was applied, and on `received`; otherwise why it
+  // was refused.
   optional string error = 2;
+  // The worker read the change, and has yet to apply it.
+  bool received = 3;
 }
 
 message LogChunk {
@@ -152,8 +158,9 @@ message Stop {
 
 message SendLogs {}
 
-// A runtime change from a Controller or the dashboard: the worker applies its
-// share and answers with a `ControlAck` of the same id.
+// A runtime change from a Controller or the dashboard: the worker says it
+// received it, applies its share, and says it applied it, each with a
+// `ControlAck` of the same id.
 message Control {
   uint64 id = 1;
   // A postcard encoded worker control.

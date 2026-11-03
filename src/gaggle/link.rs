@@ -459,7 +459,8 @@ pub(crate) enum LinkEvent {
     Stop(String),
     /// Send the logs.
     SendLogs,
-    /// A runtime change, postcard encoded, to answer with `ControlAck`.
+    /// A runtime change, postcard encoded, to answer with `ControlAck` once
+    /// applied: the link said it was received as it read it.
     Control { id: u64, command: Vec<u8> },
     /// Exit.
     Shutdown,
@@ -813,10 +814,14 @@ impl Link {
     }
 
     /// Tell the manager every user stopped, before the final delta.
-    /// Answer the manager's `Control` `id`: `error` is why it was refused.
+    /// Say the manager's `Control` `id` was applied, or, with `error`, why
+    /// it was refused. The link said it was received as it read it.
     pub(crate) fn control_ack(&self, id: u64, error: Option<String>) {
-        self.outbox
-            .push_message(ToManager::ControlAck(ControlAck { id, error }));
+        self.outbox.push_message(ToManager::ControlAck(ControlAck {
+            id,
+            error,
+            received: false,
+        }));
     }
 
     pub(crate) fn users_stopped(&self) {
@@ -1189,10 +1194,21 @@ async fn read_manager(
             Some(FromManager::ResetMetrics(reset)) => LinkEvent::ResetMetrics(reset.epoch),
             Some(FromManager::Stop(stop)) => LinkEvent::Stop(stop.reason),
             Some(FromManager::SendLogs(_)) => LinkEvent::SendLogs,
-            Some(FromManager::Control(control)) => LinkEvent::Control {
-                id: control.id,
-                command: control.command,
-            },
+            Some(FromManager::Control(control)) => {
+                // Received, as soon as it is read: the main loop applies it,
+                // in the order received, however long that takes.
+                switch
+                    .outbox
+                    .push_message(ToManager::ControlAck(ControlAck {
+                        id: control.id,
+                        error: None,
+                        received: true,
+                    }));
+                LinkEvent::Control {
+                    id: control.id,
+                    command: control.command,
+                }
+            }
             Some(FromManager::Shutdown(_)) => {
                 shutdown.store(true, Ordering::Relaxed);
                 switch.shut_down();

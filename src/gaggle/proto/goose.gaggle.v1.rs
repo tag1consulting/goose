@@ -128,15 +128,22 @@ pub mod stopped {
 /// `Stopped` follow.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UsersStopped {}
-/// A worker's answer to `Control`, once it applied the change or refused it.
+/// A worker's answers to `Control`, two for each: one with `received` as soon
+/// as it reads the change, before applying it, then one without once it
+/// applied the change or refused it. A worker applies changes in the order it
+/// received them.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ControlAck {
     /// The `Control` it answers.
     #[prost(uint64, tag = "1")]
     pub id: u64,
-    /// Empty when the change was applied; otherwise why it was refused.
+    /// Empty when the change was applied, and on `received`; otherwise why it
+    /// was refused.
     #[prost(string, optional, tag = "2")]
     pub error: ::core::option::Option<::prost::alloc::string::String>,
+    /// The worker read the change, and has yet to apply it.
+    #[prost(bool, tag = "3")]
+    pub received: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogChunk {
@@ -227,8 +234,9 @@ pub struct Stop {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SendLogs {}
-/// A runtime change from a Controller or the dashboard: the worker applies its
-/// share and answers with a `ControlAck` of the same id.
+/// A runtime change from a Controller or the dashboard: the worker says it
+/// received it, applies its share, and says it applied it, each with a
+/// `ControlAck` of the same id.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Control {
     #[prost(uint64, tag = "1")]

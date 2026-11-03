@@ -47,7 +47,7 @@ const START_DELAY: Duration = if cfg!(test) {
 
 /// How long the manager waits for every worker's answer to `Prepare`: 120
 /// seconds.
-pub(super) const PREPARE_TIMEOUT: Duration = if cfg!(test) {
+const PREPARE_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(3)
 } else {
     Duration::from_secs(120)
@@ -184,11 +184,10 @@ pub(crate) struct ManagerRun {
     pub(super) ramps: bool,
     /// The id the next `Control` takes.
     pub(super) next_control: u64,
-    /// The change a front end waits on, until every worker answered it.
+    /// The change a front end waits on, until every worker received it.
     pub(super) pending: Option<super::control::PendingControl>,
-    /// The change being sent makes workers build users, which takes as long
-    /// as a `Prepare` may: its answers get [`PREPARE_TIMEOUT`].
-    pub(super) builds_users: bool,
+    /// Every change sent, oldest first, until every worker applied it.
+    pub(super) sent: Vec<super::control::SentControl>,
     /// Every worker was told to shut down.
     shut_down: bool,
     /// The logs every worker writes.
@@ -632,7 +631,7 @@ impl GooseAttack {
             ramps: false,
             next_control: 1,
             pending: None,
-            builds_users: false,
+            sent: Vec::new(),
             shut_down: false,
             logs: spec::log_specs(&self.configuration),
             logs_left: Vec::new(),
@@ -1028,6 +1027,13 @@ impl GooseAttack {
                 run.holds = plan.holds;
             }
         }
+        #[cfg(test)]
+        if let (true, Some(delay), WorkerControl::Settings(WorkerSettings { users: Some(_), .. })) =
+            (running, self.gaggle.test_faults.slow_apply, &control)
+        {
+            self.gaggle.test_faults.slow_apply = None;
+            tokio::time::sleep(delay).await;
+        }
         let refused = match control {
             WorkerControl::Stop | WorkerControl::Shutdown => {
                 if running && !goose_attack_run_state.stopping {
@@ -1328,15 +1334,21 @@ impl GooseAttack {
                 id,
                 control,
                 error: Some(error),
+                ..
             } => {
                 // It refused what the manager accepted and the others took.
                 error!("gaggle: worker {id} refused change {control}, which the manager accepted: {error}");
                 let why = format!("it refused a change the manager accepted: {error}");
                 self.lose_worker(goose_attack_run_state, run, id, why);
             }
-            Event::ControlAck { id, control, .. } => {
-                if let Some(pending) = run.pending.as_mut().filter(|p| p.id == control) {
-                    pending.awaiting.remove(&id);
+            Event::ControlAck {
+                id,
+                control,
+                received,
+                ..
+            } => {
+                if let Some(sent) = run.sent.iter_mut().find(|sent| sent.id == control) {
+                    sent.answered(id, received);
                 }
             }
             Event::Joined | Event::PrepareAck { .. } | Event::Log { .. } => {}
@@ -1365,14 +1377,19 @@ impl GooseAttack {
         let name = worker.name.clone();
         let reason = why.clone();
         let newly = worker.lose(stop_sent, why);
-        // A change waiting on it is answered without it, and names it, even
-        // when it went away after its run rather than being lost.
-        if let Some(pending) = run.pending.as_mut() {
-            if pending.awaiting.remove(&id) && newly {
-                pending
-                    .lost
-                    .push(format!("worker {id} ({name}) lost: {reason}"));
-            }
+        // Every change waiting on it goes on without it, and the one a front
+        // end waits on names it, when it had yet to receive it, even when it
+        // went away after its run rather than being lost.
+        let pending = run.pending.as_ref().map(|pending| pending.id);
+        let mut unreceived = false;
+        for sent in run.sent.iter_mut() {
+            let missed = sent.forget(id);
+            unreceived |= missed && Some(sent.id) == pending;
+        }
+        if let (true, true, Some(pending)) = (unreceived, newly, run.pending.as_mut()) {
+            pending
+                .lost
+                .push(format!("worker {id} ({name}) lost: {reason}"));
         }
         if !newly {
             return;
@@ -2279,7 +2296,7 @@ mod tests {
             ramps: false,
             next_control: 1,
             pending: None,
-            builds_users: false,
+            sent: Vec::new(),
             shut_down: false,
             logs,
             logs_left: Vec::new(),
@@ -2826,7 +2843,7 @@ mod tests {
                 ramps: false,
                 next_control: 1,
                 pending: None,
-                builds_users: false,
+                sent: Vec::new(),
                 shut_down: false,
                 logs: Vec::new(),
                 logs_left: Vec::new(),
@@ -2931,13 +2948,20 @@ mod tests {
                 next_control: 8,
                 pending: Some(crate::gaggle::control::PendingControl {
                     id: 7,
-                    awaiting: BTreeSet::from([0, 1]),
-                    deadline: Instant::now() + Duration::from_secs(60),
                     respond,
                     outcome,
                     lost: Vec::new(),
                 }),
-                builds_users: false,
+                sent: vec![crate::gaggle::control::SentControl {
+                    id: 7,
+                    what: "users".to_string(),
+                    sent: Instant::now(),
+                    workers: 2,
+                    unreceived: BTreeSet::from([0, 1]),
+                    unapplied: BTreeSet::from([0, 1]),
+                    applied: 0,
+                    warned: Instant::now(),
+                }],
                 shut_down: false,
                 logs: Vec::new(),
                 logs_left: Vec::new(),
@@ -2951,19 +2975,28 @@ mod tests {
                 id: 1,
                 control: 7,
                 error: Some("x".to_string()),
+                received: false,
             };
             attack.manager_event(&mut state, &mut run, refused);
             assert!(run.workers[1].lost.is_some());
-            let awaiting = |run: &ManagerRun| run.pending.as_ref().map(|p| p.awaiting.clone());
-            assert_eq!(awaiting(&run), Some(BTreeSet::from([0])));
+            let awaiting = |run: &ManagerRun| {
+                run.pending.as_ref().map(|_| {
+                    run.sent
+                        .iter()
+                        .map(|sent| sent.unreceived.clone())
+                        .collect::<Vec<_>>()
+                })
+            };
+            assert_eq!(awaiting(&run), Some(vec![BTreeSet::from([0])]));
             // An answer to an older change.
             let stale = Event::ControlAck {
                 id: 0,
                 control: 6,
                 error: None,
+                received: true,
             };
             attack.manager_event(&mut state, &mut run, stale);
-            assert_eq!(awaiting(&run), Some(BTreeSet::from([0])));
+            assert_eq!(awaiting(&run), Some(vec![BTreeSet::from([0])]));
             // A request sent meanwhile waits in the queue.
             attack.gaggle.role = Some(GaggleRole::Manager(Box::new(run)));
             let (requests, queue) = flume::unbounded();
@@ -2981,19 +3014,22 @@ mod tests {
             let Some(GaggleRole::Manager(mut run)) = attack.gaggle.role.take() else {
                 panic!("the manager's run");
             };
-            let answered = Event::ControlAck {
+            // Received: the front end is answered, though the change is
+            // still being applied.
+            let received = Event::ControlAck {
                 id: 0,
                 control: 7,
                 error: None,
+                received: true,
             };
-            attack.manager_event(&mut state, &mut run, answered);
+            attack.manager_event(&mut state, &mut run, received);
             assert!(run.pending.is_none());
             match reply.await {
                 Ok(ControlReply::Outcome(outcome)) => {
                     assert!(outcome.ok);
                     assert!(
                         outcome.message.contains(
-                            "worker 1 (v) lost: it refused a change the manager accepted: x"
+                            "users configured; accepted by 1 of 2 workers; worker 1 (v) lost: it refused a change the manager accepted: x"
                         ),
                         "{}",
                         outcome.message
@@ -3001,6 +3037,15 @@ mod tests {
                 }
                 _ => panic!("no reply"),
             }
+            assert_eq!(run.sent.len(), 1, "the change is still being applied");
+            let applied = Event::ControlAck {
+                id: 0,
+                control: 7,
+                error: None,
+                received: false,
+            };
+            attack.manager_event(&mut state, &mut run, applied);
+            assert!(run.sent.is_empty(), "the change was applied");
         };
         tokio::time::timeout(Duration::from_secs(30), Box::pin(test))
             .await

@@ -56,7 +56,7 @@ Error: invalid option or value specified (`configuration.no_autostart` "true": `
 
 ## Controlling a Gaggle
 
-On a [Gaggle](../gaggle/overview.md) manager, the telnet and WebSocket Controllers and dashboard control take the same commands, and each change reaches every worker as its share, so the workers together run what one process running the whole load test would. The manager checks a change against the rules one process applies before it sends anything, applies it to its own run, the run's clock, and answers once every worker has applied its share: within 10 seconds, inside the 15 a client waits, or 120 when the change has workers build users. Later commands wait their turn meanwhile; the load test runs on.
+On a [Gaggle](../gaggle/overview.md) manager, the telnet and WebSocket Controllers and dashboard control take the same commands, and each change reaches every worker as its share, so the workers together run what one process running the whole load test would. The manager checks a change against the rules one process applies before it sends anything, applies it to its own run, the run's clock, and answers once every worker has received its share: within 10 seconds, inside the 15 a client waits, however long the workers take to apply it. Later commands wait their turn meanwhile; the load test runs on.
 
 | Command | What each worker gets |
 |---------|-----------------------|
@@ -70,4 +70,4 @@ On a [Gaggle](../gaggle/overview.md) manager, the telnet and WebSocket Controlle
 | `runtime` | The same run time: each worker's run keeps the same clock as the manager's |
 | `config`, `metrics` and their JSON forms, Save report, the report switches | Nothing: the manager answers from its configuration and the merged metrics |
 
-A change the manager makes in Idle is kept for the next Start, whose shares carry it. A worker that does not answer a change within 10 seconds is marked lost, sent `Shutdown` and disconnected, and the reply names it; the change stands on the other workers. The manager's Controllers listen on loopback like any others, so reaching them from another machine takes `--telnet-host`, or `--websocket` with `--websocket-host`, and the warning that comes with them. See [Runtime control](../gaggle/manager.md#runtime-control).
+A change the manager makes in Idle is kept for the next Start, whose shares carry it. A worker that does not say it received a change within 10 seconds is marked lost, sent `Shutdown` and disconnected, and the reply names it; the change stands on the other workers. The manager's Controllers listen on loopback like any others, so reaching them from another machine takes `--telnet-host`, or `--websocket` with `--websocket-host`, and the warning that comes with them. See [Runtime control](../gaggle/manager.md#runtime-control).

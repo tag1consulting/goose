@@ -166,11 +166,14 @@ pub(crate) enum Event {
         delta: Box<GaggleDelta>,
         bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
-    /// Its answer to `Control` `control`: `None` when it applied the change.
+    /// Its answer to `Control` `control`: `received` as it read the change,
+    /// then, `received` false, with `error` `None` once it applied it, or
+    /// why it refused it.
     ControlAck {
         id: u32,
         control: u64,
         error: Option<String>,
+        received: bool,
     },
     /// Its users stopped: its final delta and `Stopped` follow.
     UsersStopped { id: u32 },
@@ -953,6 +956,7 @@ async fn read_worker(
                 id,
                 control: ack.id,
                 error: ack.error,
+                received: ack.received,
             }),
             Some(FromWorker::Stopped(stopped)) => Arrived::Event(Event::Stopped { id, stopped }),
             Some(FromWorker::LogChunk(chunk)) => Arrived::Event(Event::Log { id, chunk }),
