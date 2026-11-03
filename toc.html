@@ -15,6 +15,18 @@
         <meta charset="UTF-8">
         <meta name="robots" content="noindex">
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
         <link rel="stylesheet" href="css/variables-8adf115d.css">

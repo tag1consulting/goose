@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -381,7 +393,7 @@ let _goose = user.post_graphql("/api/graphql", &amp;query).await?;</code></pre>
  Decreasing:  2026-10-26 20:53:55 - 2026-10-26 20:53:55 (00:00:00, 0 &lt;- 5)
 
  Target host: http://localhost:8080/
- goose v0.19.0
+ goose v0.19.1
  ------------------------------------------------------------------------------
 </code></pre>
 <h3 id="key-observations"><a class="header" href="#key-observations">Key Observations</a></h3>

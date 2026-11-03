@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -275,7 +287,7 @@
 </code></pre>
 <p>The console output of the run under <a href="#stopping-the-run">Stopping the run</a> ends with the rule that failed, then the error <code>main</code> returns, before Goose exits with code 1:</p>
 <pre><code class="language-text">19:44:40 [ERROR] threshold error-rate&lt;1% failed: observed 2.54% at abort, 6.45% at end
-Error: ThresholdsFailed { failed: [ThresholdResult { rule: "error-rate&lt;1%", observed: "2.54% at abort, 6.45% at end", value: Some(6.451612903225806), passed: false, aborted: true }], metrics: ThresholdMetrics { .. } }
+Error: one or more thresholds failed (error-rate&lt;1%, observed 2.54% at abort, 6.45% at end)
 </code></pre>
 <h2 id="reports"><a class="header" href="#reports">Reports</a></h2>
 <p>The PDF, HTML and Markdown reports have a Thresholds section with a row for each rule: the rule, what was observed, and the result. A failing row says <code>FAIL</code>, and <code>FAIL, stopped the run</code> for the rule that stopped it, so the result never rests on color alone. The JSON report keeps each result as an object in <code>raw_metrics.thresholds</code>, with <code>rule</code>, <code>observed</code>, <code>value</code>, <code>passed</code> and <code>aborted</code>, so a report rendered from it with <code>--render-report</code> shows the same section. Without thresholds there is no section. The console’s final tables have the same section; the run under <a href="#stopping-the-run">Stopping the run</a> printed:</p>

@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -182,7 +194,7 @@
 17:13:37 [INFO] Output verbosity level: INFO
 17:13:37 [INFO] Logfile verbosity level: WARN
 17:13:37 [INFO] users defaulted to number of CPUs = 18
-Error: InvalidOption { option: "--host", value: "", detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions)." }
+Error: invalid option or value specified (--host "": A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions).)
 </code></pre>
 <p>The load test fails because it has not been told which host to load test.</p>
 <p>Run it again, this time passing the <code>--host</code> option with the address of a site you run or are allowed to load test. The <code>--</code> passes the options after it to the load test rather than to Cargo. Without <code>-u</code>, Goose starts one user for each CPU; without <code>-t</code>, it runs until you stop it. This load test sets no wait time, so each user sends its next request as soon as the last one is answered. Against your own site, start small (see <a href="common.html#how-many-users-to-simulate">How many users to simulate</a> and <a href="common.html#specifying-how-long-the-load-test-will-run">Specifying how long the load test will run</a>):</p>
@@ -235,7 +247,7 @@ All 18 users launched.
  Canceling:   2026-10-28 18:14:05 - 2026-10-28 18:14:05 (00:00:00, 0 &lt;- 18)
 
  Target host: http://localhost:19060/
- goose v0.19.0
+ goose v0.19.1
  ------------------------------------------------------------------------------
 </code></pre>
 <p>Because Ctrl-C stopped this run, the overview lists its Decrease phase as Canceling; a run that ends at its <code>-t</code> time lists it as Decreasing. The log lines in the run above carry UTC times; the plan overview uses local time, an hour ahead on this machine.</p>

@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -206,7 +218,7 @@ async fn load_homepage(user: &amp;mut GooseUser) -&gt; TransactionResult {
     let _goose = user.get("/").await?;
     Ok(())
 }</code></pre>
-<p>Goose builds each user’s client with the user agent <code>goose/0.19.0</code>, the <code>--timeout</code>, gzip unless <code>--no-gzip</code>, invalid certificates accepted only with <code>--accept-invalid-certs</code>, and a cookie store when the <code>cookies</code> feature is enabled. Every user has a client of its own whether or not it keeps cookies. In a run of <code>examples/simple</code>, 1,000 users used about 65 MB more memory than 10 users.</p>
+<p>Goose builds each user’s client with the user agent <code>goose/0.19.1</code>, the <code>--timeout</code>, gzip unless <code>--no-gzip</code>, invalid certificates accepted only with <code>--accept-invalid-certs</code>, and a cookie store when the <code>cookies</code> feature is enabled. Every user has a client of its own whether or not it keeps cookies. In a run of <code>examples/simple</code>, 1,000 users used about 65 MB more memory than 10 users.</p>
 <h2 id="a-client-without-cookies"><a class="header" href="#a-client-without-cookies">A Client Without Cookies</a></h2>
 <p>To change the client of a user, build a <a href="https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html"><code>reqwest::ClientBuilder</code></a> and pass it to <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder"><code>GooseUser::set_client_builder</code></a>, usually in a transaction run once with <code>set_on_start()</code>. Goose does not re-export Reqwest, so the load test needs its own <code>reqwest = { version = "0.13", default-features = false }</code> dependency. A client built without <code>.cookie_store(true)</code> keeps no cookies:</p>
 <pre class="playground"><code class="language-rust edition2018">use goose::prelude::*;
@@ -293,7 +305,7 @@ fn main() -&gt; Result&lt;(), GooseError&gt; {
 }</code></pre>
 <p>With either setter:</p>
 <ul>
-<li>The builder’s user agent replaces <code>goose/0.19.0</code>.</li>
+<li>The builder’s user agent replaces <code>goose/0.19.1</code>.</li>
 <li>The timeout, gzip and invalid certificate settings each come from the first of: the option given on the command line (<code>--timeout</code>, <code>--no-gzip</code>, <code>--accept-invalid-certs</code>), the builder, a <code>GooseDefault</code> for the option, and Goose’s built in default. A setting the builder was not given keeps its <code>GooseDefault</code> or built in default.</li>
 <li>The users that run the <code>test_start</code> and <code>test_stop</code> transactions, and users a Controller adds, get the builder’s clients too.</li>
 <li>The two setters replace each other, so the last call wins.</li>

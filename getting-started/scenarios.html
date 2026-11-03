@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -243,7 +255,7 @@ Scenarios:
  - adminuser: ("Admin user")
  - anonymousenglishuser: ("Anonymous English user")
  - anonymousspanishuser: ("Anonymous Spanish user")
-Error: NoScenarios { detail: "No scenarios are enabled." }
+Error: no scenarios defined (No scenarios are enabled.)
 </code></pre>
 <p>When the load test completes, you can refer to the <a href="./metrics.html#scenarios">Scenario metrics</a> to confirm which Scenarios were enabled, and which were not.</p>
 

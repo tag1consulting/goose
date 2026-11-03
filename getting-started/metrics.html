@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -269,7 +281,7 @@
 <pre><code class="language-bash">jq 'map_values(if type == "array" then "\(length) rows" elif type == "object" then "{\(keys | length) keys}" else . end)' report.json
 </code></pre>
 <pre><code class="language-json">{
-  "goose_version": "0.19.0",
+  "goose_version": "0.19.1",
   "test": "umami",
   "started": "2026-10-28T16:59:19Z",
   "ended": "2026-10-28T17:02:30Z",
@@ -295,7 +307,10 @@
 <li>The <code>co_</code> keys are <code>null</code> until coordinated omission mitigation adds synthetic times, and <code>coordinated_omission_metrics</code> is <code>null</code> with mitigation off.</li>
 <li><code>graphs</code>, with the per second data behind the graphs and the heatmap, appears only when the run had <code>--report-graph-data</code> or the dashboard’s Include graph data switch on.</li>
 </ul>
-<p>Minimums, maximums and percentiles in <code>raw_request_metrics</code>, <code>raw_response_metrics</code> and the other tables are whole milliseconds, truncated, so a 37.999 ms time is <code>37</code>; averages keep their fraction of a millisecond, as <code>31.861234848484848</code> for <code>GET /</code>. A request or scenario average with no times to average is <code>0</code>, and each scenario’s heading row in <code>transaction_metrics</code> has <code>null</code> averages and rates. The raw timing data keeps microseconds, in fields ending <code>_us</code>. A JSON report loads as a baseline with <a href="common.html#comparing-against-a-baseline"><code>--baseline-file</code></a> (see <a href="common.html#baselines-from-older-goose-releases">Baselines from older Goose releases</a>), and <code>--render-report</code> writes the other reports from it.</p>
+<p>Each minimum, maximum and percentile in <code>raw_request_metrics</code>, <code>raw_response_metrics</code> and the other tables is written twice: in whole milliseconds, truncated, as Goose has always written it, so a 37.999 ms time is <code>37</code> and a 0.59 ms time is <code>0</code>, and in microseconds, in the field of the same name ending <code>_us</code>, such as <code>percentile_50_us</code> beside <code>percentile_50</code> and <code>response_time_minimum_us</code> beside <code>response_time_minimum</code>, so 37,999 and 590. Read the <code>_us</code> fields for the times the other reports show; a report from Goose 0.19.0 or earlier has only the whole milliseconds. Averages keep their fraction of a millisecond, as <code>31.861234848484848</code> for <code>GET /</code>. A request or scenario average with no times to average is <code>0</code>, and each scenario’s heading row in <code>transaction_metrics</code> has <code>null</code> averages and rates. The raw timing data keeps microseconds, in fields ending <code>_us</code>. A JSON report loads as a baseline with <a href="common.html#comparing-against-a-baseline"><code>--baseline-file</code></a> (see <a href="common.html#baselines-from-older-goose-releases">Baselines from older Goose releases</a>), and <code>--render-report</code> writes the other reports from it.</p>
+<p>The whole millisecond row fields, <code>percentile_*</code>, <code>response_time_minimum</code> and <code>response_time_maximum</code> without <code>_us</code>, are deprecated from Goose 0.19.1 and kept only for older readers: they truncate, so read the <code>_us</code> fields instead. Goose 0.20 will stop writing them and write the row times only in the <code>_us</code> fields. Goose 0.20 will not load a report from Goose 0.18 as a baseline, and Goose 0.19 will not load a report from Goose 0.20 as one. Reports from 0.19 hold their raw timing data in microseconds, and 0.20 rebuilds their rows from it, as 0.19 does.</p>
+<h3 id="converting-older-reports"><a class="header" href="#converting-older-reports">Converting older reports</a></h3>
+<p>To keep a Goose 0.18 report as history in the current form, render it to a new JSON report with any Goose 0.19.1 or later load test, such as <code>cargo run --example simple -- --render-report report-0.18.json --report-file report-converted.json</code>. Nothing is sent to a host. The converted report has a <code>_us</code> field beside every whole millisecond row field and its raw timing data in <code>times_us</code>, and loads as a baseline. Its times are still only as precise as the old report: each <code>_us</code> value is the old whole milliseconds times 1,000, and the percentiles 0.18 rounded above 100 ms stay rounded.</p>
 <h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">Console metrics</a></h2>
 <p>While the load test runs, Goose logs what it is doing; <a href="running.html">Running A Load Test</a> walks through those log lines. Once every user has started, it prints the tables so far and <a href="../glossary.html#metrics-reset">resets its metrics</a>, after which every table, errors included, counts from zero. A run with <code>--iterations</code> or a test plan never resets, and <code>--no-reset-metrics</code> keeps the ramp up in the tables. With <code>--running-metrics N</code> it prints the tables again every N seconds, ramp up included. During the ramp up it also prints them each time a user starts at least N milliseconds after the last print, because in Goose 0.19 the user launch code reads N as milliseconds. When the run ends, it prints the final metrics in this order: scenarios, with their times; transactions, with their times; requests, with their response times, percentiles and status codes; errors, transaction errors and thresholds, when there are any; the coordinated omission event summary, whenever mitigation is on; and last the <a href="../glossary.html#plan-overview">plan overview</a>, as <a href="running.html#what-the-run-produced">Running A Load Test</a> shows. From this run, up to the plan overview, with <code>...</code> for the rows and tables left out:</p>
 <pre><code class="language-text"> === PER SCENARIO METRICS ===
@@ -364,7 +379,7 @@
 <p><code>--no-print-metrics</code> leaves out every table the console prints, at the reset, with <code>--running-metrics</code> and at the end; the reports are still written.</p>
 <h2 id="response-times"><a class="header" href="#response-times">How Goose measures response times</a></h2>
 <p>Goose measures time to first byte: from sending a request until its response headers arrive, including connecting and following redirects, but not reading the body. Every request Goose sends is timed this way. A load test that needs the time to the last byte reads the body and times it; see <a href="#measuring-complete-download-time">Measuring complete download time</a>.</p>
-<p>Goose keeps request, transaction and scenario times to the microsecond. The tables of the dashboard, the PDF, HTML and Markdown reports and the console metrics show times under 10 ms to the hundredth of a millisecond and longer times in whole milliseconds, rounded half up. The heatmap labels truncate instead, as the <a href="../controller/dashboard-reference.html#the-response-time-heatmap">Dashboard Reference</a> explains, and so do the minimums, maximums and percentiles of the <a href="#json-report">JSON report</a>. Percentiles come from buckets never more than 0.78% off the times they hold, so 2.2 ms and 2.5 ms are told apart, and the fastest and slowest times are kept exactly.</p>
+<p>Goose keeps request, transaction and scenario times to the microsecond. The tables of the dashboard, the PDF, HTML and Markdown reports and the console metrics show times under 10 ms to the hundredth of a millisecond and longer times in whole milliseconds, rounded half up. The heatmap labels truncate instead, as the <a href="../controller/dashboard-reference.html#the-response-time-heatmap">Dashboard Reference</a> explains, and so do the whole millisecond minimums, maximums and percentiles of the <a href="#json-report">JSON report</a>, which keeps each in microseconds as well, in a field ending <code>_us</code>. Percentiles come from buckets never more than 0.78% off the times they hold, so 2.2 ms and 2.5 ms are told apart, and the fastest and slowest times are kept exactly.</p>
 <h3 id="measuring-complete-download-time"><a class="header" href="#measuring-complete-download-time">Measuring complete download time</a></h3>
 <p>To measure the time to the last byte, read the body yourself and record the time it took with <code>record_custom_request_duration</code>, which records it as a request of its own:</p>
 <pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]

@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -198,7 +210,7 @@
 <p>A Locust load test ported to Goose: anonymous and logged in users, form tokens read from pages, and comments posted. Needs: a Drupal 7 site prepared as the drupal-loadtest repository describes, since the example posts Drupal 7 forms. Its page has no picture of a run: against the Drupal 11 Umami site that the Umami example uses, nearly all of the example’s node and profile requests answered 404. Source: <a href="https://github.com/tag1consulting/goose/blob/main/examples/drupal_memcache.rs">examples/drupal_memcache.rs</a></p>
 <p><a href="drupal-memcache.html">Open the Drupal Memcache page</a></p>
 <h2 id="umami"><a class="header" href="#umami">Umami</a></h2>
-<p>Three kinds of visitor (English, Spanish and admin), most of the site’s page types, forms, and each page’s images and scripts. Needs: a Drupal site installed with the Umami demo profile, with CSS and JS aggregation off and an admin account the example can log in with. Source: <a href="https://github.com/tag1consulting/goose/tree/main/examples/umami">examples/umami/</a></p>
+<p>Three kinds of visitor (English, Spanish and admin), most of the site’s page types, the log in and article edit forms, and each page’s stylesheets, scripts and images. Needs: a stock Drupal 11.4 site installed with the Umami demo profile, aggregation left on, and an admin account the example can log in with. Source: <a href="https://github.com/tag1consulting/goose/tree/main/examples/umami">examples/umami/</a></p>
 <p><a href="umami.html"><img src="thumbs/umami.png" width="424" alt="The dashboard&#39;s Scenarios table: Anonymous English user with 40 users, Anonymous Spanish user with 9 and Admin user with 1"></a></p>
 
                     </main>

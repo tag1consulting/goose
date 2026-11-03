@@ -7,6 +7,18 @@
 
 
         <!-- Custom HTML head -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <script>
+        (function () {
+            if (location.hostname !== "book.goose.rs") {
+                return;
+            }
+            var s = document.createElement("script");
+            s.src = "https://app.rybbit.io/api/script.js?siteId=a1c0eb42442c";
+            s.defer = true;
+            document.head.appendChild(s);
+        })();
+        </script>
 
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +47,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+            window.path_to_searchindex_js = "../searchindex-17d0f45b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b1be2d52.js"></script>
@@ -176,8 +188,8 @@
                     <main>
                         <h1 id="run-time-options"><a class="header" href="#run-time-options">Run-Time Options</a></h1>
 <p>Every Goose load test takes the run-time options below. Three of them need a crate feature: <code>--pdf-scale</code> and <code>--pdf-timeout</code> exist only when Goose is built with <code>pdf-reports</code>, and <code>--dashboard</code> is refused unless Goose is built with <code>dashboard</code>. <code>-h</code> prints a summary of each one, and <code>--help</code> prints the full reference: what each option does, its default, the values it takes, the options it works with or excludes, an example, and the <code>GooseDefault</code> that sets it in code, where they apply. To see the summary for your own load test, run <code>cargo run --release -- -h</code> in its folder, or <code>cargo run --release --example simple -- -h</code> in a checkout of Goose.</p>
-<p>The help on this page is from Goose 0.19.0. When you run <code>-h</code> yourself, its first line names the version of Goose your load test was built with, and <code>-V</code> (<code>--version</code>) prints the library’s name and version, such as <code>goose 0.19.0</code>. The output below comes from a build with the <code>pdf-reports</code> feature:</p>
-<pre><code class="language-text">Goose 0.19.0: an HTTP(S) load testing tool written in Rust
+<p>The help on this page is from Goose 0.19.1. When you run <code>-h</code> yourself, its first line names the version of Goose your load test was built with, and <code>-V</code> (<code>--version</code>) prints the library’s name and version, such as <code>goose 0.19.1</code>. The output below comes from a build with the <code>pdf-reports</code> feature:</p>
+<pre><code class="language-text">Goose 0.19.1: an HTTP(S) load testing tool written in Rust
 
 Usage: loadtest [OPTIONS]
 
@@ -339,7 +351,7 @@ https://book.goose.rs/getting-started/runtime-options.html
 <p><code>--no-websocket</code> is not in the help: the WebSocket Controller is off unless <code>--websocket</code> turns it on, and a command line from Goose 0.18 that still passes <code>--no-websocket</code> runs with a warning. <a href="upgrading.html">Upgrading From 0.18</a> lists every option that was removed or now behaves differently.</p>
 <h2 id="full-reference"><a class="header" href="#full-reference">Full reference</a></h2>
 <p><code>cargo run --release -- --help</code> prints:</p>
-<pre><code class="language-text">Goose 0.19.0: an HTTP(S) load testing tool written in Rust
+<pre><code class="language-text">Goose 0.19.1: an HTTP(S) load testing tool written in Rust
 
 Usage: loadtest [OPTIONS]
 
