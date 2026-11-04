@@ -792,6 +792,9 @@ pub struct GooseAttack {
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
+    /// How many clients have been built for users.
+    #[cfg(test)]
+    user_clients_built: Arc<AtomicUsize>,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -883,6 +886,8 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
+            #[cfg(test)]
+            user_clients_built: Arc::default(),
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -930,6 +935,8 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
+            #[cfg(test)]
+            user_clients_built: Arc::default(),
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -1422,6 +1429,8 @@ impl GooseAttack {
         let configuration = &self.configuration;
         let client_strategy = &self.client_strategy;
         let metrics_hash = self.metrics.hash;
+        #[cfg(test)]
+        let clients_built = &self.user_clients_built;
         let num_cpus = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
@@ -1439,6 +1448,8 @@ impl GooseAttack {
                             None => goose::create_reqwest_client(configuration)?,
                             Some(strategy) => strategy.user_client()?,
                         };
+                        #[cfg(test)]
+                        clients_built.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         users.push(GooseUser::new(
                             *scenarios_index,
                             machine_name.clone(),
@@ -5435,4 +5446,196 @@ mod tests {
             "users weighted later were given a newly built shared client"
         );
     }
+
+    /// A load test of `scenarios` against `host`, prepared and started as
+    /// `execute` does, with no user started yet: `users` users ramp up at 1,000
+    /// a second, then hold for an hour.
+    async fn started_attack(
+        host: &str,
+        users: usize,
+        scenarios: Vec<Scenario>,
+    ) -> (GooseAttack, GooseAttackRunState) {
+        let users = users.to_string();
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--quiet",
+            "--host",
+            host,
+            "--users",
+            &users,
+            "--increase-rate",
+            "1000",
+            "--decrease-rate",
+            "1000",
+            "--run-time",
+            "1h",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        for scenario in scenarios {
+            goose_attack = goose_attack.register_scenario(scenario);
+        }
+        let defaults = goose_attack.defaults.clone();
+        goose_attack.configuration.configure(&defaults).unwrap();
+        goose_attack.test_plan = TestPlan::build(&goose_attack.configuration).unwrap();
+        goose_attack.run_shape =
+            run_shape::RunShape::for_configuration(&goose_attack.configuration);
+        goose_attack
+            .build_client_strategy(client::CommandLineClientOptions::default())
+            .unwrap();
+        goose_attack.prepare_load_test().unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        goose_attack.reset_run_state(&mut run_state).await.unwrap();
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Increase);
+        (goose_attack, run_state)
+    }
+
+    /// Run one turn of the step machine, as the main loop does, and return
+    /// whether the load test now holds its users.
+    async fn step(goose_attack: &mut GooseAttack, run_state: &mut GooseAttackRunState) -> bool {
+        match goose_attack.attack_phase {
+            AttackPhase::Increase => goose_attack.increase_attack(run_state).await.unwrap(),
+            AttackPhase::Decrease => goose_attack.decrease_attack(run_state).await.unwrap(),
+            AttackPhase::Maintain => return true,
+            phase => panic!("unexpected phase {phase:?}"),
+        }
+        goose_attack.attack_phase == AttackPhase::Maintain
+    }
+
+    /// Run the step machine until every user a change starts or stops has
+    /// been, and the load test holds.
+    async fn ramp_to_hold(goose_attack: &mut GooseAttack, run_state: &mut GooseAttackRunState) {
+        while !step(goose_attack, run_state).await {}
+    }
+
+    /// Requests `/` from the mock server, then waits 10 ms.
+    fn index_scenario(name: &str) -> Scenario {
+        async fn get_index(user: &mut GooseUser) -> crate::goose::TransactionResult {
+            let _goose = user.get("/").await?;
+            Ok(())
+        }
+        scenario!(name)
+            .set_wait_time(Duration::from_millis(10), Duration::from_millis(10))
+            .unwrap()
+            .register_transaction(transaction!(get_index))
+    }
+
+    /// A mock server answering `/`.
+    fn index_server() -> httpmock::MockServer {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/");
+            then.status(200);
+        });
+        server
+    }
+
+    /// Wait, as the main loop holds, until `done` or 10 seconds have passed.
+    async fn hold_until(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        done: impl Fn(&GooseAttack, &GooseAttackRunState) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !done(goose_attack, run_state) && std::time::Instant::now() < deadline {
+            goose_attack.maintain_attack(run_state).await.unwrap();
+        }
+    }
+
+    /// Weighting users builds no client; each user builds its own when it
+    /// starts, so starting k users builds exactly k.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_weighting_builds_no_client_starting_builds_one() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) =
+            started_attack(&server.base_url(), 5, vec![index_scenario("Lazy")]).await;
+        let built = |goose_attack: &GooseAttack| {
+            goose_attack
+                .user_clients_built
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        assert_eq!(built(&goose_attack), 0, "weighting 5 users built clients");
+        // Weighting many more, as a Controller increase does, builds none.
+        let more = goose_attack.weight_scenario_users(100).unwrap();
+        assert_eq!(more.len(), 100);
+        assert_eq!(built(&goose_attack), 0, "weighting 100 users built clients");
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert_eq!(goose_attack.metrics.total_users, 5);
+        hold_until(&mut goose_attack, &mut run_state, |goose_attack, _| {
+            built(goose_attack) >= 5
+        })
+        .await;
+        assert_eq!(built(&goose_attack), 5, "5 started users built other than 5");
+    }
+
+    /// A storm of `users` changes, each landing before the last finished, as
+    /// the Controller sends them: once it settles, a client was built for each
+    /// user that started and no other, and only the running users' tasks are
+    /// held.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_users_storm_builds_and_holds_only_started_users() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let (mut goose_attack, mut run_state) =
+            started_attack(&server.base_url(), 10, vec![index_scenario("Storm")]).await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        for _ in 0..20 {
+            for users in ["users 50", "users 10"] {
+                assert!(control(&mut goose_attack, &mut run_state, users).await);
+                // One turn of the step machine before the next change lands.
+                step(&mut goose_attack, &mut run_state).await;
+            }
+        }
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert_eq!(run_state.active_users, 10);
+        let built = |goose_attack: &GooseAttack| {
+            goose_attack
+                .user_clients_built
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        hold_until(&mut goose_attack, &mut run_state, |goose_attack, run_state| {
+            built(goose_attack) == goose_attack.metrics.total_users
+                && run_state.users.len() == run_state.active_users
+        })
+        .await;
+        assert_eq!(
+            built(&goose_attack),
+            goose_attack.metrics.total_users,
+            "clients built, against users started"
+        );
+        assert_eq!(
+            run_state.users.len(),
+            run_state.active_users,
+            "user tasks held, against users running"
+        );
+    }
+
+    /// Users of a weighted load test with several scenarios start in the
+    /// order, with the ordinals and scenarios, Goose 0.19.1 gave them, at
+    /// setup and on a Controller increase.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_weighted_users_start_in_base_order() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let scenarios = vec![
+            index_scenario("Heavy").set_weight(3).unwrap(),
+            index_scenario("Middle").set_weight(2).unwrap(),
+            index_scenario("Light"),
+        ];
+        let (mut goose_attack, mut run_state) =
+            started_attack(&server.base_url(), 8, scenarios).await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert!(control(&mut goose_attack, &mut run_state, "users 14").await);
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        // (scenario index, user ordinal) of each user, in the order started.
+        let started: Vec<(usize, usize)> = run_state.running_users.clone();
+        assert_eq!(started, BASE_ORDER);
+    }
+
+    /// The order `test_weighted_users_start_in_base_order` recorded on
+    /// release-0.19 at 9cb2767d, before users built their clients lazily.
+    const BASE_ORDER: &[(usize, usize)] = &[];
 }
