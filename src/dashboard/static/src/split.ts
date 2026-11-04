@@ -22,19 +22,48 @@ export interface SplitGroup {
 export function usersSplit(users: number, counts: number[]): number[] {
   const out = counts.slice();
   if (out.length === 0) return out;
-  let total = out.reduce((sum, n) => sum + n, 0);
-  while (total < users) {
-    let fewest = 0;
-    for (let i = 1; i < out.length; i++) if (out[i] < out[fewest]) fewest = i;
-    out[fewest] += 1;
-    total += 1;
+  const total = counts.reduce((sum, n) => sum + n, 0);
+  if (users === total) return out;
+  // In closed form, not one user at a time, so a large typed number costs no
+  // more than a small one: every worker is raised to (or lowered to) one
+  // level, and the users left over go one each to the first workers at it
+  // (or come one each from the last).
+  const up = users > total;
+  const change = Math.abs(users - total);
+  const cost = (level: number): number =>
+    counts.reduce((sum, n) => sum + Math.max(0, up ? level - n : n - level), 0);
+  let lo = up ? Math.min(...counts) : 0;
+  let hi = up ? lo + change : Math.max(...counts);
+  if (up) {
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (cost(mid) <= change) lo = mid;
+      else hi = mid - 1;
+    }
+  } else {
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (cost(mid) <= change) hi = mid;
+      else lo = mid + 1;
+    }
   }
-  while (total > users) {
-    let most = out.length - 1;
-    for (let i = out.length - 2; i >= 0; i--) if (out[i] > out[most]) most = i;
-    if (out[most] === 0) break;
-    out[most] -= 1;
-    total -= 1;
+  const level = lo;
+  let rest = change - cost(level);
+  for (let i = 0; i < out.length; i++) out[i] = up ? Math.max(out[i], level) : Math.min(out[i], level);
+  if (up) {
+    for (let i = 0; i < out.length && rest > 0; i++) {
+      if (out[i] === level) {
+        out[i] += 1;
+        rest -= 1;
+      }
+    }
+  } else {
+    for (let i = out.length - 1; i >= 0 && rest > 0 && level > 0; i--) {
+      if (out[i] === level) {
+        out[i] -= 1;
+        rest -= 1;
+      }
+    }
   }
   return out;
 }

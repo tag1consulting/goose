@@ -380,6 +380,24 @@ impl GaggleRecord {
     /// and which the results leave metrics out of. The dashboard says these
     /// too.
     pub(crate) fn degraded_sentences(&self) -> Vec<String> {
+        self.degraded_naming(usize::MAX)
+    }
+
+    /// [`Self::degraded_sentences`] naming at most [`CHECK_NAMES`] workers
+    /// in each, the rest counted, as the dashboard sends them every second.
+    #[cfg(feature = "gaggle")]
+    pub(crate) fn degraded_sentences_named(&self) -> Vec<String> {
+        self.degraded_naming(CHECK_NAMES)
+    }
+
+    /// The "Degraded:" sentences, each naming at most `most` workers.
+    fn degraded_naming(&self, most: usize) -> Vec<String> {
+        let list = |items: &[String]| -> String {
+            match items.len() > most {
+                true => named(items),
+                false => items.join(", "),
+            }
+        };
         let mut intro = Vec::new();
         let lost: Vec<String> = self
             .workers
@@ -403,7 +421,7 @@ impl GaggleRecord {
                 "Degraded: {} of the {} Gaggle workers were lost during the run: {}. The results hold what each sent before it was lost.",
                 lost.len(),
                 self.workers.len(),
-                lost.join(", ")
+                list(&lost)
             ));
         }
         if self.degraded && !short.is_empty() {
@@ -411,7 +429,7 @@ impl GaggleRecord {
                 "Degraded: the results leave out metrics from {} of the {} Gaggle workers: {}.",
                 short.len(),
                 self.workers.len(),
-                short.join(", ")
+                list(&short)
             ));
         }
         intro

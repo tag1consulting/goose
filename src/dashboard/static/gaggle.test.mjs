@@ -281,6 +281,13 @@ test("the Control card says how a change splits", async () => {
   throttle.value = "47";
   throttle.dispatchEvent(new page.window.Event("input", { bubbles: true }));
   assert.equal(text(page, "#ctrl-throttle-split"), "split: 1 req/s on each of 47 workers");
+  // A value the manager would refuse is not previewed: the current split stays.
+  target.value = "99999999999";
+  target.dispatchEvent(new page.window.Event("input", { bubbles: true }));
+  assert.equal(text(page, "#ctrl-target-split"), "split: 20 users on 7 workers, 19 on 40");
+  throttle.value = "5000000";
+  throttle.dispatchEvent(new page.window.Event("input", { bubbles: true }));
+  assert.equal(text(page, "#ctrl-throttle-split"), "split: 64 req/s on 39 workers, 63 on 8");
 });
 
 test("without a throttle the throttle field stays hidden", async () => {

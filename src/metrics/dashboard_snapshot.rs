@@ -98,7 +98,8 @@ pub(crate) const BY_WORKER_LINES: usize = 8;
 /// 64 KiB at 1,024 workers. Every figure,
 /// flag and sentence here comes from the manager's worker health model,
 /// which also writes the reports' Workers section; the snapshot reads it,
-/// and holds no worker's address, host name, port or token.
+/// and holds no worker's address, port or token: a worker appears under its
+/// name, by default its `HOSTNAME`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct GaggleSnapshot {
@@ -186,9 +187,13 @@ pub(crate) struct GaggleRows {
     /// How far its p95 is from the median of the running workers, in
     /// percent, signed, when past the outlier threshold.
     pub p95_gap_percent: Vec<Option<i32>>,
-    pub lost_reason: Vec<Option<String>>,
+    /// Why it was lost: an index into `reasons`, as many workers lost at
+    /// once share one.
+    pub lost_reason: Vec<Option<u32>>,
     /// The run's series second it was lost in.
     pub lost_second: Vec<Option<u64>>,
+    /// Every distinct reason `lost_reason` points at.
+    pub reasons: Vec<String>,
 }
 
 /// Every worker, one entry each in id order, as parallel arrays: the index
@@ -208,15 +213,15 @@ pub(crate) struct GaggleGrid {
     pub load: Vec<u8>,
     /// The users it runs now.
     pub users: Vec<u64>,
-    /// Its CPU use, whole percent, while it runs; `null` when it sends none
-    /// or does not run.
-    pub cpu: Vec<Option<u16>>,
-    /// Its requests per second over the last 10 seconds, whole; `null`
-    /// while it does not run.
-    pub rps: Vec<Option<u64>>,
-    /// Its p95 over the last 10 seconds, whole milliseconds: 0 is under
-    /// half a millisecond.
-    pub p95: Vec<Option<u64>>,
+    /// Its CPU use, whole percent, while it runs; -1 when it sends none or
+    /// does not run.
+    pub cpu: Vec<i32>,
+    /// Its requests per second over the last 10 seconds, whole; -1 while it
+    /// does not run.
+    pub rps: Vec<i64>,
+    /// Its p95 over the last 10 seconds, whole milliseconds, 0 under half a
+    /// millisecond; -1 without one.
+    pub p95: Vec<i64>,
     /// Its requests per user per second's distance from the median of the
     /// running workers, in percent, signed, when past the outlier
     /// threshold; 0 when it is not.
@@ -251,7 +256,8 @@ pub(crate) struct GaggleEvents {
     /// `throttle_shares_rescaled`, `users_rebalanced`, `stop` or `start`.
     pub kinds: Vec<String>,
     /// A few words for the chart's marker, `users 900` or `load-31 lost`,
-    /// for an event within the series window, which the chart draws.
+    /// for the newest event of each second within the series window, which
+    /// the chart draws; `null` for the rest, whose label would overlap it.
     pub labels: Vec<Option<String>>,
     /// The sentence the event log keeps.
     pub texts: Vec<String>,

@@ -39,3 +39,17 @@ test("the preview sentences", () => {
   assert.equal(splitText([{ value: 5, workers: 3 }], "req/s"), "split: 5 req/s on each of 3 workers");
   assert.equal(splitText([], "users"), "");
 });
+
+test("a large typed number of users costs no more than a small one", () => {
+  const started = performance.now();
+  const out = usersSplit(10_000_000, new Array(1024).fill(0));
+  const took = performance.now() - started;
+  assert.ok(took < 50, "took " + took.toFixed(1) + " ms");
+  assert.equal(out.reduce((a, b) => a + b, 0), 10_000_000);
+  assert.deepEqual(groups(out), [
+    { value: 9766, workers: 640 },
+    { value: 9765, workers: 384 },
+  ]);
+  const down = usersSplit(3, new Array(1024).fill(9766));
+  assert.equal(down.reduce((a, b) => a + b, 0), 3);
+});

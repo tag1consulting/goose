@@ -79,6 +79,22 @@ function resolve(value, vars) {
   return v.toLowerCase();
 }
 
+// A background that may be `color-mix(in srgb, A P%, B)`, as #rrggbb: each
+// channel P% of A and the rest of B, as the browser mixes in sRGB.
+function mixed(value, vars) {
+  const m = /^color-mix\(in srgb, (.+) (\d+)%, (.+)\)$/.exec(value.trim());
+  if (!m) return resolve(value, vars);
+  const [a, b] = [resolve(m[1], vars), resolve(m[3], vars)];
+  const p = +m[2] / 100;
+  return (
+    "#" +
+    [1, 3, 5]
+      .map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * p + parseInt(b.slice(i, i + 2), 16) * (1 - p)))
+      .map((c) => c.toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
 // WCAG 2.x relative luminance and contrast ratio.
 function luminance(hex) {
   const [r, g, b] = [1, 3, 5].map((i) => {
@@ -207,6 +223,15 @@ for (const theme of Object.keys(THEMES)) {
       const bg = bgValue && bgValue !== "transparent" ? resolve(bgValue, vars) : card;
       const ratio = contrast(fg, bg);
       assert.ok(ratio >= 4.5, `${selector} glyph ${fg} on ${bg} is ${ratio.toFixed(2)}:1`);
+    }
+    // A running tile's glyph (`*` outlier, `?` refused or missing) on every
+    // shade of load share.
+    for (let i = 0; i < 5; i++) {
+      const selectors = [".tile", ".tile-running", ".tile-running.tile-load-" + i];
+      const fg = resolve(cascaded(theme, selectors, "color"), vars);
+      const bg = mixed(cascaded(theme, selectors, "background"), vars);
+      const ratio = contrast(fg, bg);
+      assert.ok(ratio >= 4.5, `load-${i} glyph ${fg} on ${bg} is ${ratio.toFixed(2)}:1`);
     }
     for (const selector of [".tile-running", ".tile-saturated", ".tile-lagging", ".tile-lost"]) {
       const edge = resolve(cascaded(theme, [".tile", selector], "border-color"), vars);

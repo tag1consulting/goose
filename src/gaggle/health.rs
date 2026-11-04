@@ -568,7 +568,7 @@ impl GaggleHealth {
     /// Worker `id` was lost in an earlier run, at `at`, for `why`.
     pub(crate) fn lost_before(&mut self, id: u32, at: chrono::DateTime<chrono::Utc>, why: &str) {
         let worker = self.entry(id);
-        worker.lost = Some((at, 0, why.to_string()));
+        worker.lost = Some((at, 0, bounded(why)));
         worker.state = WorkerState::Lost;
     }
 
@@ -588,7 +588,9 @@ impl GaggleHealth {
         if worker.state == WorkerState::Lost {
             return false;
         }
-        worker.lost = Some((chrono::Utc::now(), second, why.to_string()));
+        // A worker's own words can reach `why`: kept bounded, as an event's
+        // text is, as the dashboard sends it every second.
+        worker.lost = Some((chrono::Utc::now(), second, bounded(why)));
         self.set_state(id, WorkerState::Lost, now);
         let name = self.entry(id).name.clone();
         self.event(
@@ -785,11 +787,7 @@ impl GaggleHealth {
         // A worker's words reach the text, through the reasons it gives:
         // no control character, so none reaches a terminal or a report, and
         // at most MAX_EVENT_TEXT characters.
-        let text: String = text
-            .chars()
-            .map(|c| if c.is_control() { ' ' } else { c })
-            .take(MAX_EVENT_TEXT)
-            .collect();
+        let text = bounded(&text);
         if self.events.len() >= GaggleRecord::MAX_EVENTS {
             self.events.pop_front();
             self.events_dropped += 1;
@@ -994,6 +992,16 @@ impl GaggleHealth {
             })
             .collect()
     }
+}
+
+/// `text` with no control character, so none reaches a terminal or a
+/// report, and at most [`MAX_EVENT_TEXT`] characters: a worker's words can
+/// reach it, through the reasons it gives.
+fn bounded(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_EVENT_TEXT)
+        .collect()
 }
 
 /// What an event says of a worker that turned saturated, and what the

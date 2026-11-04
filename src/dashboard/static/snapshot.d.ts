@@ -104,7 +104,8 @@ seconds: Array<number>,
 kinds: Array<string>,
 /**
  * A few words for the chart's marker, `users 900` or `load-31 lost`,
- * for an event within the series window, which the chart draws.
+ * for the newest event of each second within the series window, which
+ * the chart draws; `null` for the rest, whose label would overlap it.
  */
 labels: Array<string | null>,
 /**
@@ -133,20 +134,20 @@ load: Array<number>,
  */
 users: Array<number>,
 /**
- * Its CPU use, whole percent, while it runs; `null` when it sends none
- * or does not run.
+ * Its CPU use, whole percent, while it runs; -1 when it sends none or
+ * does not run.
  */
-cpu: Array<number | null>,
+cpu: Array<number>,
 /**
- * Its requests per second over the last 10 seconds, whole; `null`
- * while it does not run.
+ * Its requests per second over the last 10 seconds, whole; -1 while it
+ * does not run.
  */
-rps: Array<number | null>,
+rps: Array<number>,
 /**
- * Its p95 over the last 10 seconds, whole milliseconds: 0 is under
- * half a millisecond.
+ * Its p95 over the last 10 seconds, whole milliseconds, 0 under half a
+ * millisecond; -1 without one.
  */
-p95: Array<number | null>,
+p95: Array<number>,
 /**
  * Its requests per user per second's distance from the median of the
  * running workers, in percent, signed, when past the outlier
@@ -190,11 +191,20 @@ saturated_secs: Array<number | null>,
  * How far its p95 is from the median of the running workers, in
  * percent, signed, when past the outlier threshold.
  */
-p95_gap_percent: Array<number | null>, lost_reason: Array<string | null>,
+p95_gap_percent: Array<number | null>,
+/**
+ * Why it was lost: an index into `reasons`, as many workers lost at
+ * once share one.
+ */
+lost_reason: Array<number | null>,
 /**
  * The run's series second it was lost in.
  */
-lost_second: Array<number | null>, };
+lost_second: Array<number | null>,
+/**
+ * Every distinct reason `lost_reason` points at.
+ */
+reasons: Array<string>, };
 
 type GaggleSnapshot = {
 /**

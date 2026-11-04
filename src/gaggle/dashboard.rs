@@ -316,7 +316,7 @@ pub(crate) fn section(
         outliers: tally(&|view| has(view, GaggleWorkerFlag::Outlier)) as u64,
         healthy: healthy as u64,
         attention: attention(&live, healthy, now),
-        degraded: record.degraded_sentences(),
+        degraded: record.degraded_sentences_named(),
         checks: check_sentences(&record.workers),
         last_users_change,
     };
@@ -331,7 +331,8 @@ pub(crate) fn section(
         rows.iter().map(|&at| value(&live[at])).collect()
     };
     let figure = |view: &Live<'_>| view.figures.unwrap_or_default();
-    let workers = GaggleRows {
+    let mut reasons: Vec<String> = Vec::new();
+    let mut workers = GaggleRows {
         workers: rows.iter().map(|&at| at as u64).collect(),
         cores: rows.iter().map(|&at| live[at].worker.cores).collect(),
         fail_percent: column(&|view| figure(view).fail_percent.map(tenths)),
@@ -372,13 +373,25 @@ pub(crate) fn section(
             .collect(),
         lost_reason: rows
             .iter()
-            .map(|&at| live[at].worker.lost.as_ref().map(|(_, _, why)| why.clone()))
+            .map(|&at| {
+                live[at].worker.lost.as_ref().map(|(_, _, why)| {
+                    match reasons.iter().position(|reason| reason == why) {
+                        Some(index) => index as u32,
+                        None => {
+                            reasons.push(why.clone());
+                            (reasons.len() - 1) as u32
+                        }
+                    }
+                })
+            })
             .collect(),
         lost_second: rows
             .iter()
             .map(|&at| live[at].worker.lost.as_ref().map(|(_, second, _)| *second))
             .collect(),
+        reasons: Vec::new(),
     };
+    workers.reasons = reasons;
 
     // The grid: every worker, in id order.
     let busiest = live.iter().map(Live::rps).fold(0.0, f64::max);
@@ -403,7 +416,7 @@ pub(crate) fn section(
                 view.worker
                     .cpu_percent
                     .filter(|_| view.figures.is_some())
-                    .map(|cpu| cpu.round().clamp(0.0, 100.0) as u16)
+                    .map_or(-1, |cpu| cpu.round().clamp(0.0, 100.0) as i32)
             })
             .collect(),
         rps: live
@@ -411,7 +424,7 @@ pub(crate) fn section(
             .map(|view| {
                 view.figures
                     .and_then(|f| f.requests_per_second)
-                    .map(|rps| rps.round().max(0.0) as u64)
+                    .map_or(-1, |rps| rps.round().max(0.0) as i64)
             })
             .collect(),
         p95: live
@@ -419,7 +432,7 @@ pub(crate) fn section(
             .map(|view| {
                 view.figures
                     .and_then(|f| f.p95_ms)
-                    .map(|p95| p95.round().max(0.0) as u64)
+                    .map_or(-1, |p95| p95.round().max(0.0) as i64)
             })
             .collect(),
         gap: live
@@ -445,7 +458,12 @@ pub(crate) fn section(
     let by_worker = GaggleByWorker {
         workers: busy.iter().map(|view| view.worker.name.clone()).collect(),
         rps: lines,
-        others_workers: (live.len() - busy.len()) as u64,
+        // The others the rest's line adds up: every worker not lost.
+        others_workers: live
+            .iter()
+            .filter(|view| view.worker.state != WorkerState::Lost)
+            .count()
+            .saturating_sub(busy.len()) as u64,
     };
 
     // The events, newest first.
@@ -460,7 +478,12 @@ pub(crate) fn section(
         kinds: newest.iter().map(|event| kind_name(event.kind)).collect(),
         labels: newest
             .iter()
-            .map(|event| (event.second >= series.start_second).then(|| label(event)))
+            .enumerate()
+            .map(|(at, event)| {
+                // Newest first: only the first event of its second is labelled.
+                let newest = at == 0 || newest[at - 1].second != event.second;
+                (newest && event.second >= series.start_second).then(|| label(event))
+            })
             .collect(),
         texts: newest.iter().map(|event| event.text.clone()).collect(),
     };
@@ -674,7 +697,8 @@ mod tests {
 
         let lost = row(&section, "load-03");
         assert_eq!(rows.flags[lost], ["lost"]);
-        assert_eq!(rows.lost_reason[lost].as_deref(), Some("connection reset"));
+        let reason = rows.lost_reason[lost].unwrap() as usize;
+        assert_eq!(rows.reasons[reason], "connection reset");
         assert_eq!(rows.lost_second[lost], Some(185));
         assert_eq!(rows.avg_ms[lost], None);
         assert_eq!(rows.last_delta_secs[lost], None);
@@ -717,12 +741,12 @@ mod tests {
         assert_eq!(grid.flags, [2, 0, 0, 0]);
         assert_eq!(grid.load, [65, 100, 100, 0]);
         // The lost worker sent CPU before it was lost; none is shown now.
-        assert_eq!(grid.cpu, [Some(97), Some(30), Some(30), None]);
-        assert_eq!(grid.rps, [Some(41), Some(63), Some(63), None]);
+        assert_eq!(grid.cpu, [97, 30, 30, -1]);
+        assert_eq!(grid.rps, [41, 63, 63, -1]);
         assert_eq!(grid.users, [19, 19, 19, 19]);
-        let p95 = grid.p95[0].unwrap();
+        let p95 = grid.p95[0];
         assert!((200..=225).contains(&p95), "{}", p95);
-        assert_eq!(grid.p95[3], None);
+        assert_eq!(grid.p95[3], -1);
     }
 
     /// A worker that sends no CPU time shows none, in its row and the grid.
@@ -737,8 +761,8 @@ mod tests {
         let empty = series(Vec::new());
         let section = build(&health, &accumulator(), 2, &empty, None, now);
         assert_eq!(section.workers.cores[row(&section, "load-00")], None);
-        assert_eq!(section.grid.cpu, [None, None]);
-        assert_eq!(section.grid.p95[0], Some(5));
+        assert_eq!(section.grid.cpu, [-1, -1]);
+        assert_eq!(section.grid.p95[0], 5);
     }
 
     /// Rows are the most urgent 100, by severity then name; the summary and
@@ -774,7 +798,7 @@ mod tests {
         assert_eq!(section.grid.names.len(), 150);
         // Every worker past the rows is in the grid, with its hover figures.
         let last = index(&section, "load-149");
-        assert_eq!(section.grid.rps[last], Some(5));
+        assert_eq!(section.grid.rps[last], 5);
     }
 
     /// The grid holds every one of 1,024 workers, one entry each in every
@@ -1139,6 +1163,66 @@ mod tests {
             times[197],
             times[199]
         );
+    }
+
+    /// A lost worker's reason, which a worker's own words can reach, is
+    /// kept bounded: a reason of 1 MiB leaves the section small.
+    #[test]
+    fn a_long_lost_reason_is_bounded() {
+        let at = Instant::now();
+        let mut health = running(2, Some(2), 4, at);
+        health.lose(1, &"x\u{7}".repeat(1 << 19), at + secs(1.0));
+        let empty = series(Vec::new());
+        let section = build(&health, &accumulator(), 2, &empty, None, at + secs(1.0));
+        let bytes = serde_json::to_vec(&section).unwrap().len();
+        assert!(bytes < 4 * 1024, "{} bytes", bytes);
+        let reason = &section.workers.reasons[section.workers.lost_reason[0].unwrap() as usize];
+        assert_eq!(reason.chars().count(), 500);
+        assert!(!reason.contains('\u{7}'));
+    }
+
+    /// Every one of 1,024 workers lost with a long reason, as at a Ctrl-C:
+    /// the section still holds at most 64 KiB, its sentences naming at most
+    /// 10 workers each.
+    #[test]
+    fn every_worker_lost_stays_in_budget() {
+        let at = Instant::now();
+        let mut health = running(1_024, Some(4), 20, at);
+        for id in 0..1_024 {
+            health.lose(
+                id,
+                "canceled while the manager waited for its final metrics: the run was stopped",
+                at + secs(10.0),
+            );
+        }
+        let empty = series(vec![0.0; 300]);
+        let section = build(
+            &health,
+            &accumulator(),
+            1_024,
+            &empty,
+            Some(3_000),
+            at + secs(10.0),
+        );
+        let bytes = serde_json::to_vec(&section).unwrap().len();
+        let part = |v: serde_json::Value| v.to_string().len();
+        let json = serde_json::to_value(&section).unwrap();
+        assert!(
+            bytes <= 64 * 1024,
+            "{} bytes: summary {}, rows {}, grid {}, events {}",
+            bytes,
+            part(json["summary"].clone()),
+            part(json["workers"].clone()),
+            part(json["grid"].clone()),
+            part(json["events"].clone())
+        );
+        let degraded = &section.summary.degraded;
+        assert_eq!(degraded.len(), 1, "{:?}", degraded);
+        assert!(degraded[0].contains(" and 1014 more"), "{}", degraded[0]);
+        assert_eq!(section.by_worker.others_workers, 0);
+        // One reason, shared by every lost row; one label for the second.
+        assert_eq!(section.workers.reasons.len(), 1);
+        assert_eq!(section.events.labels.iter().flatten().count(), 1);
     }
 
     /// The section holds worker names, never an address, host name, port

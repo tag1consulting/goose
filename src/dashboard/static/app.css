@@ -18,6 +18,12 @@
   --chart-grid: rgba(154, 167, 184, 0.2);
   --chart-tick: #9aa7b8;
   --percentile: #ff8f45;
+  /* The glyph colour on each shade of a running worker's tile. */
+  --tile-ink-0: var(--text);
+  --tile-ink-1: var(--text);
+  --tile-ink-2: var(--bg);
+  --tile-ink-3: var(--bg);
+  --tile-ink-4: var(--bg);
 }
 
 @media (prefers-color-scheme: light) {
@@ -39,6 +45,11 @@
     --chart-grid: rgba(91, 107, 124, 0.2);
     --chart-tick: #5b6b7c;
     --percentile: #c2410c;
+    --tile-ink-0: var(--text);
+    --tile-ink-1: var(--text);
+    --tile-ink-2: var(--text);
+    --tile-ink-3: var(--text);
+    --tile-ink-4: var(--card);
   }
 }
 
@@ -1208,11 +1219,11 @@ body.gaggle-mode .charts-grid {
 }
 
 /* Running: green, darker or lighter by load share. */
-.tile-running.tile-load-0 { background: color-mix(in srgb, var(--ok) 30%, var(--card)); }
-.tile-running.tile-load-1 { background: color-mix(in srgb, var(--ok) 45%, var(--card)); }
-.tile-running.tile-load-2 { background: color-mix(in srgb, var(--ok) 62%, var(--card)); }
-.tile-running.tile-load-3 { background: color-mix(in srgb, var(--ok) 80%, var(--card)); }
-.tile-running.tile-load-4 { background: var(--ok); }
+.tile-running.tile-load-0 { background: color-mix(in srgb, var(--ok) 30%, var(--card)); color: var(--tile-ink-0); }
+.tile-running.tile-load-1 { background: color-mix(in srgb, var(--ok) 45%, var(--card)); color: var(--tile-ink-1); }
+.tile-running.tile-load-2 { background: color-mix(in srgb, var(--ok) 62%, var(--card)); color: var(--tile-ink-2); }
+.tile-running.tile-load-3 { background: color-mix(in srgb, var(--ok) 72%, var(--card)); color: var(--tile-ink-3); }
+.tile-running.tile-load-4 { background: var(--ok); color: var(--tile-ink-4); }
 
 .tile-saturated {
   background: var(--warn);

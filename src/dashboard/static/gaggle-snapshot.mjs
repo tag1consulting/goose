@@ -106,8 +106,9 @@ export function gaggleSnapshot(options = {}) {
         ),
         saturated_secs: order.map((i) => (i === 17 && saturated ? 42 : null)),
         p95_gap_percent: order.map(() => null),
-        lost_reason: order.map((i) => (i === 31 ? "connection reset" : null)),
+        lost_reason: order.map((i) => (i === 31 ? 0 : null)),
         lost_second: order.map((i) => (i === 31 ? 185 : null)),
+        reasons: ["connection reset"],
       },
       workers_truncated: false,
       grid: {
@@ -116,9 +117,9 @@ export function gaggleSnapshot(options = {}) {
         flags,
         load: rps.map((r) => (r === null ? 0 : Math.round((r * 100) / 63))),
         users,
-        cpu: names.map((_, i) => (i === 31 ? null : i === 17 ? 97 : i === 5 ? null : 40)),
-        rps,
-        p95: names.map((_, i) => (i === 31 ? null : i === 17 ? 212 : 40)),
+        cpu: names.map((_, i) => (i === 31 ? -1 : i === 17 ? 97 : i === 5 ? -1 : 40)),
+        rps: rps.map((r) => (r === null ? -1 : r)),
+        p95: names.map((_, i) => (i === 31 ? -1 : i === 17 ? 212 : 40)),
         gap: names.map((_, i) => (i === 17 ? -35 : 0)),
       },
       by_worker: {

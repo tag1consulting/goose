@@ -21,6 +21,9 @@ import { groups, splitText, throttleSplit, usersSplit, type SplitGroup } from ".
 import { announce } from "./status";
 import { sortableTable, type Column, type SortableTable } from "./tables";
 
+/** The most users and throttle the manager takes, as its refusals say. */
+const MAX_USERS = 100000;
+const MAX_THROTTLE = 1000000;
 /** Rows the compact workers table shows. */
 const COMPACT_ROWS = 6;
 /** Events shown before the scrolling list of older ones. */
@@ -92,6 +95,11 @@ function glyphBit(state: number, flag: number): number {
   return state < RUNNING ? 1 << 3 : 1 << 4;
 }
 
+/** A grid figure, or null where the snapshot sends -1 for none. */
+function known(value: number): number | null {
+  return value < 0 ? null : value;
+}
+
 /** A row of the workers tables, joined from the rows and the grid. */
 interface WorkerRow {
   worker: string;
@@ -130,9 +138,9 @@ export function workerRows(g: GaggleSnapshot): WorkerRow[] {
     worker: grid.names[index] || "",
     state: STATES[grid.states[index]] || "",
     users: grid.users[index] || 0,
-    rps: grid.rps[index],
-    p95: grid.p95[index],
-    cpu: grid.cpu[index],
+    rps: known(grid.rps[index]),
+    p95: known(grid.p95[index]),
+    cpu: known(grid.cpu[index]),
     fail: rows.fail_percent[at],
     avg: rows.avg_ms[at],
     rpus: rows.requests_per_user_per_second[at],
@@ -190,23 +198,24 @@ export function cardLines(g: GaggleSnapshot, at: number): [string, string, strin
   const satSecs = row >= 0 ? g.workers.saturated_secs[row] : null;
   if (grid.states[at] === LOST) {
     const second = row >= 0 ? g.workers.lost_second[row] : null;
-    const reason = row >= 0 ? g.workers.lost_reason[row] : null;
+    const at = row >= 0 ? g.workers.lost_reason[row] : null;
+    const reason = at == null ? null : g.workers.reasons[at];
     return [
       name + "  lost",
       second == null ? "lost" : "lost at " + clock(second),
       reason ? String(reason) : "",
     ];
   }
-  const cpu = grid.cpu[at];
+  const cpu = known(grid.cpu[at]);
   let cpuText = "CPU not reported";
   if (cpu != null) {
     cpuText = "CPU " + cpu + "%";
     if (cores != null) cpuText += " of " + count(cores, "core");
     if (satSecs != null) cpuText += " for " + satSecs + " s";
   }
-  const rps = grid.rps[at];
+  const rps = known(grid.rps[at]);
   const gap = grid.gap[at];
-  const p95 = grid.p95[at];
+  const p95 = known(grid.p95[at]);
   let load = rps == null ? "no requests yet" : formatInt(rps) + " req/s";
   if (rps != null && gap !== 0) load += " (" + (gap > 0 ? "+" : "") + gap + "%)";
   if (p95 != null) load += ", p95 " + p95Text(p95) + " ms";
@@ -294,8 +303,8 @@ const tileCodes: number[] = [];
 const tileNames: string[] = [];
 let focusedTile = 0;
 let cardAt: number | null = null;
-/** The events already seen, so each is announced once. */
-const seen = new Set<string>();
+/** The events of the last snapshot, so each is announced once; at most 200. */
+let seen = new Set<string>();
 let firstEvents = true;
 let eventsKey = "";
 let byWorker = false;
@@ -812,12 +821,14 @@ function renderEvents(g: GaggleSnapshot): void {
   const n = events.texts.length;
   const key = n + "|" + (n ? events.seconds[0] + "|" + events.texts[0] : "");
   // Announced once each, newest last; none of what was there on opening.
+  const now = new Set<string>();
   for (let i = n - 1; i >= 0; i--) {
     const id = events.seconds[i] + "|" + events.kinds[i] + "|" + events.texts[i];
+    now.add(id);
     if (seen.has(id)) continue;
-    seen.add(id);
     if (!firstEvents && ANNOUNCED.has(events.kinds[i])) announce(events.texts[i] + ".");
   }
+  seen = now;
   firstEvents = false;
   if (key === eventsKey) return;
   eventsKey = key;
@@ -965,7 +976,9 @@ function renderControl(): void {
   if (!controlParts) return;
   const g = latest;
   const edit = targetEdit();
-  const typed = edit !== null && /^\d+$/.test(edit.trim()) ? parseInt(edit, 10) : null;
+  // Only a value the manager would take is previewed: 1 to 100,000 users.
+  const parsed = edit !== null && /^\d+$/.test(edit.trim()) ? parseInt(edit, 10) : null;
+  const typed = parsed !== null && parsed >= 1 && parsed <= MAX_USERS ? parsed : null;
   setText(controlParts.usersSplit, splitText(usersPreview(g, typed), "users"));
   const throttle = latestThrottle;
   controlParts.throttleRow.hidden = throttle === null;
@@ -976,7 +989,10 @@ function renderControl(): void {
     if (!edited && document.activeElement !== input && input.value !== String(throttle)) {
       input.value = String(throttle);
     }
-    const value = edited && /^\d+$/.test(input.value.trim()) ? parseInt(input.value, 10) : null;
+    const parsedThrottle = edited && /^\d+$/.test(input.value.trim()) ? parseInt(input.value, 10) : null;
+    // 1 to 1,000,000 requests per second, as the manager takes.
+    const value =
+      parsedThrottle !== null && parsedThrottle >= 1 && parsedThrottle <= MAX_THROTTLE ? parsedThrottle : null;
     setText(controlParts.throttleSplit, splitText(throttlePreview(g, value, throttle), "req/s"));
   }
   if (controlParts.hostNote) {
