@@ -1083,3 +1083,309 @@ td.run-notes {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* A Gaggle manager's page: its workers. Every rule here applies only once
+   the page has seen a snapshot with a `gaggle` section, which adds the
+   gaggle-mode class and the elements these style. */
+body.gaggle-mode {
+  max-width: 1440px;
+}
+
+.gaggle-expected {
+  margin-left: 0.75rem;
+}
+
+.kpi .kpi-sub {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kpi .kpi-sub:empty {
+  display: none;
+}
+
+.kpi.kpi-warn {
+  border-color: var(--warn);
+}
+
+.kpi.kpi-warn .v {
+  color: var(--warn);
+}
+
+/* The Workers panel beside the RPS chart, stacked below 1200 px. */
+.gaggle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+
+@media (min-width: 1200px) {
+  .gaggle-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.gaggle-row > .card {
+  margin-top: 0;
+}
+
+.workers-panel {
+  position: relative;
+}
+
+.workers-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+
+.workers-head h2 {
+  margin-bottom: 0.4rem;
+}
+
+.workers-summary {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.workers-checks {
+  margin: 0 0 0.5rem;
+  padding-left: 1.1rem;
+  color: var(--warn);
+  font-size: 0.8rem;
+}
+
+/* One square tile per worker, 16 to a row, 32 past 256 workers. */
+.worker-grid {
+  --cols: 16;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: 2px;
+}
+
+.tile {
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 3px;
+  background: var(--border);
+  color: var(--bg);
+  font: inherit;
+  font-size: clamp(0.55rem, 1.6cqi, 0.85rem);
+  font-weight: 700;
+  line-height: 1;
+  cursor: default;
+}
+
+.worker-grid {
+  container-type: inline-size;
+}
+
+.tile:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+/* Running: green, darker or lighter by load share. */
+.tile-running.tile-load-0 { background: color-mix(in srgb, var(--ok) 30%, var(--card)); }
+.tile-running.tile-load-1 { background: color-mix(in srgb, var(--ok) 45%, var(--card)); }
+.tile-running.tile-load-2 { background: color-mix(in srgb, var(--ok) 62%, var(--card)); }
+.tile-running.tile-load-3 { background: color-mix(in srgb, var(--ok) 80%, var(--card)); }
+.tile-running.tile-load-4 { background: var(--ok); }
+
+.tile-saturated {
+  background: var(--warn);
+  color: var(--bg);
+}
+
+.tile-lagging {
+  background: transparent;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.tile-lost,
+.tile-excluded {
+  background: transparent;
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.tile-idle,
+.tile-stopped {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+
+.worker-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  margin: 0.45rem 0 0.6rem;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.worker-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.worker-legend .tile {
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.65rem;
+}
+
+/* The one hover card, moved to the tile hovered or focused. */
+.worker-card {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  gap: 0.1rem;
+  min-width: 12rem;
+  max-width: 22rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.worker-card[hidden],
+.chart-marker-tip[hidden],
+.gaggle-events-more[hidden],
+.gaggle-throttle[hidden],
+.workers-checks[hidden],
+.gaggle-split[hidden] {
+  display: none;
+}
+
+.workers-compact table {
+  width: 100%;
+  font-size: 0.8rem;
+}
+
+.workers-compact td,
+.workers-compact th {
+  padding: 0.2rem 0.4rem;
+  white-space: nowrap;
+}
+
+.workers-compact td:first-child {
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flag-alarm {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.flag-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.flag-note {
+  color: var(--muted);
+}
+
+.workers-rows-note {
+  margin: 0.3rem 0 0.2rem;
+}
+
+.workers-events-head {
+  margin: 0.8rem 0 0.3rem;
+  font-size: 0.9rem;
+}
+
+.gaggle-events {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.gaggle-events li {
+  padding: 0.1rem 0;
+}
+
+.gaggle-events .event-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gaggle-events .event-alarm {
+  color: var(--err);
+}
+
+.gaggle-events-more {
+  max-height: 6.5rem;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+
+.gaggle-events-more:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* The RPS chart's markers: their sentence on hover and focus. */
+.chart-marker-wrap {
+  position: relative;
+}
+
+.chart-marker-wrap canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chart-markers-table caption {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0.5rem 0 0.2rem;
+}
+
+/* The Control card on a Gaggle manager. */
+.gaggle-note {
+  margin: -0.4rem 0 0.5rem;
+}
+
+.gaggle-split {
+  margin: 0.2rem 0 0.4rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.gaggle-host {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.gaggle-throttle input {
+  width: 7rem;
+}

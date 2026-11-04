@@ -12,8 +12,10 @@ import {
   PointElement,
   Tooltip,
   type ChartConfiguration,
+  type ChartDataset,
   type ChartOptions,
   type LegendItem,
+  type Plugin,
 } from "chart.js";
 import { requireElement } from "./dom";
 
@@ -41,7 +43,34 @@ interface ChartColors {
   percentile: string;
 }
 
+/** A Gaggle event the RPS chart marks: a thin dashed line at its second. */
+export interface ChartMarker {
+  /** The series second it happened in. */
+  second: number;
+  /** A few words drawn at the top of the line. */
+  label: string;
+  /** The event's sentence, for hover and focus. */
+  text: string;
+  /** Drawn in the error colour: a worker lost. */
+  alarm: boolean;
+}
+
+/** The RPS chart's lines by worker, on a Gaggle manager. */
+export interface ByWorker {
+  names: string[];
+  /** Each worker's requests in each second, from the series start. */
+  lines: number[][];
+  /** How many workers `others` adds up. */
+  othersWorkers: number;
+}
+
 let chartRps: LineChart | null = null;
+/** The RPS chart's markers, drawn by the markers plugin. */
+let rpsMarkers: ChartMarker[] = [];
+/** The second each index of the RPS chart stands for starts at. */
+let rpsStart = 0;
+/** Whether the RPS chart shows its lines by worker. */
+let rpsByWorker = false;
 let chartUsers: LineChart | null = null;
 let chartLatency: LineChart | null = null;
 /** The index of each chart's first provisional second, or null. */
@@ -72,6 +101,22 @@ export function chartTheme(): { dark: boolean; tick: string; grid: string; perce
     grid: colors.grid,
     percentile: colors.percentile,
   };
+}
+
+/**
+ * Eight colours for the RPS chart's lines by worker, distinct in hue and
+ * readable on the theme's card, then grey for the rest.
+ */
+export function workerColors(dark: boolean): { lines: string[]; others: string } {
+  return dark
+    ? {
+        lines: ["#3d8bfd", "#3dd68c", "#e6b450", "#c678dd", "#56b6c2", "#f78c6c", "#ff6ac1", "#a3be8c"],
+        others: "#6b7785",
+      }
+    : {
+        lines: ["#0b5fff", "#0a7a43", "#9a6700", "#8e44ad", "#0e7490", "#c2410c", "#be185d", "#4d7c0f"],
+        others: "#8a96a3",
+      };
 }
 
 function chartColors(): ChartColors {
@@ -254,6 +299,188 @@ export function rpsDatasets(
   ];
 }
 
+/**
+ * Which of `labels`, each spanning `[x, x + width]` in pixels and sorted by
+ * `x`, are drawn: each one that clears the last one kept by `gap` pixels.
+ * The rest are dropped from the top row; their sentences stay on hover and
+ * in the data table.
+ */
+export function keptLabels(labels: { x: number; width: number }[], gap: number): boolean[] {
+  let end = -Infinity;
+  return labels.map((label) => {
+    if (label.x < end + gap) return false;
+    end = label.x + label.width;
+    return true;
+  });
+}
+
+/** The pixel x of index `at` of `chart`'s category axis, or null. */
+function indexX(chart: Chart, at: number): number | null {
+  const scale = chart.scales.x;
+  if (!scale) return null;
+  const x = scale.getPixelForValue(at);
+  return Number.isFinite(x) ? x : null;
+}
+
+/** The markers of the RPS chart within its drawn seconds, with their x. */
+function placedMarkers(chart: Chart): { marker: ChartMarker; x: number }[] {
+  const count = (chart.data.labels || []).length;
+  const placed: { marker: ChartMarker; x: number }[] = [];
+  for (const marker of rpsMarkers) {
+    const at = marker.second - rpsStart;
+    if (at < 0 || at >= count) continue;
+    const x = indexX(chart, at);
+    if (x !== null) placed.push({ marker, x });
+  }
+  return placed.sort((a, b) => a.x - b.x);
+}
+
+/**
+ * Draws the RPS chart's Gaggle markers: a thin dashed line at each event's
+ * second, its label at the top where it fits, in the error colour for a
+ * lost worker.
+ */
+const markersPlugin: Plugin<"line"> = {
+  id: "gaggleMarkers",
+  afterDatasetsDraw(chart) {
+    const area = chart.chartArea;
+    const ctx = chart.ctx;
+    if (!area || !ctx || rpsMarkers.length === 0) return;
+    const colors = chartColors();
+    const alarm = isDark() ? "#f07178" : "#b42318";
+    const placed = placedMarkers(chart as unknown as Chart);
+    ctx.save();
+    ctx.font = "10px " + getComputedStyleFont();
+    const widths = placed.map((p) => ctx.measureText(p.marker.label).width);
+    const kept = keptLabels(
+      placed.map((p, i) => ({ x: p.x + 3, width: widths[i] })),
+      6
+    );
+    placed.forEach((p, i) => {
+      const color = p.marker.alarm ? alarm : colors.tick;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(p.x, area.top);
+      ctx.lineTo(p.x, area.bottom);
+      ctx.stroke();
+      if (kept[i]) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        ctx.textBaseline = "top";
+        ctx.fillText(p.marker.label, Math.min(p.x + 3, area.right - widths[i]), area.top + 2);
+      }
+    });
+    ctx.restore();
+  },
+};
+
+/** The page's font family, for the markers' labels. */
+function getComputedStyleFont(): string {
+  try {
+    return getComputedStyle(document.body).fontFamily || "sans-serif";
+  } catch {
+    return "sans-serif";
+  }
+}
+
+/**
+ * The marker of the RPS chart within `slack` pixels of `x` on its canvas,
+ * nearest first, or null.
+ */
+export function markerNear(x: number, slack: number): ChartMarker | null {
+  if (!drawable(chartRps)) return null;
+  let best: { marker: ChartMarker; d: number } | null = null;
+  for (const p of placedMarkers(chartRps as unknown as Chart)) {
+    const d = Math.abs(p.x - x);
+    if (d <= slack && (best === null || d < best.d)) best = { marker: p.marker, d };
+  }
+  return best ? best.marker : null;
+}
+
+/** The pixel x of `marker` on the RPS chart's canvas, or null. */
+export function markerX(marker: ChartMarker): number | null {
+  if (!drawable(chartRps)) return null;
+  return indexX(chartRps as unknown as Chart, marker.second - rpsStart);
+}
+
+/** Sets the RPS chart's markers, drawn at the next update. */
+export function setRpsMarkers(markers: ChartMarker[]): void {
+  rpsMarkers = markers;
+}
+
+/**
+ * The RPS chart's datasets by worker: each worker's line, then the others,
+ * stacked and filled, so the top edge is the total.
+ */
+function byWorkerDatasets(view: ByWorker, others: number[]): ChartDataset<"line", (number | null)[]>[] {
+  const palette = workerColors(isDark());
+  const line = (label: string, data: number[], color: string): ChartDataset<"line", (number | null)[]> => ({
+    label,
+    data,
+    borderColor: color,
+    backgroundColor: lighter(color),
+    borderWidth: 1,
+    pointRadius: 0,
+    tension: 0.15,
+    fill: true,
+    stack: "workers",
+  });
+  const sets = view.names.map((name, i) => line(name, view.lines[i] || [], palette.lines[i % palette.lines.length]));
+  if (view.othersWorkers > 0) {
+    sets.push(line(view.othersWorkers.toLocaleString("en-US") + " others", others, palette.others));
+  }
+  return sets;
+}
+
+/**
+ * Shows the RPS chart by worker, from `view`, or its total when `view` is
+ * null: the datasets are swapped only when the view changes, and updated in
+ * place otherwise.
+ */
+function applyRpsView(chart: LineChart, view: ByWorker | null, series: SeriesWindow): void {
+  const y = chart.options.scales && chart.options.scales.y;
+  if (view === null) {
+    if (rpsByWorker) {
+      chart.data.datasets = rpsDatasets(chartColors());
+      if (y) (y as { stacked?: boolean }).stacked = false;
+      rpsByWorker = false;
+    }
+    return;
+  }
+  const len = Math.max(0, series.rps.length - 1);
+  const shown = view.lines.map((line) => line.slice(0, len));
+  const others: number[] = [];
+  for (let i = 0; i < len; i++) {
+    let sum = 0;
+    for (const line of shown) sum += line[i] || 0;
+    others.push(Math.max(0, series.rps[i] - sum));
+  }
+  const next = byWorkerDatasets({ ...view, lines: shown }, others);
+  const same =
+    rpsByWorker &&
+    chart.data.datasets.length === next.length &&
+    chart.data.datasets.every((set, i) => set.label === next[i].label);
+  if (same) {
+    chart.data.datasets.forEach((set, i) => {
+      set.data = next[i].data;
+    });
+  } else {
+    chart.data.datasets = next;
+  }
+  if (y) (y as { stacked?: boolean }).stacked = true;
+  rpsByWorker = true;
+}
+
+/** The RPS chart's lines by worker, or null to show its total. */
+let rpsView: ByWorker | null = null;
+
+/** Shows the RPS chart by worker from the next update, or its total. */
+export function setRpsByWorker(view: ByWorker | null): void {
+  rpsView = view;
+}
+
 export function ensureCharts(): void {
   const colors = chartColors();
 
@@ -265,6 +492,7 @@ export function ensureCharts(): void {
         datasets: rpsDatasets(colors),
       },
       options: baseChartOpts(colors),
+      plugins: [markersPlugin],
     };
     chartRps = new Chart(requireElement("chart-rps", HTMLCanvasElement), config);
   }
@@ -358,9 +586,13 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
     const rpsComplete = completeSeconds(rps);
     const fpsComplete = completeSeconds(fps);
     const empty = (i: number): boolean => !rpsComplete[i] && !fpsComplete[i];
+    rpsStart = start;
     chartRps.data.labels = labels.slice(0, Math.max(rpsComplete.length, fpsComplete.length));
-    chartRps.data.datasets[0].data = provisionalValues(rpsComplete, provisional, empty);
-    chartRps.data.datasets[1].data = provisionalValues(fpsComplete, provisional, empty);
+    applyRpsView(chartRps, rpsView, series);
+    if (!rpsByWorker) {
+      chartRps.data.datasets[0].data = provisionalValues(rpsComplete, provisional, empty);
+      chartRps.data.datasets[1].data = provisionalValues(fpsComplete, provisional, empty);
+    }
     chartRps.update("none");
   }
   if (drawable(chartUsers)) {
@@ -409,7 +641,21 @@ function recolor(chart: LineChart | null, colors: ChartColors, lines: string[]):
  */
 export function recolorCharts(): void {
   const colors = chartColors();
-  recolor(chartRps, colors, [colors.rps, colors.fps]);
+  if (rpsByWorker && rpsView !== null && drawable(chartRps)) {
+    // Rebuilt in the theme's colours: the lines by worker are filled.
+    const palette = workerColors(isDark());
+    const workers = rpsView.names.length;
+    const lines = chartRps.data.datasets.map((_, i) =>
+      i < workers ? palette.lines[i % palette.lines.length] : palette.others
+    );
+    recolor(chartRps, colors, lines);
+    chartRps.data.datasets.forEach((dataset, i) => {
+      dataset.backgroundColor = lighter(lines[i]);
+    });
+    chartRps.update("none");
+  } else {
+    recolor(chartRps, colors, [colors.rps, colors.fps]);
+  }
   recolor(chartUsers, colors, [colors.users]);
   recolor(chartLatency, colors, [colors.latency]);
 }

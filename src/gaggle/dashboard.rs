@@ -1160,4 +1160,71 @@ mod tests {
             json
         );
     }
+
+    /// 1,000 random cases of step 3's split rules, as the dashboard's split
+    /// previews read them (`split-fixture.json`, checked by
+    /// `split.test.mjs`): a book of users dealt over 1 to 24 workers, as a
+    /// run deals them, changed to a random number of users, and a random
+    /// throttle split over random users. Written with
+    /// `GOOSE_UPDATE_SPLIT_FIXTURE=1`, otherwise compared.
+    #[test]
+    fn split_fixture_matches_the_rules() {
+        let mut seed: u64 = 0x5eed_6a66_1e05;
+        let mut below = |n: u64| -> u64 {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let mut cases = Vec::new();
+        for _ in 0..1_000 {
+            let workers = 1 + below(24) as usize;
+            let live = vec![true; workers];
+            let mut book = UserBook::new(vec![Vec::new(); workers], 0);
+            // A run's users, then a change or two, as a run deals them.
+            for _ in 0..=below(3) {
+                book.set_users(below(400) as usize, &live, vec![0; 400]);
+            }
+            let counts: Vec<usize> = (0..workers).map(|w| book.users(w).len()).collect();
+            let users = below(500) as usize;
+            book.set_users(users, &live, vec![0; 500]);
+            let after: Vec<usize> = (0..workers).map(|w| book.users(w).len()).collect();
+            // The throttle over any users, some workers with none.
+            let loads: Vec<usize> = (0..workers)
+                .map(|_| match below(5) {
+                    0 => 0,
+                    _ => below(60) as usize,
+                })
+                .collect();
+            let throttle = 1 + below(20_000) as usize;
+            let shares = live_throttle_shares(throttle, &loads);
+            cases.push(serde_json::json!({
+                "counts": counts,
+                "users": users,
+                "users_after": after,
+                "loads": loads,
+                "throttle": throttle,
+                "shares": shares,
+            }));
+        }
+        let mut text = String::from("[\n");
+        for (at, case) in cases.iter().enumerate() {
+            text.push_str(&case.to_string());
+            text.push_str(if at + 1 < cases.len() { ",\n" } else { "\n" });
+        }
+        text.push_str("]\n");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/dashboard/static/split-fixture.json");
+        if std::env::var_os("GOOSE_UPDATE_SPLIT_FIXTURE").is_some() {
+            assert!(std::env::var_os("CI").is_none(), "not in CI");
+            std::fs::write(&path, &text).unwrap();
+            return;
+        }
+        let committed = std::fs::read_to_string(&path).expect("read split-fixture.json");
+        assert!(
+            committed == text,
+            "split-fixture.json no longer matches step 3's rules: regenerate it with \
+             `GOOSE_UPDATE_SPLIT_FIXTURE=1 cargo test --features gaggle --lib split_fixture`"
+        );
+    }
 }

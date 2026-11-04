@@ -25,6 +25,7 @@ import {
 } from "./control";
 import { requireElement } from "./dom";
 import { formatDuration, formatFailPct, formatInt, formatMs, formatRate, kv } from "./format";
+import { updateGaggle } from "./gaggle";
 import {
   initHeatmapCard,
   redrawHeatmapCard,
@@ -234,6 +235,9 @@ function renderSnapshot(
   // The response time card shows the heatmap, or with percentiles over time
   // off the average latency chart, which updateCharts then draws.
   const averageLatency = updateHeatmapCard(snap);
+  // On a Gaggle manager, its workers: before the charts, which draw this
+  // snapshot's lines by worker and markers.
+  updateGaggle(snap);
   updateChartData(snap.series, averageLatency, snap.target_users);
   updateCharts(snap.series, averageLatency);
   updateControlFromSnapshot(snap);

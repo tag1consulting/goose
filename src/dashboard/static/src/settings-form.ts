@@ -23,6 +23,8 @@ export interface SettingsBody {
   decrease_rate?: number | null;
   decrease_time_secs?: number | null;
   run_time_secs?: number | null;
+  /** Sent from a Gaggle manager's throttle field. */
+  throttle?: number | null;
 }
 
 /** A ramp's unit: users per second, or a total time in seconds, minutes or hours. */
