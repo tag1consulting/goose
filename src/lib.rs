@@ -1516,8 +1516,8 @@ impl GooseAttack {
     }
 
     /// Weight the next `total_users` users across the scenarios: which scenario
-    /// each runs, in the order they start (users are popped, so the last one
-    /// starts first). Builds no client: each user builds its own when it starts.
+    /// each runs, the last to start first, as users are popped. Builds no
+    /// client: each user builds its own when it starts.
     fn weight_scenario_users(
         &mut self,
         total_users: usize,
@@ -2792,7 +2792,7 @@ impl GooseAttack {
                     series_started: self.series_started,
                     // Clone the logger_tx if enabled, otherwise is None.
                     logger: goose_attack_run_state.all_threads_logger_tx.clone(),
-                    // Copy the GooseUser-throttle receiver channel, used by all threads.
+                    // Copy the throttle sender, used by all users.
                     throttle: if self.configuration.throttle_requests() > 0 {
                         Some(goose_attack_run_state.throttle_threads_tx.clone().unwrap())
                     } else {
@@ -5716,9 +5716,13 @@ mod tests {
                 assert!(control(&mut goose_attack, &mut run_state, users).await);
                 ramp_to_hold(&mut goose_attack, &mut run_state).await;
                 most_held = most_held.max(run_state.users.len());
+                // However long stopping users take, a start prunes once the
+                // tasks held double.
+                assert!(run_state.users.len() < 2 * run_state.users_pruned_at.max(1));
             }
         }
         assert_eq!(goose_attack.metrics.total_users, 810);
+        assert!(run_state.users_pruned_at > 0, "no start pruned the tasks held");
         // Without pruning on a start, every one of the 810 tasks is held;
         // with it, at most twice the users running or still stopping.
         assert!(

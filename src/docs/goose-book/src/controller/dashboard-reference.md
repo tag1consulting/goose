@@ -23,7 +23,7 @@ Then open:
 http://127.0.0.1:5118/
 ```
 
-The dashboard port opens when the Controllers' ports do, as the load test starts.
+The dashboard port opens when the Controllers' ports do, before any user starts.
 
 ### Related flags
 
