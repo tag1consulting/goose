@@ -91,7 +91,7 @@ pdf-reports = ["headless_chrome"]
 # Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 # Distributed load tests (Gaggle): a manager and workers, over gRPC.
-gaggle = ["dep:http-body", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
+gaggle = ["dep:http-body", "dep:libc", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 
 [dev-dependencies]
 httpmock = "0.8"
@@ -109,6 +109,11 @@ tokio = { version = "1", features = ["test-util"] }
 # the pin, run `GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib
 # dashboard_types_match_rust`, review the diff, and run `npm run check`.
 ts-rs = { version = "=12.0.1", features = ["chrono-impl"] }
+
+# A Gaggle worker reads its own CPU time with getrusage, with the `gaggle`
+# feature. Already in the tree, through tokio.
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
 
 # Signals, for the tests that interrupt, freeze or kill a process: Unix only,
 # as are those tests.

@@ -46,6 +46,8 @@ message Hello {
   uint64 plan_hash = 3;
   // The worker's name, for logs and the run folder.
   string worker_name = 4;
+  // The CPU cores the worker's process may use, for its CPU percent.
+  optional uint32 cores = 5;
 }
 
 message PrepareAck {
@@ -58,6 +60,10 @@ message Heartbeat {}
 message Metrics {
   // A postcard encoded metrics delta.
   bytes delta = 1;
+  // The worker process's user and system CPU time so far, in microseconds,
+  // read as the delta is sent; absent where the platform has no cheap
+  // source of it.
+  optional uint64 cpu_micros = 2;
 }
 
 message Stopped {

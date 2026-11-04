@@ -56,6 +56,41 @@ By default a lost worker's users are gone for the rest of the run: the run goes 
 
 The manager marks a worker lost when nothing has come from it for `--gaggle-heartbeat-timeout` (10 seconds by default), when its connection closes before its final metrics, or when it is stopped on its own machine. What the worker sent stays in the results, the run goes on with the others, and the manager tells the lost worker to exit if it can still reach it. The run's record, in `report.json`, lists every worker with its state, and for a lost worker when it was lost and the last metrics it sent; the HTML, Markdown and PDF reports open with a line saying the run is degraded. A worker whose metrics are not all in the results degrades the run too, named with why: one that missed the metrics reset, whose metrics the merge leaves out, one whose metrics the manager refused, or one some of whose metrics never arrived. A worker that cannot hand over its final metrics within 30 seconds, or reset its metrics within 10, tells the manager it failed, which marks it lost, and exits with an error. If every worker is lost, the run ends, recorded as ended by losing its workers.
 
+## Worker health {#worker-health}
+
+The manager keeps one model of every worker's health: its state, its CPU use, how long since its last metrics arrived, and its own figures, over the whole run and over its last 10 seconds. The reports show it, so a run's numbers can be judged: whether every worker was free to make the load it was asked for, or whether one was held back by its own machine rather than by the target. Each worker says how many CPU cores its process may use when it joins, and sends its process's CPU time with each second's metrics; a platform that has no cheap source of CPU time sends none, and the reports show a dash.
+
+A worker's state is `joining`, `ready` (prepared, waiting for the start), `running`, `stopping` (told to stop, or its users have stopped), `finished`, `users_exited` (`--iterations`) or `lost`.
+
+Each worker is flagged, for the run, when:
+
+| Flag | When | Why that threshold |
+|---|---|---|
+| lost | it was lost during the run, with when | |
+| excluded | the results leave its metrics out | |
+| saturated | its CPU use was at or above 90% of its cores for at least 5 seconds in all | past 90% a load generator queues its own work, which shows as longer response times and fewer requests than asked for; 5 seconds keeps one garbage collection or burst of logging from flagging it |
+| lagging | it once went more than 3 seconds without its metrics arriving while running | a worker sends them every second, so 3 is three missed in a row, past what a busy network or manager delays one by |
+| outlier | its requests per user per second, or its p95, was more than 25% from the median of the workers that ran, judged with at least 3 workers and once the run has run 30 seconds | workers running the same plan against the same target land well within 25%; with two, each is as far from their median as the other, and until the users have started and warmed up workers differ for no reason of their own |
+| refused, missing | some of its metrics deltas were refused, or never arrived, or its final metrics never arrived | |
+
+The same flags are judged live, over the last 10 seconds, where saturated means 5 seconds in a row: the event log records when a worker becomes saturated or lagging and when it recovers, once each way.
+
+The HTML, Markdown and PDF reports have a Workers section after the plan overview and thresholds. It opens with a line such as `47 of 48 workers finished, 1 lost, 1 saturated, 1 lagging`, then a table of every worker, the most severe first (lost, excluded, saturated, lagging, outlier, refused or missing, then healthy) and then by name: its state, users, requests, requests per second over its running time since the metrics reset, failure percent, average and p95 response time over every request name, requests per user per second, peak CPU, the longest gap between its metrics, and its flags in words, such as `lost 03:05`, `saturated 42 s` or `p95 +35%`. The console print shows at most 20 workers.
+
+![The Workers section of a manager's HTML report: four workers, one lost at 04:03, one CPU saturated for 8 seconds, three whose metrics arrived late](gaggle-workers.png)
+
+*A 10 minute run of four workers on a Kubernetes cluster. One worker's pod was deleted at four minutes; adding 2,400 users at once at eight minutes saturated one worker's CPU and held back every worker's metrics for a few seconds.*
+
+An Events section follows, oldest first, each with its time from the start of the run: the run starting, a worker lost and why, a worker's metrics left out or refused, a worker becoming saturated or lagging and recovering, a change of users, throttle or host with how many workers acknowledged it and how long that took (`users 600 to 900, acknowledged by 48 of 48 in 0.4 s`), a stop or start, the throttle's shares made again over the workers left after a loss, and a lost worker's users moved with `--gaggle-rebalance`. The manager keeps the newest 1,000 events and counts older ones, which the section says it left out.
+
+When a worker carries the saturated, lagging or outlier flag, the reports open with a "Check:" sentence for it, after any "Degraded:" sentences, for example: `Check: load-17 was CPU saturated for 42 s in total (peak 97% of 4 cores); its share of requests may be capped and its response times inflated by the generator, not the target.`
+
+![The top of the same report: a Degraded sentence for the lost worker, then a Check sentence for the saturated worker and one for the three whose metrics arrived late](gaggle-check.png)
+
+A worker's CPU is its own process's: another process on the same machine taking the CPU lowers it rather than raising it, so a worker starved by a neighbour shows as lagging or an outlier, not as saturated.
+
+`report.json`'s `gaggle` section carries the same: each worker gains `cores`, `peak_cpu_percent`, `saturated_secs`, `longest_delta_gap_secs`, `running_secs`, `requests`, `failures`, `average_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `requests_per_second`, `requests_per_user_per_second`, `rate_vs_median_percent` and `p95_vs_median_percent` (only when past 25%), `lost_second` and `flags`, and the section gains `events` (each with its `second`, `time`, `kind`, `worker` when about one, and `text`) and `events_dropped`. Every new field is optional, so a report of an earlier Goose still loads. No report holds a worker's address, host name, port or token: a worker appears only under the name the manager gave it.
+
 ## Logs
 
 With `--request-log`, `--transaction-log`, `--scenario-log`, `--error-log` or `--debug-log` on the manager, each worker writes that log in its own run folder, in the format and compression the manager's options give. When the run ends, after every worker has stopped, the manager asks each for its logs, and keeps them in its run's folder as `workers/<worker name>/<file>`, under the file names its options give. A worker's transfer fails when neither a full 1 MiB chunk of its logs nor a log's last arrives for 60 seconds; a transfer that keeps moving has no deadline, however large the log. A log that fails part way, or whose worker is lost, stays on its worker, and nothing of it is kept under its name on the manager; the manager's log, and its reports, name the worker and the path. Two logs may not share a file name, ignoring case: the manager refuses, for example, `--request-log a/x.log` with `--error-log b/x.log`. Each process keeps its own `--goose-log`.

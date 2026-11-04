@@ -1,6 +1,4 @@
-use futures::future::join_all;
 use httpmock::{Method::GET, Mock, MockServer};
-use serial_test::serial;
 
 mod common;
 
@@ -24,7 +22,6 @@ const REQUEST_LOG: &str = "request-test.log";
 const DEBUG_LOG: &str = "debug-test.log";
 const LOG_FORMAT: GooseLogFormat = GooseLogFormat::Raw;
 const THROTTLE_REQUESTS: usize = 10;
-const EXPECT_WORKERS: usize = 2;
 // Increase, Increase, Decrease, Increase, Maintain, Decrease, Decrease
 const TEST_PLAN: &str = "4,1;8,1;4,2;10,2;10,1;4,1;0,1";
 const TEST_PLAN_MAX_USERS: usize = 10;
@@ -46,8 +43,6 @@ enum TestType {
 // - GooseDefault::LogLevel (can't validate due to logger limitation)
 
 // Needs followup:
-// - GooseDefault::NoMetrics:
-//     Gaggles depend on metrics, when disabled load test does not shut down clearly.
 // - GooseDefault::StickyFollow
 //     Needs more complex tests
 
@@ -141,8 +136,6 @@ fn validate_test(
             assert!(goose_metrics.duration == RUN_TIME);
 
             // Be sure there were no more requests made than the throttle should allow.
-            // In the case of a gaggle, there's multiple processes running with the same
-            // throttle.
             assert!(metrics_lines <= (RUN_TIME + 1) * THROTTLE_REQUESTS * number_of_processes);
         }
         TestType::TestPlan => {
@@ -280,117 +273,6 @@ async fn test_no_percentiles_over_time_default_runs_without_dashboard() {
     assert!(!goose_metrics.requests.is_empty());
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Configure load test with set_default, run as Gaggle.
-async fn test_defaults_gaggle() {
-    // Multiple tests run together, so set a unique name.
-    let request_log = "gaggle-defaults".to_string() + REQUEST_LOG;
-    let debug_log = "gaggle-defaults".to_string() + DEBUG_LOG;
-
-    // Be sure there's no files left over from an earlier test.
-    for i in 0..EXPECT_WORKERS {
-        let file = request_log.to_string() + &i.to_string();
-        common::cleanup_files(vec![&file]);
-        let file = debug_log.to_string() + &i.to_string();
-        common::cleanup_files(vec![&file]);
-    }
-
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    let mut configuration = common::build_configuration(&server, vec![]);
-
-    // Unset options set in common.rs so set_default() is instead used.
-    configuration.users = None;
-    configuration.run_time = None;
-    configuration.increase_rate = None;
-    configuration.co_mitigation = None;
-    let host = configuration.host.take().unwrap_or_default();
-
-    // Launch workers in their own threads, storing the thread handle.
-    let mut worker_handles = Vec::new();
-    for i in 0..EXPECT_WORKERS {
-        let worker_configuration = configuration.clone();
-        let worker_request_log = request_log.clone() + &i.to_string();
-        let worker_debug_log = debug_log.clone() + &i.to_string();
-        worker_handles.push(tokio::spawn(
-            crate::GooseAttack::initialize_with_config(worker_configuration)
-                .unwrap()
-                .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
-                .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
-                // Start at least two users, required to run both Scenarios.
-                .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
-                .unwrap()
-                .set_default(GooseDefault::DebugLog, worker_debug_log.as_str())
-                .unwrap()
-                .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
-                .unwrap()
-                .set_default(GooseDefault::NoDebugBody, true)
-                .unwrap()
-                .set_default(GooseDefault::RequestLog, worker_request_log.as_str())
-                .unwrap()
-                .set_default(GooseDefault::RequestFormat, LOG_FORMAT)
-                .unwrap()
-                .execute(),
-        ));
-    }
-
-    // Start manager instance in current thread and run a distributed load test.
-    let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
-        .unwrap()
-        // Alter the name of the transaction set so NoHashCheck is required for load test to run.
-        .register_scenario(scenario!("FooIndex").register_transaction(transaction!(get_index)))
-        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
-        // Start at least two users, required to run both Scenarios.
-        .set_default(GooseDefault::Host, host.as_str())
-        .unwrap()
-        .set_default(GooseDefault::Users, USERS)
-        .unwrap()
-        .set_default(GooseDefault::RunTime, RUN_TIME)
-        .unwrap()
-        .set_default(GooseDefault::IncreaseRate, INCREASE_RATE)
-        .unwrap()
-        .set_default(
-            GooseDefault::CoordinatedOmissionMitigation,
-            GooseCoordinatedOmissionMitigation::Disabled,
-        )
-        .unwrap()
-        .set_default(GooseDefault::RunningMetrics, 0)
-        .unwrap()
-        .set_default(GooseDefault::NoTransactionMetrics, true)
-        .unwrap()
-        .set_default(GooseDefault::NoScenarioMetrics, true)
-        .unwrap()
-        .set_default(GooseDefault::StickyFollow, true)
-        .unwrap()
-        .execute()
-        .await
-        .unwrap();
-
-    // Wait for both worker threads to finish and exit.
-    join_all(worker_handles).await;
-
-    let mut request_logs: Vec<String> = vec![];
-    let mut debug_logs: Vec<String> = vec![];
-    for i in 0..EXPECT_WORKERS {
-        let file = request_log.to_string() + &i.to_string();
-        request_logs.push(file);
-        let file = debug_log.to_string() + &i.to_string();
-        debug_logs.push(file);
-    }
-    validate_test(
-        &goose_metrics,
-        &mock_endpoints,
-        &request_logs,
-        &debug_logs,
-        TestType::NotTestPlan,
-    );
-}
-
 #[tokio::test]
 // Configure load test with run time options (not with defaults).
 async fn test_no_defaults() {
@@ -457,118 +339,6 @@ async fn test_no_defaults() {
         &mock_endpoints,
         &[requests_file],
         &[debug_file],
-        TestType::NotTestPlan,
-    );
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Configure load test with run time options (not with defaults), run as Gaggle.
-async fn test_no_defaults_gaggle() {
-    let requests_file = "gaggle-nodefaults".to_string() + REQUEST_LOG;
-    let debug_file = "gaggle-nodefaults".to_string() + DEBUG_LOG;
-
-    // Be sure there's no files left over from an earlier test.
-    for i in 0..EXPECT_WORKERS {
-        let file = requests_file.to_string() + &i.to_string();
-        common::cleanup_files(vec![&file]);
-        let file = debug_file.to_string() + &i.to_string();
-        common::cleanup_files(vec![&file]);
-    }
-
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    const HOST: &str = "127.0.0.1";
-    const PORT: usize = 9988;
-
-    // Launch workers in their own threads, storing the thread handle.
-    let mut worker_handles = Vec::new();
-    for i in 0..EXPECT_WORKERS {
-        let worker_requests_file = requests_file.to_string() + &i.to_string();
-        let worker_debug_file = debug_file.to_string() + &i.to_string();
-        let worker_configuration = common::build_configuration(
-            &server,
-            vec![
-                "--worker",
-                "--manager-host",
-                HOST,
-                "--manager-port",
-                &PORT.to_string(),
-                "--request-log",
-                &worker_requests_file,
-                "--request-format",
-                &format!("{LOG_FORMAT:?}"),
-                "--debug-log",
-                &worker_debug_file,
-                "--debug-format",
-                &format!("{LOG_FORMAT:?}"),
-                "--no-debug-body",
-                "--throttle-requests",
-                &THROTTLE_REQUESTS.to_string(),
-            ],
-        );
-        println!("{worker_configuration:#?}");
-        worker_handles.push(tokio::spawn(
-            crate::GooseAttack::initialize_with_config(worker_configuration)
-                .unwrap()
-                .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
-                .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
-                .execute(),
-        ));
-    }
-
-    let manager_configuration = common::build_configuration(
-        &server,
-        vec![
-            "--manager",
-            "--expect-workers",
-            &EXPECT_WORKERS.to_string(),
-            "--manager-bind-host",
-            HOST,
-            "--manager-bind-port",
-            &PORT.to_string(),
-            "--users",
-            &USERS.to_string(),
-            "--increase-rate",
-            INCREASE_RATE,
-            "--run-time",
-            &RUN_TIME.to_string(),
-            "--no-reset-metrics",
-            "--no-transaction-metrics",
-            "--running-metrics",
-            "30",
-            "--sticky-follow",
-        ],
-    );
-
-    let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
-        .unwrap()
-        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
-        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
-        .execute()
-        .await
-        .unwrap();
-
-    // Wait for both worker threads to finish and exit.
-    join_all(worker_handles).await;
-
-    let mut requests_files: Vec<String> = vec![];
-    let mut debug_files: Vec<String> = vec![];
-    for i in 0..EXPECT_WORKERS {
-        let file = requests_file.to_string() + &i.to_string();
-        requests_files.push(file);
-        let file = debug_file.to_string() + &i.to_string();
-        debug_files.push(file);
-    }
-    validate_test(
-        &goose_metrics,
-        &mock_endpoints,
-        &requests_files,
-        &debug_files,
         TestType::NotTestPlan,
     );
 }

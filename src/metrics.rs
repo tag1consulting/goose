@@ -21,6 +21,8 @@ pub(crate) mod millis;
 mod nullable;
 
 #[cfg(test)]
+mod golden_tests;
+#[cfg(test)]
 mod microsecond_tests;
 
 pub use buckets::TimeBuckets;
@@ -5316,7 +5318,12 @@ impl ReportSource<'_> {
         writer: &mut W,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
-        report::write_markdown_report(writer, self.data(baseline), &self.record.intro())
+        report::write_markdown_report_with(
+            writer,
+            self.data(baseline),
+            &self.record.intro(),
+            self.record.gaggle.as_ref(),
+        )
     }
 
     /// When the run started, as the graphs count it.
@@ -5615,6 +5622,10 @@ impl ReportSource<'_> {
                 errors_template: &errors_template,
                 transaction_errors_template: &transaction_errors_template,
                 thresholds_template: &thresholds_template,
+                workers_template: &report::workers::html(
+                    self.record.gaggle.as_ref(),
+                    report::escape_html,
+                ),
                 graph_rps_template: &self
                     .graph_data
                     .get_requests_per_second_graph(!self.configuration.no_granular_report)

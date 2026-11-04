@@ -3099,6 +3099,8 @@ mod tests {
             target_users,
             field: None,
             settings: None,
+            #[cfg(feature = "gaggle")]
+            acks: None,
         }))
     }
 

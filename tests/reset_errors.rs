@@ -51,10 +51,12 @@ async fn run(reset: bool) -> GooseMetrics {
     let scenario = scenario!("LoadTest")
         .register_transaction(transaction!(fail_while_ramping).set_on_start())
         .register_transaction(transaction!(get_index));
-    let metrics = common::run_load_test(
-        common::build_load_test(configuration, vec![scenario], None, None),
+    let metrics = common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario],
         None,
-    )
+        None,
+    ))
     .await;
     // Both users that failed did so before the last user launched.
     about.assert_calls(USERS - 1);

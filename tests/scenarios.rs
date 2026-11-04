@@ -1,6 +1,5 @@
 /// Validate that Goose only runs the selected Scenario filtered by --scenarios.
 use httpmock::{Method::GET, Mock, MockServer};
-use serial_test::serial;
 
 mod common;
 
@@ -19,9 +18,6 @@ const SCENARIOA1_KEY: usize = 0;
 const SCENARIOA2_KEY: usize = 1;
 const SCENARIOB1_KEY: usize = 2;
 const SCENARIOB2_KEY: usize = 3;
-
-// Load test configuration.
-const EXPECT_WORKERS: usize = 2;
 
 // There are multiple test variations in this file.
 enum TestType {
@@ -200,83 +196,10 @@ async fn run_standalone_test(test_type: TestType) {
         .unwrap();
 
     // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(goose, None).await;
+    let goose_metrics = common::run_load_test(goose).await;
 
     // Confirm that the load test ran correctly.
     validate_loadtest(&goose_metrics, &mock_endpoints, &configuration, test_type);
-}
-
-// Helper to run all standalone tests.
-async fn run_gaggle_test(test_type: TestType) {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Each worker has the same identical configuration.
-    let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-        common::build_load_test(worker_configuration.clone(), get_scenarios(), None, None)
-    });
-
-    // Build common configuration elements, adding Manager Gaggle flags.
-    let manager_configuration = match test_type {
-        TestType::ScenariosOption => common::build_configuration(
-            &server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &EXPECT_WORKERS.to_string(),
-                "--no-reset-metrics",
-                "--users",
-                "10",
-                "--increase-rate",
-                "10",
-                "--run-time",
-                "1",
-                "--scenarios",
-                "scenarioa*",
-            ],
-        ),
-        TestType::ScenariosDefault => common::build_configuration(
-            &server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &EXPECT_WORKERS.to_string(),
-                "--no-reset-metrics",
-                "--users",
-                "10",
-                "--increase-rate",
-                "10",
-                "--run-time",
-                "1",
-            ],
-        ),
-    };
-
-    // Build the load test for the Manager.
-    let mut manager_goose_attack =
-        common::build_load_test(manager_configuration.clone(), get_scenarios(), None, None);
-
-    // By default, only run scenarios starting with `scenariob`.
-    manager_goose_attack = *manager_goose_attack
-        .set_default(GooseDefault::Scenarios, "scenariob*")
-        .unwrap();
-
-    // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
-
-    // Confirm that the load test ran correctly.
-    validate_loadtest(
-        &goose_metrics,
-        &mock_endpoints,
-        &manager_configuration,
-        test_type,
-    );
 }
 
 /* With `--scenarios` */
@@ -287,28 +210,12 @@ async fn test_scenarios_option() {
     run_standalone_test(TestType::ScenariosOption).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Run only half the configured scenarios, in Gaggle mode.
-async fn test_scenarios_option_gaggle() {
-    run_gaggle_test(TestType::ScenariosOption).await;
-}
-
 /* With `GooseDefault::Scenarios` */
 
 #[tokio::test]
 // Run only half the configured scenarios.
 async fn test_scenarios_default() {
     run_standalone_test(TestType::ScenariosDefault).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Run only half the configured scenarios, in Gaggle mode.
-async fn test_scenarios_default_gaggle() {
-    run_gaggle_test(TestType::ScenariosDefault).await;
 }
 
 /* Issue #612: exact matching should not match substrings */
@@ -344,7 +251,7 @@ async fn test_exact_scenario_match_no_substring() {
     );
 
     let goose = common::build_load_test(configuration, scenarios, None, None);
-    let _goose_metrics = common::run_load_test(goose, None).await;
+    let _goose_metrics = common::run_load_test(goose).await;
 
     // Only scenarioa1 should have been hit.
     assert!(mock_endpoints[SCENARIOA1_KEY].calls() > 0);

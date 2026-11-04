@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// A transaction that GETs `path`.
-fn get(path: &'static str) -> Transaction {
+pub(super) fn get(path: &'static str) -> Transaction {
     Transaction::new(Arc::new(move |user| {
         Box::pin(async move {
             let _ = user.get(path).await;
@@ -71,13 +71,13 @@ fn load_test(configuration: GooseConfiguration) -> GooseAttack {
         .set_worker_data(|share| format!("w{}", share.index).into_bytes())
 }
 
-fn configuration(args: &[&str]) -> GooseConfiguration {
+pub(super) fn configuration(args: &[&str]) -> GooseConfiguration {
     GooseConfiguration::parse_args_default(args).unwrap()
 }
 
 /// A fresh folder for a test's runs, removed once dropped, however the test
 /// ends.
-struct Scratch(PathBuf);
+pub(super) struct Scratch(PathBuf);
 
 impl std::ops::Deref for Scratch {
     type Target = Path;
@@ -94,7 +94,7 @@ impl Drop for Scratch {
 }
 
 /// A fresh folder for this test's runs.
-fn scratch(name: &str) -> Scratch {
+pub(super) fn scratch(name: &str) -> Scratch {
     let folder = std::env::temp_dir().join(format!(
         "goose-gaggle-{name}-{}-{}",
         std::process::id(),
@@ -105,7 +105,7 @@ fn scratch(name: &str) -> Scratch {
 }
 
 /// The lines in `file`.
-fn lines(file: &Path) -> usize {
+pub(super) fn lines(file: &Path) -> usize {
     std::fs::read_to_string(file)
         .unwrap_or_else(|e| panic!("{}: {e}", file.display()))
         .lines()
@@ -113,7 +113,7 @@ fn lines(file: &Path) -> usize {
 }
 
 /// The users of each scenario.
-fn scenario_users(metrics: &GooseMetrics) -> Vec<BTreeSet<usize>> {
+pub(super) fn scenario_users(metrics: &GooseMetrics) -> Vec<BTreeSet<usize>> {
     metrics
         .scenarios
         .iter()
@@ -132,7 +132,7 @@ fn no_token_from_the_environment() {
 /// manager and `Some(n)` for worker `n`, which is also given `faults[n]`.
 /// The manager listens on a port the system picks, and each process keeps
 /// its run folder under `folder`. The manager's result, and each worker's.
-async fn gaggle(
+pub(super) async fn gaggle(
     build: impl Fn(GooseConfiguration, Option<usize>) -> GooseAttack,
     count: usize,
     host: String,
@@ -179,11 +179,14 @@ async fn gaggle_timed(
         &count_text,
         "--manager-bind-port",
         "0",
-        "--no-telnet",
         "--quiet",
         "--host",
         &host,
     ];
+    // The telnet Controller stays off unless a test names its port.
+    if !manager_args.contains(&"--telnet-port") {
+        args.push("--no-telnet");
+    }
     // A folder for the manager's run when it writes anything: one that would
     // hold nothing is refused.
     if manager_args
@@ -238,7 +241,7 @@ fn standard(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack 
 }
 
 /// The manager's metrics, when it and every worker exited cleanly.
-fn clean(
+pub(super) fn clean(
     (manager, workers): (
         Result<GooseMetrics, crate::GooseError>,
         Vec<Result<GooseMetrics, crate::GooseError>>,
@@ -368,6 +371,22 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     let gaggle = &report["gaggle"];
     assert_eq!(gaggle["degraded"], false, "{gaggle}");
     assert_eq!(gaggle["workers"].as_array().map(Vec::len), Some(2));
+
+    // The Workers table's requests add up to the merged totals, after the
+    // reset swapped every worker's totals for its new epoch's.
+    let rows: u64 = gaggle["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|worker| worker["requests"].as_u64().unwrap_or(0))
+        .sum();
+    let merged: usize = metrics
+        .requests
+        .iter()
+        .filter(|(name, _)| name.as_str() != "GET /start" && name.as_str() != "GET /stop")
+        .map(|(_, request)| request.success_count + request.fail_count)
+        .sum();
+    assert_eq!(rows as usize, merged, "{}", gaggle);
 }
 
 /// More workers than users, with --iterations: the worker holding none is
@@ -493,7 +512,7 @@ fn record(folder: &Path) -> (serde_json::Value, String) {
 }
 
 /// A mock on `server` that answers a GET of `path` with 200 and `ok`.
-async fn mock_ok<'a>(server: &'a MockServer, path: &str) -> httpmock::Mock<'a> {
+pub(super) async fn mock_ok<'a>(server: &'a MockServer, path: &str) -> httpmock::Mock<'a> {
     server
         .mock_async(|when, then| {
             when.method(GET).path(path);
@@ -730,7 +749,7 @@ async fn gaggle_manager_client_options_win_on_workers() {
 }
 
 /// Each worker's copy of the request log in the run in `folder`.
-fn worker_logs(folder: &Path, file: &str) -> Vec<Vec<u8>> {
+pub(super) fn worker_logs(folder: &Path, file: &str) -> Vec<Vec<u8>> {
     let workers = folder.join("manager").join("workers");
     let mut logs: Vec<Vec<u8>> = std::fs::read_dir(&workers)
         .unwrap_or_else(|e| panic!("{}: {e}", workers.display()))
@@ -3250,11 +3269,6 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
         )
         .await;
         let mut telnet = Telnet::connect(IDLE_TELNET).await;
-        // The Controller listens once every worker joined. A moment for the
-        // workers to settle: a manager shutting down within a second of
-        // joining, on a loaded machine, can close a stream before its worker
-        // read the Shutdown, which the manager waits for at most 5 seconds.
-        tokio::time::sleep(Duration::from_millis(500)).await;
         let reply = telnet.send("shutdown").await;
         assert!(reply.starts_with("load test shut down"), "{}", reply);
         manager.await.unwrap().expect("the manager exits cleanly");
@@ -3310,4 +3324,170 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
     tokio::time::timeout(Duration::from_secs(30), Box::pin(test))
         .await
         .expect("within 30 seconds");
+}
+
+/// Worker health in a run of a manager and three workers: every worker
+/// runs and then finishes, or is lost; the worker that stops on its own a
+/// second in is lost, with an event; a users change and a throttle change
+/// from the manager's Controller each make an event saying both workers
+/// left acknowledged it; and the worker that says its CPU is busy for 8
+/// seconds is flagged saturated, once, then recovers, once. It claims 150%
+/// of its cores, clamped to 100 by the manager, as the manager times each
+/// sample by its arrival: on a loaded host a delta 1.5 s late spreads a
+/// second's CPU time over 1.5 s, which a claim of 95% would show as 63%. The reports
+/// carry it all: the Workers and Events sections, and the Check sentence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_health_in_one_process() {
+    const TELNET: u16 = 5236;
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("worker-health");
+        let telnet_port = TELNET.to_string();
+        let faults = [
+            TestFaults::default(),
+            TestFaults {
+                exit_mid_run: true,
+                ..Default::default()
+            },
+            TestFaults {
+                busy_cpu: Some((150, Duration::from_secs(8))),
+                ..Default::default()
+            },
+        ];
+        let markdown_path = folder.join("report.md").display().to_string();
+        let args = [
+            "--users",
+            "6",
+            "--increase-rate",
+            "60",
+            "--run-time",
+            "14",
+            "--throttle-requests",
+            "300",
+            "--telnet-port",
+            &telnet_port,
+            "--report-file",
+            "--report-file",
+            &markdown_path,
+        ];
+        let run = gaggle(standard, 3, server.base_url(), &folder, &args, &[], &faults);
+        let control = async {
+            let mut telnet = Telnet::connect(TELNET).await;
+            // The worker that exits a second in is lost first.
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            let users = telnet.send("users 8").await;
+            assert!(users.contains("accepted by 2 of 2 workers"), "{}", users);
+            let throttle = telnet.send("throttle 200").await;
+            assert!(
+                throttle.contains("accepted by 2 of 2 workers"),
+                "{}",
+                throttle
+            );
+        };
+        let ((manager, workers), ()) = tokio::join!(run, control);
+        manager.expect("the manager exits cleanly");
+        assert!(workers[0].is_ok() && workers[2].is_ok());
+        assert!(workers[1].is_err(), "the worker that exits mid run fails");
+
+        let (gaggle, html) = record(&folder);
+        // The manager numbers workers as they join, which on a loaded host
+        // is not the order they were started in: each is found by what it
+        // did, and the two left are told apart by their CPU.
+        let all = gaggle["workers"].as_array().unwrap();
+        assert_eq!(all.len(), 3, "{:?}", all);
+        type Workers<'a> = Vec<&'a serde_json::Value>;
+        let (lost, finished): (Workers, Workers) =
+            all.iter().partition(|worker| worker["state"] == "lost");
+        assert_eq!(lost.len(), 1, "the worker that exits mid run: {:?}", all);
+        assert_eq!(lost[0]["flags"][0], "lost", "{}", lost[0]);
+        for worker in &finished {
+            assert_eq!(worker["state"], "finished", "{}", worker);
+            assert!(
+                worker["running_secs"].as_f64().unwrap() > 10.0,
+                "{}",
+                worker
+            );
+            assert!(worker["requests"].as_u64().unwrap() > 0, "{}", worker);
+            assert!(worker["cores"].as_u64().unwrap() > 0, "{}", worker);
+        }
+        // The busy worker claims 150% of its cores: the manager shows 100.
+        let (busy, real): (Workers, Workers) = finished
+            .iter()
+            .copied()
+            .partition(|worker| worker["peak_cpu_percent"].as_u64() == Some(100));
+        assert_eq!(busy.len(), 1, "one busy worker: {:?}", finished);
+        let busy = busy[0];
+        assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
+        assert!(
+            busy["flags"]
+                .as_array()
+                .unwrap()
+                .contains(&"saturated".into()),
+            "{}",
+            busy
+        );
+        // The real worker is far from saturated.
+        assert!(
+            real[0]["saturated_secs"].as_u64().unwrap_or(0) < 5,
+            "{}",
+            real[0]
+        );
+
+        let events: Vec<(String, String)> = gaggle["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| {
+                (
+                    event["kind"].as_str().unwrap().to_string(),
+                    event["text"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let of = |kind: &str| -> Vec<&String> {
+            events
+                .iter()
+                .filter(|(k, _)| k == kind)
+                .map(|(_, text)| text)
+                .collect()
+        };
+        assert_eq!(of("run_started"), ["3 of 3 workers joined, run started"]);
+        assert_eq!(of("worker_lost").len(), 1, "{:?}", events);
+        assert_eq!(of("throttle_shares_rescaled").len(), 1, "{:?}", events);
+        let users = of("users_changed");
+        assert_eq!(users.len(), 1, "{:?}", events);
+        assert!(
+            users[0].starts_with("users 6 to 8, acknowledged by 2 of 2 in "),
+            "{:?}",
+            users
+        );
+        let throttle = of("throttle_changed");
+        assert_eq!(throttle.len(), 1, "{:?}", events);
+        assert!(
+            throttle[0].starts_with("throttle set to 200 req/s, acknowledged by 2 of 2 in "),
+            "{:?}",
+            throttle
+        );
+        assert_eq!(of("worker_saturated").len(), 1, "{:?}", events);
+        assert_eq!(of("worker_recovered").len(), 1, "{:?}", events);
+
+        // The reports.
+        for text in [
+            "<h2>Workers</h2>",
+            "<h2>Events</h2>",
+            "Check: ",
+            "saturated",
+            "users 6 to 8",
+        ] {
+            assert!(html.contains(text), "{}", text);
+        }
+        let markdown = std::fs::read_to_string(folder.join("report.md")).unwrap();
+        for text in ["## Workers", "## Events", "Check: "] {
+            assert!(markdown.contains(text), "{}: {}", text, markdown);
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
 }

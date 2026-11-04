@@ -1,5 +1,4 @@
 use httpmock::{Method::GET, Mock, MockServer};
-use serial_test::serial;
 use tokio::time::{sleep, Duration};
 
 mod common;
@@ -22,7 +21,6 @@ const START_ONE_KEY: usize = 3;
 const STOP_ONE_KEY: usize = 4;
 
 // Load test configuration.
-const EXPECT_WORKERS: usize = 4;
 // Users needs to be an even number.
 const USERS: usize = 18;
 const RUN_TIME: usize = 3;
@@ -116,43 +114,19 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
 }
 
 // Build appropriate configuration for these tests.
-fn common_build_configuration(
-    server: &MockServer,
-    worker: Option<bool>,
-    manager: Option<usize>,
-) -> GooseConfiguration {
-    if let Some(expect_workers) = manager {
-        common::build_configuration(
-            server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &expect_workers.to_string(),
-                "--users",
-                &USERS.to_string(),
-                "--increase-rate",
-                &USERS.to_string(),
-                "--run-time",
-                &RUN_TIME.to_string(),
-                "--no-reset-metrics",
-            ],
-        )
-    } else if worker.is_some() {
-        common::build_configuration(server, vec!["--worker"])
-    } else {
-        common::build_configuration(
-            server,
-            vec![
-                "--users",
-                &USERS.to_string(),
-                "--increase-rate",
-                &USERS.to_string(),
-                "--run-time",
-                &RUN_TIME.to_string(),
-                "--no-reset-metrics",
-            ],
-        )
-    }
+fn common_build_configuration(server: &MockServer) -> GooseConfiguration {
+    common::build_configuration(
+        server,
+        vec![
+            "--users",
+            &USERS.to_string(),
+            "--increase-rate",
+            &USERS.to_string(),
+            "--run-time",
+            &RUN_TIME.to_string(),
+            "--no-reset-metrics",
+        ],
+    )
 }
 
 // Helper to confirm all variations generate appropriate results.
@@ -289,7 +263,7 @@ async fn run_standalone_test(test_type: &TestType, scheduler: &GooseScheduler) {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     // Build common configuration.
-    let mut configuration = common_build_configuration(&server, None, None);
+    let mut configuration = common_build_configuration(&server);
 
     // If limiting the number of iterations, adjust the configuration accordingly.
     if test_type == &TestType::ScenariosLimitIterations {
@@ -327,92 +301,7 @@ async fn run_standalone_test(test_type: &TestType, scheduler: &GooseScheduler) {
     };
 
     // Run the Goose Attack.
-    common::run_load_test(goose_attack, None).await;
-
-    // Confirm the load test ran correctly.
-    validate_test(test_type, scheduler, &mock_endpoints);
-}
-
-// Helper to run all gaggle tests.
-async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let worker_configuration = common_build_configuration(&server, Some(true), None);
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = match test_type {
-        TestType::Scenarios | TestType::ScenariosLimitIterations => {
-            // Get the scenarios, start and stop transactions to build a load test.
-            let (scenario1, scenario2, start_transaction, stop_transaction) = get_scenarios();
-            common::launch_gaggle_workers(EXPECT_WORKERS, || {
-                crate::GooseAttack::initialize_with_config(worker_configuration.clone())
-                    .unwrap()
-                    .register_scenario(scenario1.clone())
-                    .register_scenario(scenario2.clone())
-                    .test_start(start_transaction.clone())
-                    .test_stop(stop_transaction.clone())
-                    .set_scheduler(scheduler.clone())
-            })
-        }
-        TestType::Transactions => {
-            // Get the scenario, start and stop transactions to build a load test.
-            let (scenario1, start_transaction, stop_transaction) = get_transactions();
-            common::launch_gaggle_workers(EXPECT_WORKERS, || {
-                crate::GooseAttack::initialize_with_config(worker_configuration.clone())
-                    .unwrap()
-                    .register_scenario(scenario1.clone())
-                    .test_start(start_transaction.clone())
-                    .test_stop(stop_transaction.clone())
-                    .set_scheduler(scheduler.clone())
-            })
-        }
-    };
-
-    // Build Manager configuration.
-    let mut manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-    // If limiting the number of iterations, adjust the configuration accordingly.
-    if test_type == &TestType::ScenariosLimitIterations {
-        manager_configuration.iterations = Some(ITERATIONS);
-        // The --run-time option isn't compatible with --iterations.
-        manager_configuration.run_time = None;
-        // The --no-reset-metrics option isn't compatible with --iterations.
-        manager_configuration.no_reset_metrics = false;
-    }
-
-    let manager_goose_attack = match test_type {
-        TestType::Scenarios | TestType::ScenariosLimitIterations => {
-            // Get the scenarios, start and stop transactions to build a load test.
-            let (scenario1, scenario2, start_transaction, stop_transaction) = get_scenarios();
-            // Build the load test for the Manager.
-            crate::GooseAttack::initialize_with_config(manager_configuration)
-                .unwrap()
-                .register_scenario(scenario1)
-                .register_scenario(scenario2)
-                .test_start(start_transaction)
-                .test_stop(stop_transaction)
-                .set_scheduler(scheduler.clone())
-        }
-        TestType::Transactions => {
-            // Get the scenario, start and stop transactions to build a load test.
-            let (scenario1, start_transaction, stop_transaction) = get_transactions();
-            // Build the load test for the Manager.
-            crate::GooseAttack::initialize_with_config(manager_configuration)
-                .unwrap()
-                .register_scenario(scenario1)
-                .test_start(start_transaction)
-                .test_stop(stop_transaction)
-                .set_scheduler(scheduler.clone())
-        }
-    };
-
-    // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
+    common::run_load_test(goose_attack).await;
 
     // Confirm the load test ran correctly.
     validate_test(test_type, scheduler, &mock_endpoints);
@@ -426,28 +315,10 @@ async fn test_round_robin_scenario() {
     run_standalone_test(&TestType::Scenarios, &GooseScheduler::RoundRobin).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions allocating Scenarios in round robin order, in
-// Gaggle mode.
-async fn test_round_robin_scenario_gaggle() {
-    run_gaggle_test(&TestType::Scenarios, &GooseScheduler::RoundRobin).await;
-}
-
 #[tokio::test]
 // Load test with multiple transactions allocating Scenarios in random order.
 async fn test_random_scenario() {
     run_standalone_test(&TestType::Scenarios, &GooseScheduler::Random).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions allocating Scenarios in random order, in
-// Gaggle mode.
-async fn test_random_scenario_gaggle() {
-    run_gaggle_test(&TestType::Scenarios, &GooseScheduler::Random).await;
 }
 
 // Scenarios scheduling with a limited number of iterations.
@@ -463,33 +334,11 @@ async fn test_round_robin_limit_iterations_scenario() {
     .await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions allocating Scenarios in round robin order, in
-// Gaggle mode.
-async fn test_round_robin_limit_iterations_scenario_gaggle() {
-    run_gaggle_test(
-        &TestType::ScenariosLimitIterations,
-        &GooseScheduler::RoundRobin,
-    )
-    .await;
-}
-
 #[tokio::test]
 // Load test with multiple transactions allocating Scenarios in serial order, limiting
 // the number of iterations run.
 async fn test_serial_limit_iterations_scenario() {
     run_standalone_test(&TestType::ScenariosLimitIterations, &GooseScheduler::Serial).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions allocating Scenarios in serial order, in
-// Gaggle mode.
-async fn test_serial_limit_iterations_scenario_gaggle() {
-    run_gaggle_test(&TestType::ScenariosLimitIterations, &GooseScheduler::Serial).await;
 }
 
 #[tokio::test]
@@ -499,28 +348,10 @@ async fn test_random_limit_iterations_scenario() {
     run_standalone_test(&TestType::ScenariosLimitIterations, &GooseScheduler::Random).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions allocating Scenarios in random order, in
-// Gaggle mode.
-async fn test_random_limit_iterations_scenario_gaggle() {
-    run_gaggle_test(&TestType::ScenariosLimitIterations, &GooseScheduler::Random).await;
-}
-
 #[tokio::test]
 // Load test with multiple transactions allocating Scenarios in serial order.
 async fn test_serial_scenario() {
     run_standalone_test(&TestType::Scenarios, &GooseScheduler::Serial).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions allocating Scenarios in serial order, in
-// Gaggle mode.
-async fn test_serial_scenario_gaggle() {
-    run_gaggle_test(&TestType::Scenarios, &GooseScheduler::Serial).await;
 }
 
 // Transaction scheduling.
@@ -529,15 +360,6 @@ async fn test_serial_scenario_gaggle() {
 // Load test with multiple Transactions allocated in round robin order.
 async fn test_round_robin_transaction() {
     run_standalone_test(&TestType::Transactions, &GooseScheduler::RoundRobin).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple Transactions allocated in round robin order, in
-// Gaggle mode.
-async fn test_round_robin_transaction_gaggle() {
-    run_gaggle_test(&TestType::Transactions, &GooseScheduler::RoundRobin).await;
 }
 
 #[tokio::test]

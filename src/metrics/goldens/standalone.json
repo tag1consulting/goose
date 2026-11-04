@@ -1,0 +1,215 @@
+{
+  "goose_version": "golden",
+  "test": "golden",
+  "started": "2026-11-03T10:00:00Z",
+  "ended": "2026-11-03T10:01:00Z",
+  "ended_by": null,
+  "in_progress": false,
+  "raw_metrics": {
+    "hash": 0,
+    "history": [],
+    "duration": 60,
+    "maximum_users": 0,
+    "total_users": 0,
+    "requests": {
+      "GET /": {
+        "path": "/",
+        "method": "Get",
+        "raw_data": {
+          "counter": 9,
+          "times_us": {
+            "448": 1,
+            "520": 1,
+            "560": 1,
+            "584": 2,
+            "640": 1,
+            "696": 1,
+            "816": 1,
+            "944": 1
+          },
+          "minimum_time_us": 450,
+          "maximum_time_us": 950,
+          "total_time_us": 5820
+        },
+        "coordinated_omission_data": null,
+        "status_code_counts": {},
+        "success_count": 8,
+        "fail_count": 1,
+        "load_test_hash": 0,
+        "custom_method": ""
+      }
+    },
+    "transactions": [
+      [
+        {
+          "scenario_index": 0,
+          "scenario_name": "Scenario",
+          "transaction_index": 0,
+          "transaction_name": {
+            "TransactionOnly": "index"
+          },
+          "counter": 3,
+          "times_us": {
+            "584": 1,
+            "640": 1,
+            "720": 1
+          },
+          "min_time_us": 590,
+          "max_time_us": 720,
+          "total_time_us": 1950,
+          "success_count": 3,
+          "fail_count": 0
+        }
+      ]
+    ],
+    "scenarios": [
+      {
+        "index": 0,
+        "name": "Scenario",
+        "users": [
+          0
+        ],
+        "counter": 2,
+        "times_us": {
+          "1216": 1,
+          "1856": 1
+        },
+        "min_time_us": 1230,
+        "max_time_us": 1870,
+        "total_time_us": 3100
+      }
+    ],
+    "errors": {},
+    "hosts": [],
+    "coordinated_omission_metrics": null,
+    "final_metrics": false,
+    "display_status_codes": false,
+    "display_metrics": true
+  },
+  "raw_request_metrics": [
+    {
+      "method": "GET",
+      "name": "/",
+      "number_of_requests": 9,
+      "number_of_failures": 1,
+      "response_time_average_us": 647,
+      "response_time_minimum_us": 450,
+      "response_time_maximum_us": 950,
+      "requests_per_second": 0.15,
+      "failures_per_second": 0.016666668
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "number_of_requests": 9,
+      "number_of_failures": 1,
+      "response_time_average_us": 647,
+      "response_time_minimum_us": 450,
+      "response_time_maximum_us": 950,
+      "requests_per_second": 0.15,
+      "failures_per_second": 0.016666668
+    }
+  ],
+  "raw_response_metrics": [
+    {
+      "method": "GET",
+      "name": "/",
+      "percentile_50_us": 588,
+      "percentile_60_us": 588,
+      "percentile_70_us": 644,
+      "percentile_80_us": 700,
+      "percentile_90_us": 820,
+      "percentile_95_us": 950,
+      "percentile_99_us": 950,
+      "percentile_100_us": 950
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "percentile_50_us": 588,
+      "percentile_60_us": 588,
+      "percentile_70_us": 644,
+      "percentile_80_us": 700,
+      "percentile_90_us": 820,
+      "percentile_95_us": 950,
+      "percentile_99_us": 950,
+      "percentile_100_us": 950
+    }
+  ],
+  "co_request_metrics": null,
+  "co_response_metrics": null,
+  "scenario_metrics": [
+    {
+      "name": "Scenario",
+      "users": 1,
+      "count": 2,
+      "response_time_average_us": 1550,
+      "response_time_minimum_us": 1230,
+      "response_time_maximum_us": 1870,
+      "count_per_second": 0.033333335,
+      "iterations": 2.0
+    },
+    {
+      "name": "Aggregated",
+      "users": 1,
+      "count": 2,
+      "response_time_average_us": 1550,
+      "response_time_minimum_us": 1230,
+      "response_time_maximum_us": 1870,
+      "count_per_second": 0.033333335,
+      "iterations": 2.0
+    }
+  ],
+  "transaction_metrics": [
+    {
+      "is_scenario": true,
+      "transaction": "",
+      "name": "Scenario",
+      "number_of_requests": 0,
+      "number_of_failures": 0,
+      "response_time_average_us": null,
+      "response_time_minimum_us": 0,
+      "response_time_maximum_us": 0,
+      "requests_per_second": null,
+      "failures_per_second": null
+    },
+    {
+      "is_scenario": false,
+      "transaction": "0.0",
+      "name": "index",
+      "number_of_requests": 3,
+      "number_of_failures": 0,
+      "response_time_average_us": 650,
+      "response_time_minimum_us": 590,
+      "response_time_maximum_us": 720,
+      "requests_per_second": 0.05,
+      "failures_per_second": 0.0
+    },
+    {
+      "is_scenario": false,
+      "transaction": "",
+      "name": "Aggregated",
+      "number_of_requests": 3,
+      "number_of_failures": 0,
+      "response_time_average_us": 650,
+      "response_time_minimum_us": 590,
+      "response_time_maximum_us": 720,
+      "requests_per_second": 0.05,
+      "failures_per_second": 0.0
+    }
+  ],
+  "status_code_metrics": [
+    {
+      "method": "GET",
+      "name": "/",
+      "status_codes": ""
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "status_codes": ""
+    }
+  ],
+  "errors": null,
+  "coordinated_omission_metrics": null
+}

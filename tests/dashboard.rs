@@ -2379,10 +2379,12 @@ async fn write_one_report(server: &MockServer, folder: &std::path::Path, users: 
             "10",
         ],
     );
-    common::run_load_test(
-        common::build_load_test(configuration, vec![get_transactions()], None, None),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![get_transactions()],
         None,
-    )
+        None,
+    ))
     .await;
 }
 
@@ -3205,10 +3207,12 @@ async fn test_gzipped_reports_in_the_panel() {
             "--compress",
         ],
     );
-    common::run_load_test(
-        common::build_load_test(configuration, vec![get_transactions()], None, None),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![get_transactions()],
         None,
-    )
+        None,
+    ))
     .await;
     let gunzip = |bytes: &[u8]| {
         let mut out = Vec::new();

@@ -20,7 +20,31 @@ impl ManagerMerge {
     /// the deltas that never arrived.
     fn note(&self, worker: u32) {
         if let Ok(mut health) = self.health.lock() {
-            let entry = health.entry(worker).or_default();
+            let entry = health.merge_mut(worker);
+            entry.last_seq = self.accumulator.last_seq(worker).unwrap_or(0);
+            entry.missing = self.accumulator.missing(worker);
+            entry.final_merged = self.accumulator.got_final(worker);
+        }
+    }
+
+    /// Record a delta merged from `worker`: `sample` is its requests and
+    /// the seconds it covers (none for a final delta), and `restarted`
+    /// whether it started the worker's figures again, whose totals are then
+    /// read from the merge.
+    fn merged(
+        &self,
+        worker: u32,
+        sample: Option<(crate::gaggle::health::Fold, u64)>,
+        restarted: bool,
+    ) {
+        let totals = restarted
+            .then(|| self.accumulator.requests_of(worker))
+            .flatten()
+            .map(|(requests, epoch)| (crate::gaggle::health::Fold::of(requests.values()), epoch));
+        // One lock for the delta and what the merge now holds of the worker.
+        if let Ok(mut health) = self.health.lock() {
+            health.applied(worker, sample, totals, std::time::Instant::now());
+            let entry = health.merge_mut(worker);
             entry.last_seq = self.accumulator.last_seq(worker).unwrap_or(0);
             entry.missing = self.accumulator.missing(worker);
             entry.final_merged = self.accumulator.got_final(worker);
@@ -30,9 +54,7 @@ impl ManagerMerge {
     /// Record a delta refused from `worker`.
     fn refused(&self, worker: u32, refusal: String) {
         if let Ok(mut health) = self.health.lock() {
-            let entry = health.entry(worker).or_default();
-            entry.refused += 1;
-            entry.refusal = Some(refusal);
+            health.refused(worker, refusal);
         }
         self.note(worker);
     }
@@ -40,12 +62,7 @@ impl ManagerMerge {
     /// Record the workers the merge just built left out, and no others.
     fn excluded(&self, excluded: Vec<(u32, String)>) {
         if let Ok(mut health) = self.health.lock() {
-            for entry in health.values_mut() {
-                entry.excluded = None;
-            }
-            for (worker, why) in excluded {
-                health.entry(worker).or_default().excluded = Some(why);
-            }
+            health.excluded(excluded);
         }
     }
 }
@@ -99,6 +116,23 @@ impl MetricsProcessor {
                 bytes,
             } => {
                 let seq = delta.seq;
+                // What the worker's health takes of it: a delta the merge
+                // ignores, a repeat or one of an older epoch, adds nothing,
+                // and one that starts its figures again has them read back.
+                let last_seq = merge.accumulator.last_seq(worker);
+                let epoch = merge
+                    .accumulator
+                    .requests_of(worker)
+                    .map(|(_, epoch)| epoch);
+                let ignored = last_seq.is_some_and(|last| delta.seq <= last)
+                    || epoch.is_some_and(|epoch| delta.epoch < epoch);
+                let restarted = !ignored
+                    && (delta.kind == crate::gaggle::delta::DeltaKind::Final
+                        || epoch != Some(delta.epoch));
+                let sample = match ignored {
+                    true => None,
+                    false => crate::gaggle::health::sample_of(&delta),
+                };
                 // Its rows for the provisional seconds go into the graph
                 // data at once, so a live view shows them.
                 let applied = merge
@@ -110,7 +144,7 @@ impl MetricsProcessor {
                 match applied {
                     Ok(()) => {
                         merge.dirty = true;
-                        merge.note(worker);
+                        merge.merged(worker, sample, restarted);
                     }
                     Err(e) => {
                         warn!("gaggle: refused delta {seq} from worker {worker}: {e}");
@@ -221,8 +255,18 @@ impl MetricsProcessor {
         self.metrics.requests = requests;
         self.metrics.transactions = transactions;
         self.metrics.scenarios = scenarios;
-        self.metrics.errors = errors;
-        self.metrics.transaction_errors = transaction_errors;
+        // A worker keeps its own --no-error-summary, which the manager does
+        // not hand it, so the manager drops the errors and transaction
+        // errors its workers sent, as one process with the option records
+        // none.
+        self.metrics.errors = match self.configuration.no_error_summary {
+            true => Default::default(),
+            false => errors,
+        };
+        self.metrics.transaction_errors = match self.configuration.no_error_summary {
+            true => Default::default(),
+            false => transaction_errors,
+        };
         self.metrics.hosts = hosts;
         self.metrics.coordinated_omission_metrics = coordinated_omission_metrics;
         self.graph_data = graph;

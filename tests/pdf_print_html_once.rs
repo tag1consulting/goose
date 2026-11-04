@@ -44,7 +44,7 @@ async fn test_pdf_print_html_written_once_with_a_pdf() {
         None,
         None,
     );
-    common::run_load_test(goose_attack, None).await;
+    common::run_load_test(goose_attack).await;
     assert!(index.calls() > 0);
 
     let log = std::fs::read_to_string(log_file).expect("the Goose log");

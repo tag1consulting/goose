@@ -61,10 +61,12 @@ fn scenario() -> Scenario {
 /// Run one load test with `args` against `server`.
 async fn run(server: &MockServer, args: Vec<&str>) -> GooseMetrics {
     let configuration = common::build_configuration(server, args);
-    common::run_load_test(
-        common::build_load_test(configuration, vec![scenario()], None, None),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario()],
         None,
-    )
+        None,
+    ))
     .await
 }
 
@@ -196,10 +198,12 @@ async fn a_canceled_run_records_why() {
         vec!["--output-dir", &folder.to_string_lossy(), "--report-file"],
     );
     let scenario = scenario!("Cancel").register_transaction(transaction!(cancel_the_run));
-    common::run_load_test(
-        common::build_load_test(configuration, vec![scenario], None, None),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario],
         None,
-    )
+        None,
+    ))
     .await;
     goose::reset_killswitch();
     let report = read_json(&folder.join("report.json"));

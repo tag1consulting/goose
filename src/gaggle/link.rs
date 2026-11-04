@@ -224,9 +224,28 @@ pub(crate) struct Outbox {
     /// Make the final delta larger than a message may be (unit tests).
     #[cfg(test)]
     pub(crate) oversize_final: AtomicBool,
+    /// Send a made up CPU time: this percent of the cores busy for this
+    /// long from the first delta sent, then idle (unit tests).
+    #[cfg(test)]
+    pub(crate) busy_cpu: Mutex<Option<(u64, Duration, Option<std::time::Instant>)>>,
 }
 
 impl Outbox {
+    /// The CPU time a delta carries: this process's, or one made up
+    /// (unit tests).
+    fn cpu_micros(&self) -> Option<u64> {
+        #[cfg(test)]
+        if let Ok(mut busy) = self.busy_cpu.lock() {
+            if let Some((percent, span, start)) = busy.as_mut() {
+                let start = *start.get_or_insert_with(std::time::Instant::now);
+                let cores = std::thread::available_parallelism().map_or(1, |cores| cores.get());
+                let busy = start.elapsed().min(*span).as_micros() as u64;
+                return Some(busy * cores as u64 * *percent / 100);
+            }
+        }
+        super::health::process_cpu_micros()
+    }
+
     fn push(&self, item: Outgoing, front: bool) {
         if let Ok(mut state) = self.state.lock() {
             if state.closed {
@@ -394,7 +413,10 @@ impl Outbox {
                             Err(e) => Err(e.to_string()),
                         };
                         match encoded {
-                            Ok(bytes) => ToManager::Metrics(Metrics { delta: bytes }),
+                            Ok(bytes) => ToManager::Metrics(Metrics {
+                                delta: bytes,
+                                cpu_micros: self.cpu_micros(),
+                            }),
                             // No final metrics will reach the manager: say
                             // so, so it records them missing, rather than
                             // wait for them.
@@ -528,6 +550,9 @@ impl LinkSettings {
             protocol_version: PROTOCOL_VERSION,
             plan_hash,
             worker_name: name,
+            cores: std::thread::available_parallelism()
+                .ok()
+                .map(|cores| cores.get() as u32),
         }
     }
 }
@@ -1211,6 +1236,10 @@ async fn read_manager(
             }
             Some(FromManager::Shutdown(_)) => {
                 shutdown.store(true, Ordering::Relaxed);
+                // Nothing more is sent: the stream's own side ends once what
+                // is queued has left, which the manager waits for before it
+                // stops.
+                switch.outbox.close();
                 switch.shut_down();
                 events.last.set(LinkEvent::Shutdown);
                 return;

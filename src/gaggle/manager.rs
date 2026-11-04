@@ -164,6 +164,8 @@ pub(crate) enum Event {
     Delta {
         id: u32,
         delta: Box<GaggleDelta>,
+        /// The worker's CPU time so far, in microseconds, when it said.
+        cpu_micros: Option<u64>,
         bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
     /// Its answer to `Control` `control`: `received` as it read the change,
@@ -197,12 +199,21 @@ pub(crate) struct WorkerHandle {
     pub(crate) id: u32,
     /// Its name, unique in this Gaggle, safe as a folder name.
     pub(crate) name: String,
+    /// The CPU cores it said its process may use, when it said.
+    cores: Option<u32>,
     /// The worker's one sender, taken when it is shut down, so its stream
     /// ends.
     outbound: Arc<Mutex<Option<Outbound>>>,
     /// Set once the worker is lost or shut down: nothing more is sent.
     closed: Arc<AtomicBool>,
-    /// Set once its response stream has ended, everything queued sent.
+    /// Set at the end of the run, once it was sent `Shutdown`: its
+    /// reader closes its stream as the worker closes its own side, having
+    /// read it.
+    draining: Arc<AtomicBool>,
+    /// Set once its reader has stopped.
+    read_done: Arc<AtomicBool>,
+    /// Set once its response stream has ended: everything queued sent, or
+    /// the stream dropped unfinished, so nothing more can leave.
     ended: Arc<AtomicBool>,
     /// Woken when it is closed, so its reader stops at once.
     closing: Arc<tokio::sync::Notify>,
@@ -213,13 +224,24 @@ impl WorkerHandle {
     /// message that finds the queue full or closed is dropped, with a
     /// warning naming it and the worker, which is the error.
     fn send(&self, message: ToWorker) -> Result<(), String> {
+        self.queue(message, false)
+    }
+
+    /// [`Self::send`]; with `shutdown`, also once draining, for the
+    /// worker's own `Shutdown`.
+    fn queue(&self, message: ToWorker, shutdown: bool) -> Result<(), String> {
         let message = ManagerMessage {
             message: Some(message),
         };
         let kind = message_kind(&message);
         let outbound = self.outbound.lock().ok();
         let outbound = outbound.as_ref().and_then(|outbound| outbound.as_ref());
-        let Some(outbound) = outbound.filter(|_| !self.closed.load(Ordering::Relaxed)) else {
+        // Nothing follows `Shutdown`, though the stream stays open.
+        // Read under the outbound lock, which orders it against the
+        // `Shutdown` queued once draining.
+        let open = !self.closed.load(Ordering::Relaxed)
+            && (shutdown || !self.draining.load(Ordering::SeqCst));
+        let Some(outbound) = outbound.filter(|_| open) else {
             return Err(format!(
                 "gaggle: worker {} ({}): {kind} not sent, its stream closed",
                 self.id, self.name
@@ -243,6 +265,24 @@ impl WorkerHandle {
         self.close();
     }
 
+    /// Send `Shutdown` at the end of a clean run, and keep the stream open
+    /// until the worker closes its own side, having read it (see
+    /// [`Manager::shut_down_all_waiting`]). A worker whose reader already
+    /// stopped is closed at once.
+    fn shut_down_draining(&self) {
+        // Draining first: a reader that ends the moment `Shutdown` is read
+        // finds it set, and nothing is queued after `Shutdown`. SeqCst on
+        // both flags, here and as the reader ends: each side stores its own
+        // and then reads the other's, so one of them closes the stream.
+        self.draining.store(true, Ordering::SeqCst);
+        let queued = self.queue(ToWorker::Shutdown(Default::default()), true);
+        // A `Shutdown` that could not be queued never leaves: nothing to
+        // wait for.
+        if queued.is_err() || self.read_done.load(Ordering::SeqCst) {
+            self.close();
+        }
+    }
+
     /// Send nothing more, and end the stream once what is queued has left.
     fn close(&self) {
         self.closed.store(true, Ordering::Relaxed);
@@ -260,6 +300,16 @@ struct Responses {
     ended: Arc<AtomicBool>,
     /// Woken as it ends.
     ending: Arc<tokio::sync::Notify>,
+}
+
+/// A response stream dropped unfinished, as when the worker resets it once
+/// it has read `Shutdown`, or its connection drops, has ended too: nothing
+/// more can leave.
+impl Drop for Responses {
+    fn drop(&mut self) {
+        self.ended.store(true, Ordering::Relaxed);
+        self.ending.notify_waiters();
+    }
 }
 
 impl tokio_stream::Stream for Responses {
@@ -496,15 +546,31 @@ impl Shared {
         let worker = WorkerHandle {
             id,
             name: unique,
+            cores: None,
             outbound: Arc::new(Mutex::new(Some(outbound))),
             closed: Arc::new(AtomicBool::new(false)),
+            draining: Arc::default(),
+            read_done: Arc::default(),
             ended: Arc::new(AtomicBool::new(false)),
             closing: Default::default(),
         };
         joined.push(worker.clone());
         Ok(worker)
     }
+
+    /// Note the cores worker `id` said it may use: a count of 0 or past
+    /// [`MAX_CORES`] is taken as none said.
+    fn set_cores(&self, id: u32, cores: Option<u32>) {
+        if let Ok(mut joined) = self.joined.lock() {
+            if let Some(worker) = super::worker_mut(joined.as_mut_slice(), id) {
+                worker.cores = cores.filter(|cores| (1..=MAX_CORES).contains(cores));
+            }
+        }
+    }
 }
+
+/// The most CPU cores a worker may say it has: more is taken as none said.
+const MAX_CORES: u32 = 65_536;
 
 /// The gRPC service.
 struct GaggleService(Arc<Shared>);
@@ -581,6 +647,7 @@ impl Gaggle for GaggleService {
             }
         };
         let id = worker.id;
+        self.0.set_cores(id, hello.cores);
         info!("gaggle: worker {id} ({}) joined from {peer}", worker.name);
         let _ = worker.send(ToWorker::Welcome(Welcome { worker_id: id }));
         let _ = self.0.events.send_async((Event::Joined, None)).await;
@@ -955,7 +1022,7 @@ async fn read_worker(
                 id,
                 error: ack.error,
             }),
-            Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta),
+            Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta, metrics.cpu_micros),
             Some(FromWorker::UsersStopped(_)) => Arrived::Event(Event::UsersStopped { id }),
             Some(FromWorker::ControlAck(ack)) => Arrived::Event(Event::ControlAck {
                 id,
@@ -971,7 +1038,7 @@ async fn read_worker(
         // holds. A reader holds a decoded delta outside the budget only
         // while it waits for more than its reserve.
         let reserve = match &arrived {
-            Arrived::Delta(_) => encoded.saturating_mul(DECODED_PER_ENCODED),
+            Arrived::Delta(..) => encoded.saturating_mul(DECODED_PER_ENCODED),
             Arrived::Event(_) => encoded,
         };
         let bytes = (reserve as u64).min(EVENT_BYTES) as u32;
@@ -988,7 +1055,7 @@ async fn read_worker(
         // A delta holds its share itself, until the merge has taken it.
         let queued = match arrived {
             Arrived::Event(event) => (event, Some(permit)),
-            Arrived::Delta(bytes) => match GaggleDelta::decode(&bytes) {
+            Arrived::Delta(bytes, cpu_micros) => match GaggleDelta::decode(&bytes) {
                 Ok(delta) => {
                     got_final |= delta.kind == DeltaKind::Final;
                     // What it holds decoded, at least its encoded size, is
@@ -1022,6 +1089,7 @@ async fn read_worker(
                     let event = Event::Delta {
                         id,
                         delta: Box::new(delta),
+                        cpu_micros,
                         bytes: Some(permit),
                     };
                     (event, None)
@@ -1043,6 +1111,13 @@ async fn read_worker(
             break;
         }
     }
+    worker.read_done.store(true, Ordering::SeqCst);
+    // Told to shut down at the end of the run, and the worker closed its
+    // side: its stream ends now, `Shutdown` read.
+    if worker.draining.load(Ordering::SeqCst) {
+        worker.close();
+        return;
+    }
     // A worker that stopped as told, then went away, is not lost: the
     // manager's main loop knows it stopped and keeps it so. Either way the
     // event ends any wait for it, its logs among them.
@@ -1060,7 +1135,8 @@ async fn read_worker(
 /// an event, or a delta still to decode.
 enum Arrived {
     Event(Event),
-    Delta(Vec<u8>),
+    /// A delta, and the worker's CPU time with it.
+    Delta(Vec<u8>, Option<u64>),
 }
 
 /// Wait for `future`, which the manager holds back, as when its event queue
@@ -1258,6 +1334,15 @@ impl Manager {
         self.events.try_recv().ok().map(taken)
     }
 
+    /// The cores worker `id` said its process may use.
+    pub(crate) fn cores(&self, id: u32) -> Option<u32> {
+        self.shared
+            .joined
+            .lock()
+            .ok()
+            .and_then(|joined| super::worker(joined.as_slice(), id).and_then(|w| w.cores))
+    }
+
     /// Each worker's id and name.
     pub(crate) fn workers(&self) -> Vec<(u32, String)> {
         self.shared
@@ -1300,15 +1385,31 @@ impl Manager {
     /// Send every worker `Shutdown`, give the messages a moment to leave,
     /// and stop listening.
     pub(crate) async fn shut_down_all(&mut self) {
+        self.shut_down_all_waiting(&[]).await;
+    }
+
+    /// [`Self::shut_down_all`], keeping the stream of each worker of
+    /// `finished`, workers that ended their run cleanly, open after its
+    /// `Shutdown` until it closes its own side, having read it: a stream the
+    /// service ends first can be reset before the worker reads `Shutdown`,
+    /// and the worker then takes its manager for lost. Every other worker's
+    /// stream ends once its `Shutdown` has left, as a worker that is stuck,
+    /// or still sending what it was told to give up, may never close its
+    /// side. Either way the wait is at most [`SHUTDOWN_DRAIN`].
+    pub(crate) async fn shut_down_all_waiting(&mut self, finished: &[u32]) {
         if let Ok(joined) = self.shared.joined.lock() {
             for worker in joined.iter() {
-                worker.shut_down();
+                match finished.contains(&worker.id) {
+                    true => worker.shut_down_draining(),
+                    false => worker.shut_down(),
+                }
             }
         }
-        // Each stream ends once its `Shutdown` has left: wait for that
-        // before the service stops, at most SHUTDOWN_DRAIN. A loaded machine
-        // can take over a second to get there, and a service stopped first
-        // closes a worker's stream with its `Shutdown` unsent.
+        // Each stream ends once its worker has read its `Shutdown` and
+        // closed its side: wait for that before the service stops, at most
+        // SHUTDOWN_DRAIN. A loaded machine can take over a second to get
+        // there, and a service stopped first closes a worker's stream with
+        // its `Shutdown` unsent or unread.
         let deadline = tokio::time::Instant::now() + SHUTDOWN_DRAIN;
         loop {
             // Created before the check, so a stream ending between them
@@ -1319,6 +1420,12 @@ impl Manager {
             });
             if drained || tokio::time::timeout_at(deadline, ending).await.is_err() {
                 break;
+            }
+        }
+        // A worker that never closed its side is closed now.
+        if let Ok(joined) = self.shared.joined.lock() {
+            for worker in joined.iter() {
+                worker.close();
             }
         }
         if let Some(stop) = self.stop_server.take() {
@@ -1541,8 +1648,11 @@ mod tests {
         let worker = WorkerHandle {
             id: 3,
             name: "w".to_string(),
+            cores: None,
             outbound: Arc::new(Mutex::new(Some(outbound))),
             closed: Arc::new(AtomicBool::new(false)),
+            draining: Arc::default(),
+            read_done: Arc::default(),
             ended: Arc::new(AtomicBool::new(false)),
             closing: Default::default(),
         };
@@ -1818,6 +1928,7 @@ pub(crate) mod handshake_tests {
             tx.send(WorkerMessage {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: last.encode().unwrap(),
+                    cpu_micros: None,
                 })),
             })
             .await
@@ -1898,6 +2009,7 @@ pub(crate) mod handshake_tests {
             tx.send(WorkerMessage {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: vec![0xff; 16],
+                    cpu_micros: None,
                 })),
             })
             .await
@@ -1961,6 +2073,141 @@ pub(crate) mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// At the end of a run a worker's stream stays open after `Shutdown`
+    /// until the worker closes its own side, so no reset can reach it
+    /// before it has read `Shutdown`; then the stream ends cleanly, and the
+    /// manager stops at once, without waiting out the drain.
+    #[tokio::test]
+    async fn shut_down_all_waits_for_the_worker_to_close() {
+        let test = async {
+            let mut manager = test_manager(1, Duration::from_secs(30)).await;
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let mut inbound = inbound.unwrap();
+            let started = std::time::Instant::now();
+            let shutting = tokio::spawn(async move {
+                manager.shut_down_all_waiting(&[0]).await;
+            });
+            let mut kinds = Vec::new();
+            while kinds.last() != Some(&"Shutdown") {
+                let message = inbound.message().await.unwrap().unwrap();
+                kinds.push(message_kind(&message));
+            }
+            // Read, the stream stays open while the worker's side does.
+            let next = tokio::time::timeout(Duration::from_millis(500), inbound.message()).await;
+            assert!(
+                next.is_err(),
+                "the stream ended first: {:?}",
+                next.map(|m| m.map(|m| m.is_some()))
+            );
+            assert!(!shutting.is_finished());
+            // The worker closes its side: the stream ends cleanly.
+            drop(tx);
+            let end = tokio::time::timeout(Duration::from_secs(5), inbound.message())
+                .await
+                .expect("the stream ends");
+            assert!(matches!(end, Ok(None)), "{:?}", end.map(|m| m.is_some()));
+            shutting.await.unwrap();
+            assert!(
+                started.elapsed() < SHUTDOWN_DRAIN,
+                "{:?}",
+                started.elapsed()
+            );
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A worker not named finished, stuck or canceled, is not waited for:
+    /// its stream ends once its `Shutdown` has left though its own side
+    /// stays open, while a finished worker's stays open until it closes it.
+    #[tokio::test]
+    async fn shut_down_all_waits_only_for_finished_workers() {
+        let test = async {
+            let mut manager = test_manager(2, Duration::from_secs(30)).await;
+            let (finished_tx, finished) = open(channel(&manager).await, hello(), None).await;
+            let (_stuck_tx, stuck) = open(channel(&manager).await, hello(), None).await;
+            let (mut finished, mut stuck) = (finished.unwrap(), stuck.unwrap());
+            let id = match finished.message().await.unwrap().and_then(|m| m.message) {
+                Some(ToWorker::Welcome(welcome)) => welcome.worker_id,
+                other => panic!("no Welcome first: {:?}", other),
+            };
+            let shutting = tokio::spawn(async move {
+                manager.shut_down_all_waiting(&[id]).await;
+            });
+            let kinds = tokio::time::timeout(Duration::from_secs(2), async {
+                let mut kinds = Vec::new();
+                while let Ok(Some(message)) = stuck.message().await {
+                    kinds.push(message_kind(&message));
+                }
+                kinds
+            })
+            .await
+            .expect("the stuck worker's stream ends without waiting out the drain");
+            assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
+            assert!(
+                !shutting.is_finished(),
+                "the finished worker was not waited for"
+            );
+            // Its stream stays open until it closes its side.
+            while message_kind(
+                &finished
+                    .message()
+                    .await
+                    .unwrap()
+                    .expect("the finished worker's stream ended before Shutdown"),
+            ) != "Shutdown"
+            {}
+            assert!(
+                tokio::time::timeout(Duration::from_millis(500), finished.message())
+                    .await
+                    .is_err(),
+                "the finished worker's stream ended before it closed its side"
+            );
+            drop(finished_tx);
+            // Then it ends, nothing after Shutdown.
+            let kinds = until_it_ends(&mut finished).await;
+            assert!(kinds.is_empty(), "{:?}", kinds);
+            shutting.await.unwrap();
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// As a real worker does it: it stops reading the moment it reads
+    /// `Shutdown`, dropping its side of the response, and closes its own
+    /// side; the manager stops at once, not after the drain.
+    #[tokio::test]
+    async fn shut_down_all_ends_as_the_worker_drops_its_stream() {
+        let test = async {
+            let mut manager = test_manager(1, Duration::from_secs(30)).await;
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let mut inbound = inbound.unwrap();
+            let started = std::time::Instant::now();
+            let shutting = tokio::spawn(async move {
+                manager.shut_down_all_waiting(&[0]).await;
+            });
+            loop {
+                let message = inbound.message().await.unwrap().unwrap();
+                if message_kind(&message) == "Shutdown" {
+                    break;
+                }
+            }
+            drop(inbound);
+            drop(tx);
+            shutting.await.unwrap();
+            assert!(
+                started.elapsed() < SHUTDOWN_DRAIN,
+                "{:?}",
+                started.elapsed()
+            );
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// The messages a worker's stream brings until it ends, within 5
     /// seconds.
     async fn until_it_ends(inbound: &mut tonic::Streaming<ManagerMessage>) -> Vec<&'static str> {
@@ -2011,7 +2258,14 @@ pub(crate) mod handshake_tests {
                 let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
                 streams.push((tx, inbound.unwrap()));
             }
+            // No worker is waited for: their open sides cost no time.
+            let started = std::time::Instant::now();
             manager.shut_down_all().await;
+            assert!(
+                started.elapsed() < SHUTDOWN_DRAIN,
+                "{:?}",
+                started.elapsed()
+            );
             for (_tx, inbound) in streams.iter_mut() {
                 let kinds = until_it_ends(inbound).await;
                 assert_eq!(kinds.last(), Some(&"Shutdown"), "{:?}", kinds);
@@ -2032,6 +2286,7 @@ pub(crate) mod handshake_tests {
             protocol_version: PROTOCOL_VERSION,
             plan_hash: 7,
             worker_name: "w".to_string(),
+            cores: None,
         }
     }
 
@@ -2149,6 +2404,7 @@ pub(crate) mod handshake_tests {
             tx.send(WorkerMessage {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: delta.encode().unwrap(),
+                    cpu_micros: None,
                 })),
             })
             .await
@@ -2376,6 +2632,7 @@ pub(crate) mod handshake_tests {
                     let message = WorkerMessage {
                         message: Some(FromWorker::Metrics(Metrics {
                             delta: encoded.clone(),
+                            cpu_micros: None,
                         })),
                     };
                     if tx.send(message).await.is_err() {

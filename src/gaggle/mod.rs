@@ -21,6 +21,7 @@
 pub(crate) mod compare;
 pub(crate) mod control;
 pub(crate) mod delta;
+pub(crate) mod health;
 pub(crate) mod link;
 pub(crate) mod manager;
 pub(crate) mod merge;
@@ -33,6 +34,8 @@ pub(crate) mod worker;
 
 #[cfg(test)]
 pub(crate) mod faults;
+#[cfg(test)]
+mod ported_tests;
 #[cfg(test)]
 mod run_tests;
 #[cfg(test)]

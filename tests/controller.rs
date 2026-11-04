@@ -861,10 +861,12 @@ async fn run_standalone_test(test_type: TestType) {
     // Run the Goose Attack. Add timeout to be sure Goose exits even if the controller tests fail.
     let goose_metrics = tokio::time::timeout(
         tokio::time::Duration::from_secs(60),
-        common::run_load_test(
-            common::build_load_test(configuration.clone(), vec![get_transactions()], None, None),
+        common::run_load_test(common::build_load_test(
+            configuration.clone(),
+            vec![get_transactions()],
             None,
-        ),
+            None,
+        )),
     )
     .await
     .expect("load test timed out");

@@ -440,15 +440,12 @@ async fn run_standalone_test(test_type: TestType) {
     let configuration = common_build_configuration(&test_type, &server, &mut configuration_flags);
 
     // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(
-        common::build_load_test(
-            configuration.clone(),
-            vec![get_scenarios(&test_type)],
-            None,
-            None,
-        ),
+    let goose_metrics = common::run_load_test(common::build_load_test(
+        configuration.clone(),
+        vec![get_scenarios(&test_type)],
         None,
-    )
+        None,
+    ))
     .await;
 
     // Confirm that the load test ran correctly.

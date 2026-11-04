@@ -300,7 +300,7 @@ async fn assert_user_agent_reaches_every_user(goose_attack: GooseAttack, server:
     let goose_attack = goose_attack.register_scenario(
         scenario!("UserAgent").register_transaction(transaction!(request_user_agent_path)),
     );
-    common::run_load_test(goose_attack, None).await;
+    common::run_load_test(goose_attack).await;
     for (i, mock) in mocks.iter().enumerate() {
         assert!(
             mock.calls() > 0,
@@ -367,7 +367,7 @@ async fn assert_user_agent_by_user(
     if let Some(on_start) = on_start {
         scenario = scenario.register_transaction(on_start);
     }
-    common::run_load_test(goose_attack.register_scenario(scenario), None).await;
+    common::run_load_test(goose_attack.register_scenario(scenario)).await;
     for (i, (right, wrong)) in mocks.iter().enumerate() {
         assert!(right.calls() > 0, "user {} never sent {}", i, expected(i));
         assert_eq!(
@@ -468,7 +468,7 @@ async fn test_builder_reaches_test_start_and_test_stop() {
             )
             .test_start(transaction!(request_setup_path))
             .test_stop(transaction!(request_teardown_path));
-    common::run_load_test(goose_attack, None).await;
+    common::run_load_test(goose_attack).await;
     for mock in &mocks {
         mock.assert_calls(1);
     }
@@ -510,7 +510,7 @@ async fn slow_requests(
             .set_default(GooseDefault::Timeout, timeout)
             .unwrap();
     }
-    let goose_metrics = common::run_load_test(goose_attack, None).await;
+    let goose_metrics = common::run_load_test(goose_attack).await;
     let metrics = goose_metrics
         .requests
         .get(&format!("GET {SLOW_PATH}"))
@@ -579,7 +579,7 @@ async fn uncompressed_requests(server: &MockServer, command_line: Vec<&str>) -> 
             .register_scenario(
                 scenario!("Gzip").register_transaction(transaction!(request_plain_path)),
             );
-    let goose_metrics = common::run_load_test(goose_attack, None).await;
+    let goose_metrics = common::run_load_test(goose_attack).await;
     goose_metrics
         .requests
         .get(&format!("GET {PLAIN_PATH}"))
@@ -691,7 +691,7 @@ async fn test_with_cookies_users_do_not_share_cookies() {
         scenario!("Cookies")
             .register_transaction(transaction!(set_and_check_cookie).set_on_start()),
     );
-    common::run_load_test(goose_attack, None).await;
+    common::run_load_test(goose_attack).await;
     for i in 0..2 {
         set_mocks[i].assert_calls(1);
         // A 404 here means user i sent the other user's cookie, lacked its own, or

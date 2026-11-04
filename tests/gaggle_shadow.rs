@@ -36,10 +36,12 @@ async fn test_gaggle_shadow_merge_matches() {
     let scenario = scenario!("Index").register_transaction(transaction!(get_index));
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        common::run_load_test(
-            common::build_load_test(configuration, vec![scenario], None, None),
+        common::run_load_test(common::build_load_test(
+            configuration,
+            vec![scenario],
             None,
-        ),
+            None,
+        )),
     )
     .await
     .expect("the run ends");

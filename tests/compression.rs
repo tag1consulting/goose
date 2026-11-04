@@ -100,10 +100,12 @@ async fn run(server: &MockServer, args: Vec<&str>) -> GooseMetrics {
 
 async fn run_with(server: &MockServer, args: Vec<&str>, scenario: Scenario) -> GooseMetrics {
     let configuration = common::build_configuration(server, args);
-    common::run_load_test(
-        common::build_load_test(configuration, vec![scenario], None, None),
+    common::run_load_test(common::build_load_test(
+        configuration,
+        vec![scenario],
         None,
-    )
+        None,
+    ))
     .await
 }
 

@@ -46,20 +46,16 @@ async fn test_status_code_response_time_tracking() {
         vec!["--users", "2", "--increase-rate", "2", "--run-time", "2"],
     );
 
-    let metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![
-                scenario!("Mixed")
-                    .register_transaction(transaction!(get_mixed).set_weight(3).unwrap()),
-                scenario!("Success")
-                    .register_transaction(transaction!(get_success).set_weight(1).unwrap()),
-            ],
-            None,
-            None,
-        ),
+    let metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![
+            scenario!("Mixed").register_transaction(transaction!(get_mixed).set_weight(3).unwrap()),
+            scenario!("Success")
+                .register_transaction(transaction!(get_success).set_weight(1).unwrap()),
+        ],
         None,
-    )
+        None,
+    ))
     .await;
 
     // --- "mixed endpoint" should have both 200 and 404 status codes ---
@@ -175,16 +171,14 @@ async fn test_status_code_breakdowns_in_reports() {
         ],
     );
 
-    let _metrics = common::run_load_test(
-        common::build_load_test(
-            config,
-            vec![scenario!("Mixed")
-                .register_transaction(transaction!(get_mixed).set_weight(3).unwrap())],
-            None,
-            None,
-        ),
+    let _metrics = common::run_load_test(common::build_load_test(
+        config,
+        vec![
+            scenario!("Mixed").register_transaction(transaction!(get_mixed).set_weight(3).unwrap())
+        ],
         None,
-    )
+        None,
+    ))
     .await;
 
     // --- Verify HTML report contains breakdown rows ---

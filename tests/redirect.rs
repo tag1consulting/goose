@@ -1,5 +1,4 @@
 use httpmock::{Method::GET, Mock, MockServer};
-use serial_test::serial;
 
 mod common;
 
@@ -27,7 +26,6 @@ const SERVER2_INDEX_KEY: usize = 3;
 const SERVER2_ABOUT_KEY: usize = 4;
 
 // Load test configuration.
-const EXPECT_WORKERS: usize = 4;
 const USERS: usize = 9;
 const RUN_TIME: usize = 3;
 
@@ -163,48 +161,8 @@ fn setup_mock_server_endpoints<'a>(
 }
 
 // Build appropriate configuration for these tests.
-fn common_build_configuration(
-    server: &MockServer,
-    sticky: bool,
-    worker: Option<bool>,
-    manager: Option<usize>,
-) -> GooseConfiguration {
-    if let Some(expect_workers) = manager {
-        if sticky {
-            common::build_configuration(
-                server,
-                vec![
-                    "--sticky-follow",
-                    "--manager",
-                    "--expect-workers",
-                    &expect_workers.to_string(),
-                    "--users",
-                    &USERS.to_string(),
-                    "--increase-rate",
-                    &USERS.to_string(),
-                    "--run-time",
-                    &RUN_TIME.to_string(),
-                ],
-            )
-        } else {
-            common::build_configuration(
-                server,
-                vec![
-                    "--manager",
-                    "--expect-workers",
-                    &expect_workers.to_string(),
-                    "--users",
-                    &USERS.to_string(),
-                    "--increase-rate",
-                    &USERS.to_string(),
-                    "--run-time",
-                    &RUN_TIME.to_string(),
-                ],
-            )
-        }
-    } else if worker.is_some() {
-        common::build_configuration(server, vec!["--worker"])
-    } else if sticky {
+fn common_build_configuration(server: &MockServer, sticky: bool) -> GooseConfiguration {
+    if sticky {
         common::build_configuration(
             server,
             vec![
@@ -328,64 +286,16 @@ async fn run_standalone_test(test_type: TestType) {
         TestType::Sticky => true,
         TestType::Chain | TestType::Domain => false,
     };
-    let configuration = common_build_configuration(&server1, sticky, None, None);
+    let configuration = common_build_configuration(&server1, sticky);
 
     // Run the Goose Attack.
-    common::run_load_test(
-        common::build_load_test(
-            configuration,
-            vec![get_transactions(&test_type)],
-            None,
-            None,
-        ),
-        None,
-    )
-    .await;
-
-    // Confirm that the load test was actually redirected.
-    validate_redirect(&test_type, &mock_endpoints);
-}
-
-// Helper to run all standalone tests.
-async fn run_gaggle_test(test_type: TestType) {
-    // Start the mock servers.
-    let server1 = MockServer::start();
-    let server2 = MockServer::start();
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
-
-    // Build appropriate Worker configuration.
-    let sticky = match test_type {
-        TestType::Sticky => true,
-        TestType::Chain | TestType::Domain => false,
-    };
-    let worker_configuration = common_build_configuration(&server1, sticky, Some(true), None);
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-        common::build_load_test(
-            worker_configuration.clone(),
-            vec![get_transactions(&test_type)],
-            None,
-            None,
-        )
-    });
-
-    // Build Manager configuration.
-    let manager_configuration =
-        common_build_configuration(&server1, sticky, None, Some(EXPECT_WORKERS));
-
-    // Build the load test for the Workers.
-    let manager_goose_attack = common::build_load_test(
-        manager_configuration,
+    common::run_load_test(common::build_load_test(
+        configuration,
         vec![get_transactions(&test_type)],
         None,
         None,
-    );
-
-    // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
+    ))
+    .await;
 
     // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
@@ -397,15 +307,6 @@ async fn test_redirect() {
     run_standalone_test(TestType::Chain).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
-#[serial]
-// Request a page that redirects multiple times with different redirect headers,
-// in Gaggle mode.
-async fn test_redirect_gaggle() {
-    run_gaggle_test(TestType::Chain).await;
-}
-
 #[tokio::test]
 // Request a page that redirects to another domain.
 // Different domains are simulated with multiple mock servers running on different
@@ -414,31 +315,10 @@ async fn test_domain_redirect() {
     run_standalone_test(TestType::Domain).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Request a page that redirects to another domain, in Gaggle mode.
-// Different domains are simulated with multiple mock servers running on different
-// ports.
-async fn test_domain_redirect_gaggle() {
-    run_gaggle_test(TestType::Domain).await;
-}
-
 #[tokio::test]
 // Request a page that redirects to another domain with --sticky-follow enabled.
 // Different domains are simulated with multiple mock servers running on different
 // ports.
 async fn test_sticky_domain_redirect() {
     run_standalone_test(TestType::Sticky).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Request a page that redirects to another domain with --sticky-follow enabled, in
-// Gaggle mode.
-// Different domains are simulated with multiple mock servers running on different
-// ports.
-async fn test_sticky_domain_redirect_gaggle() {
-    run_gaggle_test(TestType::Sticky).await;
 }

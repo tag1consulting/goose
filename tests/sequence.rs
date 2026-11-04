@@ -1,5 +1,4 @@
 use httpmock::{Method::GET, Mock, MockServer};
-use serial_test::serial;
 use tokio::time::{sleep, Duration};
 
 mod common;
@@ -22,7 +21,6 @@ const START_ONE_KEY: usize = 3;
 const STOP_ONE_KEY: usize = 4;
 
 // Load test configuration.
-const EXPECT_WORKERS: usize = 2;
 const USERS: usize = 4;
 const RUN_TIME: usize = 2;
 
@@ -109,43 +107,19 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
 }
 
 // Build appropriate configuration for these tests.
-fn common_build_configuration(
-    server: &MockServer,
-    worker: Option<bool>,
-    manager: Option<usize>,
-) -> GooseConfiguration {
-    if let Some(expect_workers) = manager {
-        common::build_configuration(
-            server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &expect_workers.to_string(),
-                "--users",
-                &USERS.to_string(),
-                "--increase-rate",
-                &USERS.to_string(),
-                "--run-time",
-                &RUN_TIME.to_string(),
-                "--no-reset-metrics",
-            ],
-        )
-    } else if worker.is_some() {
-        common::build_configuration(server, vec!["--worker"])
-    } else {
-        common::build_configuration(
-            server,
-            vec![
-                "--users",
-                &USERS.to_string(),
-                "--increase-rate",
-                &USERS.to_string(),
-                "--run-time",
-                &RUN_TIME.to_string(),
-                "--no-reset-metrics",
-            ],
-        )
-    }
+fn common_build_configuration(server: &MockServer) -> GooseConfiguration {
+    common::build_configuration(
+        server,
+        vec![
+            "--users",
+            &USERS.to_string(),
+            "--increase-rate",
+            &USERS.to_string(),
+            "--run-time",
+            &RUN_TIME.to_string(),
+            "--no-reset-metrics",
+        ],
+    )
 }
 
 // Helper to confirm all variations generate appropriate results.
@@ -235,7 +209,7 @@ async fn run_standalone_test(test_type: TestType) {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     // Build common configuration.
-    let configuration = common_build_configuration(&server, None, None);
+    let configuration = common_build_configuration(&server);
 
     // Get the scenario, start and stop transactions to build a load test.
     let (scenario, start_transaction, stop_transaction) = get_transactions(&test_type);
@@ -262,77 +236,7 @@ async fn run_standalone_test(test_type: TestType) {
     };
 
     // Run the Goose Attack.
-    common::run_load_test(goose_attack, None).await;
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
-}
-
-// Helper to run all gaggle tests.
-async fn run_gaggle_test(test_type: TestType) {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let worker_configuration = common_build_configuration(&server, Some(true), None);
-
-    // Get the scenario, start and stop transactions to build a load test.
-    let (scenario, start_transaction, stop_transaction) = get_transactions(&test_type);
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = match test_type {
-        TestType::NotSequenced | TestType::SequencedRoundRobin => {
-            // Set up the common base configuration.
-            common::launch_gaggle_workers(EXPECT_WORKERS, || {
-                crate::GooseAttack::initialize_with_config(worker_configuration.clone())
-                    .unwrap()
-                    .register_scenario(scenario.clone())
-                    .test_start(start_transaction.clone())
-                    .test_stop(stop_transaction.clone())
-                    // Unnecessary as this is the default.
-                    .set_scheduler(GooseScheduler::RoundRobin)
-            })
-        }
-        TestType::SequencedSerial => common::launch_gaggle_workers(EXPECT_WORKERS, || {
-            crate::GooseAttack::initialize_with_config(worker_configuration.clone())
-                .unwrap()
-                .register_scenario(scenario.clone())
-                .test_start(start_transaction.clone())
-                .test_stop(stop_transaction.clone())
-                .set_scheduler(GooseScheduler::Serial)
-        }),
-    };
-
-    // Build Manager configuration.
-    let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-    let manager_goose_attack = match test_type {
-        TestType::NotSequenced | TestType::SequencedRoundRobin => {
-            // Set up the common base configuration.
-            crate::GooseAttack::initialize_with_config(manager_configuration)
-                .unwrap()
-                .register_scenario(scenario)
-                .test_start(start_transaction)
-                .test_stop(stop_transaction)
-                // Unnecessary as this is the default.
-                .set_scheduler(GooseScheduler::RoundRobin)
-        }
-        TestType::SequencedSerial => {
-            // Set up the common base configuration.
-            crate::GooseAttack::initialize_with_config(manager_configuration)
-                .unwrap()
-                .register_scenario(scenario)
-                .test_start(start_transaction)
-                .test_stop(stop_transaction)
-                .set_scheduler(GooseScheduler::Serial)
-        }
-    };
-
-    // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
+    common::run_load_test(goose_attack).await;
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
@@ -342,14 +246,6 @@ async fn run_gaggle_test(test_type: TestType) {
 // Load test with multiple transactions and no sequences defined.
 async fn test_not_sequenced() {
     run_standalone_test(TestType::NotSequenced).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions and no sequences defined, in Gaggle mode.
-async fn test_not_sequenced_gaggle() {
-    run_gaggle_test(TestType::NotSequenced).await;
 }
 
 #[tokio::test]
@@ -364,22 +260,4 @@ async fn test_sequenced_round_robin() {
 // sequential scheduler.
 async fn test_sequenced_sequential() {
     run_standalone_test(TestType::SequencedSerial).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions and sequences defined, using the
-// round robin scheduler, in Gaggle mode.
-async fn test_sequenced_round_robin_gaggle() {
-    run_gaggle_test(TestType::SequencedRoundRobin).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Load test with multiple transactions and sequences defined, using the
-// sequential scheduler, in Gaggle mode.
-async fn test_sequenced_sequential_gaggle() {
-    run_gaggle_test(TestType::SequencedSerial).await;
 }

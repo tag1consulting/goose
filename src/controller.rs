@@ -4499,6 +4499,8 @@ pub(crate) mod tests {
             field: None,
             #[cfg(feature = "dashboard")]
             settings: None,
+            #[cfg(feature = "gaggle")]
+            acks: None,
         }));
         assert_eq!(telnet_reply(&mut client).await, "users configured\ngoose> ");
     }

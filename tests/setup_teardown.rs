@@ -2,7 +2,6 @@ use httpmock::{
     Method::{GET, POST},
     Mock, MockServer,
 };
-use serial_test::serial;
 
 mod common;
 
@@ -20,7 +19,6 @@ const SETUP_KEY: usize = 1;
 const TEARDOWN_KEY: usize = 2;
 
 // Load test configuration.
-const EXPECT_WORKERS: usize = 2;
 const USERS: &str = "4";
 
 // There are multiple test variations in this file.
@@ -76,29 +74,8 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
 }
 
 // Build appropriate configuration for these tests.
-fn common_build_configuration(
-    server: &MockServer,
-    worker: Option<bool>,
-    manager: Option<usize>,
-) -> GooseConfiguration {
-    if let Some(expect_workers) = manager {
-        common::build_configuration(
-            server,
-            vec![
-                "--manager",
-                "--expect-workers",
-                &expect_workers.to_string(),
-                "--users",
-                USERS,
-                "--increase-rate",
-                USERS,
-            ],
-        )
-    } else if worker.is_some() {
-        common::build_configuration(server, vec!["--worker"])
-    } else {
-        common::build_configuration(server, vec!["--users", USERS, "--increase-rate", USERS])
-    }
+fn common_build_configuration(server: &MockServer) -> GooseConfiguration {
+    common::build_configuration(server, vec!["--users", USERS, "--increase-rate", USERS])
 }
 
 // Helper to confirm all variations generate appropriate results.
@@ -163,42 +140,13 @@ async fn run_standalone_test(test_type: TestType) {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     // Build common configuration.
-    let configuration = common_build_configuration(&server, None, None);
+    let configuration = common_build_configuration(&server);
 
     // Use configuration to generate the load test.
     let goose_attack = build_goose_attack(&test_type, configuration);
 
     // Run the load test.
-    common::run_load_test(goose_attack, None).await;
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
-}
-
-// Helper to run all gaggle tests.
-async fn run_gaggle_test(test_type: TestType) {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let worker_configuration = common_build_configuration(&server, Some(true), None);
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-        build_goose_attack(&test_type, worker_configuration.clone())
-    });
-
-    // Build Manager configuration.
-    let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-    // Use Manager configuration to generate the load test.
-    let goose_attack = build_goose_attack(&test_type, manager_configuration);
-
-    // Run the load test.
-    common::run_load_test(goose_attack, Some(worker_handles)).await;
+    common::run_load_test(goose_attack).await;
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
@@ -210,38 +158,14 @@ async fn test_setup() {
     run_standalone_test(TestType::Start).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Test test_start(), in Gaggle mode.
-async fn test_setup_gaggle() {
-    run_gaggle_test(TestType::Start).await;
-}
-
 #[tokio::test]
 // Test test_stop().
 async fn test_teardown() {
     run_standalone_test(TestType::Stop).await;
 }
 
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-// Test test_stop(), in Gaggle mode.
-async fn test_teardown_gaggle() {
-    run_gaggle_test(TestType::Stop).await;
-}
-
 #[tokio::test]
 /// Test test_start and test_stop together.
 async fn test_setup_teardown() {
     run_standalone_test(TestType::StartAndStop).await;
-}
-
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-/// Test test_start and test_stop together, in Gaggle mode.
-async fn test_setup_teardown_gaggle() {
-    run_gaggle_test(TestType::StartAndStop).await;
 }

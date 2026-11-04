@@ -59,7 +59,7 @@ async fn test_pdf_generation_with_feature() {
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
     // Run the Goose Attack
-    let goose_metrics = common::run_load_test(goose_attack, None).await;
+    let goose_metrics = common::run_load_test(goose_attack).await;
 
     // Confirm that we loaded the mock endpoints
     assert!(mock_endpoints[0].calls() > 0);
@@ -116,7 +116,7 @@ async fn test_pdf_of_a_large_report() {
     let configuration = common::build_configuration(&server, configuration_flags);
     let scenario = scenario!("LoadTest").register_transaction(transaction!(get_index_long_name));
     let goose_attack = common::build_load_test(configuration, vec![scenario], None, None);
-    common::run_load_test(goose_attack, None).await;
+    common::run_load_test(goose_attack).await;
 
     assert!(mock_endpoints[0].calls() > 0);
     let html = std::fs::metadata(html_file).expect("the HTML report").len();
@@ -154,7 +154,7 @@ async fn test_pdf_print_html_without_feature_works() {
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
     // This should succeed because --pdf-print-html only generates HTML+CSS without requiring Chromium
-    let goose_metrics = common::run_load_test(goose_attack, None).await;
+    let goose_metrics = common::run_load_test(goose_attack).await;
 
     // Verify the test ran successfully
     assert!(mock_endpoints[0].calls() > 0);
@@ -221,7 +221,7 @@ async fn test_pdf_print_html_generation() {
     // Build and run the load test
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
-    let goose_metrics = common::run_load_test(goose_attack, None).await;
+    let goose_metrics = common::run_load_test(goose_attack).await;
 
     // Verify the test ran successfully
     assert!(mock_endpoints[0].calls() > 0);
@@ -297,7 +297,7 @@ async fn test_pdf_resource_management() {
         let goose_attack =
             common::build_load_test(configuration, vec![get_transactions()], None, None);
 
-        let goose_metrics = common::run_load_test(goose_attack, None).await;
+        let goose_metrics = common::run_load_test(goose_attack).await;
 
         // Confirm basic functionality
         assert!(mock_endpoints[0].calls() > 0);
@@ -451,7 +451,7 @@ async fn test_pdf_print_html_alone_has_the_graphs() {
         vec!["--run-time", "2", "--pdf-print-html", html_file],
     );
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    common::run_load_test(goose_attack, None).await;
+    common::run_load_test(goose_attack).await;
     assert!(mock_endpoints[0].calls() > 0);
 
     let html = std::fs::read_to_string(html_file).expect("the print HTML");

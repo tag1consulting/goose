@@ -56,6 +56,9 @@ pub(crate) struct TestFaults {
     /// Say a change made while the manager is idle was applied this long
     /// after reading it, as a busy main loop would.
     pub(crate) slow_idle_ack: Option<Duration>,
+    /// Send a CPU time that has this percent of the worker's cores busy for
+    /// this long from its first delta, and idle after.
+    pub(crate) busy_cpu: Option<(u64, Duration)>,
 }
 
 impl TestFaults {
@@ -93,6 +96,9 @@ impl TestFaults {
         outbox.corrupt_from.store(self.refuse_from, Relaxed);
         outbox.oversize_seq.store(self.oversize_delta, Relaxed);
         outbox.oversize_final.store(self.oversize_final, Relaxed);
+        if let Ok(mut busy) = outbox.busy_cpu.lock() {
+            *busy = self.busy_cpu.map(|(percent, span)| (percent, span, None));
+        }
     }
 
     /// Say once, through `link`, that the worker stopped for
