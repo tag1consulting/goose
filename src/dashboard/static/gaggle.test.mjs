@@ -214,6 +214,18 @@ test("a state change is announced once, from the events", async () => {
     })
   );
   assert.equal(announce.textContent, "load-09 recovered: no longer lagging.");
+  // Many at once: the first three said, the rest counted.
+  const left = [0, 1, 2, 3, 4].map((i) => ({
+    second: 256,
+    kind: "worker_excluded",
+    label: null,
+    text: "load-0" + i + "'s metrics left out: it missed a metrics reset",
+  }));
+  await send(page, gaggleSnapshot({ events: [...left] }));
+  assert.equal(
+    announce.textContent,
+    "load-04's metrics left out: it missed a metrics reset. load-03's metrics left out: it missed a metrics reset. load-02's metrics left out: it missed a metrics reset. 2 more worker changes in Recent gaggle events."
+  );
 });
 
 test("the RPS chart's toggle is remembered, and draws by worker", async () => {
@@ -426,6 +438,7 @@ test("keyboard focus reaches every tile, and the hover card follows it", async (
   key("ArrowRight");
   assert.equal(page.window.document.activeElement, tiles[33]);
   tiles[17].focus();
+  assert.deepEqual(tiles.filter((t) => t.tabIndex === 0), [tiles[17]], "one tab stop after a tile is focused");
   const lines = [...card.children].map((c) => c.textContent);
   assert.deepEqual(lines, ["load-17  saturated", "CPU 97% of 4 cores for 42 s", "41 req/s (-35%), p95 212 ms"]);
   tiles[31].focus();

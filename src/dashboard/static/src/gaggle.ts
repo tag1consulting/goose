@@ -729,7 +729,10 @@ function tileFor(at: number): HTMLButtonElement {
   tile.setAttribute("aria-describedby", "worker-card");
   tile.addEventListener("mouseenter", () => showCard(at));
   tile.addEventListener("focus", () => {
+    // The one tab stop moves with focus, however the tile got it.
+    if (tiles[focusedTile]) tiles[focusedTile].tabIndex = -1;
     focusedTile = at;
+    tile.tabIndex = 0;
     showCard(at);
   });
   return tile;
@@ -893,13 +896,17 @@ function renderEvents(g: GaggleSnapshot): void {
   const n = events.texts.length;
   const key = n + "|" + (n ? events.seconds[0] + "|" + events.texts[0] : "");
   // Announced once each, newest last; none of what was there on opening.
+  // At most 3 said a snapshot, the rest counted: a run's start can leave
+  // out every worker's metrics at once.
   const now = new Set<string>();
+  let said = 0;
   for (let i = n - 1; i >= 0; i--) {
     const id = events.seconds[i] + "|" + events.kinds[i] + "|" + events.texts[i];
     now.add(id);
     if (seen.has(id)) continue;
-    if (!firstEvents && ANNOUNCED.has(events.kinds[i])) announce(events.texts[i] + ".");
+    if (!firstEvents && ANNOUNCED.has(events.kinds[i]) && said++ < 3) announce(events.texts[i] + ".");
   }
+  if (said > 3) announce(count(said - 3, "more worker change") + " in Recent gaggle events.");
   seen = now;
   firstEvents = false;
   if (key === eventsKey) return;
