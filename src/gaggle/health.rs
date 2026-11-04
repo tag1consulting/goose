@@ -419,8 +419,9 @@ impl WorkerHealth {
     }
 
     /// How long its CPU use has stayed at or above [`SATURATED_PERCENT`],
-    /// measured to its last CPU sample: a worker that goes quiet is not
-    /// taken as saturated for want of samples.
+    /// over the spans of its samples since, on its own clock when they carry
+    /// it: a worker that goes quiet is not taken as saturated for want of
+    /// samples.
     fn saturated_for(&self) -> Duration {
         match self.above_since {
             Some(_) => self.saturated_run,
@@ -627,7 +628,8 @@ impl GaggleHealth {
                 let span = Duration::from_micros(is.saturating_sub(was));
                 // A clock that did not move on, as a restarted worker's,
                 // or one that jumped past the longest span, gives no
-                // baseline: start again from this sample.
+                // baseline: start again from this sample, and as nothing
+                // then says it is still saturated, a saturation ends.
                 if is <= was || span > MAX_CPU_SPAN {
                     worker.cpu_sample = Some(sample);
                     worker.unsaturate();
@@ -1394,6 +1396,39 @@ mod tests {
         health.cpu(0, Some(4_700_000), Some(jumped + 1_000_000), at + secs(6.0));
         assert_eq!(percent(&health), Some(70.0));
         assert_eq!(health.worker(0).unwrap().cpu_peak, Some(90.0));
+        // A span of exactly the longest is still taken.
+        let longest = MAX_CPU_SPAN.as_micros() as u64;
+        let at_most = jumped + 1_000_000 + longest;
+        health.cpu(0, Some(4_700_000 + longest / 2), Some(at_most), at + secs(7.0));
+        assert_eq!(percent(&health), Some(50.0));
+    }
+
+    #[test]
+    fn starting_again_ends_a_saturation() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        let _ = late(&mut health, at, 6, 95, true);
+        assert!(health.worker(0).unwrap().above_since.is_some());
+        // The clock goes back: nothing says it is still saturated.
+        health.cpu(0, Some(6_000_000), Some(1_000_000), at + secs(20.0));
+        let worker = health.worker(0).unwrap();
+        assert!(worker.above_since.is_none());
+        assert_eq!(worker.saturated_for(), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_sample_without_the_clock_is_timed_by_arrival() {
+        let at = Instant::now();
+        let percent = |health: &GaggleHealth| health.worker(0).unwrap().cpu_percent;
+        // The sample before carries the clock and this one does not, then
+        // the other way round: each pair is timed by its arrival, 2 s apart,
+        // not by the 1 s the clock would say.
+        for (before, after) in [(Some(0), None), (None, Some(1_000_000))] {
+            let mut health = running(1, Some(1), at);
+            health.cpu(0, Some(0), before, at);
+            health.cpu(0, Some(1_000_000), after, at + secs(2.0));
+            assert_eq!(percent(&health), Some(50.0));
+        }
     }
 
     #[test]
@@ -1401,7 +1436,7 @@ mod tests {
         let at = Instant::now();
         let mut health = running(1, Some(1), at);
         // Nine samples at 95%: eight seconds saturated on the worker's clock,
-        // which took over twelve seconds to arrive.
+        // which took over eleven seconds to arrive.
         let _ = late(&mut health, at, 9, 95, true);
         let worker = health.worker(0).unwrap();
         assert_eq!(worker.saturated_total, secs(8.0));

@@ -3409,14 +3409,15 @@ async fn gaggle_worker_health_in_one_process() {
             assert!(worker["requests"].as_u64().unwrap() > 0, "{}", worker);
             assert!(worker["cores"].as_u64().unwrap() > 0, "{}", worker);
         }
-        // The busy worker, at 95% of its cores, peaks highest.
+        // The busy worker, at 95% of its cores, peaks highest: at 95, its
+        // own clock's span, never clamped at 100.
         let peak = |worker: &serde_json::Value| worker["peak_cpu_percent"].as_u64();
         let (busy, real) = match peak(finished[0]) >= peak(finished[1]) {
             true => (finished[0], &finished[1..]),
             false => (finished[1], &finished[..1]),
         };
         let busy_peak = peak(busy).unwrap();
-        assert!((90..=100).contains(&busy_peak), "{}", busy);
+        assert!((94..=96).contains(&busy_peak), "{}", busy);
         assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
         assert!(
             busy["flags"]
@@ -3493,8 +3494,8 @@ async fn gaggle_worker_health_in_one_process() {
 
 /// A worker that says 95% of its CPU is busy for 8 seconds, whose deltas
 /// are held back at random by up to 2 seconds after it reads its CPU time,
-/// is flagged saturated, once, then recovers, once, and peaks between 90
-/// and 100: the manager times its CPU by the worker's own clock, not by
+/// is flagged saturated, once, then recovers, once, and peaks at 95, not
+/// clamped at 100: the manager times its CPU by the worker's own clock, not by
 /// when each delta arrives.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
@@ -3532,7 +3533,7 @@ async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
         let peak = |worker: &serde_json::Value| worker["peak_cpu_percent"].as_u64();
         let busy = all.iter().max_by_key(|worker| peak(worker)).unwrap();
         let busy_peak = peak(busy).unwrap();
-        assert!((90..=100).contains(&busy_peak), "{}", busy);
+        assert!((94..=96).contains(&busy_peak), "{}", busy);
         assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
         assert!(
             busy["flags"]
