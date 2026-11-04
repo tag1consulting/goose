@@ -125,7 +125,7 @@ export function gaggleSnapshot(options = {}) {
       by_worker: {
         workers: ["load-00", "load-01", "load-02", "load-03", "load-04", "load-05", "load-06", "load-07"],
         rps: Array.from({ length: 8 }, () => Array.from({ length: seconds }, () => 63)),
-        others_workers: 40,
+        others_workers: 39,
       },
       events: {
         seconds: events.map((e) => e.second),

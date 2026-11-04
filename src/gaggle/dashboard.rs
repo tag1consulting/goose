@@ -37,22 +37,31 @@ const REASON_LEFT_OUT: &str = "its reason is in the run's report";
 /// The most bytes of one summary sentence.
 const SENTENCE_BYTES: usize = 1_500;
 
-/// `text` cut to at most `max` bytes, at a character boundary: the section
-/// copies the health model's words, never words them again, and keeps them
-/// within its budget.
+/// `text`'s length as JSON writes it, without the quotes around it: `"`
+/// and `\\` take two bytes each. Control characters, which take more, were
+/// already replaced by the health model.
+fn json_len(text: &str) -> usize {
+    text.len() + text.bytes().filter(|b| *b == b'"' || *b == b'\\').count()
+}
+
+/// `text` cut to at most `max` bytes as JSON writes it, at a character
+/// boundary: the section copies the health model's words, never words them
+/// again, and keeps them within its budget.
 fn clip(text: &str, max: usize) -> String {
-    match text.len() <= max {
-        true => text.to_string(),
-        false => {
-            let end = text
-                .char_indices()
-                .map(|(at, c)| at + c.len_utf8())
-                .take_while(|&end| end <= max)
-                .last()
-                .unwrap_or(0);
-            text[..end].to_string()
-        }
+    if json_len(text) <= max {
+        return text.to_string();
     }
+    let end = text
+        .char_indices()
+        .scan(0usize, |width, (at, c)| {
+            *width += c.len_utf8() + usize::from(c == '"' || c == '\\');
+            Some((at + c.len_utf8(), *width))
+        })
+        .take_while(|&(_, width)| width <= max)
+        .map(|(end, _)| end)
+        .last()
+        .unwrap_or(0);
+    text[..end].to_string()
 }
 
 /// What the section is built from, beside the health model and the merge.
@@ -419,13 +428,13 @@ pub(crate) fn section(
             .map(|&at| {
                 live[at].worker.lost.as_ref().map(|(_, _, why)| {
                     let mut why = clip(why, REASON_BYTES);
-                    if !reasons.contains(&why) && reasons_bytes + why.len() > REASONS_BYTES {
+                    if !reasons.contains(&why) && reasons_bytes + json_len(&why) > REASONS_BYTES {
                         why = REASON_LEFT_OUT.to_string();
                     }
                     match reasons.iter().position(|reason| *reason == why) {
                         Some(index) => index as u32,
                         None => {
-                            reasons_bytes += why.len();
+                            reasons_bytes += json_len(&why);
                             reasons.push(why);
                             (reasons.len() - 1) as u32
                         }
@@ -521,7 +530,7 @@ pub(crate) fn section(
         .rev()
         .take(MAX_GAGGLE_EVENTS)
         .take_while(|event| {
-            bytes += event.text.len().min(EVENT_TEXT_BYTES);
+            bytes += json_len(&clip(&event.text, EVENT_TEXT_BYTES));
             bytes <= EVENT_TEXTS_BYTES
         })
         .copied()
@@ -1013,6 +1022,8 @@ mod tests {
             delta.graph.requests.insert("GET /a".to_string(), rows);
             accumulator.apply(id, delta).unwrap();
         }
+        // A lost worker is not among the others the rest's line adds up.
+        health.lose(0, "gone", now);
         health.tick(now);
         // The merged series counts every worker: 55 a second.
         let merged = series(vec![55.0; 6]);
@@ -1027,8 +1038,9 @@ mod tests {
         );
         assert_eq!(lines.rps[0], [10, 10, 10, 10, 10, 0]);
         assert_eq!(lines.rps[7], [3, 3, 3, 3, 3, 0]);
-        // The others, workers 1 and 0, are the merged series less these.
-        assert_eq!(lines.others_workers, 2);
+        // The others, worker 1 (worker 0 is lost), are the merged series
+        // less these.
+        assert_eq!(lines.others_workers, 1);
     }
 
     /// The split previews are step 3's: 900 users dealt over 47 workers run
@@ -1249,7 +1261,7 @@ mod tests {
     /// as a worker's words may be: the section still holds at most 64 KiB,
     /// with names as long as `load-1023`. Names of the longest, 64
     /// characters, take 68 KB alone at 1,024 workers, so the budget holds for
-    /// names up to about 16 characters there.
+    /// names up to about 10 characters there.
     #[test]
     fn every_worker_lost_stays_in_budget() {
         let at = Instant::now();
@@ -1270,6 +1282,7 @@ mod tests {
             at + secs(10.0),
         );
         let bytes = serde_json::to_vec(&section).unwrap().len();
+        println!("every worker lost, distinct reasons: {} bytes", bytes);
         let part = |v: serde_json::Value| v.to_string().len();
         let json = serde_json::to_value(&section).unwrap();
         assert!(
@@ -1299,6 +1312,37 @@ mod tests {
         assert!(section.events.texts.len() < MAX_GAGGLE_EVENTS);
         assert!(section.events_truncated);
         assert_eq!(section.events.labels.iter().flatten().count(), 1);
+    }
+
+    /// Reasons made of characters JSON escapes, `"` and `\\`, are held to
+    /// the same budgets as written: the section stays within 64 KiB.
+    #[test]
+    fn escaped_reasons_stay_in_budget() {
+        let at = Instant::now();
+        let mut health = running(1_024, Some(4), 20, at);
+        for id in 0..1_024 {
+            let why = format!("{id} {}", "\"\\".repeat(250));
+            health.lose(id, &why, at + secs(10.0));
+        }
+        let empty = series(vec![0.0; 300]);
+        let section = build(
+            &health,
+            &accumulator(),
+            1_024,
+            &empty,
+            None,
+            at + secs(10.0),
+        );
+        let bytes = serde_json::to_vec(&section).unwrap().len();
+        println!("every worker lost, escaped reasons: {} bytes", bytes);
+        assert!(bytes <= 64 * 1024, "{} bytes", bytes);
+        for reason in &section.workers.reasons {
+            assert!(json_len(reason) <= REASON_BYTES.max(REASON_LEFT_OUT.len()));
+        }
+        let texts: usize = section.events.texts.iter().map(|t| json_len(t)).sum();
+        assert!(texts <= EVENT_TEXTS_BYTES, "{}", texts);
+        assert_eq!(clip("ab\"c", 3), "ab");
+        assert_eq!(clip("\u{e9}\u{e9}", 3), "\u{e9}");
     }
 
     /// The section holds worker names, never an address, port or token (a

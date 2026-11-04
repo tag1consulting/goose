@@ -439,7 +439,7 @@ function makeParts(): Parts {
     legendItem("tile tile-lagging", "~", "lagging"),
     legendItem("tile tile-lost", "x", "lost")
   );
-  const legendExtra = el("span", "worker-legend-extra");
+  const legendExtra = el("li", "worker-legend-extra");
   legend.appendChild(legendExtra);
 
   const card = el("div", "worker-card");

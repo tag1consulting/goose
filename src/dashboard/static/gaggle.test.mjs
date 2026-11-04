@@ -243,7 +243,7 @@ test("the RPS chart's toggle is remembered, and draws by worker", async () => {
     .filter((c) => c.id === "chart-rps" && c.name === "fillText")
     .map((c) => String(c.value[0]));
   assert.ok(drawn.includes("load-00"), "a worker's line in the legend: " + drawn.join("|"));
-  assert.ok(drawn.includes("40 others"), drawn.join("|"));
+  assert.ok(drawn.includes("39 others"), drawn.join("|"));
   // The markers' labels are drawn at the top of the chart.
   assert.ok(drawn.includes("users 900"), drawn.join("|"));
   // The chart's data table names each line: its text fallback.
@@ -253,7 +253,7 @@ test("the RPS chart's toggle is remembered, and draws by worker", async () => {
   const table = $(page, "#chart-rps-by-worker");
   assert.ok(!table.hidden);
   const head = [...table.querySelectorAll("thead th")].map((th) => th.textContent);
-  assert.deepEqual(head, ["Second", "load-00", "load-01", "load-02", "load-03", "load-04", "load-05", "load-06", "load-07", "40 others"]);
+  assert.deepEqual(head, ["Second", "load-00", "load-01", "load-02", "load-03", "load-04", "load-05", "load-06", "load-07", "39 others"]);
   const first = [...table.querySelectorAll("tbody tr")[0].cells].map((td) => td.textContent);
   assert.deepEqual(first, ["0", "63", "63", "63", "63", "63", "63", "63", "63", "2,483"]);
   buttons[0].click();

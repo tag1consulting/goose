@@ -1276,6 +1276,10 @@ body.gaggle-mode .charts-grid {
   font-size: 0.65rem;
 }
 
+.worker-legend-extra:empty {
+  display: none;
+}
+
 /* The one hover card, moved to the tile hovered or focused. */
 .worker-card {
   position: absolute;
