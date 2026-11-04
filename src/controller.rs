@@ -43,7 +43,7 @@ pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 a
 /// large users change), it can still apply after the timeout, so clients
 /// must check the phase and users before retrying.
 ///
-/// 15s allows non-trivial `weight_scenario_users` work; Start still replies
+/// 15s leaves room for a large users change; Start still replies
 /// before `control_start_finish`, so a client usually hears much sooner.
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
 

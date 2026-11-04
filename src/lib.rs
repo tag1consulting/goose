@@ -659,8 +659,10 @@ struct GooseAttackRunState {
     idle_status_displayed: bool,
     /// The task of every [`GooseUser`](./goose/struct.GooseUser.html) not yet seen to
     /// finish, joined when the load test stops. Finished tasks are pruned as
-    /// users start and stop, and while the load test holds.
+    /// users start and while the load test holds.
     users: Vec<tokio::task::JoinHandle<()>>,
+    /// How many tasks `users` held after it was last pruned on a user start.
+    users_pruned_at: usize,
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
@@ -750,12 +752,13 @@ impl GooseAttackRunState {
         }
     }
 
-    /// As [`prune_finished_users`](Self::prune_finished_users), on a user start
-    /// or stop: only once the handles held reach twice the running users, so
-    /// each start or stop does constant work on average.
+    /// As [`prune_finished_users`](Self::prune_finished_users), on a user start:
+    /// only once the tasks held have doubled since the last time, so each start
+    /// does constant work on average, however long stopped users take to end.
     fn prune_finished_users_when_due(&mut self) {
-        if self.users.len() >= 2 * self.active_users.max(1) {
+        if self.users.len() >= 2 * self.users_pruned_at.max(1) {
             self.prune_finished_users();
+            self.users_pruned_at = self.users.len();
         }
     }
 }
@@ -779,7 +782,7 @@ struct UserBuild {
     configuration: GooseConfiguration,
     load_test_hash: u64,
     client_strategy: Option<client::ClientStrategy>,
-    /// Counts the clients users build when they start.
+    /// Counts every client built for a user.
     #[cfg(test)]
     clients_built: Arc<AtomicUsize>,
 }
@@ -787,6 +790,8 @@ struct UserBuild {
 impl UserBuild {
     /// A client for one user: its own, or a clone of a shared client.
     fn client(&self) -> Result<reqwest::Client, reqwest::Error> {
+        #[cfg(test)]
+        self.clients_built.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match &self.client_strategy {
             None => goose::create_reqwest_client(&self.configuration),
             Some(strategy) => strategy.user_client(),
@@ -810,8 +815,6 @@ struct UserStart {
     throttle: Option<flume::Sender<bool>>,
     metrics_channel: flume::Sender<GooseMetric>,
     metrics_epoch: crate::metrics::MetricsEpoch,
-    /// The metrics epoch when the user started.
-    epoch: u64,
     request_counters: crate::metrics::GooseRequestCounterRegistry,
     shutdown_channel: flume::Sender<usize>,
 }
@@ -826,11 +829,6 @@ impl UserStart {
             .client()
             .map_err(GooseError::Reqwest)
             .and_then(|client| {
-                #[cfg(test)]
-                weighted
-                    .build
-                    .clients_built
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 GooseUser::new(
                     weighted.scenarios_index,
                     weighted.machine_name,
@@ -852,7 +850,9 @@ impl UserStart {
         goose_user.logger = self.logger;
         goose_user.throttle = self.throttle;
         goose_user.metrics_channel = Some(self.metrics_channel);
-        goose_user.metrics_batch = Some(crate::metrics::GooseMetricBatch::new(self.epoch));
+        // The metrics batch starts in the epoch current when the user runs.
+        let epoch = self.metrics_epoch.load(std::sync::atomic::Ordering::Relaxed);
+        goose_user.metrics_batch = Some(crate::metrics::GooseMetricBatch::new(epoch));
         goose_user.metrics_epoch = Some(self.metrics_epoch);
         goose_user.request_counters = Some(self.request_counters);
         goose_user.shutdown_channel = Some(self.shutdown_channel);
@@ -1979,7 +1979,7 @@ impl GooseAttack {
             self.metrics.display_metrics = true;
         }
 
-        // Allocate a state for each of the users we are about to start.
+        // Weight the users the test plan will start.
         self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
         self.check_user_client()?;
 
@@ -2652,6 +2652,7 @@ impl GooseAttack {
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
+            users_pruned_at: 0,
             user_channels: Vec::new(),
             running_users: Vec::new(),
             running_metrics_timer: std_now,
@@ -2781,7 +2782,7 @@ impl GooseAttack {
                 // Hand the user everything it shares with the others; it builds
                 // its own client in its task, so the main loop does not wait.
                 let start = UserStart {
-                    // Copy the appropriate task_set into the thread.
+                    // The scenario this user runs.
                     scenario: self.scenarios[weighted_user.scenarios_index].clone(),
                     user: weighted_user,
                     // Start at 1 as this is human visible.
@@ -2799,10 +2800,6 @@ impl GooseAttack {
                     // Copy the GooseUser-metrics sender channel, used by all threads.
                     metrics_channel: goose_attack_run_state.all_threads_metrics_tx.clone(),
                     metrics_epoch: goose_attack_run_state.metrics_epoch.clone(),
-                    // The per-user metrics batch starts in the current epoch.
-                    epoch: goose_attack_run_state
-                        .metrics_epoch
-                        .load(std::sync::atomic::Ordering::Relaxed),
                     // Share the atomic request counter registry with this user thread.
                     request_counters: goose_attack_run_state.request_counter_registry.clone(),
                     // Copy the GooseUser-shutdown sender channel, used by all threads.
@@ -3111,7 +3108,6 @@ impl GooseAttack {
                     }
                     goose_attack_run_state.completed_users += 1;
                     goose_attack_run_state.active_users -= 1;
-                    goose_attack_run_state.prune_finished_users_when_due();
                 }
             } else {
                 goose_attack_run_state.sleep_until_adjust().await;
@@ -3622,6 +3618,7 @@ impl GooseAttack {
         goose_attack_run_state.metrics_header_displayed = false;
         goose_attack_run_state.idle_status_displayed = false;
         goose_attack_run_state.users = Vec::new();
+        goose_attack_run_state.users_pruned_at = 0;
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_users = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
@@ -5625,6 +5622,7 @@ mod tests {
     /// Weighting users builds no client; each user builds its own when it
     /// starts, so starting k users builds exactly k.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
     async fn test_weighting_builds_no_client_starting_builds_one() {
         let server = index_server();
         let (mut goose_attack, mut run_state) =
@@ -5634,18 +5632,19 @@ mod tests {
                 .user_clients_built
                 .load(std::sync::atomic::Ordering::Relaxed)
         };
-        assert_eq!(built(&goose_attack), 0, "weighting 5 users built clients");
+        // Setup builds one client to check it can, and drops it.
+        assert_eq!(built(&goose_attack), 1, "weighting 5 users built clients");
         // Weighting many more, as a Controller increase does, builds none.
         let more = goose_attack.weight_scenario_users(100).unwrap();
         assert_eq!(more.len(), 100);
-        assert_eq!(built(&goose_attack), 0, "weighting 100 users built clients");
+        assert_eq!(built(&goose_attack), 1, "weighting 100 users built clients");
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         assert_eq!(goose_attack.metrics.total_users, 5);
         hold_until(&mut goose_attack, &mut run_state, |goose_attack, _| {
-            built(goose_attack) >= 5
+            built(goose_attack) >= 6
         })
         .await;
-        assert_eq!(built(&goose_attack), 5, "5 started users built other than 5");
+        assert_eq!(built(&goose_attack), 6, "5 started users built other than 5");
     }
 
     /// A storm of `users` changes, each landing before the last finished, as
@@ -5653,6 +5652,7 @@ mod tests {
     /// user that started and no other, and only the running users' tasks are
     /// held.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
     async fn test_users_storm_builds_and_holds_only_started_users() {
         use crate::controller::tests::control;
 
@@ -5675,13 +5675,14 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed)
         };
         hold_until(&mut goose_attack, &mut run_state, |goose_attack, run_state| {
-            built(goose_attack) == goose_attack.metrics.total_users
+            built(goose_attack) == goose_attack.metrics.total_users + 1
                 && run_state.users.len() == run_state.active_users
         })
         .await;
         assert_eq!(
             built(&goose_attack),
-            goose_attack.metrics.total_users,
+            // One more: the client setup builds to check it can.
+            goose_attack.metrics.total_users + 1,
             "clients built, against users started"
         );
         assert_eq!(
@@ -5691,10 +5692,40 @@ mod tests {
         );
     }
 
+    /// Users changes that each run to completion, with no hold between them
+    /// in which the main loop prunes: stopped users' tasks are still released
+    /// as new users start, so the tasks held stay bounded.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn test_users_cycles_release_stopped_tasks_as_users_start() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let (mut goose_attack, mut run_state) =
+            started_attack(&server.base_url(), 10, vec![index_scenario("Cycle")]).await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let mut most_held = 0;
+        for _ in 0..20 {
+            for users in ["users 50", "users 10"] {
+                assert!(control(&mut goose_attack, &mut run_state, users).await);
+                ramp_to_hold(&mut goose_attack, &mut run_state).await;
+                most_held = most_held.max(run_state.users.len());
+            }
+        }
+        assert_eq!(goose_attack.metrics.total_users, 810);
+        // Without pruning on a start, every one of the 810 tasks is held.
+        assert!(
+            most_held <= 300,
+            "{} user tasks held for at most 50 running users",
+            most_held
+        );
+    }
+
     /// Users of a weighted load test with several scenarios start in the
     /// order, with the ordinals and scenarios, Goose 0.19.1 gave them, at
     /// setup and on a Controller increase.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
     async fn test_weighted_users_start_in_base_order() {
         use crate::controller::tests::control;
 
