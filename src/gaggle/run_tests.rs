@@ -3553,11 +3553,7 @@ async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
             .iter()
             .find(|worker| worker["name"] != busy["name"])
             .unwrap();
-        assert!(
-            real["saturated_secs"].as_u64().unwrap_or(0) < 5,
-            "{}",
-            real
-        );
+        assert!(real["saturated_secs"].as_u64().unwrap_or(0) < 5, "{}", real);
         let kinds: Vec<&str> = gaggle["events"]
             .as_array()
             .unwrap()

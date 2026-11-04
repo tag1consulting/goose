@@ -493,7 +493,7 @@ impl Outbox {
         if most == 0 {
             return;
         }
-        if self.delayed_deltas.fetch_add(1, Ordering::Relaxed) % 2 == 0 {
+        if self.delayed_deltas.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
             return;
         }
         let ms = rand::rng().random_range(0..most);
