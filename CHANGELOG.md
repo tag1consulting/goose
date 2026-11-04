@@ -2,6 +2,15 @@
 
 ## 0.19.2-dev
 
+ - [#808](https://github.com/tag1consulting/goose/pull/808) a user builds its HTTP client when it starts, in its own task, where `weight_scenario_users` built a `GooseUser` and client for every planned user on the main loop, at setup, on a new test plan and on every Controller `users` increase; a `users` storm replaced those users with the next command, so most were built and thrown away unstarted, and each build blocked the main loop
+    o measured on a 4 vCPU node, the `simple` example at 900 users and `--increase-rate 100`, five storms of 101 `users` commands: storms took 92 to 97 s to answer on 0.19 and 10 s, the time to send them, after; RSS 60 s after the fifth storm was 226 MB on 0.19 and 137 MB after
+    o a Controller `users` change is answered in 0.1 to 0.2 s, where 0.19 answered after building every added user's client, past the Controller's 15 s timeout for 4,500 users or more
+    o the first request comes 20 to 40 ms after start, where 0.19 first built every user's client: 4.5 s for 1,000 users and 22 s for 5,000
+    o **behavior change**: users start at the rate their clients can be built (about 150 to 200 a second on 4 vCPU) while the users already started run; 0.19 built every client first and then started users at the requested rate, so a large ramp at an unlimited or high rate takes longer to launch every user: 5,000 users at 1,000 a second launched in 30.8 s (26.8 s on 0.19), and a jump from 500 to 20,000 with an unlimited rate in 240 s (94 s on 0.19), with the running users' p99 at 30 s during that ramp
+    o client builds run on blocking threads, at most one for each CPU at once, so a build never holds a tokio worker; inline, the 500 users running during a jump to 5,000 saw a 16 s p99
+    o a client that can not be built still fails setup and a new test plan before the attack starts; a user whose client fails to build later logs the error and exits as a user that completes its iterations does
+ - [#808](https://github.com/tag1consulting/goose/pull/808) a stopped user's task is released: `decrease_attack` stopped a user without removing its `JoinHandle` from the run state, which held every stopped user's task until the run ended; finished tasks are now pruned as users start, once the tasks held double, and while the load test holds; from 5,000 users down to 500, 500 tasks are held 60 s later, and RSS then was 601 MB (644 MB on 0.19)
+
 ## 0.19.1 November 3, 2026
 
  - [#803](https://github.com/tag1consulting/goose/pull/803) the Goose Book loads Rybbit page view analytics when served from `book.goose.rs`, through `theme/head.hbs`, and nowhere else
