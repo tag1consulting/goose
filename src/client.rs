@@ -131,7 +131,7 @@
 //! ## Performance Considerations
 //!
 //! ### Individual Clients (CookiesEnabled)
-//! - **Memory usage**: one client per user, built before the users start
+//! - **Memory usage**: one client per user, built as each user starts
 //! - **Cookie support**: a cookie jar per user
 //! - **Use cases**: applications that need sessions or other per user state
 //!

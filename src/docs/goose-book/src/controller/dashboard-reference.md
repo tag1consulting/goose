@@ -23,7 +23,7 @@ Then open:
 http://127.0.0.1:5118/
 ```
 
-The dashboard port opens when the Controllers' ports do, once Goose has built a client for every user, which takes longer with more users and fewer cores. With `--no-autostart` users are built on Start, so the port opens at once.
+The dashboard port opens when the Controllers' ports do, as the load test starts.
 
 ### Related flags
 

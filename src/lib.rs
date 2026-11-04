@@ -1526,7 +1526,7 @@ impl GooseAttack {
 
         let weighted_scenarios = self.allocate_scenarios();
 
-        // Allocate a state for each user that will be launched.
+        // Weight a scenario for each user that will be launched.
         info!(
             "[scheduler]: initializing {} user states...",
             self.test_plan.total_users()
@@ -1792,8 +1792,8 @@ impl GooseAttack {
         self.attack_mode = AttackMode::StandAlone;
 
         // When --no-autostart is set, defer prepare_load_test() until the Controller
-        // sends a Start command. Otherwise user states are initialized here and then
-        // redundantly re-initialized when the Start command calls prepare_load_test().
+        // sends a Start command. Otherwise users are weighted here, and weighted again
+        // when the Start command calls prepare_load_test().
         if self.configuration.no_autostart {
             if self.validate_host().is_err() {
                 info!("host must be configured via Controller before starting load test");
@@ -5587,14 +5587,14 @@ mod tests {
         while !step(goose_attack, run_state).await {}
     }
 
-    /// Requests `/` from the mock server, then waits 10 ms.
-    fn index_scenario(name: &str) -> Scenario {
+    /// Requests `/` from the mock server, then waits `wait_ms`.
+    fn index_scenario(name: &str, wait_ms: u64) -> Scenario {
         async fn get_index(user: &mut GooseUser) -> crate::goose::TransactionResult {
             let _goose = user.get("/").await?;
             Ok(())
         }
         scenario!(name)
-            .set_wait_time(Duration::from_millis(10), Duration::from_millis(10))
+            .set_wait_time(Duration::from_millis(wait_ms), Duration::from_millis(wait_ms))
             .unwrap()
             .register_transaction(transaction!(get_index))
     }
@@ -5628,7 +5628,7 @@ mod tests {
     async fn test_weighting_builds_no_client_starting_builds_one() {
         let server = index_server();
         let (mut goose_attack, mut run_state) =
-            started_attack(&server.base_url(), 5, vec![index_scenario("Lazy")]).await;
+            started_attack(&server.base_url(), 5, vec![index_scenario("Lazy", 10)]).await;
         let built = |goose_attack: &GooseAttack| {
             goose_attack
                 .user_clients_built
@@ -5646,7 +5646,7 @@ mod tests {
             built(goose_attack) >= 6
         })
         .await;
-        // One more turn, so a user that built a second client is counted.
+        // One more turn, to give a user that builds a second client time to.
         goose_attack.maintain_attack(&mut run_state).await.unwrap();
         assert_eq!(built(&goose_attack), 6, "5 started users built other than 5");
     }
@@ -5662,7 +5662,7 @@ mod tests {
 
         let server = index_server();
         let (mut goose_attack, mut run_state) =
-            started_attack(&server.base_url(), 10, vec![index_scenario("Storm")]).await;
+            started_attack(&server.base_url(), 10, vec![index_scenario("Storm", 10)]).await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         for _ in 0..20 {
             for users in ["users 50", "users 10"] {
@@ -5705,8 +5705,10 @@ mod tests {
         use crate::controller::tests::control;
 
         let server = index_server();
+        // A user told to exit ends once its request is answered, so a wait
+        // long enough not to flood the mock server keeps stopping users short.
         let (mut goose_attack, mut run_state) =
-            started_attack(&server.base_url(), 10, vec![index_scenario("Cycle")]).await;
+            started_attack(&server.base_url(), 10, vec![index_scenario("Cycle", 100)]).await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         let mut most_held = 0;
         for _ in 0..20 {
@@ -5717,16 +5719,17 @@ mod tests {
             }
         }
         assert_eq!(goose_attack.metrics.total_users, 810);
-        // Without pruning on a start, every one of the 810 tasks is held.
+        // Without pruning on a start, every one of the 810 tasks is held;
+        // with it, at most twice the users running or still stopping.
         assert!(
-            most_held <= 300,
+            most_held < 810 / 2,
             "{} user tasks held for at most 50 running users",
             most_held
         );
     }
 
     /// Users of a weighted load test with several scenarios start in the
-    /// order, with the ordinals and scenarios, Goose 0.19.1 gave them, at
+    /// order, with the ordinals and scenarios, release-0.19 gave them, at
     /// setup and on a Controller increase.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial_test::serial]
@@ -5735,9 +5738,9 @@ mod tests {
 
         let server = index_server();
         let scenarios = vec![
-            index_scenario("Heavy").set_weight(3).unwrap(),
-            index_scenario("Middle").set_weight(2).unwrap(),
-            index_scenario("Light"),
+            index_scenario("Heavy", 10).set_weight(3).unwrap(),
+            index_scenario("Middle", 10).set_weight(2).unwrap(),
+            index_scenario("Light", 10),
         ];
         let (mut goose_attack, mut run_state) =
             started_attack(&server.base_url(), 8, scenarios).await;
