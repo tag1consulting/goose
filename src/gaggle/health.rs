@@ -1399,7 +1399,12 @@ mod tests {
         // A span of exactly the longest is still taken.
         let longest = MAX_CPU_SPAN.as_micros() as u64;
         let at_most = jumped + 1_000_000 + longest;
-        health.cpu(0, Some(4_700_000 + longest / 2), Some(at_most), at + secs(7.0));
+        health.cpu(
+            0,
+            Some(4_700_000 + longest / 2),
+            Some(at_most),
+            at + secs(7.0),
+        );
         assert_eq!(percent(&health), Some(50.0));
     }
 
