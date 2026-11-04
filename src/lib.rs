@@ -657,8 +657,9 @@ struct GooseAttackRunState {
     metrics_header_displayed: bool,
     /// When entering the idle phase use this flag to only display a message one time.
     idle_status_displayed: bool,
-    /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
-    /// can be stopped later.
+    /// The task of every [`GooseUser`](./goose/struct.GooseUser.html) not yet seen to
+    /// finish, joined when the load test stops. Finished tasks are pruned as
+    /// users start and stop, and while the load test holds.
     users: Vec<tokio::task::JoinHandle<()>>,
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
@@ -729,6 +730,32 @@ impl GooseAttackRunState {
             debug!("sleeping {until_due:?}...");
             tokio::time::sleep(until_due).await;
             self.drift_timer = tokio::time::Instant::now();
+        }
+    }
+
+    /// Drop the handles of user tasks that have finished, so a stopped user's
+    /// task is not held until the load test ends. A `Vec` and not a `JoinSet`:
+    /// this run state is dropped on an error return while users still run,
+    /// and dropping a `JoinSet` would abort them where a `Vec` leaves them be.
+    fn prune_finished_users(&mut self) {
+        let held = self.users.len();
+        self.users.retain(|user| !user.is_finished());
+        if self.users.len() < held {
+            debug!(
+                "[users]: released {} finished user tasks, {} held for {} running users",
+                held - self.users.len(),
+                self.users.len(),
+                self.active_users
+            );
+        }
+    }
+
+    /// As [`prune_finished_users`](Self::prune_finished_users), on a user start
+    /// or stop: only once the handles held reach twice the running users, so
+    /// each start or stop does constant work on average.
+    fn prune_finished_users_when_due(&mut self) {
+        if self.users.len() >= 2 * self.active_users.max(1) {
+            self.prune_finished_users();
         }
     }
 }
@@ -2787,6 +2814,7 @@ impl GooseAttack {
 
                 goose_attack_run_state.users.push(user);
                 goose_attack_run_state.active_users += 1;
+                goose_attack_run_state.prune_finished_users_when_due();
                 self.metrics.total_users += 1;
                 if goose_attack_run_state.active_users > self.metrics.maximum_users {
                     self.metrics.maximum_users = goose_attack_run_state.active_users;
@@ -2832,6 +2860,8 @@ impl GooseAttack {
         {
             self.advance_test_plan(goose_attack_run_state);
         } else {
+            // Release the tasks of users that have stopped since.
+            goose_attack_run_state.prune_finished_users();
             // Subtract the time spent doing other things, running the main parent loop twice
             // per second.
             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
@@ -3081,6 +3111,7 @@ impl GooseAttack {
                     }
                     goose_attack_run_state.completed_users += 1;
                     goose_attack_run_state.active_users -= 1;
+                    goose_attack_run_state.prune_finished_users_when_due();
                 }
             } else {
                 goose_attack_run_state.sleep_until_adjust().await;
