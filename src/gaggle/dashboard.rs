@@ -535,6 +535,21 @@ pub(crate) fn section(
         })
         .copied()
         .collect();
+    // One label a second, as labels in one second overlap: a lost worker's
+    // event, else the newest.
+    let mut chosen: BTreeMap<u64, usize> = BTreeMap::new();
+    for (at, event) in newest.iter().enumerate() {
+        let lost = event.kind == GaggleEventKind::WorkerLost;
+        match chosen.get(&event.second) {
+            None => {
+                chosen.insert(event.second, at);
+            }
+            Some(&held) if lost && newest[held].kind != GaggleEventKind::WorkerLost => {
+                chosen.insert(event.second, at);
+            }
+            Some(_) => {}
+        }
+    }
     let shown = GaggleEvents {
         seconds: newest.iter().map(|event| event.second).collect(),
         kinds: newest.iter().map(|event| kind_name(event.kind)).collect(),
@@ -542,9 +557,8 @@ pub(crate) fn section(
             .iter()
             .enumerate()
             .map(|(at, event)| {
-                // Newest first: only the first event of its second is labelled.
-                let first = at == 0 || newest[at - 1].second != event.second;
-                (first && event.second >= series.start_second).then(|| label(event))
+                (chosen.get(&event.second) == Some(&at) && event.second >= series.start_second)
+                    .then(|| label(event))
             })
             .collect(),
         texts: newest
@@ -916,6 +930,12 @@ mod tests {
         }
         health.set_second(250);
         health.lose(0, "connection reset", Instant::now());
+        // A newer event in the same second: the lost worker keeps the label.
+        health.event(
+            GaggleEventKind::ThrottleSharesRescaled,
+            None,
+            "throttle shares of 3,000 req/s rescaled over 47 workers".to_string(),
+        );
         let empty = series(Vec::new());
         let section = build(&health, &accumulator(), 1, &empty, None, Instant::now());
         let events = &section.events;
@@ -923,11 +943,16 @@ mod tests {
         assert_eq!(events.texts.len(), MAX_GAGGLE_EVENTS);
         assert!(section.events_truncated);
         assert_eq!(events.seconds[0], 250);
-        assert_eq!(events.kinds[0], "worker_lost");
-        assert_eq!(events.labels[0].as_deref(), Some("load-31 lost"));
-        assert_eq!(events.texts[0], "load-31 lost: connection reset");
-        assert_eq!(events.labels[1].as_deref(), Some("users 1,449"));
-        assert_eq!(events.kinds[1], "users_changed");
+        assert_eq!(events.kinds[0], "throttle_shares_rescaled");
+        assert_eq!(
+            events.labels[0], None,
+            "the lost worker's label wins its second"
+        );
+        assert_eq!(events.kinds[1], "worker_lost");
+        assert_eq!(events.labels[1].as_deref(), Some("load-31 lost"));
+        assert_eq!(events.texts[1], "load-31 lost: connection reset");
+        assert_eq!(events.labels[2].as_deref(), Some("users 1,449"));
+        assert_eq!(events.kinds[2], "users_changed");
         assert!(events.seconds.windows(2).all(|pair| pair[0] >= pair[1]));
         assert_eq!(
             section.summary.last_users_change,

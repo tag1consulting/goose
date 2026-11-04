@@ -104,8 +104,9 @@ seconds: Array<number>,
 kinds: Array<string>,
 /**
  * A few words for the chart's marker, `users 900` or `load-31 lost`,
- * for the newest event of each second within the series window, which
- * the chart draws; `null` for the rest, whose label would overlap it.
+ * for one event of each second within the series window, which the
+ * chart draws: a lost worker's, else the newest; `null` for the rest,
+ * whose label would overlap it.
  */
 labels: Array<string | null>,
 /**

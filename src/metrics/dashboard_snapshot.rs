@@ -256,8 +256,9 @@ pub(crate) struct GaggleEvents {
     /// `throttle_shares_rescaled`, `users_rebalanced`, `stop` or `start`.
     pub kinds: Vec<String>,
     /// A few words for the chart's marker, `users 900` or `load-31 lost`,
-    /// for the newest event of each second within the series window, which
-    /// the chart draws; `null` for the rest, whose label would overlap it.
+    /// for one event of each second within the series window, which the
+    /// chart draws: a lost worker's, else the newest; `null` for the rest,
+    /// whose label would overlap it.
     pub labels: Vec<Option<String>>,
     /// The sentence the event log keeps.
     pub texts: Vec<String>,
