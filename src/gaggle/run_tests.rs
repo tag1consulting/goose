@@ -3554,15 +3554,27 @@ async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
             .find(|worker| worker["name"] != busy["name"])
             .unwrap();
         assert!(real["saturated_secs"].as_u64().unwrap_or(0) < 5, "{}", real);
-        let kinds: Vec<&str> = gaggle["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|event| event["kind"].as_str().unwrap())
-            .collect();
-        let count = |kind: &str| kinds.iter().filter(|k| **k == kind).count();
-        assert_eq!(count("worker_saturated"), 1, "{:?}", gaggle["events"]);
-        assert_eq!(count("worker_recovered"), 1, "{:?}", gaggle["events"]);
+        // A delta held 2 s after a 1 s interval can leave the 3 s gap that
+        // flags the busy worker lagging, and its recovery from that is a
+        // worker_recovered too: each recovery is told apart by its text.
+        let events = gaggle["events"].as_array().unwrap();
+        let texts = |kind: &str| -> Vec<&str> {
+            events
+                .iter()
+                .filter(|event| event["kind"] == kind)
+                .map(|event| event["text"].as_str().unwrap())
+                .collect()
+        };
+        assert_eq!(texts("worker_saturated").len(), 1, "{:?}", events);
+        let (saturation, other): (Vec<&str>, Vec<&str>) = texts("worker_recovered")
+            .into_iter()
+            .partition(|text| text.ends_with("no longer saturated"));
+        assert_eq!(saturation.len(), 1, "{:?}", events);
+        assert!(
+            other.iter().all(|text| text.ends_with("no longer lagging")),
+            "{:?}",
+            events
+        );
     };
     tokio::time::timeout(Duration::from_secs(120), test)
         .await
