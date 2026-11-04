@@ -80,6 +80,18 @@ export function tileLook(state: number, flag: number, load: number): { cls: stri
   return { cls: "tile tile-stopped", glyph: "s", word: STATES[state] || "stopped" };
 }
 
+/** The legend's items beyond the four always shown, by the bit `glyphBit` sets. */
+const LEGEND_EXTRAS = ["* outlier", "/ left out", "? deltas refused or missing", ". joining", "s stopped"];
+
+/** The bit of LEGEND_EXTRAS a tile of `state` and `flag` needs, or 0. */
+function glyphBit(state: number, flag: number): number {
+  if (state === LOST) return 0;
+  if (flag === 1) return 1 << 1;
+  if (flag === 2 || flag === 3) return 0;
+  if (state === RUNNING) return flag === 4 ? 1 << 0 : flag === 5 ? 1 << 2 : 0;
+  return state < RUNNING ? 1 << 3 : 1 << 4;
+}
+
 /** A row of the workers tables, joined from the rows and the grid. */
 interface WorkerRow {
   worker: string;
@@ -273,7 +285,9 @@ let latest: GaggleSnapshot | null = null;
 let latestThrottle: number | null = null;
 /** Each tile, by grid index, and what it shows. */
 const tiles: HTMLButtonElement[] = [];
-const tileKeys: string[] = [];
+/** What each tile shows: its state, flag and load shade as one number, and its name. */
+const tileCodes: number[] = [];
+const tileNames: string[] = [];
 let focusedTile = 0;
 let cardAt: number | null = null;
 /** The events already seen, so each is announced once. */
@@ -641,32 +655,39 @@ function renderGrid(g: GaggleSnapshot): void {
   while (tiles.length < n) {
     const tile = tileFor(tiles.length);
     tiles.push(tile);
-    tileKeys.push("");
+    tileCodes.push(-1);
+    tileNames.push("");
     parts.grid.appendChild(tile);
   }
   while (tiles.length > n) {
     const tile = tiles.pop();
-    tileKeys.pop();
+    tileCodes.pop();
+    tileNames.pop();
     if (tile) tile.remove();
   }
-  const extras = new Set<string>();
+  // Only the tiles whose look changed are touched; the rest are compared as numbers.
+  let seenGlyphs = 0;
   for (let at = 0; at < n; at++) {
-    const look = tileLook(grid.states[at], grid.flags[at], grid.load[at]);
-    if (look.glyph === "*") extras.add("* outlier");
-    if (look.glyph === "/") extras.add("/ left out");
-    if (look.glyph === "?") extras.add("? deltas refused or missing");
-    if (look.glyph === ".") extras.add(". joining");
-    if (look.glyph === "s") extras.add("s stopped");
-    const key = look.cls + "|" + look.glyph + "|" + grid.names[at];
-    if (tileKeys[at] === key) continue;
-    tileKeys[at] = key;
+    const state = grid.states[at];
+    const flag = grid.flags[at];
+    const code = state * 100 + flag * 10 + Math.min(4, Math.floor(grid.load[at] / 20));
+    const name = grid.names[at] || "";
+    if (tileCodes[at] === code && tileNames[at] === name) {
+      seenGlyphs |= glyphBit(state, flag);
+      continue;
+    }
+    tileCodes[at] = code;
+    tileNames[at] = name;
+    const look = tileLook(state, flag, grid.load[at]);
+    seenGlyphs |= glyphBit(state, flag);
     const tile = tiles[at];
     tile.className = look.cls;
     tile.textContent = look.glyph;
-    tile.setAttribute("aria-label", (grid.names[at] || "") + ": " + look.word);
+    tile.setAttribute("aria-label", name + ": " + look.word);
   }
+  const extras = LEGEND_EXTRAS.filter((_, bit) => seenGlyphs & (1 << bit)).join(", ");
   if (focusedTile >= n) focusedTile = 0;
-  setText(parts.legendExtra, [...extras].join(", "));
+  setText(parts.legendExtra, extras);
   if (cardAt !== null && cardAt < n) fillCard(cardAt);
 }
 

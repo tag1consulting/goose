@@ -494,6 +494,16 @@
               "signal": "SIGCONT"
             }
           ]
+        },
+        {
+          "name": "the end of the 10 minute run",
+          "at": 600,
+          "actions": [
+            {
+              "do": "waitFor",
+              "selector": "#workers-summary"
+            }
+          ]
         }
       ]
     },
@@ -603,6 +613,16 @@
               "do": "signal",
               "worker": 42,
               "signal": "SIGCONT"
+            }
+          ]
+        },
+        {
+          "name": "the end of the 6 minute run",
+          "at": 360,
+          "actions": [
+            {
+              "do": "waitFor",
+              "selector": "#workers-summary"
             }
           ]
         }
