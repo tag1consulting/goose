@@ -791,7 +791,8 @@ impl UserBuild {
     /// A client for one user: its own, or a clone of a shared client.
     fn client(&self) -> Result<reqwest::Client, reqwest::Error> {
         #[cfg(test)]
-        self.clients_built.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.clients_built
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match &self.client_strategy {
             None => goose::create_reqwest_client(&self.configuration),
             Some(strategy) => strategy.user_client(),
@@ -842,7 +843,10 @@ impl UserStart {
         let mut goose_user = match built {
             Ok(goose_user) => goose_user,
             Err(e) => {
-                error!("[user {}]: failed to build the user: {e}", self.thread_number);
+                error!(
+                    "[user {}]: failed to build the user: {e}",
+                    self.thread_number
+                );
                 let _ = self.shutdown_channel.send(self.thread_number);
                 return;
             }
@@ -852,7 +856,9 @@ impl UserStart {
         goose_user.throttle = self.throttle;
         goose_user.metrics_channel = Some(self.metrics_channel);
         // The metrics batch starts in the epoch current when the user runs.
-        let epoch = self.metrics_epoch.load(std::sync::atomic::Ordering::Relaxed);
+        let epoch = self
+            .metrics_epoch
+            .load(std::sync::atomic::Ordering::Relaxed);
         goose_user.metrics_batch = Some(crate::metrics::GooseMetricBatch::new(epoch));
         goose_user.metrics_epoch = Some(self.metrics_epoch);
         goose_user.request_counters = Some(self.request_counters);
@@ -5594,7 +5600,10 @@ mod tests {
             Ok(())
         }
         scenario!(name)
-            .set_wait_time(Duration::from_millis(wait_ms), Duration::from_millis(wait_ms))
+            .set_wait_time(
+                Duration::from_millis(wait_ms),
+                Duration::from_millis(wait_ms),
+            )
             .unwrap()
             .register_transaction(transaction!(get_index))
     }
@@ -5648,7 +5657,11 @@ mod tests {
         .await;
         // One more turn, to give a user that builds a second client time to.
         goose_attack.maintain_attack(&mut run_state).await.unwrap();
-        assert_eq!(built(&goose_attack), 6, "5 started users built other than 5");
+        assert_eq!(
+            built(&goose_attack),
+            6,
+            "5 started users built other than 5"
+        );
     }
 
     /// A storm of `users` changes, each landing before the last finished, as
@@ -5678,10 +5691,14 @@ mod tests {
                 .user_clients_built
                 .load(std::sync::atomic::Ordering::Relaxed)
         };
-        hold_until(&mut goose_attack, &mut run_state, |goose_attack, run_state| {
-            built(goose_attack) == goose_attack.metrics.total_users + 1
-                && run_state.users.len() == run_state.active_users
-        })
+        hold_until(
+            &mut goose_attack,
+            &mut run_state,
+            |goose_attack, run_state| {
+                built(goose_attack) == goose_attack.metrics.total_users + 1
+                    && run_state.users.len() == run_state.active_users
+            },
+        )
         .await;
         assert_eq!(
             built(&goose_attack),
@@ -5722,7 +5739,10 @@ mod tests {
             }
         }
         assert_eq!(goose_attack.metrics.total_users, 810);
-        assert!(run_state.users_pruned_at > 0, "no start pruned the tasks held");
+        assert!(
+            run_state.users_pruned_at > 0,
+            "no start pruned the tasks held"
+        );
         // Without pruning on a start, every one of the 810 tasks is held;
         // with it, at most twice the users running or still stopping, and a
         // stopping user against the mock server can take seconds to end.
