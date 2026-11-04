@@ -5498,7 +5498,7 @@ mod tests {
             AttackPhase::Increase => goose_attack.increase_attack(run_state).await.unwrap(),
             AttackPhase::Decrease => goose_attack.decrease_attack(run_state).await.unwrap(),
             AttackPhase::Maintain => return true,
-            phase => panic!("unexpected phase {phase:?}"),
+            phase => panic!("unexpected phase {:?}", phase),
         }
         goose_attack.attack_phase == AttackPhase::Maintain
     }
@@ -5637,5 +5637,20 @@ mod tests {
 
     /// The order `test_weighted_users_start_in_base_order` recorded on
     /// release-0.19 at 9cb2767d, before users built their clients lazily.
-    const BASE_ORDER: &[(usize, usize)] = &[];
+    const BASE_ORDER: &[(usize, usize)] = &[
+        (1, 0),
+        (0, 1),
+        (0, 2),
+        (1, 3),
+        (0, 4),
+        (2, 5),
+        (1, 6),
+        (0, 7),
+        (0, 8),
+        (1, 9),
+        (0, 10),
+        (2, 11),
+        (1, 12),
+        (0, 13),
+    ];
 }
