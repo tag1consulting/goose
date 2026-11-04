@@ -826,20 +826,24 @@ impl UserStart {
     /// its iterations does.
     async fn run(self, receiver: flume::Receiver<GooseUserCommand>) {
         let weighted = self.user;
-        let built = weighted
-            .build
-            .client()
-            .map_err(GooseError::Reqwest)
-            .and_then(|client| {
-                GooseUser::new(
-                    weighted.scenarios_index,
-                    weighted.machine_name,
-                    weighted.base_url,
-                    &weighted.build.configuration,
-                    weighted.build.load_test_hash,
-                    Some(client),
-                )
-            });
+        // Building a client costs milliseconds of CPU (its TLS setup): on a
+        // blocking thread, so the users already running are not held up
+        // behind the builds of a large ramp.
+        let build = weighted.build.clone();
+        let built = match tokio::task::spawn_blocking(move || build.client()).await {
+            Ok(client) => client.map_err(GooseError::Reqwest),
+            Err(e) => Err(GooseError::Io(io::Error::other(e))),
+        }
+        .and_then(|client| {
+            GooseUser::new(
+                weighted.scenarios_index,
+                weighted.machine_name,
+                weighted.base_url,
+                &weighted.build.configuration,
+                weighted.build.load_test_hash,
+                Some(client),
+            )
+        });
         let mut goose_user = match built {
             Ok(goose_user) => goose_user,
             Err(e) => {
