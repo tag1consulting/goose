@@ -23,6 +23,38 @@ use crate::runs::{
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+/// The most bytes of an event's text the section copies: a worker's words
+/// can reach it, at up to 4 bytes a character.
+const EVENT_TEXT_BYTES: usize = 160;
+/// The most bytes of event texts in all; older events past it are left out.
+const EVENT_TEXTS_BYTES: usize = 12 * 1024;
+/// The most bytes of a lost worker's reason the section copies.
+const REASON_BYTES: usize = 120;
+/// The most bytes of reasons in all; a reason past it reads as `REASON_LEFT_OUT`.
+const REASONS_BYTES: usize = 6 * 1024;
+/// What a reason past `REASONS_BYTES` reads as.
+const REASON_LEFT_OUT: &str = "its reason is in the run's report";
+/// The most bytes of one summary sentence.
+const SENTENCE_BYTES: usize = 1_500;
+
+/// `text` cut to at most `max` bytes, at a character boundary: the section
+/// copies the health model's words, never words them again, and keeps them
+/// within its budget.
+fn clip(text: &str, max: usize) -> String {
+    match text.len() <= max {
+        true => text.to_string(),
+        false => {
+            let end = text
+                .char_indices()
+                .map(|(at, c)| at + c.len_utf8())
+                .take_while(|&end| end <= max)
+                .last()
+                .unwrap_or(0);
+            text[..end].to_string()
+        }
+    }
+}
+
 /// What the section is built from, beside the health model and the merge.
 pub(crate) struct SectionInput<'a> {
     /// `--expect-workers`.
@@ -228,7 +260,10 @@ fn attention(live: &[Live<'_>], healthy: usize, now: Instant) -> Option<String> 
                 .lost
                 .as_ref()
                 .map_or((0, ""), |(_, second, why)| (*second, why.as_str()));
-            (3, health::lost_at_text(name, second, why))
+            (
+                3,
+                health::lost_at_text(name, second, &clip(why, REASON_BYTES)),
+            )
         } else if worker.live.saturated {
             (
                 0,
@@ -240,7 +275,7 @@ fn attention(live: &[Live<'_>], healthy: usize, now: Instant) -> Option<String> 
                 health::lagging_text(name, worker.delta_gap(now).unwrap_or_default()),
             )
         } else if let Some(why) = &worker.merge.excluded {
-            (2, health::excluded_text(name, why))
+            (2, health::excluded_text(name, &clip(why, REASON_BYTES)))
         } else {
             continue;
         };
@@ -315,9 +350,16 @@ pub(crate) fn section(
         lagging: tally(&|view| has(view, GaggleWorkerFlag::Lagging)) as u64,
         outliers: tally(&|view| has(view, GaggleWorkerFlag::Outlier)) as u64,
         healthy: healthy as u64,
-        attention: attention(&live, healthy, now),
-        degraded: record.degraded_sentences_named(),
-        checks: check_sentences(&record.workers),
+        attention: attention(&live, healthy, now).map(|text| clip(&text, SENTENCE_BYTES)),
+        degraded: record
+            .degraded_sentences_named()
+            .iter()
+            .map(|text| clip(text, SENTENCE_BYTES))
+            .collect(),
+        checks: check_sentences(&record.workers)
+            .iter()
+            .map(|text| clip(text, SENTENCE_BYTES))
+            .collect(),
         last_users_change,
     };
 
@@ -332,6 +374,7 @@ pub(crate) fn section(
     };
     let figure = |view: &Live<'_>| view.figures.unwrap_or_default();
     let mut reasons: Vec<String> = Vec::new();
+    let mut reasons_bytes = 0;
     let mut workers = GaggleRows {
         workers: rows.iter().map(|&at| at as u64).collect(),
         cores: rows.iter().map(|&at| live[at].worker.cores).collect(),
@@ -375,10 +418,15 @@ pub(crate) fn section(
             .iter()
             .map(|&at| {
                 live[at].worker.lost.as_ref().map(|(_, _, why)| {
-                    match reasons.iter().position(|reason| reason == why) {
+                    let mut why = clip(why, REASON_BYTES);
+                    if !reasons.contains(&why) && reasons_bytes + why.len() > REASONS_BYTES {
+                        why = REASON_LEFT_OUT.to_string();
+                    }
+                    match reasons.iter().position(|reason| *reason == why) {
                         Some(index) => index as u32,
                         None => {
-                            reasons.push(why.clone());
+                            reasons_bytes += why.len();
+                            reasons.push(why);
                             (reasons.len() - 1) as u32
                         }
                     }
@@ -466,11 +514,16 @@ pub(crate) fn section(
             .saturating_sub(busy.len()) as u64,
     };
 
-    // The events, newest first.
+    // The events, newest first, as many as fit EVENT_TEXTS_BYTES.
+    let mut bytes = 0;
     let newest: Vec<&GaggleEvent> = events
         .iter()
         .rev()
         .take(MAX_GAGGLE_EVENTS)
+        .take_while(|event| {
+            bytes += event.text.len().min(EVENT_TEXT_BYTES);
+            bytes <= EVENT_TEXTS_BYTES
+        })
         .copied()
         .collect();
     let shown = GaggleEvents {
@@ -481,11 +534,14 @@ pub(crate) fn section(
             .enumerate()
             .map(|(at, event)| {
                 // Newest first: only the first event of its second is labelled.
-                let newest = at == 0 || newest[at - 1].second != event.second;
-                (newest && event.second >= series.start_second).then(|| label(event))
+                let first = at == 0 || newest[at - 1].second != event.second;
+                (first && event.second >= series.start_second).then(|| label(event))
             })
             .collect(),
-        texts: newest.iter().map(|event| event.text.clone()).collect(),
+        texts: newest
+            .iter()
+            .map(|event| clip(&event.text, EVENT_TEXT_BYTES))
+            .collect(),
     };
     let events_truncated = dropped > 0 || events.len() > newest.len();
 
@@ -1163,6 +1219,13 @@ mod tests {
             times[197],
             times[199]
         );
+        if !cfg!(debug_assertions) {
+            assert!(
+                times[197] <= Duration::from_millis(5),
+                "p99 {:?} over 5 ms",
+                times[197]
+            );
+        }
     }
 
     /// A lost worker's reason, which a worker's own words can reach, is
@@ -1177,23 +1240,25 @@ mod tests {
         let bytes = serde_json::to_vec(&section).unwrap().len();
         assert!(bytes < 4 * 1024, "{} bytes", bytes);
         let reason = &section.workers.reasons[section.workers.lost_reason[0].unwrap() as usize];
-        assert_eq!(reason.chars().count(), 500);
+        // Kept to 500 characters by the model, and cut to REASON_BYTES here.
+        assert_eq!(reason.len(), REASON_BYTES);
         assert!(!reason.contains('\u{7}'));
     }
 
-    /// Every one of 1,024 workers lost with a long reason, as at a Ctrl-C:
-    /// the section still holds at most 64 KiB, its sentences naming at most
-    /// 10 workers each.
+    /// Every one of 1,024 workers lost, each with a reason of its own as long
+    /// as a worker's words may be: the section still holds at most 64 KiB,
+    /// with names as long as `load-1023`. Names of the longest, 64
+    /// characters, take 68 KB alone at 1,024 workers, so the budget holds for
+    /// names up to about 16 characters there.
     #[test]
     fn every_worker_lost_stays_in_budget() {
         let at = Instant::now();
         let mut health = running(1_024, Some(4), 20, at);
+        // Each with a reason of its own, as long as a worker's words may be,
+        // in characters of 2 bytes each.
         for id in 0..1_024 {
-            health.lose(
-                id,
-                "canceled while the manager waited for its final metrics: the run was stopped",
-                at + secs(10.0),
-            );
+            let why = format!("{id} {}", "\u{e9}".repeat(500));
+            health.lose(id, &why, at + secs(10.0));
         }
         let empty = series(vec![0.0; 300]);
         let section = build(
@@ -1218,15 +1283,26 @@ mod tests {
         );
         let degraded = &section.summary.degraded;
         assert_eq!(degraded.len(), 1, "{:?}", degraded);
-        assert!(degraded[0].contains(" and 1014 more"), "{}", degraded[0]);
+        assert!(degraded[0].len() <= SENTENCE_BYTES, "{}", degraded[0].len());
         assert_eq!(section.by_worker.others_workers, 0);
-        // One reason, shared by every lost row; one label for the second.
-        assert_eq!(section.workers.reasons.len(), 1);
+        // The reasons and event texts are cut to their budgets, the events
+        // past it left out, and said to be.
+        let reasons: usize = section.workers.reasons.iter().map(String::len).sum();
+        assert!(
+            reasons <= REASONS_BYTES + REASON_LEFT_OUT.len(),
+            "{}",
+            reasons
+        );
+        assert!(section.workers.reasons.iter().any(|r| r == REASON_LEFT_OUT));
+        let texts: usize = section.events.texts.iter().map(String::len).sum();
+        assert!(texts <= EVENT_TEXTS_BYTES, "{}", texts);
+        assert!(section.events.texts.len() < MAX_GAGGLE_EVENTS);
+        assert!(section.events_truncated);
         assert_eq!(section.events.labels.iter().flatten().count(), 1);
     }
 
-    /// The section holds worker names, never an address, host name, port
-    /// or token: every string in it is a name, a state, a flag, a kind, a
+    /// The section holds worker names, never an address, port or token (a
+    /// name is by default the worker's HOSTNAME): every string in it is a name, a state, a flag, a kind, a
     /// label or a health sentence.
     #[test]
     fn names_only() {

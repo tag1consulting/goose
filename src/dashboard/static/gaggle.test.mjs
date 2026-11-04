@@ -203,6 +203,17 @@ test("a state change is announced once, from the events", async () => {
     })
   );
   assert.equal(announce.textContent, "");
+  // A worker recovering is said once too.
+  await send(
+    page,
+    gaggleSnapshot({
+      events: [
+        { second: 255, kind: "worker_recovered", label: "load-09 recovered", text: "load-09 recovered: no longer lagging" },
+        lagging,
+      ],
+    })
+  );
+  assert.equal(announce.textContent, "load-09 recovered: no longer lagging.");
 });
 
 test("the RPS chart's toggle is remembered, and draws by worker", async () => {
@@ -223,6 +234,18 @@ test("the RPS chart's toggle is remembered, and draws by worker", async () => {
   assert.ok(drawn.includes("40 others"), drawn.join("|"));
   // The markers' labels are drawn at the top of the chart.
   assert.ok(drawn.includes("users 900"), drawn.join("|"));
+  // The chart's data table names each line: its text fallback.
+  const details = $(page, "#chart-rps-details");
+  details.open = true;
+  details.dispatchEvent(new page.window.Event("toggle"));
+  const table = $(page, "#chart-rps-by-worker");
+  assert.ok(!table.hidden);
+  const head = [...table.querySelectorAll("thead th")].map((th) => th.textContent);
+  assert.deepEqual(head, ["Second", "load-00", "load-01", "load-02", "load-03", "load-04", "load-05", "load-06", "load-07", "40 others"]);
+  const first = [...table.querySelectorAll("tbody tr")[0].cells].map((td) => td.textContent);
+  assert.deepEqual(first, ["0", "63", "63", "63", "63", "63", "63", "63", "63", "2,483"]);
+  buttons[0].click();
+  assert.ok(table.hidden, "Total hides it");
   // A new page for the same viewer opens by worker.
   const local = { "goose-dashboard-rps-view": "by-worker" };
   const again = await open({}, { session: {}, local });
@@ -483,4 +506,17 @@ test("the report sentences fold under the summary line, and a p95 under 1 ms rea
   ]);
   const row = $$(page, "#workers-compact tbody tr").find((tr) => tr.cells[0].textContent === "load-00");
   assert.equal(row.cells[4].textContent, "<1 ms");
+});
+
+test("a healthy Gaggle shows no banner and no warning", async () => {
+  const page = await open();
+  const snap = gaggleSnapshot({ saturatedFlag: false });
+  const g = snap.gaggle;
+  g.summary = { ...g.summary, attention: null, lost: 0, lagging: 0, running: 48, healthy: 48 };
+  g.grid.states = g.grid.states.map(() => 2);
+  g.grid.flags = g.grid.flags.map(() => 0);
+  await send(page, snap);
+  assert.ok($(page, "#gaggle-attention").hidden);
+  assert.ok(!$(page, ".kpi-workers").classList.contains("kpi-warn"));
+  assert.equal($(page, ".kpi-workers .kpi-sub").textContent, "all healthy");
 });

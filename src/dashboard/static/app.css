@@ -1296,6 +1296,7 @@ body.gaggle-mode .charts-grid {
   overflow-wrap: anywhere;
 }
 
+.chart-markers-table[hidden],
 .worker-card[hidden],
 .chart-marker-tip[hidden],
 .gaggle-events-more[hidden],

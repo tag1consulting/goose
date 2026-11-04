@@ -37,7 +37,13 @@ const LOST = 6;
 const RUNNING = 2;
 
 /** The event kinds announced once each, as they happen. */
-const ANNOUNCED = new Set(["worker_lost", "worker_excluded", "worker_saturated", "worker_lagging"]);
+const ANNOUNCED = new Set([
+  "worker_lost",
+  "worker_excluded",
+  "worker_saturated",
+  "worker_lagging",
+  "worker_recovered",
+]);
 
 /** `second` as `mm:ss`. */
 export function clock(second: number): string {
@@ -290,11 +296,17 @@ interface Parts {
   eventsMoreWrap: HTMLElement;
   markerTip: HTMLElement;
   markerRows: HTMLTableSectionElement;
+  byWorkerTable: HTMLTableElement;
+  byWorkerHead: HTMLTableRowElement;
+  byWorkerRows: HTMLTableSectionElement;
+  rpsDetails: HTMLDetailsElement | null;
   toggle: HTMLButtonElement[];
 }
 
 let parts: Parts | null = null;
 let latest: GaggleSnapshot | null = null;
+/** The whole snapshot last shown, for the By worker table's series. */
+let latestSnap: DashboardSnapshot | null = null;
 let latestThrottle: number | null = null;
 /** Each tile, by grid index, and what it shows. */
 const tiles: HTMLButtonElement[] = [];
@@ -543,6 +555,19 @@ function makeParts(): Parts {
   const toggle: HTMLButtonElement[] = [];
   let markerTip = el("div");
   let markerRows = el("tbody");
+  // While By worker is on, the chart's data table gains each line by name:
+  // the text fallback for its colours.
+  const byWorkerTable = el("table", "chart-markers-table");
+  byWorkerTable.id = "chart-rps-by-worker";
+  byWorkerTable.hidden = true;
+  const byWorkerCaption = el("caption", undefined, "Requests per second by worker");
+  const byWorkerHeadEl = el("thead");
+  const byWorkerHead = el("tr");
+  byWorkerHeadEl.appendChild(byWorkerHead);
+  const byWorkerRows = el("tbody");
+  byWorkerTable.append(byWorkerCaption, byWorkerHeadEl, byWorkerRows);
+  const rpsDetails = optionalElement("chart-rps-details", HTMLDetailsElement);
+  if (rpsDetails) rpsDetails.addEventListener("toggle", () => latestSnap && renderByWorkerTable(latestSnap));
   if (rpsCard) {
     const title = rpsCard.querySelector("h2");
     const chartHead = el("div", "chart-head");
@@ -590,6 +615,7 @@ function makeParts(): Parts {
       markersHead.appendChild(markersHeadRow);
       markersTable.append(caption, markersHead, markerRows);
       region.appendChild(markersTable);
+      region.appendChild(byWorkerTable);
     }
   }
 
@@ -619,6 +645,10 @@ function makeParts(): Parts {
     eventsMoreWrap,
     markerTip,
     markerRows,
+    byWorkerTable,
+    byWorkerHead,
+    byWorkerRows,
+    rpsDetails,
     toggle,
   };
   parts = made;
@@ -635,6 +665,45 @@ function setByWorker(on: boolean, remember: boolean): void {
   }
   if (remember) saveView(on);
   applyByWorker();
+  if (latestSnap) renderByWorkerTable(latestSnap);
+}
+
+/**
+ * The By worker table: a column for each line the chart draws by worker,
+ * the busiest 8 and the rest, a row for each complete second. Built only
+ * while By worker is on and the chart's data is open.
+ */
+function renderByWorkerTable(snap: DashboardSnapshot): void {
+  if (!parts || !snap.gaggle) return;
+  const on = byWorker && !!parts.rpsDetails && parts.rpsDetails.open;
+  parts.byWorkerTable.hidden = !byWorker;
+  if (!on) return;
+  const lines = snap.gaggle.by_worker;
+  const names = lines.workers.concat(
+    lines.others_workers > 0 ? [formatInt(lines.others_workers) + " others"] : []
+  );
+  const head = ["Second", ...names];
+  if (parts.byWorkerHead.getAttribute("data-key") !== head.join("\n")) {
+    parts.byWorkerHead.setAttribute("data-key", head.join("\n"));
+    parts.byWorkerHead.textContent = "";
+    for (const name of head) parts.byWorkerHead.appendChild(th(name));
+  }
+  const series = snap.series;
+  const len = Math.max(0, series.rps.length - 1);
+  const body = parts.byWorkerRows;
+  while (body.rows.length > len) body.deleteRow(-1);
+  for (let i = 0; i < len; i++) {
+    const tr = body.rows[i] || body.insertRow();
+    let shown = 0;
+    const cells = [String(series.start_second + i)];
+    for (const line of lines.rps) {
+      shown += line[i] || 0;
+      cells.push(formatInt(line[i] || 0));
+    }
+    if (lines.others_workers > 0) cells.push(formatInt(Math.max(0, series.rps[i] - shown)));
+    while (tr.cells.length > cells.length) tr.deleteCell(-1);
+    cells.forEach((text, c) => setText(tr.cells[c] || tr.insertCell(), text));
+  }
 }
 
 /** Hands the RPS chart its lines by worker, or none for its total. */
@@ -706,7 +775,10 @@ function renderGrid(g: GaggleSnapshot): void {
     tile.setAttribute("aria-label", name + ": " + look.word);
   }
   const extras = LEGEND_EXTRAS.filter((_, bit) => seenGlyphs & (1 << bit)).join(", ");
-  if (focusedTile >= n) focusedTile = 0;
+  if (focusedTile >= n) {
+    focusedTile = 0;
+    if (tiles[0]) tiles[0].tabIndex = 0;
+  }
   setText(parts.legendExtra, extras);
   if (cardAt !== null && cardAt < n) fillCard(cardAt);
 }
@@ -1009,6 +1081,7 @@ export function updateGaggle(snap: DashboardSnapshot): void {
   const g = snap.gaggle;
   if (!g) return;
   latest = g;
+  latestSnap = snap;
   latestThrottle = snap.settings.throttle == null ? null : snap.settings.throttle;
   const p = parts || makeParts();
   const s = g.summary;
@@ -1045,5 +1118,6 @@ export function updateGaggle(snap: DashboardSnapshot): void {
   renderMarkerRows(g);
   setRpsMarkers(chartMarkers(g));
   applyByWorker();
+  renderByWorkerTable(snap);
   renderControl();
 }
