@@ -473,7 +473,8 @@ async fn test_dashboard_loopback_no_token() {
     // A single process has no Gaggle section, whatever features Goose has.
     assert!(
         snap.get("gaggle").is_none(),
-        "a single process snapshot has no gaggle section: {snap}"
+        "a single process snapshot has no gaggle section: {}",
+        snap
     );
 
     // CSP header present.
@@ -1138,7 +1139,8 @@ async fn test_control_set_users() {
     assert_eq!(users_body["target_users"], 8);
     assert!(
         users_body.get("acks").is_none(),
-        "no acks outside a Gaggle: {users_body}"
+        "no acks outside a Gaggle: {}",
+        users_body
     );
     assert_eq!(
         users_body["phase"], "increase",
