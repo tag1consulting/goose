@@ -194,6 +194,18 @@ struct ControlResult {
     /// as the snapshot's `settings`.
     #[serde(skip_serializing_if = "Option::is_none")]
     settings: Option<Box<SnapshotSettings>>,
+    /// On a Gaggle manager, how many workers said they received the change,
+    /// of how many it went to, and how long the last took.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acks: Option<ControlAcksBody>,
+}
+
+/// [`ControlResult::acks`].
+#[derive(Debug, Clone, Serialize)]
+struct ControlAcksBody {
+    acknowledged: u64,
+    workers: u64,
+    secs: f64,
 }
 
 impl ControlResult {
@@ -209,6 +221,14 @@ impl ControlResult {
             target_users: outcome.target_users.map(|u| u as u64),
             field: outcome.field.map(str::to_string),
             settings: outcome.settings,
+            #[cfg(feature = "gaggle")]
+            acks: outcome.acks.map(|acks| ControlAcksBody {
+                acknowledged: acks.acknowledged as u64,
+                workers: acks.workers as u64,
+                secs: (acks.secs * 10.0).round() / 10.0,
+            }),
+            #[cfg(not(feature = "gaggle"))]
+            acks: None,
         }
     }
 }
@@ -3044,6 +3064,7 @@ mod tests {
             report: crate::metrics::dashboard_snapshot::SnapshotReport::default(),
             settings: crate::metrics::dashboard_snapshot::SnapshotSettings::idle(),
             build_time: Duration::ZERO,
+            gaggle: None,
         }
     }
 

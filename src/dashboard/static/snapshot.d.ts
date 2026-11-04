@@ -64,9 +64,204 @@ report: SnapshotReport,
  * The run settings: what the next Start runs, and where the running
  * test is.
  */
-settings: SnapshotSettings, };
+settings: SnapshotSettings,
+/**
+ * On a Gaggle manager, its workers: their health, how the load is
+ * spread across them, what happened to the Gaggle, and how a change
+ * splits between them. Absent on one process. Added in 0.20.
+ */
+gaggle?: GaggleSnapshot, };
 
 type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
+
+type GaggleByWorker = {
+/**
+ * At most 8, busiest first.
+ */
+workers: Array<string>,
+/**
+ * Each worker's requests started in each second of the series window,
+ * from `series.start_second`, as `series.rps` counts them. Every
+ * other worker's together are `series.rps` less these.
+ */
+rps: Array<Array<number>>,
+/**
+ * How many workers `others` adds up.
+ */
+others_workers: number, };
+
+type GaggleEvents = {
+/**
+ * The run's series second each happened in.
+ */
+seconds: Array<number>,
+/**
+ * `run_started`, `worker_lost`, `worker_excluded`, `deltas_refused`,
+ * `worker_saturated`, `worker_lagging`, `worker_recovered`,
+ * `users_changed`, `throttle_changed`, `host_changed`,
+ * `throttle_shares_rescaled`, `users_rebalanced`, `stop` or `start`.
+ */
+kinds: Array<string>,
+/**
+ * A few words for the chart's marker, `users 900` or `load-31 lost`,
+ * for an event within the series window, which the chart draws.
+ */
+labels: Array<string | null>,
+/**
+ * The sentence the event log keeps.
+ */
+texts: Array<string>, };
+
+type GaggleGrid = { names: Array<string>,
+/**
+ * 0 joining, 1 ready, 2 running, 3 stopping, 4 finished, 5 users
+ * exited, 6 lost.
+ */
+states: Array<number>,
+/**
+ * Its most severe live flag: 0 none, 1 excluded, 2 saturated,
+ * 3 lagging, 4 outlier, 5 refused or missing.
+ */
+flags: Array<number>,
+/**
+ * Its requests per second over the last 10 seconds as a percent of the
+ * busiest worker's, 0 to 100.
+ */
+load: Array<number>,
+/**
+ * The users it runs now.
+ */
+users: Array<number>,
+/**
+ * Its CPU use, whole percent; `null` when it sends none.
+ */
+cpu: Array<number | null>,
+/**
+ * Its requests per second over the last 10 seconds, whole; `null`
+ * while it does not run.
+ */
+rps: Array<number | null>,
+/**
+ * Its p95 over the last 10 seconds, whole milliseconds.
+ */
+p95: Array<number | null>,
+/**
+ * Its requests per user per second's distance from the median of the
+ * running workers, in percent, signed, when past the outlier
+ * threshold; 0 when it is not.
+ */
+gap: Array<number>, };
+
+type GagglePreviews = {
+/**
+ * The workers a change goes to: running, and neither lost nor stopped.
+ */
+workers: number, users: Array<GaggleSplit>,
+/**
+ * `null` without a throttle.
+ */
+throttle: Array<GaggleSplit> | null, };
+
+type GaggleRows = {
+/**
+ * Each row's worker: its index in every array of the grid.
+ */
+workers: Array<number>,
+/**
+ * The CPU cores it said its process may use.
+ */
+cores: Array<number | null>, fail_percent: Array<number | null>, avg_ms: Array<number | null>, requests_per_user_per_second: Array<number | null>,
+/**
+ * Seconds since its last delta was merged, while it runs.
+ */
+last_delta_secs: Array<number | null>,
+/**
+ * Its live flags, most severe first: `lost`, `excluded`, `saturated`,
+ * `lagging`, `outlier`, `refused` and `missing`.
+ */
+flags: Array<Array<string>>,
+/**
+ * While saturated, how long it has been.
+ */
+saturated_secs: Array<number | null>,
+/**
+ * How far its p95 is from the median of the running workers, in
+ * percent, signed, when past the outlier threshold.
+ */
+p95_gap_percent: Array<number | null>, lost_reason: Array<string | null>,
+/**
+ * The run's series second it was lost in.
+ */
+lost_second: Array<number | null>, };
+
+type GaggleSnapshot = {
+/**
+ * The workers the manager waits for (`--expect-workers`).
+ */
+expected_workers: number, summary: GaggleSummary,
+/**
+ * The most urgent workers, at most 100: lost, left out, saturated,
+ * lagging, outlier, then the rest, each group by name.
+ */
+workers: GaggleRows,
+/**
+ * True when `workers` leaves some out; `summary` and `grid` count every
+ * worker.
+ */
+workers_truncated: boolean, grid: GaggleGrid, by_worker: GaggleByWorker,
+/**
+ * What happened to the Gaggle, newest first, at most 200.
+ */
+events: GaggleEvents,
+/**
+ * True when older events are left out of `events`.
+ */
+events_truncated: boolean, previews: GagglePreviews, };
+
+type GaggleSplit = { value: number, workers: number, };
+
+type GaggleSummary = { expected: number,
+/**
+ * Workers running their share now.
+ */
+running: number,
+/**
+ * Workers stopping, finished, or whose users all exited.
+ */
+stopped: number, lost: number,
+/**
+ * Workers whose metrics the merge leaves out now.
+ */
+excluded: number,
+/**
+ * Workers saturated, lagging or an outlier now, live: on the last 10
+ * seconds.
+ */
+saturated: number, lagging: number, outliers: number,
+/**
+ * Running workers that are neither saturated, lagging nor left out.
+ */
+healthy: number,
+/**
+ * One sentence naming the workers that need attention now, `null` when
+ * none does: `2 workers need attention: load-17 saturated (CPU 97% for
+ * 42 s), load-31 lost at 03:05 (connection reset). 45 workers healthy.`
+ */
+attention: string | null,
+/**
+ * The "Degraded:" sentences the reports would open with now.
+ */
+degraded: Array<string>,
+/**
+ * The "Check:" sentences the reports would open with now.
+ */
+checks: Array<string>,
+/**
+ * The last users change: its second, and the users before and after.
+ */
+last_users_change?: GaggleUsersChange, };
+
+type GaggleUsersChange = { second: number, from: number, to: number, };
 
 type Heatmap = {
 /**

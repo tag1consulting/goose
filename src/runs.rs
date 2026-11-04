@@ -363,6 +363,23 @@ pub(crate) struct GaggleLogLeft {
 impl GaggleRecord {
     /// The sentences a degraded run's reports open with.
     pub(crate) fn intro(&self) -> Vec<String> {
+        let mut intro = self.degraded_sentences();
+        intro.extend(check_sentences(&self.workers));
+        if !self.logs_left.is_empty() {
+            let left: Vec<String> = self
+                .logs_left
+                .iter()
+                .map(|left| format!("{} on {}", left.path, left.worker))
+                .collect();
+            intro.push(format!("Logs left on their workers: {}.", left.join("; ")));
+        }
+        intro
+    }
+
+    /// The "Degraded:" sentences of [`Self::intro`]: which workers were lost,
+    /// and which the results leave metrics out of. The dashboard says these
+    /// too.
+    pub(crate) fn degraded_sentences(&self) -> Vec<String> {
         let mut intro = Vec::new();
         let lost: Vec<String> = self
             .workers
@@ -397,15 +414,6 @@ impl GaggleRecord {
                 short.join(", ")
             ));
         }
-        intro.extend(check_sentences(&self.workers));
-        if !self.logs_left.is_empty() {
-            let left: Vec<String> = self
-                .logs_left
-                .iter()
-                .map(|left| format!("{} on {}", left.path, left.worker))
-                .collect();
-            intro.push(format!("Logs left on their workers: {}.", left.join("; ")));
-        }
         intro
     }
 }
@@ -422,7 +430,7 @@ const CHECK_NAMES: usize = 10;
 
 /// `items`, at most [`CHECK_NAMES`] of them, joined with commas, the rest
 /// counted: `a, b and 3 more`.
-fn named(items: &[String]) -> String {
+pub(crate) fn named(items: &[String]) -> String {
     let shown = &items[..items.len().min(CHECK_NAMES)];
     let mut text = shown.join(", ");
     if items.len() > shown.len() {

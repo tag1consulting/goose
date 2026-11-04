@@ -615,6 +615,24 @@ impl GaggleAccumulator {
             .map(|total| (&total.total.metrics.requests, total.total.epoch))
     }
 
+    /// The requests `worker` started in each second from `start` for `len`
+    /// seconds, every request name together, as its graph rows this epoch
+    /// hold them: the dashboard's RPS lines by worker. Its rows from before
+    /// a metrics reset are cleared, as the merged series' are.
+    pub(crate) fn requests_by_second(&self, worker: u32, start: Second, len: usize) -> Vec<u64> {
+        let mut counts = vec![0; len];
+        let Some(total) = self.workers.get(&worker) else {
+            return counts;
+        };
+        let end = start.saturating_add(len as Second);
+        for rows in total.total.graph.requests.values() {
+            for (&second, &count) in rows.range(start..end) {
+                counts[(second - start) as usize] += count;
+            }
+        }
+        counts
+    }
+
     /// The sequence number of the last delta merged from `worker`.
     pub(crate) fn last_seq(&self, worker: u32) -> Option<u64> {
         self.workers.get(&worker).map(|total| total.last_seq)

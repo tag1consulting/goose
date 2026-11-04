@@ -74,6 +74,206 @@ pub(crate) struct DashboardSnapshot {
     /// not built by the processor. Not part of the JSON.
     #[serde(skip)]
     pub build_time: std::time::Duration,
+    /// On a Gaggle manager, its workers: their health, how the load is
+    /// spread across them, what happened to the Gaggle, and how a change
+    /// splits between them. Absent on one process. Added in 0.20.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub gaggle: Option<Box<GaggleSnapshot>>,
+}
+
+/// The most worker rows a snapshot holds, most urgent first.
+#[cfg_attr(not(feature = "gaggle"), allow(dead_code))]
+pub(crate) const MAX_WORKER_ROWS: usize = 100;
+/// The most Gaggle events a snapshot holds, newest first.
+#[cfg_attr(not(feature = "gaggle"), allow(dead_code))]
+pub(crate) const MAX_GAGGLE_EVENTS: usize = 200;
+/// The most workers the RPS chart draws on their own; the rest are added
+/// up as "others".
+#[cfg_attr(not(feature = "gaggle"), allow(dead_code))]
+pub(crate) const BY_WORKER_LINES: usize = 8;
+
+/// A Gaggle manager's workers, as the dashboard shows them. Its lists are
+/// parallel arrays rather than arrays of objects, which keeps it within
+/// 64 KiB at 1,024 workers. Every figure,
+/// flag and sentence here comes from the manager's worker health model,
+/// which also writes the reports' Workers section; the snapshot reads it,
+/// and holds no worker's address, host name, port or token.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleSnapshot {
+    /// The workers the manager waits for (`--expect-workers`).
+    pub expected_workers: u64,
+    pub summary: GaggleSummary,
+    /// The most urgent workers, at most 100: lost, left out, saturated,
+    /// lagging, outlier, then the rest, each group by name.
+    pub workers: GaggleRows,
+    /// True when `workers` leaves some out; `summary` and `grid` count every
+    /// worker.
+    pub workers_truncated: bool,
+    pub grid: GaggleGrid,
+    pub by_worker: GaggleByWorker,
+    /// What happened to the Gaggle, newest first, at most 200.
+    pub events: GaggleEvents,
+    /// True when older events are left out of `events`.
+    pub events_truncated: bool,
+    pub previews: GagglePreviews,
+}
+
+/// The workers counted, and what the health model says of them.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleSummary {
+    pub expected: u64,
+    /// Workers running their share now.
+    pub running: u64,
+    /// Workers stopping, finished, or whose users all exited.
+    pub stopped: u64,
+    pub lost: u64,
+    /// Workers whose metrics the merge leaves out now.
+    pub excluded: u64,
+    /// Workers saturated, lagging or an outlier now, live: on the last 10
+    /// seconds.
+    pub saturated: u64,
+    pub lagging: u64,
+    pub outliers: u64,
+    /// Running workers that are neither saturated, lagging nor left out.
+    pub healthy: u64,
+    /// One sentence naming the workers that need attention now, `null` when
+    /// none does: `2 workers need attention: load-17 saturated (CPU 97% for
+    /// 42 s), load-31 lost at 03:05 (connection reset). 45 workers healthy.`
+    pub attention: Option<String>,
+    /// The "Degraded:" sentences the reports would open with now.
+    pub degraded: Vec<String>,
+    /// The "Check:" sentences the reports would open with now.
+    pub checks: Vec<String>,
+    /// The last users change: its second, and the users before and after.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub last_users_change: Option<GaggleUsersChange>,
+}
+
+/// A users change, as the KPI row's subtitle says it: `+300 at 02:00`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleUsersChange {
+    pub second: u64,
+    pub from: u64,
+    pub to: u64,
+}
+
+/// The most urgent workers, live, as parallel arrays, one entry per row:
+/// their figures over the last 10 seconds and their live flags. Each row's
+/// name, state, users, CPU, requests per second and p95 are in the grid, at
+/// its `workers` index.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleRows {
+    /// Each row's worker: its index in every array of the grid.
+    pub workers: Vec<u64>,
+    /// The CPU cores it said its process may use.
+    pub cores: Vec<Option<u32>>,
+    pub fail_percent: Vec<Option<f64>>,
+    pub avg_ms: Vec<Option<f64>>,
+    pub requests_per_user_per_second: Vec<Option<f64>>,
+    /// Seconds since its last delta was merged, while it runs.
+    pub last_delta_secs: Vec<Option<f64>>,
+    /// Its live flags, most severe first: `lost`, `excluded`, `saturated`,
+    /// `lagging`, `outlier`, `refused` and `missing`.
+    pub flags: Vec<Vec<String>>,
+    /// While saturated, how long it has been.
+    pub saturated_secs: Vec<Option<u64>>,
+    /// How far its p95 is from the median of the running workers, in
+    /// percent, signed, when past the outlier threshold.
+    pub p95_gap_percent: Vec<Option<i32>>,
+    pub lost_reason: Vec<Option<String>>,
+    /// The run's series second it was lost in.
+    pub lost_second: Vec<Option<u64>>,
+}
+
+/// Every worker, one entry each in id order, as parallel arrays: the index
+/// of a worker's name in `names` is its index in every other array.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleGrid {
+    pub names: Vec<String>,
+    /// 0 joining, 1 ready, 2 running, 3 stopping, 4 finished, 5 users
+    /// exited, 6 lost.
+    pub states: Vec<u8>,
+    /// Its most severe live flag: 0 none, 1 excluded, 2 saturated,
+    /// 3 lagging, 4 outlier, 5 refused or missing.
+    pub flags: Vec<u8>,
+    /// Its requests per second over the last 10 seconds as a percent of the
+    /// busiest worker's, 0 to 100.
+    pub load: Vec<u8>,
+    /// The users it runs now.
+    pub users: Vec<u64>,
+    /// Its CPU use, whole percent; `null` when it sends none.
+    pub cpu: Vec<Option<u16>>,
+    /// Its requests per second over the last 10 seconds, whole; `null`
+    /// while it does not run.
+    pub rps: Vec<Option<u64>>,
+    /// Its p95 over the last 10 seconds, whole milliseconds.
+    pub p95: Vec<Option<u64>>,
+    /// Its requests per user per second's distance from the median of the
+    /// running workers, in percent, signed, when past the outlier
+    /// threshold; 0 when it is not.
+    pub gap: Vec<i32>,
+}
+
+/// The RPS chart's lines by worker: the busiest workers over the last 10
+/// seconds, each on its own, and the rest added up.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleByWorker {
+    /// At most 8, busiest first.
+    pub workers: Vec<String>,
+    /// Each worker's requests started in each second of the series window,
+    /// from `series.start_second`, as `series.rps` counts them. Every
+    /// other worker's together are `series.rps` less these.
+    pub rps: Vec<Vec<u64>>,
+    /// How many workers `others` adds up.
+    pub others_workers: u64,
+}
+
+/// What happened to the Gaggle, newest first, as parallel arrays, one
+/// entry per event.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleEvents {
+    /// The run's series second each happened in.
+    pub seconds: Vec<u64>,
+    /// `run_started`, `worker_lost`, `worker_excluded`, `deltas_refused`,
+    /// `worker_saturated`, `worker_lagging`, `worker_recovered`,
+    /// `users_changed`, `throttle_changed`, `host_changed`,
+    /// `throttle_shares_rescaled`, `users_rebalanced`, `stop` or `start`.
+    pub kinds: Vec<String>,
+    /// A few words for the chart's marker, `users 900` or `load-31 lost`,
+    /// for an event within the series window, which the chart draws.
+    pub labels: Vec<Option<String>>,
+    /// The sentence the event log keeps.
+    pub texts: Vec<String>,
+}
+
+/// How a change splits between the running workers now, by step 3's rules:
+/// the users each runs and the throttle each takes, as groups of workers
+/// with the same value, largest first.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GagglePreviews {
+    /// The workers a change goes to: running, and neither lost nor stopped.
+    pub workers: u64,
+    pub users: Vec<GaggleSplit>,
+    /// `null` without a throttle.
+    pub throttle: Option<Vec<GaggleSplit>>,
+}
+
+/// `workers` workers each with `value`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct GaggleSplit {
+    pub value: u64,
+    pub workers: u64,
 }
 
 /// The report the run writes, as the dashboard's report bar shows it.
@@ -598,6 +798,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             report: input.report,
             settings: input.settings,
             build_time: std::time::Duration::ZERO,
+            gaggle: None,
         };
     }
 
@@ -780,6 +981,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         report: input.report,
         settings: input.settings,
         build_time: std::time::Duration::ZERO,
+        gaggle: None,
     }
 }
 
