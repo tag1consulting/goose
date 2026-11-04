@@ -99,3 +99,62 @@ fn standalone_reports_are_unchanged() {
         );
     }
 }
+
+/// A one process dashboard snapshot of [`metrics`], with a series window,
+/// as JSON, its time and version fixed.
+fn dashboard_snapshot() -> Vec<u8> {
+    let metrics = metrics();
+    let series = dashboard_snapshot::SeriesWindow {
+        start_second: 3,
+        rps: vec![4.0, 5.5, 6.0],
+        fps: vec![0.0, 1.0, 0.0],
+        users: vec![2, 3, 3],
+        avg_latency_ms: vec![0.6, 0.7, 0.65],
+        heatmap: None,
+        provisional_from: None,
+    };
+    let mut snapshot =
+        dashboard_snapshot::build_dashboard_snapshot(dashboard_snapshot::DashboardSnapshotInput {
+            metrics: &metrics,
+            series,
+            active_users: 3,
+            maximum_users: 3,
+            target_users: 3,
+            total_users: 3,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: 300,
+            no_status_codes: false,
+            metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
+            report: dashboard_snapshot::SnapshotReport::default(),
+            settings: dashboard_snapshot::SnapshotSettings::idle(),
+            percentiles_over_time: true,
+            series_keys: std::collections::HashSet::new(),
+        });
+    snapshot.generated_at = "2026-11-03T10:00:30Z".parse().unwrap();
+    snapshot.goose_version = "golden".to_string();
+    serde_json::to_vec_pretty(&snapshot).unwrap()
+}
+
+/// A one process dashboard snapshot serializes byte for byte as `main`
+/// wrote it before the Gaggle workers panel: `dashboard-snapshot.json` was
+/// written by this test at b819323e, before the snapshot gained its
+/// optional `gaggle` section.
+#[test]
+fn standalone_dashboard_snapshot_is_unchanged() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/metrics/goldens/dashboard-snapshot.json");
+    let bytes = dashboard_snapshot();
+    if std::env::var_os("GOOSE_UPDATE_GOLDENS").is_some() {
+        std::fs::write(&path, &bytes).unwrap();
+        return;
+    }
+    let golden = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
+    assert!(
+        golden == bytes,
+        "the snapshot differs from its golden:\n{}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
