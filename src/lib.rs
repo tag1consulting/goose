@@ -733,6 +733,111 @@ impl GooseAttackRunState {
     }
 }
 
+/// A user the load test will start, as weighting assigns it. Its client and
+/// [`GooseUser`](./goose/struct.GooseUser.html) are built only when it starts,
+/// so a user a Controller change replaces before it starts costs nothing.
+struct WeightedUser {
+    /// The index of the scenario this user runs.
+    scenarios_index: usize,
+    /// The machine name of the scenario this user runs.
+    machine_name: Arc<str>,
+    /// The base URL this user's requests are relative to.
+    base_url: url::Url,
+    /// What this user is built from, shared by every user weighted with it.
+    build: Arc<UserBuild>,
+}
+
+/// What users are built from, as it was when they were weighted.
+struct UserBuild {
+    configuration: GooseConfiguration,
+    load_test_hash: u64,
+    client_strategy: Option<client::ClientStrategy>,
+    /// Counts the clients users build when they start.
+    #[cfg(test)]
+    clients_built: Arc<AtomicUsize>,
+}
+
+impl UserBuild {
+    /// A client for one user: its own, or a clone of a shared client.
+    fn client(&self) -> Result<reqwest::Client, reqwest::Error> {
+        match &self.client_strategy {
+            None => goose::create_reqwest_client(&self.configuration),
+            Some(strategy) => strategy.user_client(),
+        }
+    }
+}
+
+/// Everything one user needs to start, gathered on the main loop in constant
+/// time. [`UserStart::run`] is the only way a user starts: it builds the user's
+/// client and [`GooseUser`](./goose/struct.GooseUser.html) in the user's own
+/// task, then runs the user until it exits.
+struct UserStart {
+    user: WeightedUser,
+    /// The user's number in logs, counted from 1.
+    thread_number: usize,
+    weighted_users_index: usize,
+    scenario: Scenario,
+    /// The continuous series clock, so request `elapsed` matches the graphs.
+    series_started: Option<time::Instant>,
+    logger: GooseLoggerTx,
+    throttle: Option<flume::Sender<bool>>,
+    metrics_channel: flume::Sender<GooseMetric>,
+    metrics_epoch: crate::metrics::MetricsEpoch,
+    /// The metrics epoch when the user started.
+    epoch: u64,
+    request_counters: crate::metrics::GooseRequestCounterRegistry,
+    shutdown_channel: flume::Sender<usize>,
+}
+
+impl UserStart {
+    /// Build the user, then run it until it exits. A user whose client can not
+    /// be built logs why and exits, telling the parent as an exiting user does.
+    async fn run(self, receiver: flume::Receiver<GooseUserCommand>) {
+        let weighted = self.user;
+        let built = weighted
+            .build
+            .client()
+            .map_err(GooseError::Reqwest)
+            .and_then(|client| {
+                #[cfg(test)]
+                weighted
+                    .build
+                    .clients_built
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                GooseUser::new(
+                    weighted.scenarios_index,
+                    weighted.machine_name,
+                    weighted.base_url,
+                    &weighted.build.configuration,
+                    weighted.build.load_test_hash,
+                    Some(client),
+                )
+            });
+        let mut goose_user = match built {
+            Ok(goose_user) => goose_user,
+            Err(e) => {
+                error!("[user {}]: failed to build the user: {e}", self.thread_number);
+                let _ = self.shutdown_channel.send(self.thread_number);
+                return;
+            }
+        };
+        goose_user.weighted_users_index = self.weighted_users_index;
+        goose_user.logger = self.logger;
+        goose_user.throttle = self.throttle;
+        goose_user.metrics_channel = Some(self.metrics_channel);
+        goose_user.metrics_batch = Some(crate::metrics::GooseMetricBatch::new(self.epoch));
+        goose_user.metrics_epoch = Some(self.metrics_epoch);
+        goose_user.request_counters = Some(self.request_counters);
+        goose_user.shutdown_channel = Some(self.shutdown_channel);
+        // Align request `elapsed` (graph second) with the continuous series
+        // clock so RPS and active-users charts share one timeline.
+        if let Some(series_started) = self.series_started {
+            goose_user.started = series_started;
+        }
+        user::user_main(self.thread_number, self.scenario, goose_user, receiver).await;
+    }
+}
+
 /// Global internal state for the load test.
 pub struct GooseAttack {
     /// An optional transaction that is run one time before starting GooseUsers and running Scenarios.
@@ -743,8 +848,9 @@ pub struct GooseAttack {
     scenarios: Vec<Scenario>,
     /// A set of all registered scenario names.
     scenario_machine_names: HashSet<String>,
-    /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
-    weighted_users: Vec<GooseUser>,
+    /// The users still to start, in reverse order (they are popped): which
+    /// scenario each runs, and what its client and GooseUser are built from.
+    weighted_users: Vec<WeightedUser>,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
     /// Configuration object holding options set when launching the load test.
@@ -792,7 +898,7 @@ pub struct GooseAttack {
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
-    /// How many clients have been built for users.
+    /// How many clients users have built when they started.
     #[cfg(test)]
     user_clients_built: Arc<AtomicUsize>,
     /// Set when a run starts and cleared once its reports are written, so a
@@ -1381,8 +1487,13 @@ impl GooseAttack {
         weighted_scenarios
     }
 
-    /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
-    fn weight_scenario_users(&mut self, total_users: usize) -> Result<Vec<GooseUser>, GooseError> {
+    /// Weight the next `total_users` users across the scenarios: which scenario
+    /// each runs, in the order they start (users are popped, so the last one
+    /// starts first). Builds no client: each user builds its own when it starts.
+    fn weight_scenario_users(
+        &mut self,
+        total_users: usize,
+    ) -> Result<Vec<WeightedUser>, GooseError> {
         trace!("weight_scenario_users");
 
         let weighted_scenarios = self.allocate_scenarios();
@@ -1393,96 +1504,51 @@ impl GooseAttack {
             self.test_plan.total_users()
         );
 
-        // Gather the parameters needed for each user. This is cheap and must be
-        // sequential to preserve the round-robin scenario assignment order (users
-        // are later .pop()'d so ordering matters).
+        // Every user weighted now is built from the configuration as it is now.
+        let build = Arc::new(UserBuild {
+            configuration: self.configuration.clone(),
+            load_test_hash: self.metrics.hash,
+            client_strategy: self.client_strategy.clone(),
+            #[cfg(test)]
+            clients_built: self.user_clients_built.clone(),
+        });
+
+        // Assign scenarios round robin, in the weighted order.
         let config_host = self.get_configuration_host();
         let defaults_host = self.defaults.host.clone();
-        let mut user_params: Vec<(usize, Arc<str>, url::Url)> = Vec::with_capacity(total_users);
-        let mut user_count = 0;
-        loop {
+        let mut weighted_users = Vec::with_capacity(total_users);
+        while weighted_users.len() < total_users {
             for scenarios_index in &weighted_scenarios {
-                let base_url = goose::get_base_url(
-                    config_host.clone(),
-                    self.scenarios[*scenarios_index].host.clone(),
-                    defaults_host.clone(),
-                )?;
-                user_params.push((
-                    self.scenarios[*scenarios_index].scenarios_index,
-                    self.scenarios[*scenarios_index].machine_name.clone(),
-                    base_url,
-                ));
-                user_count += 1;
-                if user_count == total_users {
+                let scenario = &self.scenarios[*scenarios_index];
+                weighted_users.push(WeightedUser {
+                    scenarios_index: scenario.scenarios_index,
+                    machine_name: scenario.machine_name.clone(),
+                    base_url: goose::get_base_url(
+                        config_host.clone(),
+                        scenario.host.clone(),
+                        defaults_host.clone(),
+                    )?,
+                    build: build.clone(),
+                });
+                if weighted_users.len() == total_users {
                     break;
                 }
             }
-            if user_count == total_users {
-                break;
-            }
-        }
-
-        // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client unless one is shared, and building it is
-        // the expensive part. Chunks are collected back in order to preserve the
-        // scenario assignment sequence.
-        let configuration = &self.configuration;
-        let client_strategy = &self.client_strategy;
-        let metrics_hash = self.metrics.hash;
-        #[cfg(test)]
-        let clients_built = &self.user_clients_built;
-        let num_cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        let chunk_size = total_users.div_ceil(num_cpus);
-
-        let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(num_cpus);
-            for (chunk_idx, chunk) in user_params.chunks(chunk_size).enumerate() {
-                let base = chunk_idx * chunk_size;
-                handles.push(s.spawn(move || {
-                    let mut users = Vec::with_capacity(chunk.len());
-                    for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
-                        debug!("creating user state: {} ({})", base + i, scenarios_index);
-                        let reqwest_client = match client_strategy {
-                            None => goose::create_reqwest_client(configuration)?,
-                            Some(strategy) => strategy.user_client()?,
-                        };
-                        #[cfg(test)]
-                        clients_built.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        users.push(GooseUser::new(
-                            *scenarios_index,
-                            machine_name.clone(),
-                            base_url.clone(),
-                            configuration,
-                            metrics_hash,
-                            Some(reqwest_client),
-                        )?);
-                    }
-                    Ok::<Vec<GooseUser>, GooseError>(users)
-                }));
-            }
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join().unwrap_or_else(|_| {
-                        Err(GooseError::Io(io::Error::other(
-                            "user initialization thread panicked",
-                        )))
-                    })
-                })
-                .collect()
-        });
-
-        let mut weighted_users = Vec::with_capacity(total_users);
-        for result in results {
-            weighted_users.extend(result?);
         }
         debug!(
             "[scheduler]: created {} weighted_users",
             weighted_users.len()
         );
         Ok(weighted_users)
+    }
+
+    /// Build one user's client as users will build theirs, and drop it, so a
+    /// client that can not be built fails before the load test starts.
+    fn check_user_client(&self) -> Result<(), GooseError> {
+        if let Some(user) = self.weighted_users.last() {
+            user.build.client()?;
+        }
+        Ok(())
     }
 
     // Change from one attack_phase to another.
@@ -1888,6 +1954,7 @@ impl GooseAttack {
 
         // Allocate a state for each of the users we are about to start.
         self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+        self.check_user_client()?;
 
         Ok(())
     }
@@ -2655,7 +2722,7 @@ impl GooseAttack {
 
             // Determine if it's time to spawn a GooseUser.
             if goose_attack_run_state.adjust_due() {
-                let mut thread_user = self
+                let weighted_user = self
                     .weighted_users
                     .pop()
                     .expect("insufficent weighted_users");
@@ -2665,7 +2732,7 @@ impl GooseAttack {
                     .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(increase_rate)));
 
                 // Remember which task group this user is using.
-                thread_user.weighted_users_index = self.metrics.total_users;
+                let weighted_users_index = self.metrics.total_users;
 
                 // Create a per-thread channel allowing parent thread to control child threads.
                 let (parent_sender, thread_receiver): (
@@ -2673,70 +2740,50 @@ impl GooseAttack {
                     flume::Receiver<GooseUserCommand>,
                 ) = flume::unbounded();
                 goose_attack_run_state.user_channels.push(parent_sender);
-                goose_attack_run_state.running_users.push((
-                    thread_user.scenarios_index,
-                    thread_user.weighted_users_index,
-                ));
+                goose_attack_run_state
+                    .running_users
+                    .push((weighted_user.scenarios_index, weighted_users_index));
                 // The user runs its scenario from now, iteration or not.
                 let _ = goose_attack_run_state
                     .metrics_cmd_tx
                     .send(MetricsCommand::UserStarted {
-                        scenario_index: thread_user.scenarios_index,
-                        user: thread_user.weighted_users_index,
+                        scenario_index: weighted_user.scenarios_index,
+                        user: weighted_users_index,
                     });
 
-                // Clone the logger_tx if enabled, otherwise is None.
-                thread_user
-                    .logger
-                    .clone_from(&goose_attack_run_state.all_threads_logger_tx);
-
-                // Copy the GooseUser-throttle receiver channel, used by all threads.
-                thread_user.throttle = if self.configuration.throttle_requests() > 0 {
-                    Some(goose_attack_run_state.throttle_threads_tx.clone().unwrap())
-                } else {
-                    None
+                // Hand the user everything it shares with the others; it builds
+                // its own client in its task, so the main loop does not wait.
+                let start = UserStart {
+                    // Copy the appropriate task_set into the thread.
+                    scenario: self.scenarios[weighted_user.scenarios_index].clone(),
+                    user: weighted_user,
+                    // Start at 1 as this is human visible.
+                    thread_number: self.metrics.total_users + 1,
+                    weighted_users_index,
+                    series_started: self.series_started,
+                    // Clone the logger_tx if enabled, otherwise is None.
+                    logger: goose_attack_run_state.all_threads_logger_tx.clone(),
+                    // Copy the GooseUser-throttle receiver channel, used by all threads.
+                    throttle: if self.configuration.throttle_requests() > 0 {
+                        Some(goose_attack_run_state.throttle_threads_tx.clone().unwrap())
+                    } else {
+                        None
+                    },
+                    // Copy the GooseUser-metrics sender channel, used by all threads.
+                    metrics_channel: goose_attack_run_state.all_threads_metrics_tx.clone(),
+                    metrics_epoch: goose_attack_run_state.metrics_epoch.clone(),
+                    // The per-user metrics batch starts in the current epoch.
+                    epoch: goose_attack_run_state
+                        .metrics_epoch
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    // Share the atomic request counter registry with this user thread.
+                    request_counters: goose_attack_run_state.request_counter_registry.clone(),
+                    // Copy the GooseUser-shutdown sender channel, used by all threads.
+                    shutdown_channel: goose_attack_run_state.all_threads_shutdown_tx.clone(),
                 };
 
-                // Copy the GooseUser-metrics sender channel, used by all threads.
-                thread_user.metrics_channel =
-                    Some(goose_attack_run_state.all_threads_metrics_tx.clone());
-
-                // Initialize the per-user metrics batch accumulator.
-                let epoch = goose_attack_run_state
-                    .metrics_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                thread_user.metrics_batch = Some(crate::metrics::GooseMetricBatch::new(epoch));
-                thread_user.metrics_epoch = Some(goose_attack_run_state.metrics_epoch.clone());
-
-                // Share the atomic request counter registry with this user thread.
-                thread_user.request_counters =
-                    Some(goose_attack_run_state.request_counter_registry.clone());
-
-                // Copy the GooseUser-shutdown sender channel, used by all threads.
-                thread_user.shutdown_channel =
-                    Some(goose_attack_run_state.all_threads_shutdown_tx.clone());
-
-                // Copy the appropriate task_set into the thread.
-                let thread_scenario = self.scenarios[thread_user.scenarios_index].clone();
-
-                // Start at 1 as this is human visible.
-                let thread_number = self.metrics.total_users + 1;
-
-                // Align request `elapsed` (graph second) with the continuous series
-                // clock so RPS and active-users charts share one timeline. Weighted
-                // users are often created before the run starts; mid-test increases
-                // create users later — both must report seconds since series start.
-                if let Some(series_started) = self.series_started {
-                    thread_user.started = series_started;
-                }
-
                 // Launch a new user.
-                let user = tokio::spawn(user::user_main(
-                    thread_number,
-                    thread_scenario,
-                    thread_user,
-                    thread_receiver,
-                ));
+                let user = tokio::spawn(start.run(thread_receiver));
 
                 goose_attack_run_state.users.push(user);
                 goose_attack_run_state.active_users += 1;
@@ -3406,6 +3453,7 @@ impl GooseAttack {
         self.test_plan = test_plan;
         // Reallocate users.
         self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+        self.check_user_client()?;
         // Insert the current state of the test plan before the new test plan.
         let elapsed = self.step_elapsed() as usize;
         self.test_plan
@@ -3651,10 +3699,6 @@ impl GooseAttack {
         self.series_started = Some(now);
         // The same start, as the reports' record gives it.
         self.output.started = Some(chrono::Utc::now());
-        // Align pre-created weighted users so request.elapsed matches series time.
-        for user in &mut self.weighted_users {
-            user.started = now;
-        }
 
         Ok(())
     }
@@ -5440,6 +5484,10 @@ mod tests {
         let mut users = goose_attack.weight_scenario_users(2).unwrap();
         users.extend(goose_attack.weight_scenario_users(2).unwrap());
         assert_eq!(users.len(), 4);
+        // Each user gets its client as it does when it starts.
+        for user in &users {
+            user.build.client().unwrap();
+        }
         assert_eq!(
             builds() - before,
             1,
