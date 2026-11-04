@@ -1361,11 +1361,29 @@ mod tests {
             "{}",
             json
         );
-        assert!(
-            !json.contains("addr") && !json.contains("port") && !json.contains("token"),
-            "{}",
-            json
-        );
+        // No field is named for an address, a port or a token.
+        let keys = |value: &serde_json::Value| -> Vec<String> {
+            fn walk(value: &serde_json::Value, out: &mut Vec<String>) {
+                match value {
+                    serde_json::Value::Object(map) => {
+                        for (key, value) in map {
+                            out.push(key.clone());
+                            walk(value, out);
+                        }
+                    }
+                    serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+                    _ => {}
+                }
+            }
+            let mut out = Vec::new();
+            walk(value, &mut out);
+            out
+        };
+        for key in keys(&serde_json::to_value(&section).unwrap()) {
+            for word in ["addr", "port", "token", "host"] {
+                assert!(!key.contains(word), "{} in {}", key, json);
+            }
+        }
     }
 
     /// 1,000 random cases of step 3's split rules, as the dashboard's split

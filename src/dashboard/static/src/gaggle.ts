@@ -16,7 +16,7 @@
 import { setRpsByWorker, setRpsMarkers, markerNear, markerX, type ChartMarker } from "./charts";
 import { isControlEnabled, sendThrottle, setSubtitleLead, targetEdit } from "./control";
 import { optionalElement, requireElement } from "./dom";
-import { formatInt, formatMs, formatRate } from "./format";
+import { clock, formatInt, formatMs, formatRate } from "./format";
 import { groups, splitText, throttleSplit, usersSplit, type SplitGroup } from "./split";
 import { announce } from "./status";
 import { sortableTable, type Column, type SortableTable } from "./tables";
@@ -44,13 +44,6 @@ const ANNOUNCED = new Set([
   "worker_lagging",
   "worker_recovered",
 ]);
-
-/** `second` as `mm:ss`. */
-export function clock(second: number): string {
-  const s = Math.max(0, Math.floor(second));
-  const pad = (n: number): string => (n < 10 ? "0" : "") + n;
-  return pad(Math.floor(s / 60)) + ":" + pad(s % 60);
-}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,

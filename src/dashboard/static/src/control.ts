@@ -10,7 +10,7 @@ import {
   removeDescribedBy,
   setReadOnly,
 } from "./follow";
-import { formatInt } from "./format";
+import { clock, formatInt } from "./format";
 import { settingsSummary } from "./run-settings";
 import { SettingsBody, SettingsForm } from "./settings-form";
 import { announce, setBanner } from "./status";
@@ -505,13 +505,6 @@ function refusalText(reason: string | undefined): string {
 
 /** What the change in flight sets, as its success sentence names it. */
 let sending = "";
-
-/** `second` as `mm:ss`. */
-function clock(second: number): string {
-  const s = Math.max(0, Math.floor(second));
-  const pad = (n: number): string => (n < 10 ? "0" : "") + n;
-  return pad(Math.floor(s / 60)) + ":" + pad(s % 60);
-}
 
 /**
  * The status after a change a Gaggle manager's workers acknowledged:
