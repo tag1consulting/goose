@@ -186,7 +186,41 @@ for (const theme of Object.keys(THEMES)) {
       }
     }
   });
+  // A Gaggle manager's workers panel: each tile's glyph is text, at least
+  // 4.5:1 on its tile; each tile's edge is at least 3:1 on the card, so a
+  // tile is seen whatever its shade; and the flags, events and Workers tile
+  // in their colours are text on the card.
+  test(`the workers grid, flags and events are readable in the ${theme} theme`, () => {
+    const vars = tokens(theme);
+    const card = resolve("var(--card)", vars);
+    const glyphs = [
+      [".tile-saturated", "background"],
+      [".tile-lagging", null],
+      [".tile-lost", null],
+      [".tile-excluded", null],
+      [".tile-idle", null],
+    ];
+    for (const [selector, bgProp] of glyphs) {
+      const selectors = [".tile", selector];
+      const fg = resolve(cascaded(theme, selectors, "color"), vars);
+      const bgValue = bgProp ? cascaded(theme, selectors, bgProp) : null;
+      const bg = bgValue && bgValue !== "transparent" ? resolve(bgValue, vars) : card;
+      const ratio = contrast(fg, bg);
+      assert.ok(ratio >= 4.5, `${selector} glyph ${fg} on ${bg} is ${ratio.toFixed(2)}:1`);
+    }
+    for (const selector of [".tile-running", ".tile-saturated", ".tile-lagging", ".tile-lost"]) {
+      const edge = resolve(cascaded(theme, [".tile", selector], "border-color"), vars);
+      const ratio = contrast(edge, card);
+      assert.ok(ratio >= 3, `${selector} edge ${edge} on ${card} is ${ratio.toFixed(2)}:1`);
+    }
+    for (const selector of [".flag-alarm", ".flag-warn", ".flag-note", ".gaggle-events .event-alarm", ".kpi.kpi-warn .v", ".workers-summary"]) {
+      const fg = resolve(cascaded(theme, [selector], "color"), vars);
+      const ratio = contrast(fg, card);
+      assert.ok(ratio >= 4.5, `${selector} ${fg} on ${card} is ${ratio.toFixed(2)}:1`);
+    }
+  });
 }
+
 
 // The page.
 

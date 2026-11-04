@@ -353,10 +353,11 @@ function makeParts(): Parts {
   workersTile.append(workersValue, workersSub);
   requireElement("kpis", HTMLElement).appendChild(workersTile);
 
-  // The Workers panel and the RPS card side by side.
-  const row = el("div", "gaggle-row");
-  row.id = "gaggle-row";
-  requireElement("kpis", HTMLElement).insertAdjacentElement("afterend", row);
+  // The Workers panel and the RPS card side by side: the panel takes the
+  // charts grid's first cell, beside the RPS card, and the users card the
+  // row below. No chart moves, so Chart.js keeps its canvases.
+  const charts = requireElement("charts", HTMLElement);
+  charts.classList.add("gaggle-charts");
   const panel = el("section", "card workers-panel");
   panel.id = "workers-panel";
   panel.setAttribute("aria-labelledby", "workers-heading");
@@ -499,19 +500,22 @@ function makeParts(): Parts {
   eventsMoreWrap.appendChild(eventsMore);
 
   panel.append(head, checks, grid, legend, card, compactWrap, rowsNote, dataDetails, eventsHead, eventsShown, eventsMoreWrap);
-  row.appendChild(panel);
+  charts.insertBefore(panel, charts.firstChild);
+  const usersCanvas = optionalElement("chart-users", HTMLCanvasElement);
+  const usersCard = usersCanvas ? usersCanvas.closest(".chart-card") : null;
+  if (usersCard) usersCard.classList.add("chart-wide");
 
-  // The RPS card joins the row, with a Total / By worker toggle.
+  // The RPS card, beside it, gains a Total / By worker toggle.
   const canvas = requireElement("chart-rps", HTMLCanvasElement);
   const rpsCard = canvas.closest(".chart-card") as HTMLElement;
   const toggle: HTMLButtonElement[] = [];
   let markerTip = el("div");
   let markerRows = el("tbody");
   if (rpsCard) {
-    row.appendChild(rpsCard);
     const title = rpsCard.querySelector("h2");
     const chartHead = el("div", "chart-head");
     const group = el("div", "segmented");
+    group.id = "rps-view";
     group.setAttribute("role", "group");
     group.setAttribute("aria-label", "Requests per second shown");
     for (const [label, on] of [
@@ -530,14 +534,12 @@ function makeParts(): Parts {
     }
     // The markers' sentences: on hover and on focus of the chart, and in
     // a table under its data table.
-    const wrap = el("div", "chart-marker-wrap");
-    canvas.insertAdjacentElement("beforebegin", wrap);
-    wrap.appendChild(canvas);
+    rpsCard.classList.add("chart-marker-card");
     markerTip = el("div", "heatmap-tooltip chart-marker-tip");
     markerTip.id = "chart-rps-marker";
     markerTip.setAttribute("role", "tooltip");
     markerTip.hidden = true;
-    wrap.appendChild(markerTip);
+    canvas.insertAdjacentElement("afterend", markerTip);
     canvas.tabIndex = 0;
     canvas.setAttribute("aria-describedby", "chart-rps-marker");
     canvas.addEventListener("mousemove", onChartHover);
@@ -803,8 +805,10 @@ function showMarker(marker: ChartMarker): void {
   const x = markerX(marker);
   setText(parts.markerTip, clock(marker.second) + " " + marker.text);
   parts.markerTip.hidden = false;
-  if (x !== null) parts.markerTip.style.setProperty("left", Math.max(0, x - 40) + "px");
-  parts.markerTip.style.setProperty("top", "4px");
+  const canvas = optionalElement("chart-rps", HTMLCanvasElement);
+  const left = (canvas ? canvas.offsetLeft : 0) + (x === null ? 0 : x);
+  parts.markerTip.style.setProperty("left", Math.max(0, left - 40) + "px");
+  parts.markerTip.style.setProperty("top", (canvas ? canvas.offsetTop : 0) + 4 + "px");
 }
 
 function hideMarker(): void {

@@ -1118,26 +1118,20 @@ body.gaggle-mode {
 }
 
 /* The Workers panel beside the RPS chart, stacked below 1200 px. */
-.gaggle-row {
-  display: grid;
+body.gaggle-mode .charts-grid {
   grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-  margin-top: 0.85rem;
+  align-items: start;
 }
 
 @media (min-width: 1200px) {
-  .gaggle-row {
+  body.gaggle-mode .charts-grid {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: start;
   }
-}
-
-.gaggle-row > .card {
-  margin-top: 0;
 }
 
 .workers-panel {
   position: relative;
+  margin-top: 0;
 }
 
 .workers-head {
@@ -1197,6 +1191,12 @@ body.gaggle-mode {
   outline-offset: 1px;
 }
 
+/* Running: green, darker or lighter by load share, inside a full strength
+   border so every tile stands out from the card whatever its shade. */
+.tile-running {
+  border-color: var(--ok);
+}
+
 /* Running: green, darker or lighter by load share. */
 .tile-running.tile-load-0 { background: color-mix(in srgb, var(--ok) 30%, var(--card)); }
 .tile-running.tile-load-1 { background: color-mix(in srgb, var(--ok) 45%, var(--card)); }
@@ -1206,7 +1206,8 @@ body.gaggle-mode {
 
 .tile-saturated {
   background: var(--warn);
-  color: var(--bg);
+  border-color: var(--warn);
+  color: var(--card);
 }
 
 .tile-lagging {
@@ -1355,11 +1356,11 @@ body.gaggle-mode {
 }
 
 /* The RPS chart's markers: their sentence on hover and focus. */
-.chart-marker-wrap {
+.chart-marker-card {
   position: relative;
 }
 
-.chart-marker-wrap canvas:focus-visible {
+.chart-marker-card canvas:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
