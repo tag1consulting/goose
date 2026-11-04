@@ -451,6 +451,14 @@ test("keyboard focus reaches every tile, and the hover card follows it", async (
   // Colour is never alone: each flagged tile has a glyph, each in the legend.
   const legend = $$(page, ".worker-legend li").map((li) => li.textContent.trim());
   assert.deepEqual(legend.slice(0, 4), ["running (shade = load share)", "! saturated", "~ lagging", "x lost"]);
+  const extra = $(page, ".worker-legend li.worker-legend-extra");
+  assert.equal(extra.textContent, "", "no extras without their glyphs");
+  const outlier = gaggleSnapshot();
+  outlier.gaggle.grid.flags[5] = 4;
+  await send(page, outlier);
+  assert.equal(tiles[5].textContent, "*");
+  assert.equal(tiles[5].getAttribute("aria-label"), "load-05: running, outlier");
+  assert.equal(extra.textContent, "* outlier", "the glyph shown is in the legend");
 });
 
 test("worker names that look like markup are shown as text", async () => {
