@@ -472,7 +472,8 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
   // HOSTNAME names a worker; the manager starts the run once every one has joined.
   const workers = [];
   if (gaggle) {
-    await waitForHealth(base, child, 120);
+    // The manager listens for workers at once; its dashboard answers once they joined.
+    await sleep(1500);
     for (let i = 0; i < gaggle.workers; i++) {
       const workerName = (gaggle.name ?? "load-{n}").replace("{n}", String(i).padStart(2, "0"));
       const workerArgs = ["--worker", "--manager-host", "127.0.0.1", "--manager-port", String(gaggle.port ?? 5135), "-q", ...(gaggle.flags ?? [])];

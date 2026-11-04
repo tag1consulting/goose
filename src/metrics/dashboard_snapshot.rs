@@ -208,12 +208,14 @@ pub(crate) struct GaggleGrid {
     pub load: Vec<u8>,
     /// The users it runs now.
     pub users: Vec<u64>,
-    /// Its CPU use, whole percent; `null` when it sends none.
+    /// Its CPU use, whole percent, while it runs; `null` when it sends none
+    /// or does not run.
     pub cpu: Vec<Option<u16>>,
     /// Its requests per second over the last 10 seconds, whole; `null`
     /// while it does not run.
     pub rps: Vec<Option<u64>>,
-    /// Its p95 over the last 10 seconds, whole milliseconds.
+    /// Its p95 over the last 10 seconds, whole milliseconds: 0 is under
+    /// half a millisecond.
     pub p95: Vec<Option<u64>>,
     /// Its requests per user per second's distance from the median of the
     /// running workers, in percent, signed, when past the outlier

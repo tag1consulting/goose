@@ -1152,8 +1152,18 @@ body.gaggle-mode .charts-grid {
   font-variant-numeric: tabular-nums;
 }
 
-.workers-checks {
+.workers-checks-wrap {
   margin: 0 0 0.5rem;
+  color: var(--warn);
+  font-size: 0.8rem;
+}
+
+.workers-checks-wrap[hidden] {
+  display: none;
+}
+
+.workers-checks {
+  margin: 0.25rem 0 0;
   padding-left: 1.1rem;
   color: var(--warn);
   font-size: 0.8rem;

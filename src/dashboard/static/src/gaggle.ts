@@ -145,6 +145,8 @@ export function workerRows(g: GaggleSnapshot): WorkerRow[] {
 }
 
 const dash = "-";
+/** A p95 in whole milliseconds as the panel says it: 0 is under half a millisecond. */
+const p95Text = (n: number): string => (n === 0 ? "<1" : formatInt(n));
 const num = (value: number | null, format: (n: number) => string): string =>
   value == null ? dash : format(value);
 
@@ -207,7 +209,7 @@ export function cardLines(g: GaggleSnapshot, at: number): [string, string, strin
   const p95 = grid.p95[at];
   let load = rps == null ? "no requests yet" : formatInt(rps) + " req/s";
   if (rps != null && gap !== 0) load += " (" + (gap > 0 ? "+" : "") + gap + "%)";
-  if (p95 != null) load += ", p95 " + formatInt(p95) + " ms";
+  if (p95 != null) load += ", p95 " + p95Text(p95) + " ms";
   return [name + "  " + look.word, cpuText, load];
 }
 
@@ -264,6 +266,8 @@ interface Parts {
   workersTile: HTMLElement;
   summary: HTMLElement;
   checks: HTMLElement;
+  checksWrap: HTMLDetailsElement;
+  checksSummary: HTMLElement;
   grid: HTMLElement;
   legendExtra: HTMLElement;
   card: HTMLElement;
@@ -381,8 +385,13 @@ function makeParts(): Parts {
   const summary = el("p", "workers-summary");
   summary.id = "workers-summary";
   head.append(heading, summary);
+  // What the reports would open with now: the "Degraded:" and "Check:"
+  // sentences, folded so the grid stays near the top.
+  const checksWrap = el("details", "workers-checks-wrap");
+  const checksSummary = el("summary");
   const checks = el("ul", "workers-checks");
-  checks.hidden = true;
+  checksWrap.append(checksSummary, checks);
+  checksWrap.hidden = true;
 
   const grid = el("div", "worker-grid");
   grid.id = "worker-grid";
@@ -471,7 +480,7 @@ function makeParts(): Parts {
     state: (r) => r.state,
     users: (r) => formatInt(r.users),
     rps: (r) => num(r.rps, formatInt),
-    p95: (r) => num(r.p95, formatInt),
+    p95: (r) => num(r.p95, p95Text),
     cpu: (r) => num(r.cpu, String),
     fail: (r) => num(r.fail, (n) => n.toFixed(1)),
     avg: (r) => num(r.avg, formatMs),
@@ -513,7 +522,7 @@ function makeParts(): Parts {
   const eventsMore = el("ol", "gaggle-events");
   eventsMoreWrap.appendChild(eventsMore);
 
-  panel.append(head, checks, grid, legend, card, compactWrap, rowsNote, dataDetails, eventsHead, eventsShown, eventsMoreWrap);
+  panel.append(head, checksWrap, grid, legend, card, compactWrap, rowsNote, dataDetails, eventsHead, eventsShown, eventsMoreWrap);
   charts.insertBefore(panel, charts.firstChild);
   const usersCanvas = optionalElement("chart-users", HTMLCanvasElement);
   const usersCard = usersCanvas ? usersCanvas.closest(".chart-card") : null;
@@ -586,6 +595,8 @@ function makeParts(): Parts {
     workersTile,
     summary,
     checks,
+    checksWrap,
+    checksSummary,
     grid,
     legendExtra,
     card,
@@ -758,7 +769,7 @@ function renderCompact(g: GaggleSnapshot): void {
       row.state,
       formatInt(row.users),
       num(row.rps, formatInt),
-      num(row.p95, (n) => formatInt(n) + " ms"),
+      num(row.p95, (n) => p95Text(n) + " ms"),
       num(row.cpu, (n) => n + "%"),
       num(row.delta, (n) => n.toFixed(1) + " s"),
     ];
@@ -1005,7 +1016,11 @@ export function updateGaggle(snap: DashboardSnapshot): void {
     p.checks.setAttribute("data-key", checksKey);
     p.checks.textContent = "";
     for (const sentence of checks) p.checks.appendChild(el("li", undefined, sentence));
-    p.checks.hidden = checks.length === 0;
+    p.checksWrap.hidden = checks.length === 0;
+    setText(
+      p.checksSummary,
+      checks.length === 1 ? "1 sentence the reports would open with" : formatInt(checks.length) + " sentences the reports would open with"
+    );
   }
 
   renderGrid(g);

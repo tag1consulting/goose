@@ -90,6 +90,8 @@ test("the header, banner, KPI row and workers panel", async () => {
   assert.ok(tile.classList.contains("kpi-warn"));
 
   assert.equal(text(page, "#workers-summary"), "47 of 48 running | 1 saturated | 1 lagging | 1 lost");
+  // No report sentences in this snapshot: their fold is hidden.
+  assert.ok($(page, ".workers-checks-wrap").hidden);
   // The Workers panel and the RPS card share the first row of the charts
   // grid, right after the KPI row: the same RPS chart, not a second one.
   const charts = $(page, "#charts");
@@ -454,4 +456,24 @@ test("worker names that look like markup are shown as text", async () => {
     "the same elements as with plain names"
   );
   assert.ok(doc.querySelectorAll("*").length > before);
+});
+
+test("the report sentences fold under the summary line, and a p95 under 1 ms reads <1", async () => {
+  const page = await open();
+  const snap = gaggleSnapshot();
+  snap.gaggle.summary.degraded = ["Degraded: 1 of the 48 Gaggle workers were lost during the run: load-31 (connection reset)."];
+  snap.gaggle.summary.checks = ["Check: load-42's metrics arrived late (longest gap 5.2 s)."];
+  snap.gaggle.grid.p95[0] = 0;
+  await send(page, snap);
+  const fold = $(page, ".workers-checks-wrap");
+  assert.ok(!fold.hidden);
+  assert.equal(fold.tagName, "DETAILS");
+  assert.ok(!fold.open, "folded");
+  assert.equal(fold.querySelector("summary").textContent, "2 sentences the reports would open with");
+  assert.deepEqual([...fold.querySelectorAll("li")].map((li) => li.textContent), [
+    snap.gaggle.summary.degraded[0],
+    snap.gaggle.summary.checks[0],
+  ]);
+  const row = $$(page, "#workers-compact tbody tr").find((tr) => tr.cells[0].textContent === "load-00");
+  assert.equal(row.cells[4].textContent, "<1 ms");
 });

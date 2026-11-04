@@ -133,7 +133,8 @@ load: Array<number>,
  */
 users: Array<number>,
 /**
- * Its CPU use, whole percent; `null` when it sends none.
+ * Its CPU use, whole percent, while it runs; `null` when it sends none
+ * or does not run.
  */
 cpu: Array<number | null>,
 /**
@@ -142,7 +143,8 @@ cpu: Array<number | null>,
  */
 rps: Array<number | null>,
 /**
- * Its p95 over the last 10 seconds, whole milliseconds.
+ * Its p95 over the last 10 seconds, whole milliseconds: 0 is under
+ * half a millisecond.
  */
 p95: Array<number | null>,
 /**

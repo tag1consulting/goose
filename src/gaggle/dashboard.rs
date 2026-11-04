@@ -402,6 +402,7 @@ pub(crate) fn section(
             .map(|view| {
                 view.worker
                     .cpu_percent
+                    .filter(|_| view.figures.is_some())
                     .map(|cpu| cpu.round().clamp(0.0, 100.0) as u16)
             })
             .collect(),
@@ -650,7 +651,7 @@ mod tests {
         burn(&mut health, 0, 4, 97, at, 6);
         let now = at + secs(6.0);
         window(&mut health, 0, 41, 212, now);
-        for id in 1..3 {
+        for id in 1..4 {
             burn(&mut health, id, 4, 30, at, 6);
             window(&mut health, id, 63, 18, now);
         }
@@ -715,6 +716,7 @@ mod tests {
         assert_eq!(grid.states, [2, 2, 2, 6]);
         assert_eq!(grid.flags, [2, 0, 0, 0]);
         assert_eq!(grid.load, [65, 100, 100, 0]);
+        // The lost worker sent CPU before it was lost; none is shown now.
         assert_eq!(grid.cpu, [Some(97), Some(30), Some(30), None]);
         assert_eq!(grid.rps, [Some(41), Some(63), Some(63), None]);
         assert_eq!(grid.users, [19, 19, 19, 19]);
@@ -736,6 +738,7 @@ mod tests {
         let section = build(&health, &accumulator(), 2, &empty, None, now);
         assert_eq!(section.workers.cores[row(&section, "load-00")], None);
         assert_eq!(section.grid.cpu, [None, None]);
+        assert_eq!(section.grid.p95[0], Some(5));
     }
 
     /// Rows are the most urgent 100, by severity then name; the summary and
