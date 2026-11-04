@@ -3493,8 +3493,9 @@ async fn gaggle_worker_health_in_one_process() {
         .expect("within 120 seconds");
 }
 
-/// A worker that says 95% of its CPU is busy for 8 seconds, whose deltas
-/// are held back at random by up to 2 seconds after it reads its CPU time,
+/// A worker that says 95% of its CPU is busy for 8 seconds, every other
+/// delta of which is held back by a random time up to 2 seconds after it
+/// reads its CPU time,
 /// is flagged saturated, once, then recovers, once, and peaks at 95, not
 /// clamped at 100: the manager times its CPU by the worker's own clock, not by
 /// when each delta arrives.
@@ -3519,6 +3520,8 @@ async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
             "40",
             "--run-time",
             "14",
+            "--throttle-requests",
+            "300",
             "--report-file",
         ];
         let (manager, workers) =
@@ -3544,6 +3547,16 @@ async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
                 .contains(&"saturated".into()),
             "{}",
             busy
+        );
+        // The real worker is far from saturated.
+        let real = all
+            .iter()
+            .find(|worker| worker["name"] != busy["name"])
+            .unwrap();
+        assert!(
+            real["saturated_secs"].as_u64().unwrap_or(0) < 5,
+            "{}",
+            real
         );
         let kinds: Vec<&str> = gaggle["events"]
             .as_array()

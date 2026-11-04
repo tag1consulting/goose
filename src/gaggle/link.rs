@@ -228,10 +228,13 @@ pub(crate) struct Outbox {
     /// long from the first delta sent, then idle (unit tests).
     #[cfg(test)]
     pub(crate) busy_cpu: Mutex<Option<(u64, Duration, Option<std::time::Instant>)>>,
-    /// Hold back about every other delta by a random time below this, in
+    /// Hold back every other delta by a random time below this, in
     /// milliseconds, after its CPU sample is read, 0 for none (unit tests).
     #[cfg(test)]
     pub(crate) delay_deltas_ms: std::sync::atomic::AtomicU64,
+    /// The deltas [`Self::delay_delta`] has seen (unit tests).
+    #[cfg(test)]
+    delayed_deltas: std::sync::atomic::AtomicU64,
 }
 
 impl Outbox {
@@ -479,10 +482,10 @@ impl Outbox {
         self.state.lock().map_or(true, |state| state.closed)
     }
 
-    /// Hold back about every other delta, after its CPU sample is read, by
-    /// a random time below [`Self::delay_deltas_ms`], as a busy network or
-    /// manager would (unit tests). Only about half are held so the queue
-    /// keeps up with one delta a second.
+    /// Hold back every other delta, after its CPU sample is read, by a
+    /// random time below [`Self::delay_deltas_ms`], as a busy network or
+    /// manager would (unit tests). Only half are held so the queue keeps up
+    /// with one delta a second.
     #[cfg(test)]
     async fn delay_delta(&self) {
         use rand::Rng;
@@ -490,13 +493,11 @@ impl Outbox {
         if most == 0 {
             return;
         }
-        let held = {
-            let mut rng = rand::rng();
-            rng.random_bool(0.5).then(|| rng.random_range(0..most))
-        };
-        if let Some(ms) = held {
-            tokio::time::sleep(Duration::from_millis(ms)).await;
+        if self.delayed_deltas.fetch_add(1, Ordering::Relaxed) % 2 == 0 {
+            return;
         }
+        let ms = rand::rng().random_range(0..most);
+        tokio::time::sleep(Duration::from_millis(ms)).await;
     }
 
     /// The deltas queued (unit tests).

@@ -59,7 +59,7 @@ pub(crate) struct TestFaults {
     /// Send a CPU time that has this percent of the worker's cores busy for
     /// this long from its first delta, and idle after.
     pub(crate) busy_cpu: Option<(u64, Duration)>,
-    /// Hold back about every other delta by a random time below this, after
+    /// Hold back every other delta by a random time below this, after
     /// its CPU sample is read, as a busy network or manager would.
     pub(crate) delay_deltas: Option<Duration>,
 }
