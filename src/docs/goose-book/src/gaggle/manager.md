@@ -58,7 +58,7 @@ The manager marks a worker lost when nothing has come from it for `--gaggle-hear
 
 ## Worker health {#worker-health}
 
-The manager keeps one model of every worker's health: its state, its CPU use, how long since its last metrics arrived, and its own figures, over the whole run and over its last 10 seconds. The reports show it, so a run's numbers can be judged: whether every worker was free to make the load it was asked for, or whether one was held back by its own machine rather than by the target. Each worker says how many CPU cores its process may use when it joins, and sends its process's CPU time with each second's metrics; a platform that has no cheap source of CPU time sends none, and the reports show a dash.
+The manager keeps one model of every worker's health: its state, its CPU use, how long since its last metrics arrived, and its own figures, over the whole run and over its last 10 seconds. The reports show it, so a run's numbers can be judged: whether every worker was free to make the load it was asked for, or whether one was held back by its own machine rather than by the target. Each worker says how many CPU cores its process may use when it joins, and sends its process's CPU time with each second's metrics; a platform that has no cheap source of CPU time sends none, and the reports show a dash. Each worker times its own CPU samples, so metrics that arrive late do not change the CPU shown.
 
 A worker's state is `joining`, `ready` (prepared, waiting for the start), `running`, `stopping` (told to stop, or its users have stopped), `finished`, `users_exited` (`--iterations`) or `lost`.
 

@@ -228,22 +228,34 @@ pub(crate) struct Outbox {
     /// long from the first delta sent, then idle (unit tests).
     #[cfg(test)]
     pub(crate) busy_cpu: Mutex<Option<(u64, Duration, Option<std::time::Instant>)>>,
+    /// Hold back about every other delta by a random time below this, in
+    /// milliseconds, after its CPU sample is read, 0 for none (unit tests).
+    #[cfg(test)]
+    pub(crate) delay_deltas_ms: std::sync::atomic::AtomicU64,
 }
 
 impl Outbox {
-    /// The CPU time a delta carries: this process's, or one made up
-    /// (unit tests).
-    fn cpu_micros(&self) -> Option<u64> {
+    /// The CPU sample a delta carries, read together: the CPU time, this
+    /// process's or one made up (unit tests), and the worker's clock as it
+    /// was read, sent whenever the CPU time is.
+    fn cpu_sample(&self) -> (Option<u64>, Option<u64>) {
         #[cfg(test)]
         if let Ok(mut busy) = self.busy_cpu.lock() {
             if let Some((percent, span, start)) = busy.as_mut() {
-                let start = *start.get_or_insert_with(std::time::Instant::now);
+                // The made up CPU time and the clock come from one reading.
+                let now = std::time::Instant::now();
+                let start = *start.get_or_insert(now);
                 let cores = std::thread::available_parallelism().map_or(1, |cores| cores.get());
-                let busy = start.elapsed().min(*span).as_micros() as u64;
-                return Some(busy * cores as u64 * *percent / 100);
+                let busy = now.saturating_duration_since(start).min(*span).as_micros() as u64;
+                return (
+                    Some(busy * cores as u64 * *percent / 100),
+                    Some(super::health::wall_micros_at(now)),
+                );
             }
         }
-        super::health::process_cpu_micros()
+        let cpu_micros = super::health::process_cpu_micros();
+        let wall_micros = cpu_micros.map(|_| super::health::wall_micros());
+        (cpu_micros, wall_micros)
     }
 
     fn push(&self, item: Outgoing, front: bool) {
@@ -413,10 +425,16 @@ impl Outbox {
                             Err(e) => Err(e.to_string()),
                         };
                         match encoded {
-                            Ok(bytes) => ToManager::Metrics(Metrics {
-                                delta: bytes,
-                                cpu_micros: self.cpu_micros(),
-                            }),
+                            Ok(bytes) => {
+                                let (cpu_micros, wall_micros) = self.cpu_sample();
+                                #[cfg(test)]
+                                self.delay_delta().await;
+                                ToManager::Metrics(Metrics {
+                                    delta: bytes,
+                                    cpu_micros,
+                                    wall_micros,
+                                })
+                            }
                             // No final metrics will reach the manager: say
                             // so, so it records them missing, rather than
                             // wait for them.
@@ -459,6 +477,26 @@ impl Outbox {
     /// Whether it is closed: nothing more is queued.
     fn is_closed(&self) -> bool {
         self.state.lock().map_or(true, |state| state.closed)
+    }
+
+    /// Hold back about every other delta, after its CPU sample is read, by
+    /// a random time below [`Self::delay_deltas_ms`], as a busy network or
+    /// manager would (unit tests). Only about half are held so the queue
+    /// keeps up with one delta a second.
+    #[cfg(test)]
+    async fn delay_delta(&self) {
+        use rand::Rng;
+        let most = self.delay_deltas_ms.load(Ordering::Relaxed);
+        if most == 0 {
+            return;
+        }
+        let held = {
+            let mut rng = rand::rng();
+            rng.random_bool(0.5).then(|| rng.random_range(0..most))
+        };
+        if let Some(ms) = held {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
     }
 
     /// The deltas queued (unit tests).

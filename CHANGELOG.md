@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.20.0-dev
+ - [#PRNUM](https://github.com/tag1consulting/goose/pull/PRNUM) a Gaggle worker's CPU percent, saturated seconds and saturation start are timed by the worker's own clock between two samples, not by when its metrics arrive, so a late or early delta no longer hides or inflates saturation; the protocol gains `Metrics.wall_micros`, optional, still version 1; a worker that sends none is timed by arrival as before
  - [#807](https://github.com/tag1consulting/goose/pull/807) Gaggle worker health (refs #645): the manager keeps one model of each worker's state, CPU use, delta lag and figures, and one log of Gaggle events; its HTML, Markdown and PDF reports and console print gain Workers and Events sections, and a "Check:" sentence when a worker was CPU saturated, lagging or an outlier; see the Book's Worker health section
     o flags: saturated (CPU at or above 90% of its cores for 5 s), lagging (no delta for more than 3 s while running), outlier (requests per user per second or p95 more than 25% from the median, with 3 or more workers, after 30 s), excluded, refused and missing
     o events: the run starting, a worker lost, excluded, refused, saturated, lagging or recovered, users, throttle and host changes with how many workers acknowledged them and how long it took, stop, start, the throttle's shares rescaled after a loss and users rebalanced; the newest 1,000 kept

@@ -71,6 +71,11 @@ const MAX_NAME: usize = 64;
 /// arrive together, and their CPU over a few milliseconds says nothing.
 const MIN_CPU_SPAN: Duration = Duration::from_millis(900);
 
+/// The longest span, on a worker's own clock, a CPU sample is taken against
+/// the one before: a worker that sent none for longer has lost its baseline,
+/// as a percent averaged over more than the live window says nothing of it.
+const MAX_CPU_SPAN: Duration = Duration::from_secs(WINDOW_SECS);
+
 /// The longest event text kept, in characters: a sentence with a worker's
 /// reason in it, which the worker could make as long as it likes.
 const MAX_EVENT_TEXT: usize = 500;
@@ -302,6 +307,18 @@ pub(crate) struct Flags {
     pub(crate) p95_outlier: Option<i32>,
 }
 
+/// One CPU time sample from a worker.
+#[derive(Clone, Copy, Debug)]
+struct CpuSample {
+    /// When it arrived.
+    at: Instant,
+    /// The worker's clock as it read the CPU time, in microseconds, when it
+    /// sent it.
+    wall_micros: Option<u64>,
+    /// The worker's CPU time, in microseconds.
+    micros: u64,
+}
+
 /// What the manager knows of one worker.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WorkerHealth {
@@ -318,8 +335,8 @@ pub(crate) struct WorkerHealth {
     pub(crate) lost: Option<(chrono::DateTime<chrono::Utc>, u64, String)>,
     /// What the merge did with its deltas.
     pub(crate) merge: WorkerMerge,
-    /// Its last CPU time sample: when it arrived, and the CPU time.
-    cpu_sample: Option<(Instant, u64)>,
+    /// Its last CPU time sample.
+    cpu_sample: Option<CpuSample>,
     /// Its CPU use over the last span between samples, in percent of its
     /// cores.
     pub(crate) cpu_percent: Option<f64>,
@@ -330,6 +347,9 @@ pub(crate) struct WorkerHealth {
     /// Since when its CPU use has stayed at or above [`SATURATED_PERCENT`],
     /// as an instant and an RFC 3339 time: the current saturation's start.
     pub(crate) above_since: Option<(Instant, chrono::DateTime<chrono::Utc>)>,
+    /// How long the current saturation has lasted, over the spans of the
+    /// samples it covers: zero while it is not saturated.
+    saturated_run: Duration,
     /// When it started running its share, and when it stopped.
     running_since: Option<Instant>,
     running_until: Option<Instant>,
@@ -402,10 +422,16 @@ impl WorkerHealth {
     /// measured to its last CPU sample: a worker that goes quiet is not
     /// taken as saturated for want of samples.
     fn saturated_for(&self) -> Duration {
-        match (self.above_since, self.cpu_sample) {
-            (Some((since, _)), Some((last, _))) => last.saturating_duration_since(since),
-            _ => Duration::ZERO,
+        match self.above_since {
+            Some(_) => self.saturated_run,
+            None => Duration::ZERO,
         }
+    }
+
+    /// Nothing says it is still saturated.
+    fn unsaturate(&mut self) {
+        self.above_since = None;
+        self.saturated_run = Duration::ZERO;
     }
 
     /// Whether it runs its share.
@@ -567,30 +593,57 @@ impl GaggleHealth {
         true
     }
 
-    /// Worker `id`'s CPU time is `cpu_micros`, arrived at `now`: its CPU
-    /// use is worked out against the sample before, once
-    /// [`MIN_CPU_SPAN`] apart, as a percent of its cores. Absent, or without
-    /// its cores, nothing is worked out.
-    pub(crate) fn cpu(&mut self, id: u32, cpu_micros: Option<u64>, now: Instant) {
+    /// Worker `id`'s CPU time is `cpu_micros`, read at `wall_micros` on its
+    /// own clock and arrived at `now`: its CPU use is worked out against the
+    /// sample before, once [`MIN_CPU_SPAN`] apart, as a percent of its
+    /// cores. The span between the two is the worker's own when both carry
+    /// its clock, so a delta that arrives late or early reads the same CPU,
+    /// and otherwise the time between their arrivals. Absent, or without its
+    /// cores, nothing is worked out.
+    pub(crate) fn cpu(
+        &mut self,
+        id: u32,
+        cpu_micros: Option<u64>,
+        wall_micros: Option<u64>,
+        now: Instant,
+    ) {
         let worker = self.entry(id);
         let (Some(micros), Some(cores)) = (cpu_micros, worker.cores) else {
             // No CPU time from it now: nothing says it is still saturated.
-            worker.above_since = None;
+            worker.unsaturate();
             return;
         };
-        let Some((at, before)) = worker.cpu_sample else {
-            worker.cpu_sample = Some((now, micros));
+        let sample = CpuSample {
+            at: now,
+            wall_micros,
+            micros,
+        };
+        let Some(before) = worker.cpu_sample else {
+            worker.cpu_sample = Some(sample);
             return;
         };
-        let span = now.saturating_duration_since(at);
+        let span = match (before.wall_micros, wall_micros) {
+            (Some(was), Some(is)) => {
+                let span = Duration::from_micros(is.saturating_sub(was));
+                // A clock that did not move on, as a restarted worker's,
+                // or one that jumped past the longest span, gives no
+                // baseline: start again from this sample.
+                if is <= was || span > MAX_CPU_SPAN {
+                    worker.cpu_sample = Some(sample);
+                    worker.unsaturate();
+                    return;
+                }
+                span
+            }
+            _ => now.saturating_duration_since(before.at),
+        };
         if span < MIN_CPU_SPAN {
             return;
         }
-        worker.cpu_sample = Some((now, micros));
-        let used = micros.saturating_sub(before) as f64;
-        // The samples are timed as they arrive: a late one squeezes the
-        // worker's time into a shorter span, and a worker's CPU time is
-        // untrusted, so the percent never passes 100.
+        worker.cpu_sample = Some(sample);
+        let used = micros.saturating_sub(before.micros) as f64;
+        // A worker's CPU time and clock are untrusted, so the percent never
+        // passes 100.
         let percent = (used * 100.0 / (span.as_micros() as f64 * f64::from(cores))).min(100.0);
         worker.cpu_percent = Some(percent);
         worker.cpu_peak = Some(worker.cpu_peak.map_or(percent, |peak| peak.max(percent)));
@@ -598,15 +651,16 @@ impl GaggleHealth {
             if worker.is_running() {
                 worker.saturated_total += span;
             }
+            worker.saturated_run += span;
             // Saturated since the start of the span this sample covers.
             worker.above_since.get_or_insert_with(|| {
                 (
-                    at,
+                    now.checked_sub(span).unwrap_or(now),
                     chrono::Utc::now() - chrono::Duration::from_std(span).unwrap_or_default(),
                 )
             });
         } else {
-            worker.above_since = None;
+            worker.unsaturate();
         }
     }
 
@@ -966,6 +1020,20 @@ pub(crate) fn sample_of(delta: &GaggleDelta) -> Option<(Fold, u64)> {
     }
 }
 
+/// This process's monotonic clock, in microseconds since a fixed point in
+/// it: read on a worker with its CPU time, so the manager times the CPU over
+/// the worker's own span.
+pub(crate) fn wall_micros() -> u64 {
+    wall_micros_at(Instant::now())
+}
+
+/// [`wall_micros`] for an instant this process read.
+pub(crate) fn wall_micros_at(at: Instant) -> u64 {
+    static ORIGIN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let origin = *ORIGIN.get_or_init(Instant::now);
+    at.saturating_duration_since(origin).as_micros() as u64
+}
+
 /// This process's CPU time so far, user and system, in microseconds: `None`
 /// where the platform has no cheap source of it. Read on a worker as each
 /// delta is sent, off the user threads.
@@ -1137,7 +1205,7 @@ mod tests {
     ) -> u64 {
         for second in from..=to {
             health.applied(0, None, None, at + secs(second as f64));
-            health.cpu(0, Some(micros), at + secs(second as f64));
+            health.cpu(0, Some(micros), None, at + secs(second as f64));
             health.tick(at + secs(second as f64));
             micros += percent * 10_000;
         }
@@ -1178,11 +1246,11 @@ mod tests {
         for (seconds, flagged) in [(4, false), (5, true)] {
             let mut health = running(1, Some(1), at);
             let mut micros = 0;
-            health.cpu(0, Some(micros), at);
+            health.cpu(0, Some(micros), None, at);
             for second in 1..=seconds * 2 {
                 micros += if second % 2 == 1 { 950_000 } else { 100_000 };
                 health.applied(0, None, None, at + secs(second as f64));
-                health.cpu(0, Some(micros), at + secs(second as f64));
+                health.cpu(0, Some(micros), None, at + secs(second as f64));
                 health.tick(at + secs(second as f64));
             }
             assert!(!health.worker(0).unwrap().live.saturated);
@@ -1220,22 +1288,22 @@ mod tests {
     fn cpu_is_a_percent_of_the_cores_and_absent_without_them() {
         let at = Instant::now();
         let mut health = running(1, Some(4), at);
-        health.cpu(0, Some(0), at);
+        health.cpu(0, Some(0), None, at);
         // Two cores of four busy.
-        health.cpu(0, Some(2_000_000), at + secs(1.0));
+        health.cpu(0, Some(2_000_000), None, at + secs(1.0));
         assert_eq!(health.worker(0).unwrap().cpu_percent, Some(50.0));
         // Samples closer than the span are not taken against each other.
-        health.cpu(0, Some(3_000_000), at + secs(1.1));
+        health.cpu(0, Some(3_000_000), None, at + secs(1.1));
         assert_eq!(health.worker(0).unwrap().cpu_percent, Some(50.0));
         // A late sample, or an untrusted CPU time, is never past 100%.
-        health.cpu(0, Some(u64::MAX), at + secs(2.0));
+        health.cpu(0, Some(u64::MAX), None, at + secs(2.0));
         assert_eq!(health.worker(0).unwrap().cpu_percent, Some(100.0));
         // Without CPU time, or without cores, nothing is worked out.
         for cores in [Some(4), None] {
             let mut health = running(1, cores, at);
             let cpu = |second: u64| (cores.is_none()).then_some(second * 1_000_000);
             for second in 0..10 {
-                health.cpu(0, cpu(second), at + secs(second as f64));
+                health.cpu(0, cpu(second), None, at + secs(second as f64));
                 health.tick(at + secs(second as f64));
             }
             let worker = health.worker(0).unwrap();
@@ -1243,6 +1311,111 @@ mod tests {
             let ran = record(&health, 0, at + secs(10.0));
             assert_eq!((ran.peak_cpu_percent, ran.saturated_secs), (None, None));
         }
+    }
+
+    /// How much later than the one before each of a worker's samples
+    /// arrives, in milliseconds, in turn: a late one, one soon after it, and
+    /// one a little early. The samples are a second apart on the worker.
+    const LATE: [u64; 3] = [3_000, 100, 920];
+
+    /// Feed worker 0 of `health` `samples` CPU samples a second apart on its
+    /// clock at `percent` of its one core, the first at `at`, each arriving
+    /// as [`LATE`] says, the clock sent when `clock`; after each the CPU
+    /// percent, `None` before one is worked out.
+    fn late(
+        health: &mut GaggleHealth,
+        at: Instant,
+        samples: u64,
+        percent: u64,
+        clock: bool,
+    ) -> Vec<Option<f64>> {
+        let mut arrived = at;
+        let mut read = Vec::new();
+        for sample in 0..samples {
+            if sample > 0 {
+                arrived += Duration::from_millis(LATE[(sample as usize - 1) % LATE.len()]);
+            }
+            let wall = clock.then_some(sample * 1_000_000);
+            health.applied(0, None, None, arrived);
+            health.cpu(0, Some(sample * percent * 10_000), wall, arrived);
+            health.tick(arrived);
+            read.push(health.worker(0).unwrap().cpu_percent);
+        }
+        read
+    }
+
+    #[test]
+    fn cpu_is_timed_by_the_workers_clock() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        let read = late(&mut health, at, 10, 95, true);
+        // A percent from the second sample on, each 95 however late it came.
+        assert_eq!(read[0], None);
+        for percent in &read[1..] {
+            let percent = percent.unwrap();
+            assert!((percent - 95.0).abs() < 1.0, "{read:?}");
+        }
+        assert_eq!(health.worker(0).unwrap().cpu_peak, Some(95.0));
+    }
+
+    #[test]
+    fn cpu_without_the_workers_clock_is_timed_by_arrival() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        let read = late(&mut health, at, 4, 95, false);
+        // A second's CPU over the 3 s it took to arrive reads low; one soon
+        // after waits for a longer span; two seconds' CPU over the 1.02 s
+        // since the late one is clamped.
+        assert_eq!(read[0], None);
+        assert!((read[1].unwrap() - 95.0 / 3.0).abs() < 0.01, "{read:?}");
+        assert_eq!(read[2], read[1]);
+        assert_eq!(read[3], Some(100.0));
+    }
+
+    #[test]
+    fn a_clock_that_goes_back_or_jumps_starts_again() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        let percent = |health: &GaggleHealth| health.worker(0).unwrap().cpu_percent;
+        health.cpu(0, Some(0), Some(0), at);
+        health.cpu(0, Some(500_000), Some(1_000_000), at + secs(1.0));
+        assert_eq!(percent(&health), Some(50.0));
+        // Back in time, then still: no percent, but each starts again.
+        health.cpu(0, Some(1_400_000), Some(500_000), at + secs(2.0));
+        assert_eq!(percent(&health), Some(50.0));
+        health.cpu(0, Some(2_000_000), Some(500_000), at + secs(3.0));
+        assert_eq!(percent(&health), Some(50.0));
+        health.cpu(0, Some(2_900_000), Some(1_500_000), at + secs(4.0));
+        assert_eq!(percent(&health), Some(90.0));
+        // Past the longest span: no percent, and it starts again.
+        let jumped = 1_500_000 + MAX_CPU_SPAN.as_micros() as u64 + 1;
+        health.cpu(0, Some(4_000_000), Some(jumped), at + secs(5.0));
+        assert_eq!(percent(&health), Some(90.0));
+        health.cpu(0, Some(4_700_000), Some(jumped + 1_000_000), at + secs(6.0));
+        assert_eq!(percent(&health), Some(70.0));
+        assert_eq!(health.worker(0).unwrap().cpu_peak, Some(90.0));
+    }
+
+    #[test]
+    fn saturation_fed_late_samples_is_the_workers_time() {
+        let at = Instant::now();
+        let mut health = running(1, Some(1), at);
+        // Nine samples at 95%: eight seconds saturated on the worker's clock,
+        // which took over twelve seconds to arrive.
+        let _ = late(&mut health, at, 9, 95, true);
+        let worker = health.worker(0).unwrap();
+        assert_eq!(worker.saturated_total, secs(8.0));
+        assert_eq!(worker.saturated_for(), secs(8.0));
+        // Saturated from a second, on its clock, before the first late
+        // sample arrived.
+        let first = at + Duration::from_millis(LATE[0]);
+        assert_eq!(worker.above_since.unwrap().0, first - secs(1.0));
+        assert!(worker.live.saturated);
+        let saturated = health.events().0.next().unwrap().text.clone();
+        assert_eq!(saturated, "load-0 saturated (CPU 95% for 5 s)");
+        let ran = record(&health, 0, at + secs(20.0));
+        assert_eq!(ran.saturated_secs, Some(8));
+        assert!(ran.flags.contains(&GaggleWorkerFlag::Saturated));
     }
 
     /// Workers 0 to `n - 1`, each with `rates[id]` requests a second at
@@ -1463,7 +1636,7 @@ mod tests {
             let now = at + secs(tick as f64);
             let started = Instant::now();
             for id in 0..WORKERS {
-                health.cpu(id, Some(tick * 1_000_000), now);
+                health.cpu(id, Some(tick * 1_000_000), None, now);
                 health.applied(id, sample_of(&delta), None, now);
             }
             health.tick(now);
