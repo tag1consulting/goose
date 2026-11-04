@@ -3418,6 +3418,7 @@ async fn gaggle_worker_health_in_one_process() {
         };
         let busy_peak = peak(busy).unwrap();
         assert!((94..=96).contains(&busy_peak), "{}", busy);
+        println!("busy worker peak CPU {}%", busy_peak);
         assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
         assert!(
             busy["flags"]
@@ -3534,6 +3535,7 @@ async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
         let busy = all.iter().max_by_key(|worker| peak(worker)).unwrap();
         let busy_peak = peak(busy).unwrap();
         assert!((94..=96).contains(&busy_peak), "{}", busy);
+        println!("busy worker peak CPU {}%", busy_peak);
         assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
         assert!(
             busy["flags"]
