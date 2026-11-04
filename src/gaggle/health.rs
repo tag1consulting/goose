@@ -1353,7 +1353,7 @@ mod tests {
         assert_eq!(read[0], None);
         for percent in &read[1..] {
             let percent = percent.unwrap();
-            assert!((percent - 95.0).abs() < 1.0, "{read:?}");
+            assert!((percent - 95.0).abs() < 1.0, "{:?}", read);
         }
         assert_eq!(health.worker(0).unwrap().cpu_peak, Some(95.0));
     }
@@ -1367,7 +1367,7 @@ mod tests {
         // after waits for a longer span; two seconds' CPU over the 1.02 s
         // since the late one is clamped.
         assert_eq!(read[0], None);
-        assert!((read[1].unwrap() - 95.0 / 3.0).abs() < 0.01, "{read:?}");
+        assert!((read[1].unwrap() - 95.0 / 3.0).abs() < 0.01, "{:?}", read);
         assert_eq!(read[2], read[1]);
         assert_eq!(read[3], Some(100.0));
     }
