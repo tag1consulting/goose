@@ -782,6 +782,8 @@ struct UserBuild {
     configuration: GooseConfiguration,
     load_test_hash: u64,
     client_strategy: Option<client::ClientStrategy>,
+    /// Limits the clients built at once to the CPUs, shared by every user.
+    client_builds: Arc<tokio::sync::Semaphore>,
     /// Counts every client built for a user.
     #[cfg(test)]
     clients_built: Arc<AtomicUsize>,
@@ -827,10 +829,13 @@ impl UserStart {
     async fn run(self, receiver: flume::Receiver<GooseUserCommand>) {
         let weighted = self.user;
         // Building a client costs milliseconds of CPU (its TLS setup): on a
-        // blocking thread, so the users already running are not held up
-        // behind the builds of a large ramp.
+        // blocking thread, at most one for each CPU at once, so the users
+        // already running are not held up behind the builds of a large ramp.
+        let permit = weighted.build.client_builds.acquire().await;
         let build = weighted.build.clone();
-        let built = match tokio::task::spawn_blocking(move || build.client()).await {
+        let client = tokio::task::spawn_blocking(move || build.client()).await;
+        drop(permit);
+        let built = match client {
             Ok(client) => client.map_err(GooseError::Reqwest),
             Err(e) => Err(GooseError::Io(io::Error::other(e))),
         }
@@ -936,6 +941,9 @@ pub struct GooseAttack {
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
+    /// How many users' clients may be built at once: one for each CPU, so the
+    /// builds of a large ramp leave CPU for the users already running.
+    client_builds: Arc<tokio::sync::Semaphore>,
     /// How many clients users have built when they started.
     #[cfg(test)]
     user_clients_built: Arc<AtomicUsize>,
@@ -1030,6 +1038,9 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
+            client_builds: Arc::new(tokio::sync::Semaphore::new(
+                std::thread::available_parallelism().map_or(1, |n| n.get()),
+            )),
             #[cfg(test)]
             user_clients_built: Arc::default(),
             run_in_progress: false,
@@ -1079,6 +1090,9 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
+            client_builds: Arc::new(tokio::sync::Semaphore::new(
+                std::thread::available_parallelism().map_or(1, |n| n.get()),
+            )),
             #[cfg(test)]
             user_clients_built: Arc::default(),
             run_in_progress: false,
@@ -1547,6 +1561,7 @@ impl GooseAttack {
             configuration: self.configuration.clone(),
             load_test_hash: self.metrics.hash,
             client_strategy: self.client_strategy.clone(),
+            client_builds: self.client_builds.clone(),
             #[cfg(test)]
             clients_built: self.user_clients_built.clone(),
         });
