@@ -59,6 +59,9 @@ pub(crate) struct TestFaults {
     /// Send a CPU time that has this percent of the worker's cores busy for
     /// this long from its first delta, and idle after.
     pub(crate) busy_cpu: Option<(u64, Duration)>,
+    /// Hold back every other delta by a random time below this, after
+    /// its CPU sample is read, as a busy network or manager would.
+    pub(crate) delay_deltas: Option<Duration>,
 }
 
 impl TestFaults {
@@ -99,6 +102,8 @@ impl TestFaults {
         if let Ok(mut busy) = outbox.busy_cpu.lock() {
             *busy = self.busy_cpu.map(|(percent, span)| (percent, span, None));
         }
+        let delay = self.delay_deltas.map_or(0, |most| most.as_millis() as u64);
+        outbox.delay_deltas_ms.store(delay, Relaxed);
     }
 
     /// Say once, through `link`, that the worker stopped for

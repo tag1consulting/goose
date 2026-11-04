@@ -166,6 +166,8 @@ pub(crate) enum Event {
         delta: Box<GaggleDelta>,
         /// The worker's CPU time so far, in microseconds, when it said.
         cpu_micros: Option<u64>,
+        /// The worker's clock as it read that CPU time, in microseconds.
+        wall_micros: Option<u64>,
         bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
     /// Its answer to `Control` `control`: `received` as it read the change,
@@ -1022,7 +1024,9 @@ async fn read_worker(
                 id,
                 error: ack.error,
             }),
-            Some(FromWorker::Metrics(metrics)) => Arrived::Delta(metrics.delta, metrics.cpu_micros),
+            Some(FromWorker::Metrics(metrics)) => {
+                Arrived::Delta(metrics.delta, metrics.cpu_micros, metrics.wall_micros)
+            }
             Some(FromWorker::UsersStopped(_)) => Arrived::Event(Event::UsersStopped { id }),
             Some(FromWorker::ControlAck(ack)) => Arrived::Event(Event::ControlAck {
                 id,
@@ -1055,7 +1059,7 @@ async fn read_worker(
         // A delta holds its share itself, until the merge has taken it.
         let queued = match arrived {
             Arrived::Event(event) => (event, Some(permit)),
-            Arrived::Delta(bytes, cpu_micros) => match GaggleDelta::decode(&bytes) {
+            Arrived::Delta(bytes, cpu_micros, wall_micros) => match GaggleDelta::decode(&bytes) {
                 Ok(delta) => {
                     got_final |= delta.kind == DeltaKind::Final;
                     // What it holds decoded, at least its encoded size, is
@@ -1090,6 +1094,7 @@ async fn read_worker(
                         id,
                         delta: Box::new(delta),
                         cpu_micros,
+                        wall_micros,
                         bytes: Some(permit),
                     };
                     (event, None)
@@ -1135,8 +1140,9 @@ async fn read_worker(
 /// an event, or a delta still to decode.
 enum Arrived {
     Event(Event),
-    /// A delta, and the worker's CPU time with it.
-    Delta(Vec<u8>, Option<u64>),
+    /// A delta, and the worker's CPU time with it and its clock as it read
+    /// that.
+    Delta(Vec<u8>, Option<u64>, Option<u64>),
 }
 
 /// Wait for `future`, which the manager holds back, as when its event queue
@@ -1929,6 +1935,7 @@ pub(crate) mod handshake_tests {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: last.encode().unwrap(),
                     cpu_micros: None,
+                    wall_micros: None,
                 })),
             })
             .await
@@ -2010,6 +2017,7 @@ pub(crate) mod handshake_tests {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: vec![0xff; 16],
                     cpu_micros: None,
+                    wall_micros: None,
                 })),
             })
             .await
@@ -2405,6 +2413,7 @@ pub(crate) mod handshake_tests {
                 message: Some(FromWorker::Metrics(Metrics {
                     delta: delta.encode().unwrap(),
                     cpu_micros: None,
+                    wall_micros: None,
                 })),
             })
             .await
@@ -2633,6 +2642,7 @@ pub(crate) mod handshake_tests {
                         message: Some(FromWorker::Metrics(Metrics {
                             delta: encoded.clone(),
                             cpu_micros: None,
+                            wall_micros: None,
                         })),
                     };
                     if tx.send(message).await.is_err() {

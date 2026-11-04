@@ -64,6 +64,10 @@ message Metrics {
   // read as the delta is sent; absent where the platform has no cheap
   // source of it.
   optional uint64 cpu_micros = 2;
+  // Microseconds on the worker's monotonic clock since a fixed point in its
+  // process, read at the same moment as `cpu_micros`: only meaningful as the
+  // difference between two samples from one worker.
+  optional uint64 wall_micros = 3;
 }
 
 message Stopped {

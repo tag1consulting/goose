@@ -68,6 +68,11 @@ pub struct Metrics {
     /// source of it.
     #[prost(uint64, optional, tag = "2")]
     pub cpu_micros: ::core::option::Option<u64>,
+    /// Microseconds on the worker's monotonic clock since a fixed point in its
+    /// process, read at the same moment as `cpu_micros`: only meaningful as the
+    /// difference between two samples from one worker.
+    #[prost(uint64, optional, tag = "3")]
+    pub wall_micros: ::core::option::Option<u64>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Stopped {

@@ -1365,6 +1365,7 @@ impl GooseAttack {
                 id,
                 delta,
                 cpu_micros,
+                wall_micros,
                 bytes,
             } => {
                 let Some(worker) = run.worker(id) else {
@@ -1375,7 +1376,7 @@ impl GooseAttack {
                     return;
                 }
                 if let Ok(mut health) = run.health.lock() {
-                    health.cpu(id, cpu_micros, Instant::now());
+                    health.cpu(id, cpu_micros, wall_micros, Instant::now());
                 }
                 // Whether the merge takes a delta depends on all it holds of
                 // the worker (its sequence, epoch, final delta and names),

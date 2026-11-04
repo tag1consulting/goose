@@ -3330,12 +3330,10 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
 /// runs and then finishes, or is lost; the worker that stops on its own a
 /// second in is lost, with an event; a users change and a throttle change
 /// from the manager's Controller each make an event saying both workers
-/// left acknowledged it; and the worker that says its CPU is busy for 8
-/// seconds is flagged saturated, once, then recovers, once. It claims 150%
-/// of its cores, clamped to 100 by the manager, as the manager times each
-/// sample by its arrival: on a loaded host a delta 1.5 s late spreads a
-/// second's CPU time over 1.5 s, which a claim of 95% would show as 63%. The reports
-/// carry it all: the Workers and Events sections, and the Check sentence.
+/// left acknowledged it; and the worker that says 95% of its CPU is busy
+/// for 8 seconds is flagged saturated, once, then recovers, once. The
+/// reports carry it all: the Workers and Events sections, and the Check
+/// sentence.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_worker_health_in_one_process() {
@@ -3351,7 +3349,7 @@ async fn gaggle_worker_health_in_one_process() {
                 ..Default::default()
             },
             TestFaults {
-                busy_cpu: Some((150, Duration::from_secs(8))),
+                busy_cpu: Some((95, Duration::from_secs(8))),
                 ..Default::default()
             },
         ];
@@ -3411,13 +3409,16 @@ async fn gaggle_worker_health_in_one_process() {
             assert!(worker["requests"].as_u64().unwrap() > 0, "{}", worker);
             assert!(worker["cores"].as_u64().unwrap() > 0, "{}", worker);
         }
-        // The busy worker claims 150% of its cores: the manager shows 100.
-        let (busy, real): (Workers, Workers) = finished
-            .iter()
-            .copied()
-            .partition(|worker| worker["peak_cpu_percent"].as_u64() == Some(100));
-        assert_eq!(busy.len(), 1, "one busy worker: {:?}", finished);
-        let busy = busy[0];
+        // The busy worker, at 95% of its cores, peaks highest: at 95, its
+        // own clock's span, never clamped at 100.
+        let peak = |worker: &serde_json::Value| worker["peak_cpu_percent"].as_u64();
+        let (busy, real) = match peak(finished[0]) >= peak(finished[1]) {
+            true => (finished[0], &finished[1..]),
+            false => (finished[1], &finished[..1]),
+        };
+        let busy_peak = peak(busy).unwrap();
+        assert!((94..=96).contains(&busy_peak), "{}", busy);
+        println!("busy worker peak CPU {}%", busy_peak);
         assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
         assert!(
             busy["flags"]
@@ -3486,6 +3487,94 @@ async fn gaggle_worker_health_in_one_process() {
         for text in ["## Workers", "## Events", "Check: "] {
             assert!(markdown.contains(text), "{}: {}", text, markdown);
         }
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
+}
+
+/// A worker that says 95% of its CPU is busy for 8 seconds, every other
+/// delta of which is held back by a random time up to 2 seconds after it
+/// reads its CPU time,
+/// is flagged saturated, once, then recovers, once, and peaks at 95, not
+/// clamped at 100: the manager times its CPU by the worker's own clock, not by
+/// when each delta arrives.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
+    let test = async {
+        let server = answering().await;
+        let folder = scratch("worker-cpu-clock");
+        let faults = [
+            TestFaults::default(),
+            TestFaults {
+                busy_cpu: Some((95, Duration::from_secs(8))),
+                delay_deltas: Some(Duration::from_secs(2)),
+                ..Default::default()
+            },
+        ];
+        let args = [
+            "--users",
+            "4",
+            "--increase-rate",
+            "40",
+            "--run-time",
+            "14",
+            "--throttle-requests",
+            "300",
+            "--report-file",
+        ];
+        let (manager, workers) =
+            gaggle(standard, 2, server.base_url(), &folder, &args, &[], &faults).await;
+        manager.expect("the manager exits cleanly");
+        for worker in workers {
+            worker.expect("the worker exits cleanly");
+        }
+
+        let (gaggle, _) = record(&folder);
+        let all = gaggle["workers"].as_array().unwrap();
+        assert_eq!(all.len(), 2, "{:?}", all);
+        let peak = |worker: &serde_json::Value| worker["peak_cpu_percent"].as_u64();
+        let busy = all.iter().max_by_key(|worker| peak(worker)).unwrap();
+        let busy_peak = peak(busy).unwrap();
+        assert!((94..=96).contains(&busy_peak), "{}", busy);
+        println!("busy worker peak CPU {}%", busy_peak);
+        assert!(busy["saturated_secs"].as_u64().unwrap() >= 5, "{}", busy);
+        assert!(
+            busy["flags"]
+                .as_array()
+                .unwrap()
+                .contains(&"saturated".into()),
+            "{}",
+            busy
+        );
+        // The real worker is far from saturated.
+        let real = all
+            .iter()
+            .find(|worker| worker["name"] != busy["name"])
+            .unwrap();
+        assert!(real["saturated_secs"].as_u64().unwrap_or(0) < 5, "{}", real);
+        // A delta held 2 s after a 1 s interval can leave the 3 s gap that
+        // flags the busy worker lagging, and its recovery from that is a
+        // worker_recovered too: each recovery is told apart by its text.
+        let events = gaggle["events"].as_array().unwrap();
+        let texts = |kind: &str| -> Vec<&str> {
+            events
+                .iter()
+                .filter(|event| event["kind"] == kind)
+                .map(|event| event["text"].as_str().unwrap())
+                .collect()
+        };
+        assert_eq!(texts("worker_saturated").len(), 1, "{:?}", events);
+        let (saturation, other): (Vec<&str>, Vec<&str>) = texts("worker_recovered")
+            .into_iter()
+            .partition(|text| text.ends_with("no longer saturated"));
+        assert_eq!(saturation.len(), 1, "{:?}", events);
+        assert!(
+            other.iter().all(|text| text.ends_with("no longer lagging")),
+            "{:?}",
+            events
+        );
     };
     tokio::time::timeout(Duration::from_secs(120), test)
         .await
