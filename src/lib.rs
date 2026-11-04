@@ -661,7 +661,7 @@ struct GooseAttackRunState {
     /// finish, joined when the load test stops. Finished tasks are pruned as
     /// users start and while the load test holds.
     users: Vec<tokio::task::JoinHandle<()>>,
-    /// How many tasks `users` held after it was last pruned on a user start.
+    /// How many tasks `users` held after it was last pruned.
     users_pruned_at: usize,
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
@@ -742,6 +742,7 @@ impl GooseAttackRunState {
     fn prune_finished_users(&mut self) {
         let held = self.users.len();
         self.users.retain(|user| !user.is_finished());
+        self.users_pruned_at = self.users.len();
         if self.users.len() < held {
             debug!(
                 "[users]: released {} finished user tasks, {} held for {} running users",
@@ -753,12 +754,11 @@ impl GooseAttackRunState {
     }
 
     /// As [`prune_finished_users`](Self::prune_finished_users), on a user start:
-    /// only once the tasks held have doubled since the last time, so each start
+    /// only once the tasks held have doubled since the last prune, so each start
     /// does constant work on average, however long stopped users take to end.
     fn prune_finished_users_when_due(&mut self) {
         if self.users.len() >= 2 * self.users_pruned_at.max(1) {
             self.prune_finished_users();
-            self.users_pruned_at = self.users.len();
         }
     }
 }
@@ -821,7 +821,8 @@ struct UserStart {
 
 impl UserStart {
     /// Build the user, then run it until it exits. A user whose client can not
-    /// be built logs why and exits, telling the parent as an exiting user does.
+    /// be built logs why and exits, telling the parent as a user that completes
+    /// its iterations does.
     async fn run(self, receiver: flume::Receiver<GooseUserCommand>) {
         let weighted = self.user;
         let built = weighted
@@ -3123,7 +3124,8 @@ impl GooseAttack {
     // Soft vs hard errors:
     // - Soft: expected rejections → ControlOutcome { ok: false, error: Some(...) }
     // - Hard: Result::Err(GooseError) (weight_scenario_users on a users or test
-    //   plan increase; reset_run_state in start finish; cancel_attack).
+    //   plan increase, and check_user_client on a test plan; reset_run_state in
+    //   start finish; cancel_attack).
     // `GooseAttack::control` replies with the outcome, or `internal` on a hard
     // error before returning it, so every caller still waiting gets an answer.
     // ========================================================================
@@ -3423,7 +3425,7 @@ impl GooseAttack {
             };
             let total_time = run_shape::ramp_ms(user_difference, rate);
 
-            // Allocate more users if increasing users (hard Err on failure),
+            // Weight more users if increasing users (hard Err on failure),
             // before anything changes.
             if new_users > goose_attack_run_state.active_users {
                 let weighted = self.weight_scenario_users(user_difference);
@@ -3470,7 +3472,7 @@ impl GooseAttack {
     /// Switch a running load test to `test_plan`, from its first step and
     /// the current user count, replacing a users ramp and its shape.
     ///
-    /// Hard error: `weight_scenario_users`.
+    /// Hard error: `weight_scenario_users` or `check_user_client`.
     pub(crate) fn run_test_plan(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -5644,6 +5646,8 @@ mod tests {
             built(goose_attack) >= 6
         })
         .await;
+        // One more turn, so a user that built a second client is counted.
+        goose_attack.maintain_attack(&mut run_state).await.unwrap();
         assert_eq!(built(&goose_attack), 6, "5 started users built other than 5");
     }
 

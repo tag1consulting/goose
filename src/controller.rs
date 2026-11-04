@@ -906,8 +906,8 @@ impl GooseAttack {
     /// Apply `settings` together, all or none, refused as
     /// [`Self::refuse_settings`] says. A single Controller setting is
     /// applied as settings of its own, so every front end decides alike.
-    /// Hard error: `weight_scenario_users` when a test plan replaces a
-    /// running test's.
+    /// Hard error: `weight_scenario_users` or `check_user_client` when a test
+    /// plan replaces a running test's.
     fn control_settings(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
