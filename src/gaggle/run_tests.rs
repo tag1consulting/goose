@@ -2485,6 +2485,94 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
         .expect("within 60 seconds");
 }
 
+/// A Ctrl-C while the stopping manager waits for its processor to work
+/// through its queue, behind a slow threshold check that passes, is a
+/// Ctrl-C during the final wait: the manager ends within 5 seconds of the
+/// drain, where it would wait the request timeout and more for a worker
+/// that never says its users stopped, records that worker lost, canceled,
+/// and runs test_stop once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_killswitch_during_the_stop_drain() {
+    use std::sync::atomic::Ordering::SeqCst;
+    // Disarmed however the test ends, so no later test meets the hold.
+    struct Disarm;
+    impl Drop for Disarm {
+        fn drop(&mut self) {
+            super::faults::HOLD_THRESHOLD_CHECK.store(false, SeqCst);
+            super::faults::CANCEL_IN_HELD_CHECK.store(false, SeqCst);
+            super::faults::MANAGER_STOPPING.store(false, SeqCst);
+        }
+    }
+    let _disarm = Disarm;
+    let test = async {
+        let server = MockServer::start_async().await;
+        let (_a, stop) = (
+            mock_ok(&server, "/a").await,
+            mock_ok(&server, "/stop").await,
+        );
+        let folder = scratch("cancel-stop-drain");
+        *super::faults::HELD_CHECK_ENDED.lock().unwrap() = None;
+        super::faults::MANAGER_STOPPING.store(false, SeqCst);
+        super::faults::HOLD_THRESHOLD_CHECK.store(true, SeqCst);
+        super::faults::CANCEL_IN_HELD_CHECK.store(true, SeqCst);
+        super::faults::HELD_TO_STOP.store(false, SeqCst);
+        let faults = [TestFaults {
+            withhold_final: true,
+            ..Default::default()
+        }];
+        let build = |configuration, place| quick(configuration, place).test_stop(get("/stop"));
+        let ((manager, ended), _) = gaggle_timed(
+            build,
+            1,
+            server.base_url(),
+            &folder,
+            &[
+                "--users",
+                "1",
+                "--run-time",
+                "3",
+                "--threshold",
+                "error-rate<50%",
+                "--report-file",
+            ],
+            &[],
+            &faults,
+        )
+        .await;
+        crate::reset_killswitch();
+        super::faults::MANAGER_STOPPING.store(false, SeqCst);
+        assert!(
+            super::faults::HELD_TO_STOP.swap(false, SeqCst),
+            "the held check was released before the manager stopped"
+        );
+        assert!(
+            !super::faults::CANCEL_IN_HELD_CHECK.swap(false, SeqCst),
+            "the held check sent no Ctrl-C"
+        );
+        let drained = super::faults::HELD_CHECK_ENDED
+            .lock()
+            .unwrap()
+            .expect("the held check ended");
+        let took = ended.saturating_duration_since(drained);
+        assert!(took <= Duration::from_secs(5), "{:?}", took);
+        assert!(manager.is_ok(), "{:?}", manager.map(|_| ()));
+        assert_eq!(stop.calls_async().await, 1, "test_stop");
+        let (gaggle, _) = record(&folder);
+        let (lost, _) = split_workers(&gaggle, |worker| worker["state"] == "lost");
+        assert_eq!(lost.len(), 1, "{gaggle}");
+        let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.starts_with("canceled while the manager waited"),
+            "{}",
+            gaggle
+        );
+    };
+    tokio::time::timeout(Duration::from_secs(120), test)
+        .await
+        .expect("within 120 seconds");
+}
+
 /// A telnet Controller session with the manager in one process.
 struct Telnet(tokio::net::TcpStream);
 

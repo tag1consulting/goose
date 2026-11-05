@@ -201,6 +201,16 @@ pub(crate) static HELD_TO_STOP: std::sync::atomic::AtomicBool =
 pub(crate) static MANAGER_STOPPING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Armed by a test: the held threshold check triggers the killswitch, as
+/// Ctrl-C on the manager, once the manager is stopping, while the stop
+/// waits behind it.
+pub(crate) static CANCEL_IN_HELD_CHECK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// When the held threshold check let the processor go on.
+pub(crate) static HELD_CHECK_ENDED: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
 /// Hold a threshold check, as [`HOLD_THRESHOLD_CHECK`] says, once there are
 /// requests to judge.
 pub(crate) fn hold_threshold_check(has_requests: bool) {
@@ -216,7 +226,11 @@ pub(crate) fn hold_threshold_check(has_requests: bool) {
             std::thread::sleep(Duration::from_millis(10));
         }
         HELD_TO_STOP.store(MANAGER_STOPPING.load(SeqCst), SeqCst);
+        if MANAGER_STOPPING.load(SeqCst) && CANCEL_IN_HELD_CHECK.swap(false, SeqCst) {
+            crate::trigger_killswitch("a test's Ctrl-C during the stop drain");
+        }
         std::thread::sleep(Duration::from_millis(300));
+        *HELD_CHECK_ENDED.lock().unwrap() = Some(std::time::Instant::now());
     });
 }
 
