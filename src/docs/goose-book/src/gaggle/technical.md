@@ -40,7 +40,7 @@ In `report.json`'s `gaggle` section each worker's `state` is `joining`, `ready`,
 
 ## The manager's memory
 
-The manager keeps, for each worker, every second of its graph rows over the whole run, as well as their merge: what a worker sends grows with its request names and with the run's length, not with its users. A worker's rows take about 180 bytes for each request name each second (measured with the latency heatmap on; see the PR's figures), so a manager of 50 workers of 30 request names each holds about 3.6 GiB after 4 hours (50 x 30 x 14,400 seconds x 180 bytes), on top of what one process running the whole load test would hold. Give a long run's manager the memory for it, or fewer request names.
+The manager keeps, for each worker, every second of its graph rows over the whole run, as well as their merge: what a worker sends grows with its request names and with the run's length, not with its users. A worker's rows take at most about 300 bytes for each request name each second (with the latency heatmap on, as Goose's ignored test `manager_memory_per_worker` counts them), so a manager of 50 workers of 30 request names each holds up to about 6 GiB after 4 hours (50 x 30 x 14,400 seconds x 300 bytes), on top of what one process running the whole load test would hold. Give a long run's manager the memory for it, or fewer request names.
 
 ## Trust
 
