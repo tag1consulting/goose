@@ -652,6 +652,8 @@ mod tests {
             json!(true),
             json!([1]),
             json!({}),
+            json!(1e20),
+            json!(3.0),
         ];
         for tool in Tool::ALL {
             for value in values {

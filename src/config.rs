@@ -5875,6 +5875,14 @@ mod test {
             .set_default(GooseDefault::DashboardAuthToken, "secret")
             .unwrap()
             .set_default(GooseDefault::DashboardMaxClients, 64)
+            .unwrap()
+            .set_default(GooseDefault::Mcp, true)
+            .unwrap()
+            .set_default(GooseDefault::McpHost, "127.0.0.2")
+            .unwrap()
+            .set_default(GooseDefault::McpPort, 6119)
+            .unwrap()
+            .set_default(GooseDefault::McpReadOnly, true)
             .unwrap();
 
         assert!(goose_attack.defaults.host == Some(host));
@@ -5918,6 +5926,10 @@ mod test {
         assert!(goose_attack.defaults.dashboard_host == Some("127.0.0.1".to_string()));
         assert!(goose_attack.defaults.dashboard_port == Some(5118));
         assert!(goose_attack.defaults.dashboard_auth_token == Some("secret".to_string()));
+        assert!(goose_attack.defaults.mcp == Some(true));
+        assert!(goose_attack.defaults.mcp_host == Some("127.0.0.2".to_string()));
+        assert!(goose_attack.defaults.mcp_port == Some(6119));
+        assert!(goose_attack.defaults.mcp_read_only == Some(true));
         assert!(goose_attack.defaults.dashboard_max_clients == Some(64));
     }
 

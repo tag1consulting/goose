@@ -128,6 +128,24 @@ async fn tools_listed_refused_and_redacted() {
         ]);
         let mut mcp = Mcp::new(port).with_token(mcp_token);
 
+        // The handshake a client of a revision before 2026-07-28 starts with.
+        let init = mcp
+            .rpc(
+                "initialize",
+                json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": { "name": "test", "version": "0" },
+                }),
+            )
+            .await;
+        assert!(
+            init["result"]["capabilities"]["tools"].is_object(),
+            "{}",
+            init
+        );
+        assert_eq!(init["result"]["serverInfo"]["name"], "goose", "{}", init);
+
         let tools = mcp.tools().await;
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
