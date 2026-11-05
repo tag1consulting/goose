@@ -2583,9 +2583,10 @@ fn short_names_are_estimated_at_no_less_than_they_hold() {
         for name in names() {
             let seconds = 0..rows;
             let graph = &mut every.graph;
-            graph
-                .errors
-                .insert(name.clone(), seconds.clone().map(|second| (second, 1)).collect());
+            graph.errors.insert(
+                name.clone(),
+                seconds.clone().map(|second| (second, 1)).collect(),
+            );
             graph.averages.insert(
                 name.clone(),
                 seconds

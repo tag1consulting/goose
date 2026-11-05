@@ -105,7 +105,11 @@ type EventKey = (u64, u32, usize);
 /// new one's place on taken out once and merged back with them, so the work
 /// is the held list's tail and `new`, never their product. New events that
 /// all follow the held ones, as each second's do, move none.
-fn place_events(keys: &mut Vec<EventKey>, events: &mut Vec<CoEvent>, mut new: Vec<(EventKey, CoEvent)>) {
+fn place_events(
+    keys: &mut Vec<EventKey>,
+    events: &mut Vec<CoEvent>,
+    mut new: Vec<(EventKey, CoEvent)>,
+) {
     // Each key is unique: a worker numbers its own events.
     new.sort_unstable_by_key(|(key, _)| *key);
     let Some((first, _)) = new.first() else {
