@@ -1,6 +1,7 @@
 //! The MCP Controller's own rules: the tools it lists and how, read only
-//! mode, its Origin, Host and token checks, its body limit, the refusals it
-//! returns as tool errors, and that it is off unless `--mcp` is given. What
+//! mode, its Origin, Host and token checks, its body limit and connection
+//! cap, the refusals it returns as
+//! tool errors, and that it is off unless `--mcp` is given. What
 //! every command does through it is in tests/controller.rs and
 //! tests/control_agreement.rs, shared with telnet and WebSocket.
 
@@ -27,15 +28,86 @@ async fn get_index(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
+/// How many times [`Running::start`] tries, each on new ports, before it
+/// gives up.
+const START_ATTEMPTS: usize = 3;
+
 /// A load test waiting idle for a Controller, run with `args` added.
 struct Running {
     load: JoinHandle<Result<GooseMetrics, GooseError>>,
     _server: MockServer,
+    /// The MCP port, then the other ports the test asked for.
+    ports: Vec<u16>,
 }
 
 impl Running {
-    /// Start a load test against a mock server, with `args` added.
-    fn start(args: &[&str]) -> Self {
+    /// Start a load test with an MCP Controller, on `1 + more` new free
+    /// ports: `args` builds the options to add from their text, the MCP
+    /// port first. The ports are free when chosen but not held, as Goose
+    /// binds them itself, so another test may take one first. Goose then
+    /// logs that it could not listen and runs without the MCP Controller,
+    /// which the first call shows: nothing answers on the port, or another
+    /// load test does. Only on that is the start tried again, on new ports,
+    /// at most [`START_ATTEMPTS`] times; `token` is the MCP token, if any.
+    async fn start(
+        more: usize,
+        token: Option<&str>,
+        args: impl Fn(&[String]) -> Vec<String>,
+    ) -> Self {
+        for attempt in 1..=START_ATTEMPTS {
+            let ports = free_ports(1 + more);
+            let texts: Vec<String> = ports.iter().map(u16::to_string).collect();
+            let args = args(&texts);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (load, server) = Self::spawn(&args);
+            let mut probe = Mcp::new(ports[0]);
+            if let Some(token) = token {
+                probe = probe.with_token(token);
+            }
+            // get_config names the host under load: this test's mock server
+            // or another test's.
+            let reply = probe
+                .reach(&request("tools/call", json!({ "name": "get_config" })), &[])
+                .await;
+            let host = reply
+                .as_ref()
+                .filter(|reply| reply.status == 200)
+                .map(|reply| {
+                    reply.json()["result"]["structuredContent"]["host"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string()
+                });
+            if host.as_deref() == Some(server.base_url().as_str()) {
+                return Running {
+                    load,
+                    _server: server,
+                    ports,
+                };
+            }
+            eprintln!(
+                "attempt {attempt} of {START_ATTEMPTS}: the MCP Controller on port {} is not this load test's ({}): retrying on new ports",
+                ports[0],
+                match &reply {
+                    None => "nothing listens".to_string(),
+                    Some(reply) => format!("{} {}", reply.status, reply.body),
+                }
+            );
+            load.abort();
+        }
+        panic!(
+            "no MCP Controller of this test's in {} attempts",
+            START_ATTEMPTS
+        );
+    }
+
+    /// The MCP port.
+    fn port(&self) -> u16 {
+        self.ports[0]
+    }
+
+    /// Spawn a load test against a new mock server, with `args` added.
+    fn spawn(args: &[&str]) -> (JoinHandle<Result<GooseMetrics, GooseError>>, MockServer) {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET).path("/");
@@ -57,10 +129,10 @@ impl Running {
         let goose_attack = GooseAttack::initialize_with_config(configuration)
             .unwrap()
             .register_scenario(scenario!("Mcp").register_transaction(transaction!(get_index)));
-        Running {
-            load: tokio::spawn(async move { goose_attack.execute().await }),
-            _server: server,
-        }
+        (
+            tokio::spawn(async move { goose_attack.execute().await }),
+            server,
+        )
     }
 
     /// Shut the load test down through `mcp` and wait for it to end.
@@ -73,6 +145,11 @@ impl Running {
             .expect("join load test")
             .expect("load test");
     }
+}
+
+/// `args` as owned strings, for [`Running::start`].
+fn strings(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| arg.to_string()).collect()
 }
 
 /// `body` as a JSON-RPC request.
@@ -110,23 +187,24 @@ async fn telnet(port: u16, line: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn tools_listed_refused_and_redacted() {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let ports = free_ports(2);
-        let (port, telnet_port) = (ports[0], ports[1]);
-        let (port_text, telnet_text) = (port.to_string(), telnet_port.to_string());
         let mcp_token = "mcp-secret-token";
         let dashboard_token = "dashboard-secret-token";
-        let running = Running::start(&[
-            "--mcp",
-            "--mcp-port",
-            &port_text,
-            "--mcp-token",
-            mcp_token,
-            "--dashboard-auth-token",
-            dashboard_token,
-            "--telnet-port",
-            &telnet_text,
-        ]);
-        let mut mcp = Mcp::new(port).with_token(mcp_token);
+        let running = Running::start(1, Some(mcp_token), |ports| {
+            strings(&[
+                "--mcp",
+                "--mcp-port",
+                &ports[0],
+                "--mcp-token",
+                mcp_token,
+                "--dashboard-auth-token",
+                dashboard_token,
+                "--telnet-port",
+                &ports[1],
+            ])
+        })
+        .await;
+        let telnet_port = running.ports[1];
+        let mut mcp = Mcp::new(running.port()).with_token(mcp_token);
 
         // The handshake a client of a revision before 2026-07-28 starts with.
         let init = mcp
@@ -277,21 +355,21 @@ async fn tools_listed_refused_and_redacted() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn read_only_lists_two_tools() {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let ports = free_ports(2);
-        let port = ports[0];
-        let port_text = port.to_string();
         // Read only, the MCP Controller can not start the test: telnet stays on
         // for --no-autostart, on a port of its own.
-        let telnet_text = ports[1].to_string();
-        let running = Running::start(&[
-            "--mcp",
-            "--mcp-read-only",
-            "--mcp-port",
-            &port_text,
-            "--telnet-port",
-            &telnet_text,
-        ]);
-        let mut mcp = Mcp::new(port);
+        let running = Running::start(1, None, |ports| {
+            strings(&[
+                "--mcp",
+                "--mcp-read-only",
+                "--mcp-port",
+                &ports[0],
+                "--telnet-port",
+                &ports[1],
+            ])
+        })
+        .await;
+        let telnet_port = running.ports[1];
+        let mut mcp = Mcp::new(running.port());
         let tools = mcp.tools().await;
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(names, ["get_config", "get_metrics"]);
@@ -324,7 +402,7 @@ async fn read_only_lists_two_tools() {
         let config = mcp.call("get_config", json!({})).await;
         assert_eq!(config.structured["users"], 1);
         // Shut down through telnet, as MCP can not.
-        let reply = telnet(telnet_text.parse().unwrap(), "shutdown").await;
+        let reply = telnet(telnet_port, "shutdown").await;
         assert_eq!(reply, "load test shut down");
         tokio::time::timeout(Duration::from_secs(30), running.load)
             .await
@@ -341,17 +419,19 @@ async fn read_only_lists_two_tools() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn transport_refusals() {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let port = free_port();
-        let port_text = port.to_string();
         let token = "transport-token";
-        let running = Running::start(&[
-            "--mcp",
-            "--mcp-port",
-            &port_text,
-            "--mcp-token",
-            token,
-            "--no-telnet",
-        ]);
+        let running = Running::start(0, Some(token), |ports| {
+            strings(&[
+                "--mcp",
+                "--mcp-port",
+                &ports[0],
+                "--mcp-token",
+                token,
+                "--no-telnet",
+            ])
+        })
+        .await;
+        let port = running.port();
         let list = request("tools/list", json!({}));
         let with_token = Mcp::new(port).with_token(token);
         let without = Mcp::new(port);
@@ -447,7 +527,7 @@ async fn off_without_the_option() {
         let free = TcpStream::connect(("127.0.0.1", 5119)).await.is_err();
         let telnet_port = free_port();
         let telnet_text = telnet_port.to_string();
-        let running = Running::start(&["--telnet-port", &telnet_text]);
+        let (load, _server) = Running::spawn(&["--telnet-port", &telnet_text]);
         // Telnet answers, so the Controllers are up.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         while TcpStream::connect(("127.0.0.1", telnet_port))
@@ -469,11 +549,135 @@ async fn off_without_the_option() {
             );
         }
         assert_eq!(telnet(telnet_port, "shutdown").await, "load test shut down");
-        tokio::time::timeout(Duration::from_secs(30), running.load)
+        tokio::time::timeout(Duration::from_secs(30), load)
             .await
             .expect("Goose exits on shutdown")
             .expect("join load test")
             .expect("load test");
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// A `tools/list` request on a raw connection to `port`: the response, or
+/// `None` when the server closed the connection before any of it.
+async fn raw_list(port: u16) -> Option<String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let body = request("tools/list", json!({}));
+    let head = format!(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    // A connection over the cap may be closed before the request is
+    // written; that is the same refusal.
+    if stream
+        .write_all(format!("{head}{body}").as_bytes())
+        .await
+        .is_err()
+    {
+        return None;
+    }
+    let mut reply = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        // A reset reads as a close.
+        let n: usize = stream.read(&mut buf).await.unwrap_or_default();
+        if n == 0 {
+            return (!reply.is_empty()).then(|| String::from_utf8_lossy(&reply).into_owned());
+        }
+        reply.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&reply).into_owned();
+        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())?
+                })
+                .expect("a Content-Length");
+            if body.len() >= length {
+                return Some(text);
+            }
+        }
+    }
+}
+
+/// [`raw_list`] until it is answered, for up to 5 seconds: a slot freed by a
+/// closed connection is freed when the server reads that close.
+async fn raw_list_answered(port: u16) -> String {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(reply) = raw_list(port).await {
+            return reply;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no slot came free within 5 seconds"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// At most 16 connections are open at once: with 16 held, a 17th is closed
+/// before any reply, and once one of the 16 closes a `tools/list` succeeds.
+/// Done well inside the 10 second header read timeout that would close the
+/// 16 idle ones.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connection_cap() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let running = Running::start(0, None, |ports| {
+            strings(&["--mcp", "--mcp-port", &ports[0], "--no-telnet"])
+        })
+        .await;
+        let port = running.port();
+        // 16 connections, each shown held by an answered request and left
+        // open, idle. A connection closed at once is one the server still
+        // counted another against, such as the start's own probe, closing:
+        // it is opened again.
+        let mut held = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while held.len() < 16 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "could not hold 16 connections"
+            );
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            let body = request("tools/list", json!({}));
+            let head = format!(
+                "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            if stream.write_all(format!("{head}{body}").as_bytes()).await.is_err() {
+                continue;
+            }
+            let mut buf = [0u8; 16];
+            match stream.read(&mut buf).await {
+                Ok(n) if n > 0 && buf.starts_with(b"HTTP/1.1 200") => held.push(stream),
+                _ => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+        // The 17th is closed before any reply: a read ends at once.
+        let mut extra = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut buf = [0u8; 64];
+        let read = tokio::time::timeout(Duration::from_secs(5), extra.read(&mut buf))
+            .await
+            .expect("the 17th connection is closed within 5 seconds");
+        assert!(
+            matches!(read, Ok(0) | Err(_)),
+            "the 17th connection was answered: {:?}",
+            read.map(|n| String::from_utf8_lossy(&buf[..n]).into_owned())
+        );
+        // Close one of the 16: a request is served again.
+        drop(held.pop());
+        let reply = raw_list_answered(port).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{}", reply);
+        assert!(reply.contains(r#""tools":["#), "{}", reply);
+        // Free every slot, then shut down.
+        drop(held);
+        let mut mcp = Mcp::new(port);
+        raw_list_answered(port).await;
+        running.shutdown(&mut mcp).await;
     })
     .await
     .expect("test timed out");

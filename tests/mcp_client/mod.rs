@@ -78,6 +78,14 @@ impl Mcp {
     /// POST `body` with `headers` added, retrying for up to 20 seconds while
     /// nothing listens yet.
     pub async fn post(&self, body: &str, headers: &[(&str, &str)]) -> Reply {
+        self.reach(body, headers)
+            .await
+            .unwrap_or_else(|| panic!("POST {}: nothing listened within 20 seconds", self.url))
+    }
+
+    /// As [`Mcp::post`], but `None` when nothing listened on the port within
+    /// 20 seconds, as when Goose could not bind it.
+    pub async fn reach(&self, body: &str, headers: &[(&str, &str)]) -> Option<Reply> {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let mut request = self
@@ -96,11 +104,12 @@ impl Mcp {
                 Ok(response) => {
                     let status = response.status().as_u16();
                     let body = response.text().await.expect("body");
-                    return Reply { status, body };
+                    return Some(Reply { status, body });
                 }
                 Err(e) if e.is_connect() && Instant::now() < deadline => {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
+                Err(e) if e.is_connect() => return None,
                 Err(e) => panic!("POST {}: {}", self.url, e),
             }
         }
