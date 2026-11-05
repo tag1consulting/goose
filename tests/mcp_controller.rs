@@ -57,13 +57,9 @@ impl Running {
         Self::start_on(free_ports, more, token, args).await
     }
 
-    /// Fail at once, saying why, when `GOOSE_MCP_TOKEN` is set where the
-    /// tests run: every Goose here would take it as its token.
+    /// See [`mcp_client::no_token_in_env`].
     fn no_token_in_env() {
-        assert!(
-            std::env::var_os("GOOSE_MCP_TOKEN").is_none(),
-            "unset GOOSE_MCP_TOKEN to run these tests: Goose reads it as the MCP token"
-        );
+        mcp_client::no_token_in_env();
     }
 
     /// [`Running::start`], with each attempt's ports from `pick`.
@@ -111,11 +107,13 @@ impl Running {
             }
             // Otherwise retry only on what a taken port shows: nothing
             // listens, another HTTP server answers (404 at /mcp, which Goose
-            // never answers), or another load test's Goose does. Anything
-            // else from the port fails at once.
+            // never answers), another load test's Goose with a token of its
+            // own refuses this probe (401), or one without a token names its
+            // own host. A Goose that refuses its own token does so on every
+            // attempt, and still fails. Anything else fails at once.
             let taken = match &reply {
                 None => true,
-                Some(reply) if reply.status == 404 => true,
+                Some(reply) if matches!(reply.status, 401 | 404) => true,
                 Some(reply) if reply.status == 200 => {
                     let host = reply.json()["result"]["structuredContent"]["host"].clone();
                     if host == json!(server.base_url()) {
@@ -873,7 +871,9 @@ async fn structured_content_is_the_text() {
 }
 
 /// A start whose MCP port another server holds is tried again on new ports:
-/// Goose can not listen there, and the probe meets that server instead.
+/// Goose can not listen there, and either the probe meets that server (a
+/// 404) or the load test ends at once, with no Controller to start it; both
+/// are retried.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn start_retries_a_taken_port() {
     tokio::time::timeout(TEST_TIMEOUT, async {

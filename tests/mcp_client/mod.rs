@@ -23,6 +23,15 @@ pub fn free_ports(n: usize) -> Vec<u16> {
         .collect()
 }
 
+/// Fail at once, saying why, when `GOOSE_MCP_TOKEN` is set where the tests
+/// run: every Goose they start with `--mcp` would take it as its token.
+pub fn no_token_in_env() {
+    assert!(
+        std::env::var_os("GOOSE_MCP_TOKEN").is_none(),
+        "unset GOOSE_MCP_TOKEN to run these tests: Goose reads it as the MCP token"
+    );
+}
+
 /// The answer to one HTTP request: its status and body.
 pub struct Reply {
     pub status: u16,
@@ -57,6 +66,7 @@ pub struct Mcp {
 impl Mcp {
     /// A client of the MCP Controller on 127.0.0.1:`port`.
     pub fn new(port: u16) -> Self {
+        no_token_in_env();
         Mcp {
             // Every request ends within 30 seconds: a tool answers within 15.
             client: reqwest::Client::builder()
