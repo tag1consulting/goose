@@ -450,6 +450,13 @@ pub(crate) enum MetricsCommand {
     /// Controller added users.
     #[cfg(feature = "gaggle")]
     GaggleMaxUsers { max_users: u64 },
+    /// A Gaggle manager stopping its workers: answered once every command
+    /// queued before it is handled, building and copying nothing, with
+    /// whether a threshold rule stopped the run.
+    #[cfg(feature = "gaggle")]
+    GaggleDrained {
+        respond: tokio::sync::oneshot::Sender<bool>,
+    },
     /// Flush all pending metrics and return the final state for reporting.
     Shutdown {
         duration: usize,
@@ -3939,6 +3946,11 @@ impl MetricsProcessor {
             | MetricsCommand::GaggleDone { .. }
             | MetricsCommand::GaggleClock { .. }
             | MetricsCommand::GaggleMaxUsers { .. } => false,
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleDrained { respond } => {
+                let _ = respond.send(self.metrics.threshold_abort.is_some());
+                false
+            }
             MetricsCommand::Shutdown {
                 duration,
                 total_users,

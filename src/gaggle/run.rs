@@ -1740,6 +1740,10 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut ManagerRun,
     ) {
+        // A cancel already set ended the run; one set while the processor
+        // works through its queue is a Ctrl-C during the wait, unless a
+        // threshold rule queued before Stop set it.
+        let canceled = crate::is_killswitch_triggered();
         #[cfg(test)]
         super::faults::MANAGER_STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
         run.stop_sent = true;
@@ -1757,25 +1761,25 @@ impl GooseAttack {
         // is done first: a rule that fails now triggers the killswitch before
         // the cancel is set aside, never during the wait, where it would read
         // as Ctrl-C. The main loop, held here, sends no other check.
-        // GetMetrics is only a barrier here: its reply is dropped on purpose.
         let (respond, drained) = tokio::sync::oneshot::channel();
+        let mut threshold_failed = false;
         if goose_attack_run_state
             .metrics_cmd_tx
-            .send(MetricsCommand::GetMetrics {
-                duration: self.metrics.duration,
-                total_users: self.metrics.total_users,
-                maximum_users: self.metrics.maximum_users,
-                history: Vec::new(),
-                respond,
-            })
+            .send(MetricsCommand::GaggleDrained { respond })
             .is_ok()
         {
-            let _ = tokio::time::timeout(FINAL_TIMEOUT, drained).await;
+            if let Ok(Ok(failed)) = tokio::time::timeout(FINAL_TIMEOUT, drained).await {
+                threshold_failed = failed;
+            }
         }
         // A cancel that ended the run is set aside while the workers send
         // their final metrics, so a Ctrl-C now ends the wait rather than the
-        // process; it is put back for test_stop and the log collection.
-        let aside = set_cancel_aside();
+        // process; it is put back for test_stop and the log collection. One
+        // that came during the drain stays, and ends the wait at once.
+        let mut aside = set_cancel_aside();
+        if !(canceled || threshold_failed) {
+            put_back_cancel(aside.take());
+        }
         run.canceled_at_stop = aside.is_some();
         let reason = match &self.ended_by {
             Some((EndedBy::Canceled, Some(reason))) => format!("canceled: {reason}"),
