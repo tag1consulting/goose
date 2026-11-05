@@ -654,6 +654,46 @@ Controllers:
           Example: --websocket-port 6117. Set in code with
           GooseDefault::WebSocketPort.
 
+      --mcp
+          Enable the MCP Controller
+
+          Serves the Controller commands as Model Context Protocol tools, for AI
+          agents, over Streamable HTTP at /mcp on --mcp-host and --mcp-port. Off
+          by default, and only in a Goose built with the mcp feature.
+
+          Set in code with GooseDefault::Mcp.
+
+      --mcp-host <HOST>
+          MCP host [default: 127.0.0.1]
+
+          The address the MCP Controller listens on, with --mcp. An address that
+          is not loopback needs --mcp-token.
+
+          Example: --mcp-host 10.0.0.5. Set in code with GooseDefault::McpHost.
+
+      --mcp-port <PORT>
+          MCP port [default: 5119]
+
+          The TCP port the MCP Controller listens on, with --mcp.
+
+          Example: --mcp-port 6119. Set in code with GooseDefault::McpPort.
+
+      --mcp-token <TOKEN>
+          MCP auth token
+
+          The token every MCP request must send, as an Authorization: Bearer
+          header. Needed when --mcp-host is not a loopback address.
+
+          Set in code with GooseDefault::McpToken.
+
+      --mcp-read-only
+          Only the MCP tools that read
+
+          The MCP Controller lists and answers only get_config and get_metrics,
+          so an agent can watch the load test but not start, stop or change it.
+
+          Set in code with GooseDefault::McpReadOnly.
+
 HTTP client:
       --timeout <SECS>
           Request timeout in seconds [default: 60]

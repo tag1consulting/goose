@@ -65,6 +65,9 @@ axum = { version = "0.8", optional = true }
 hyper = { version = "1", optional = true, features = ["http1", "server"] }
 hyper-util = { version = "0.1", optional = true, features = ["service", "tokio"] }
 tower-http = { version = "0.6", optional = true, features = ["set-header"] }
+# The MCP Controller, with the `mcp` feature: Model Context Protocol tools
+# over Streamable HTTP, served by axum.
+rmcp = { version = "3.8", optional = true, default-features = false, features = ["server", "transport-streamable-http-server"] }
 # Encodes Gaggle metrics deltas, with the `gaggle` feature.
 postcard = { version = "1", optional = true, default-features = false, features = ["use-std"] }
 # The Gaggle manager and workers talk gRPC, with the `gaggle` feature. The
@@ -90,6 +93,9 @@ pdf-reports = ["headless_chrome"]
 # Live web dashboard HTTP server (axum). DTO/builder always compiled; only HTTP is gated.
 # Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
+# MCP Controller: Model Context Protocol tools for every Controller command,
+# for AI agents. Opt-in, and off at run time until --mcp.
+mcp = ["dep:rmcp", "axum", "hyper", "hyper-util"]
 # Distributed load tests (Gaggle): a manager and workers, over gRPC.
 gaggle = ["dep:http-body", "dep:libc", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 

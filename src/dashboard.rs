@@ -20,14 +20,15 @@
 //! latency.
 
 use crate::controller::{
-    self, send_command, ControlCommand, ControlReply, ControlRequest, ControllerCommand,
-    ListeningControllers, RunSettings, SendError, CONTROL_TIMEOUT,
+    self, format_bind_address, send_command, ControlCommand, ControlReply, ControlRequest,
+    ControllerCommand, ListeningControllers, RunSettings, SendError, CONTROL_TIMEOUT,
 };
 use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSettings,
 };
 use crate::metrics::DashboardSnapshot;
 use crate::runs;
+use crate::serve::{self, bearer_token_from_headers, constant_time_eq};
 use crate::{ControlOutcome, GooseConfiguration, GooseError};
 
 use axum::body::{Body, Bytes};
@@ -79,17 +80,6 @@ const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 /// Hub wait for a single parent/metrics snapshot reply before treating the build
 /// as transient (poll clients already use a 5s outer timeout).
 const SNAPSHOT_BUILD_TIMEOUT: Duration = Duration::from_secs(4);
-
-/// How long [`DashboardServer::shutdown`] lets open connections finish (an
-/// SSE stream sending `event: closed`, a response in flight) before closing
-/// them. Bounds the wait in `execute()` when a client never finishes a request.
-const SERVER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
-
-/// How long a client has to send a request's headers, on a new connection and
-/// between requests on a keep-alive one, before the connection is closed. A
-/// header read timeout and not a whole request timeout, which would cut the
-/// long-lived `/api/v1/events` streams.
-const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connections allowed beyond the SSE client cap: every browser tab holds one
 /// SSE stream plus keep-alive connections for static assets, polls and
@@ -987,28 +977,18 @@ struct HealthResponse {
     auth_required: bool,
     /// Whether the dashboard is bound to a loopback address.
     loopback: bool,
-    /// Where the telnet and WebSocket Controllers listen.
+    /// Where the telnet, WebSocket and MCP Controllers listen.
     controllers: HealthControllers,
 }
 
 /// The `host:port` each Controller listens on, or `None` when it is off
-/// (`--no-telnet`, or no `--websocket`) or couldn't bind its port.
+/// (`--no-telnet`, no `--websocket`, or no `--mcp`) or couldn't bind its port.
 #[derive(Debug, Clone, Serialize)]
 struct HealthControllers {
     telnet: Option<String>,
     websocket: Option<String>,
-}
-
-/// Format `host:port` for [`TcpListener::bind`], bracketing bare IPv6 literals.
-///
-/// Mirrors how operators type `--dashboard-host` (`localhost`, `127.0.0.1`,
-/// `::1`, `[::1]`) while remaining valid for `ToSocketAddrs`.
-fn format_bind_address(host: &str, port: u16) -> String {
-    if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
+    /// The MCP Controller's address; its tools are served at `/mcp` there.
+    mcp: Option<String>,
 }
 
 /// Spawn the dashboard HTTP server task.
@@ -1102,6 +1082,9 @@ pub(crate) async fn setup_dashboard(
                     configuration.websocket_port(),
                 )
             }),
+            mcp: listening
+                .mcp
+                .then(|| format_bind_address(configuration.mcp_host(), configuration.mcp_port())),
         },
     };
 
@@ -1124,7 +1107,13 @@ pub(crate) async fn setup_dashboard(
     }
 
     let (stop_tx, stop_rx) = watch::channel(false);
-    let task = tokio::spawn(serve_dashboard(listener, app, max_connections, stop_rx));
+    let task = tokio::spawn(serve::serve(
+        "dashboard",
+        listener,
+        app,
+        max_connections,
+        stop_rx,
+    ));
     let server = DashboardServer {
         stop_tx,
         close_tx: close_tx.clone(),
@@ -1262,7 +1251,7 @@ pub(crate) struct DashboardServer {
 
 impl DashboardServer {
     /// Stop accepting, drain open connections for at most
-    /// [`SERVER_DRAIN_TIMEOUT`], close whatever is still open, and wait for
+    /// [`serve::SERVER_DRAIN_TIMEOUT`], close whatever is still open, and wait for
     /// the server task to finish.
     pub(crate) async fn shutdown(self) {
         self.close_tx.send_replace(true);
@@ -1282,117 +1271,6 @@ fn connection_cap(max_sse_clients: usize) -> usize {
         .saturating_mul(2)
         .saturating_add(EXTRA_CONNECTIONS)
         .min(tokio::sync::Semaphore::MAX_PERMITS)
-}
-
-/// Accept loop. Owns the listener and every connection task, so when it
-/// returns nothing of the server is left running.
-///
-/// At most `max_connections` connections are open at once; a connection
-/// accepted beyond that is closed at once, before any of it is read.
-async fn serve_dashboard(
-    listener: tokio::net::TcpListener,
-    app: Router,
-    max_connections: usize,
-    mut stop_rx: watch::Receiver<bool>,
-) {
-    let mut builder = hyper::server::conn::http1::Builder::new();
-    // Without a timer hyper applies no header read timeout at all.
-    builder
-        .timer(hyper_util::rt::TokioTimer::new())
-        .header_read_timeout(HEADER_READ_TIMEOUT);
-    // Each connection task holds one permit until it ends, aborted or not, so
-    // the count does not wait for finished tasks to be reaped.
-    let open_connections = Arc::new(tokio::sync::Semaphore::new(max_connections));
-    let mut connections = tokio::task::JoinSet::new();
-    loop {
-        tokio::select! {
-            // A send or a dropped sender both mean stop.
-            _ = stop_rx.changed() => break,
-            accepted = listener.accept() => match accepted {
-                Ok((stream, peer)) => match Arc::clone(&open_connections).try_acquire_owned() {
-                    Ok(permit) => {
-                        connections.spawn(serve_connection(
-                            builder.clone(),
-                            stream,
-                            app.clone(),
-                            stop_rx.clone(),
-                            permit,
-                        ));
-                    }
-                    Err(_) => {
-                        debug!(
-                            "[dashboard]: closing connection from {peer}: {max_connections} connections already open"
-                        );
-                        drop(stream);
-                    }
-                },
-                Err(e) => {
-                    if !is_connection_error(&e) {
-                        // Usually EMFILE: back off as axum::serve does, but
-                        // keep listening for the stop signal meanwhile.
-                        error!("[dashboard]: accept error: {e}");
-                        tokio::select! {
-                            _ = stop_rx.changed() => break,
-                            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                        }
-                    }
-                }
-            },
-        }
-        // Reap finished connection tasks so the set does not grow with every
-        // short lived connection.
-        while connections.try_join_next().is_some() {}
-    }
-
-    // Stop accepting before the drain, so only open connections remain.
-    drop(listener);
-
-    let drained = tokio::time::timeout(SERVER_DRAIN_TIMEOUT, async {
-        while connections.join_next().await.is_some() {}
-    })
-    .await;
-    if drained.is_err() {
-        debug!(
-            "[dashboard]: closing {} connection(s) still open after the drain deadline",
-            connections.len()
-        );
-        connections.shutdown().await;
-    }
-}
-
-/// Serve one HTTP/1 connection until it ends or the server stops; on stop,
-/// let an in flight response finish and then close. Holds its slot of the
-/// connection cap until it returns.
-async fn serve_connection(
-    builder: hyper::server::conn::http1::Builder,
-    stream: tokio::net::TcpStream,
-    app: Router,
-    mut stop_rx: watch::Receiver<bool>,
-    _permit: tokio::sync::OwnedSemaphorePermit,
-) {
-    let service = hyper_util::service::TowerToHyperService::new(app);
-    let conn = builder.serve_connection(hyper_util::rt::TokioIo::new(stream), service);
-    let mut conn = std::pin::pin!(conn);
-    let result = tokio::select! {
-        result = conn.as_mut() => result,
-        _ = stop_rx.changed() => {
-            conn.as_mut().graceful_shutdown();
-            conn.await
-        }
-    };
-    if let Err(e) = result {
-        debug!("[dashboard]: connection error: {e}");
-    }
-}
-
-/// Accept errors that concern one connection only; the listener is fine.
-fn is_connection_error(e: &std::io::Error) -> bool {
-    matches!(
-        e.kind(),
-        std::io::ErrorKind::ConnectionRefused
-            | std::io::ErrorKind::ConnectionAborted
-            | std::io::ErrorKind::ConnectionReset
-    )
 }
 
 /// Build the axum router with public shell/static/health and auth-gated metrics.
@@ -2364,48 +2242,6 @@ impl DashboardState {
     }
 }
 
-/// Extract a Bearer token from `Authorization`. Scheme match is case-insensitive
-/// (RFC 7235); the token itself is compared separately with constant-time eq.
-///
-/// Accepts any ASCII whitespace between scheme and token (`Bearer TOKEN`,
-/// `Bearer\tTOKEN`, multiple spaces). Rejects extra tokens after the credential.
-fn bearer_token_from_headers(headers: &HeaderMap) -> Option<&str> {
-    let value = headers.get(header::AUTHORIZATION)?;
-    let s = value.to_str().ok()?;
-    let mut parts = s.split_whitespace();
-    let scheme = parts.next()?;
-    let token = parts.next()?;
-    // Reject `Bearer tok extra` — only scheme + single token credential.
-    if parts.next().is_some() {
-        return None;
-    }
-    if scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty() {
-        Some(token)
-    } else {
-        None
-    }
-}
-
-/// Best-effort constant-time equality for auth tokens.
-///
-/// Always walks a fixed number of bytes derived from both lengths so short-circuit
-/// on length mismatch does not dominate the timing profile for typical token sizes.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    // Compare up to max(len_a, len_b), treating missing bytes as 0, and fold in
-    // a length mismatch bit so equal prefixes of different lengths never match.
-    let len_mismatch = (a.len() != b.len()) as u8;
-    let max_len = a.len().max(b.len());
-    let mut diff = len_mismatch;
-    let mut i = 0;
-    while i < max_len {
-        let x = if i < a.len() { a[i] } else { 0 };
-        let y = if i < b.len() { b[i] } else { 0 };
-        diff |= x ^ y;
-        i += 1;
-    }
-    diff == 0
-}
-
 /// Validate start/stop body: empty, missing, or `{}` only (no unknown fields).
 fn parse_empty_control_body(body: &[u8]) -> Result<(), (&'static str, &'static str)> {
     let trimmed = trim_ascii_whitespace(body);
@@ -3011,6 +2847,7 @@ mod tests {
     use crate::metrics::dashboard_snapshot::{
         AggregateMetrics, Percentiles, SeriesWindow, SnapshotFlags,
     };
+    use crate::serve::{HEADER_READ_TIMEOUT, SERVER_DRAIN_TIMEOUT};
     use chrono::Utc;
     use std::time::Instant;
 
@@ -3362,15 +3199,6 @@ mod tests {
     }
 
     #[test]
-    fn constant_time_eq_matches() {
-        assert!(constant_time_eq(b"secret", b"secret"));
-        assert!(!constant_time_eq(b"secret", b"Secret"));
-        assert!(!constant_time_eq(b"short", b"longer"));
-        assert!(!constant_time_eq(b"", b"x"));
-        assert!(constant_time_eq(b"", b""));
-    }
-
-    #[test]
     fn authorize_empty_token_allows_all() {
         let headers = HeaderMap::new();
         assert!(authorize("", &headers, None));
@@ -3450,14 +3278,6 @@ mod tests {
             HeaderValue::from_static("Bearer s3cret extra"),
         );
         assert!(!authorize("s3cret", &headers, None));
-    }
-
-    #[test]
-    fn constant_time_eq_length_mismatch() {
-        assert!(!constant_time_eq(b"abc", b"ab"));
-        assert!(!constant_time_eq(b"ab", b"abc"));
-        assert!(constant_time_eq(b"secret", b"secret"));
-        assert!(!constant_time_eq(b"secret", b"secreT"));
     }
 
     #[test]
@@ -4158,21 +3978,21 @@ mod tests {
                 true,
                 true,
                 None,
-                serde_json::json!({"telnet": "127.0.0.1:5116", "websocket": "[::1]:6117"}),
+                serde_json::json!({"telnet": "127.0.0.1:5116", "websocket": "[::1]:6117", "mcp": null}),
             ),
             (
                 true,
                 true,
                 true,
                 None,
-                serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
+                serde_json::json!({"telnet": null, "websocket": "[::1]:6117", "mcp": null}),
             ),
             (
                 true,
                 false,
                 true,
                 None,
-                serde_json::json!({"telnet": null, "websocket": null}),
+                serde_json::json!({"telnet": null, "websocket": null, "mcp": null}),
             ),
             // The default: telnet on, the WebSocket Controller off.
             (
@@ -4180,7 +4000,7 @@ mod tests {
                 false,
                 true,
                 None,
-                serde_json::json!({"telnet": "127.0.0.1:5116", "websocket": null}),
+                serde_json::json!({"telnet": "127.0.0.1:5116", "websocket": null, "mcp": null}),
             ),
             // An explicit host is kept: here every address.
             (
@@ -4188,7 +4008,7 @@ mod tests {
                 false,
                 true,
                 Some("0.0.0.0"),
-                serde_json::json!({"telnet": "0.0.0.0:5116", "websocket": null}),
+                serde_json::json!({"telnet": "0.0.0.0:5116", "websocket": null, "mcp": null}),
             ),
             // A Controller that couldn't bind its port is not named.
             (
@@ -4196,7 +4016,7 @@ mod tests {
                 true,
                 false,
                 None,
-                serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
+                serde_json::json!({"telnet": null, "websocket": "[::1]:6117", "mcp": null}),
             ),
         ];
         let client = reqwest::Client::new();
@@ -4249,6 +4069,37 @@ mod tests {
                 assert!(!health[field].is_null(), "{} missing", field);
             }
         }
+        // The MCP Controller is listed where it listens, an IPv6 host
+        // bracketed, beside the others.
+        let config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: Some("127.0.0.1".to_string()),
+            dashboard_port: Some(0),
+            no_telnet: true,
+            mcp: true,
+            mcp_host: Some("::1".to_string()),
+            mcp_port: Some(6119),
+            ..Default::default()
+        };
+        let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
+            .await
+            .expect("bind")
+            .expect("enabled");
+        let health: serde_json::Value = client
+            .get(format!(
+                "http://127.0.0.1:{}/api/v1/health",
+                setup.bound_port
+            ))
+            .send()
+            .await
+            .expect("health")
+            .json()
+            .await
+            .expect("json");
+        assert_eq!(
+            health["controllers"],
+            serde_json::json!({"telnet": null, "websocket": null, "mcp": "[::1]:6119"})
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

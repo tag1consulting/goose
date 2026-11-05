@@ -1,27 +1,28 @@
 # Controlling A Running Goose Load Test
 
-There are three ways to watch or change a load test while it runs: the Live Dashboard and two Controllers.
+There are four ways to watch or change a load test while it runs: the Live Dashboard and three Controllers.
 
 - The [Live Dashboard](dashboard.md) is a page in your browser that shows the test as it runs and saves its report, and, with control turned on, starts and stops it and changes its users and settings. Pick it to watch a test, or to steer one by hand.
 - The [telnet Controller](telnet.md) takes typed commands. Pick it for `config` and `metrics` at a prompt, a test plan typed by hand, or shutting Goose down mid run.
 - The [WebSocket Controller](websocket.md) takes the same commands as JSON. Pick it to drive Goose from a program.
+- The [MCP Controller](mcp.md) serves the same commands as Model Context Protocol tools. Pick it to let an AI agent, such as Claude Code, watch or drive the test. It needs Goose built with the `mcp` feature.
 
 ## What each can do
 
-| | Live Dashboard | Telnet | WebSocket |
-|---|---|---|---|
-| Observe | Live charts, KPIs and tables | `metrics`, `metrics-json` | `metrics`, `metrics-json` |
-| Start, stop | With control on | `start`, `stop` | `start`, `stop` |
-| Users | With control on | `users` | `users` |
-| Host and ramps | With control on, in the Edit settings form | `host`, `increaserate`, `increase-time`, `decreaserate`, `decrease-time` | the same commands |
-| Test plan | With control on, through [`POST /api/v1/control/settings` or `POST /api/v1/control/start`](dashboard-reference.md#run-settings); the form has no plan field | `test-plan` | `test-plan` |
-| Run time | With control on, in the Edit settings form | `runtime` | `runtime` |
-| Throttle | With control on, through [`POST /api/v1/control/settings`](dashboard-reference.md#the-throttle-on-a-running-test); the form has no throttle field | `throttle` | `throttle` |
-| Save report | On by default with `--dashboard`; turning it off and Save report now need control | No | No |
-| `config` | No | `config`, `config-json` | `config`, `config-json` |
-| Shut Goose down | With control on: Quit, from Idle only | `shutdown`, from any phase | `shutdown`, from any phase |
-| Default | Off; `--dashboard` turns it on, on `127.0.0.1:5118` | On, on `127.0.0.1:5116` | Off; `--websocket` turns it on, on `127.0.0.1:5117` |
-| Authentication | Read-only on loopback: none, unless a token is set. Control, or any bind off loopback: a token, or `--dashboard-no-auth` | None | None |
+| | Live Dashboard | Telnet | WebSocket | MCP |
+|---|---|---|---|---|
+| Observe | Live charts, KPIs and tables | `metrics`, `metrics-json` | `metrics`, `metrics-json` | `get_metrics` |
+| Start, stop | With control on | `start`, `stop` | `start`, `stop` | `start`, `stop` |
+| Users | With control on | `users` | `users` | `set_users` |
+| Host and ramps | With control on, in the Edit settings form | `host`, `increaserate`, `increase-time`, `decreaserate`, `decrease-time` | the same commands | `set_host`, `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time` |
+| Test plan | With control on, through [`POST /api/v1/control/settings` or `POST /api/v1/control/start`](dashboard-reference.md#run-settings); the form has no plan field | `test-plan` | `test-plan` | `set_test_plan` |
+| Run time | With control on, in the Edit settings form | `runtime` | `runtime` | `set_run_time` |
+| Throttle | With control on, through [`POST /api/v1/control/settings`](dashboard-reference.md#the-throttle-on-a-running-test); the form has no throttle field | `throttle` | `throttle` | `set_throttle` |
+| Save report | On by default with `--dashboard`; turning it off and Save report now need control | No | No | No |
+| `config` | No | `config`, `config-json` | `config`, `config-json` | `get_config` |
+| Shut Goose down | With control on: Quit, from Idle only | `shutdown`, from any phase | `shutdown`, from any phase | `shutdown`, from any phase |
+| Default | Off; `--dashboard` turns it on, on `127.0.0.1:5118` | On, on `127.0.0.1:5116` | Off; `--websocket` turns it on, on `127.0.0.1:5117` | Off; needs the `mcp` feature, then `--mcp` turns it on, on `127.0.0.1:5119` |
+| Authentication | Read-only on loopback: none, unless a token is set. Control, or any bind off loopback: a token, or `--dashboard-no-auth` | None | None | None on loopback, unless `--mcp-token` is set; off loopback, `--mcp-token` is required |
 
 The dashboard is read-only unless control is turned on with `--dashboard-control` and a token or `--dashboard-no-auth`; see [Turning it on](dashboard.md#turning-it-on). It needs Goose built with the `dashboard` feature.
 

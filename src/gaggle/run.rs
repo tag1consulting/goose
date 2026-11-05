@@ -916,6 +916,7 @@ impl GooseAttack {
         self.attack_mode = AttackMode::Worker;
         self.configuration.no_telnet = true;
         self.configuration.websocket = false;
+        self.configuration.mcp = false;
         self.configuration.dashboard = false;
         let hello = LinkSettings::hello(
             crate::plan_hash(&self.scenarios, &self.scheduler),

@@ -32,6 +32,7 @@
         - [Dashboard Reference](controller/dashboard-reference.md)
     - [Telnet Controller](controller/telnet.md)
     - [WebSocket Controller](controller/websocket.md)
+    - [MCP Controller](controller/mcp.md)
 
 - [Gaggle: Distributed Load Test](gaggle/overview.md)
     - [Manager](gaggle/manager.md)

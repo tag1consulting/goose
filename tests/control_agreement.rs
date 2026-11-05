@@ -1,8 +1,11 @@
-//! Telnet, WebSocket and the dashboard control endpoints agree: the same
-//! command in the same state gets the same accept or refuse decision and the
-//! same message from each of them.
+//! Telnet, WebSocket, the dashboard control endpoints and, with the `mcp`
+//! feature, the MCP Controller agree: the same command in the same state gets
+//! the same accept or refuse decision and the same message from each of them.
 
 #![cfg(feature = "dashboard")]
+
+#[cfg(feature = "mcp")]
+mod mcp_client;
 
 use futures::{SinkExt, StreamExt};
 use httpmock::{Method::GET, MockServer};
@@ -163,11 +166,13 @@ async fn wait_for_phase(client: &reqwest::Client, phases: &[&str]) {
     }
 }
 
-/// The three front ends of one Goose process.
+/// The front ends of one Goose process.
 struct FrontEnds {
     telnet: Telnet,
     websocket: WebSocket,
     client: reqwest::Client,
+    #[cfg(feature = "mcp")]
+    mcp: mcp_client::Mcp,
 }
 
 /// Which front end sends a command.
@@ -176,6 +181,19 @@ enum Via {
     Telnet,
     WebSocket,
     Dashboard,
+    #[cfg(feature = "mcp")]
+    Mcp,
+}
+
+/// Every front end, in the order the runs below go through them.
+fn every_front_end() -> Vec<Via> {
+    vec![
+        Via::Telnet,
+        Via::WebSocket,
+        Via::Dashboard,
+        #[cfg(feature = "mcp")]
+        Via::Mcp,
+    ]
 }
 
 impl FrontEnds {
@@ -198,7 +216,25 @@ impl FrontEnds {
                 let (ok, message) = dashboard_post(&self.client, command, body).await;
                 (Some(ok), message)
             }
+            // The tool for the line, its argument the line's value.
+            #[cfg(feature = "mcp")]
+            Via::Mcp => {
+                let (ok, message) = self.mcp.send_line(line).await;
+                (Some(ok), message)
+            }
         }
+    }
+
+    /// With the `mcp` feature, the same line through the MCP Controller must
+    /// give `websocket`'s decision and message.
+    async fn agree_mcp(&mut self, line: &str, websocket: &(Option<bool>, String)) {
+        #[cfg(feature = "mcp")]
+        {
+            let mcp = self.send(Via::Mcp, line, "", "").await;
+            assert_eq!(&mcp, websocket, "{line}: mcp and websocket differ");
+        }
+        #[cfg(not(feature = "mcp"))]
+        let _ = (line, websocket);
     }
 
     /// Send the same command through all three front ends in the same state
@@ -207,6 +243,7 @@ impl FrontEnds {
         let telnet = self.send(Via::Telnet, line, command, body).await;
         let websocket = self.send(Via::WebSocket, line, command, body).await;
         let dashboard = self.send(Via::Dashboard, line, command, body).await;
+        self.agree_mcp(line, &websocket).await;
         assert_eq!(
             websocket, dashboard,
             "{line}: websocket and dashboard differ"
@@ -224,6 +261,7 @@ impl FrontEnds {
     async fn agree_controllers(&mut self, line: &str) -> (bool, String) {
         let telnet = self.send(Via::Telnet, line, "", "").await;
         let websocket = self.send(Via::WebSocket, line, "", "").await;
+        self.agree_mcp(line, &websocket).await;
         assert_eq!(telnet.1, websocket.1, "{line}: telnet and websocket differ");
         (websocket.0.unwrap(), websocket.1)
     }
@@ -240,12 +278,15 @@ async fn test_control_agreement() {
     let telnet_port = TELNET_PORT.to_string();
     let websocket_port = WEBSOCKET_PORT.to_string();
     let dashboard_port = DASHBOARD_PORT.to_string();
+    #[cfg(feature = "mcp")]
+    let mcp_port = mcp_client::free_port().to_string();
     let output_dir = std::env::temp_dir()
         .join(format!("goose-control-agreement-{}", std::process::id()))
         .join("run")
         .to_string_lossy()
         .into_owned();
-    let configuration = GooseConfiguration::parse_args_default(&[
+    #[allow(unused_mut)]
+    let mut args = vec![
         "--users",
         "2",
         "--increase-rate",
@@ -277,8 +318,10 @@ async fn test_control_agreement() {
         // checkout.
         "--output-dir",
         &output_dir,
-    ])
-    .unwrap();
+    ];
+    #[cfg(feature = "mcp")]
+    args.extend(["--mcp", "--mcp-port", mcp_port.as_str()]);
+    let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
     let goose_attack = GooseAttack::initialize_with_config(configuration)
         .unwrap()
         .register_scenario(scenario!("Agreement").register_transaction(transaction!(get_index)));
@@ -288,6 +331,8 @@ async fn test_control_agreement() {
         telnet: Telnet::connect().await,
         websocket: websocket_connect().await,
         client: reqwest::Client::new(),
+        #[cfg(feature = "mcp")]
+        mcp: mcp_client::Mcp::new(mcp_port.parse().unwrap()),
     };
     wait_for_phase(&front.client, &["idle"]).await;
 
@@ -410,7 +455,7 @@ async fn test_control_agreement() {
     // Start, start again, change users, and stop, through each front end in
     // turn: each one sees the same replies.
     let mut runs = Vec::new();
-    for via in [Via::Telnet, Via::WebSocket, Via::Dashboard] {
+    for via in every_front_end() {
         let mut replies = Vec::new();
         replies.push(front.send(via, "start", "start", "{}").await);
         wait_for_phase(&front.client, &["increase", "maintain"]).await;
