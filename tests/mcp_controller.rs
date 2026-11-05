@@ -54,8 +54,18 @@ impl Running {
         token: Option<&str>,
         args: impl Fn(&[String]) -> Vec<String>,
     ) -> Self {
+        Self::start_on(free_ports, more, token, args).await
+    }
+
+    /// [`Running::start`], with each attempt's ports from `pick`.
+    async fn start_on(
+        mut pick: impl FnMut(usize) -> Vec<u16>,
+        more: usize,
+        token: Option<&str>,
+        args: impl Fn(&[String]) -> Vec<String>,
+    ) -> Self {
         for attempt in 1..=START_ATTEMPTS {
-            let ports = free_ports(1 + more);
+            let ports = pick(1 + more);
             let texts: Vec<String> = ports.iter().map(u16::to_string).collect();
             let args = args(&texts);
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -816,6 +826,34 @@ async fn structured_content_is_the_text() {
             .as_object()
             .unwrap()
             .is_empty());
+        running.shutdown(&mut mcp).await;
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// A start whose MCP port another server holds is tried again on new ports:
+/// Goose can not listen there, and the probe meets that server instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn start_retries_a_taken_port() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        // Another HTTP server, answering 404 at /mcp, holds the first port.
+        let other = MockServer::start();
+        let taken = other.port();
+        let mut first = true;
+        let pick = |n: usize| {
+            let mut ports = free_ports(n);
+            if std::mem::take(&mut first) {
+                ports[0] = taken;
+            }
+            ports
+        };
+        let running = Running::start_on(pick, 0, None, |ports| {
+            strings(&["--mcp", "--mcp-port", &ports[0], "--no-telnet"])
+        })
+        .await;
+        assert_ne!(running.port(), taken);
+        let mut mcp = Mcp::new(running.port());
         running.shutdown(&mut mcp).await;
     })
     .await
