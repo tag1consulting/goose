@@ -705,6 +705,10 @@ A [Gaggle](../gaggle/overview.md) manager's page says, at a glance, whether ever
 
 ![The Workers panel of 6 workers: the summary line, the grid with a lost and a lagging tile, the compact table and the recent events](../gaggle/dashboard-workers-panel.png)
 
+![The worker grid with one saturated tile and its hover card: load-03 saturated, CPU 99% of 4 cores for 23 s, 2,172 requests a second, p95 43 ms](../gaggle/dashboard-saturated-card.png)
+
+*A worker limited to 4 CPUs that inflates a 4.2 MB page on every request, next to five light workers: its own CPU stays near 100%, so it is flagged saturated after 5 seconds.*
+
 ![The RPS chart by worker: the 8 busiest workers stacked in colour, the others in grey, and dashed markers for the users and throttle changes and the lost worker](../gaggle/dashboard-rps-by-worker.png)
 
 ![The Control card on a Gaggle manager: the users and throttle split previews and the sentence for an applied change](../gaggle/dashboard-control.png)
