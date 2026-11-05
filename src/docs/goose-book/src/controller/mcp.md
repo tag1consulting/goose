@@ -30,7 +30,9 @@ Once on, the tools are served over Streamable HTTP at `http://127.0.0.1:5119/mcp
 | `--mcp-host HOST` | `127.0.0.1` | The address it listens on. One that is not loopback needs `--mcp-token`. `GooseDefault::McpHost`. |
 | `--mcp-port PORT` | `5119` | The TCP port it listens on; as for telnet and WebSocket, 0 is refused. `GooseDefault::McpPort`. |
 | `--mcp-token TOKEN` | none | A token every request must send as `Authorization: Bearer TOKEN`. `GooseDefault::McpToken`. |
+| `GOOSE_MCP_TOKEN` | none | An environment variable, read for the token when `--mcp-token` is not given and before `GooseDefault::McpToken`; the better way to give it. An empty value is as if it were unset. |
 | `--mcp-read-only` | off | List and answer only `get_config` and `get_metrics`. `GooseDefault::McpReadOnly`. |
+| `--mcp-set-host` | off | Also list and answer `set_host`. Ignored with `--mcp-read-only`. `GooseDefault::McpSetHost`. |
 
 With `--no-autostart`, the MCP Controller counts as a Controller that can start the test, unless it is read only. The dashboard's `/api/v1/health` names it under `controllers.mcp`, and the read-only dashboard says where it listens, beside telnet and WebSocket; a read only MCP Controller, which can not control the test, is not named there.
 
@@ -71,7 +73,7 @@ Each tool's description is its command's line from telnet's `help`, with when it
 | `stop` | `stop` | none | destructive, idempotent, open world |
 | `shutdown` | `shutdown` | none | destructive, idempotent, open world |
 | `set_users` | `users` | `users`, integer, 1 to 100000 | idempotent, open world |
-| `set_host` | `host` | `host`, string, an http or https url | idempotent, open world |
+| `set_host` | `host` | `host`, string, an http or https url; listed only with `--mcp-set-host` | idempotent, open world |
 | `increase_rate` | `increaserate` | `rate`, number, 0.01 to 100000 | idempotent, open world |
 | `decrease_rate` | `decreaserate` | `rate`, number, 0.01 to 100000 | idempotent, open world |
 | `increase_time` | `increase-time` | `time`, string, up to 30 days, 0 clears | idempotent, open world |
@@ -79,6 +81,8 @@ Each tool's description is its command's line from telnet's `help`, with when it
 | `set_run_time` | `runtime` | `time`, string, up to 30 days, 0 clears | open world |
 | `set_test_plan` | `test-plan` | `plan`, string, at most 100 steps and 4096 bytes | open world |
 | `set_throttle` | `throttle` | `requests`, integer, 1 to 1000000, 0 clears | idempotent, open world |
+
+With the default options `tools/list` lists 13 tools: `set_host` is listed, and answered, only with `--mcp-set-host`; without it a call to `set_host` is refused as an unknown tool is.
 
 Every tool but the two that read is marked not read only and not destructive unless the table says destructive. The dashboard's Quit has no tool, as it has no telnet command; `shutdown` ends Goose.
 
@@ -104,17 +108,21 @@ With `--mcp-read-only`, `tools/list` lists only `get_config` and `get_metrics`, 
 
 ## Security
 
-- **Loopback by default.** The MCP Controller listens on `127.0.0.1` unless told otherwise. A `--mcp-host` that is not loopback is refused at startup without `--mcp-token`:
+- **Loopback by default.** The MCP Controller listens on `127.0.0.1` unless told otherwise. A `--mcp-host` that is not loopback is refused at startup without a token, from `--mcp-token`, `GOOSE_MCP_TOKEN` or `GooseDefault::McpToken`:
 
   ```text
-  Error: invalid option or value specified (`configuration.mcp_host` "0.0.0.0": `configuration.mcp` is enabled with non-loopback host `0.0.0.0`; set `configuration.mcp_token` (--mcp-token) when `configuration.mcp_host` (--mcp-host) is not a loopback address)
+  Error: invalid option or value specified (`configuration.mcp_host` "0.0.0.0": `configuration.mcp` is enabled with non-loopback host `0.0.0.0`; set `configuration.mcp_token` (--mcp-token, or the GOOSE_MCP_TOKEN environment variable) when `configuration.mcp_host` (--mcp-host) is not a loopback address)
   ```
 
   With a token it starts, and warns that the token is all that guards it. There is no TLS, so the token crosses the network in clear text: an ssh forward (`ssh -L 5119:127.0.0.1:5119 loadtest`) to a loopback bind is safer.
-- **The token.** With `--mcp-token`, every request needs `Authorization: Bearer TOKEN`, compared in constant time; a missing or wrong one gets `401`. A token in the query string is not read. A token on the command line shows in `ps` to other users of the machine; a load test can set it in code with `GooseDefault::McpToken` instead.
+- **The token.** With a token, every request needs `Authorization: Bearer TOKEN`, compared in constant time; a missing or wrong one gets `401`. A token in the query string is not read. Give it in the `GOOSE_MCP_TOKEN` environment variable rather than with `--mcp-token`: Goose never shows it, but a token on the command line shows in `ps` and `/proc/<pid>/cmdline` to other users of the machine, and in your shell's history. A load test can also set it in code with `GooseDefault::McpToken`. `--mcp-token` comes first, then the variable, then the default:
+
+  ```bash
+  GOOSE_MCP_TOKEN=s3cret target/release/examples/simple --host https://staging.example.org/ --mcp --mcp-host 10.0.0.5 --no-autostart
+  ```
 - **Without a token, loopback is trusted.** On a loopback bind with no `--mcp-token`, any program on the machine can call the tools. Set `--mcp-token` on a shared machine.
-- **Origin and Host checks.** A request from a browser page on another site, whose `Origin` is not loopback or the configured host, gets `403`, and so does one whose `Host` does not name the Controller: on a loopback bind only `localhost`, `127.0.0.1` and `::1`, otherwise only the configured host and its addresses. This stops a web page from reaching the Controller through DNS rebinding. With a wildcard host such as `0.0.0.0`, clients must send that host, so bind the address clients use.
-- **An agent with the control tools can aim traffic at any host it is told to.** `set_host` and `start` send load wherever the agent is asked to send it, by you or by text it read. Give an agent you do not fully trust `--mcp-read-only`.
+- **Origin and Host checks.** A request from a browser page on another site, whose `Origin` is not loopback or the configured host, gets `403`, and so does one whose `Host` does not name the Controller: on a loopback bind only `localhost`, `127.0.0.1` and `::1`, otherwise only the configured host as typed and the address the Controller is bound to. No name is looked up, so a client that reaches it by another name for the same address is refused: give `--mcp-host` the name clients use. This stops a web page from reaching the Controller through DNS rebinding. With a wildcard host such as `0.0.0.0`, clients must send that host, so bind the address clients use.
+- **`set_host` is off unless `--mcp-set-host` is given.** Text from the target reaches the model through `get_metrics`, and text crafted to look like instructions could lead an agent holding `set_host` and `start` to point Goose at someone else's server and send it load. Without `set_host` the agent can only load the host the test was started with. Give `--mcp-set-host` only to an agent you trust with any host, and an agent you do not fully trust `--mcp-read-only`.
 - **Text from the target reaches the model.** Request names, hosts and error messages in `get_metrics` come from the load test and the server under load, which may be someone else's. The two tools that read say so in their descriptions, but a model can still be misled by text crafted to look like instructions.
 
 ## A Gaggle
