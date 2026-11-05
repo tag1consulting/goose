@@ -57,6 +57,15 @@ impl Running {
         Self::start_on(free_ports, more, token, args).await
     }
 
+    /// Fail at once, saying why, when `GOOSE_MCP_TOKEN` is set where the
+    /// tests run: every Goose here would take it as its token.
+    fn no_token_in_env() {
+        assert!(
+            std::env::var_os("GOOSE_MCP_TOKEN").is_none(),
+            "unset GOOSE_MCP_TOKEN to run these tests: Goose reads it as the MCP token"
+        );
+    }
+
     /// [`Running::start`], with each attempt's ports from `pick`.
     async fn start_on(
         mut pick: impl FnMut(usize) -> Vec<u16>,
@@ -64,6 +73,7 @@ impl Running {
         token: Option<&str>,
         args: impl Fn(&[String]) -> Vec<String>,
     ) -> Self {
+        Self::no_token_in_env();
         for attempt in 1..=START_ATTEMPTS {
             let ports = pick(1 + more);
             let texts: Vec<String> = ports.iter().map(u16::to_string).collect();
@@ -79,21 +89,52 @@ impl Running {
             let reply = probe
                 .reach(&request("tools/call", json!({ "name": "get_config" })), &[])
                 .await;
-            let host = reply
-                .as_ref()
-                .filter(|reply| reply.status == 200)
-                .map(|reply| {
-                    reply.json()["result"]["structuredContent"]["host"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string()
-                });
-            if host.as_deref() == Some(server.base_url().as_str()) {
-                return Running {
-                    load,
-                    _server: server,
-                    ports,
-                };
+            // A load test that ended: with --no-autostart and no other
+            // Controller, one whose MCP port was taken ends with that
+            // refusal; any other end fails at once, saying why.
+            if load.is_finished() {
+                match load.await {
+                    Ok(Err(GooseError::InvalidOption { detail, .. }))
+                        if detail.contains("no Controller could listen on its port") =>
+                    {
+                        eprintln!(
+                            "attempt {attempt} of {START_ATTEMPTS}: Goose could not listen on port {}: retrying on new ports",
+                            ports[0]
+                        );
+                        continue;
+                    }
+                    ended => panic!(
+                        "the load test ended before its MCP Controller answered: {:?}",
+                        ended
+                    ),
+                }
+            }
+            // Otherwise retry only on what a taken port shows: nothing
+            // listens, another HTTP server answers (404 at /mcp, which Goose
+            // never answers), or another load test's Goose does. Anything
+            // else from the port fails at once.
+            let taken = match &reply {
+                None => true,
+                Some(reply) if reply.status == 404 => true,
+                Some(reply) if reply.status == 200 => {
+                    let host = reply.json()["result"]["structuredContent"]["host"].clone();
+                    if host == json!(server.base_url()) {
+                        return Running {
+                            load,
+                            _server: server,
+                            ports,
+                        };
+                    }
+                    host.is_string()
+                }
+                Some(_) => false,
+            };
+            if !taken {
+                let reply = reply.unwrap();
+                panic!(
+                    "the MCP Controller on port {} answered get_config with {} {}",
+                    ports[0], reply.status, reply.body
+                );
             }
             eprintln!(
                 "attempt {attempt} of {START_ATTEMPTS}: the MCP Controller on port {} is not this load test's ({}): retrying on new ports",
@@ -103,6 +144,8 @@ impl Running {
                     Some(reply) => format!("{} {}", reply.status, reply.body),
                 }
             );
+            // Its Controllers stay bound to their ports until the test ends,
+            // harmless as each attempt takes new ones.
             load.abort();
         }
         panic!(
@@ -506,6 +549,7 @@ async fn transport_refusals() {
 /// start, naming both options.
 #[tokio::test]
 async fn off_loopback_needs_a_token() {
+    Running::no_token_in_env();
     tokio::time::timeout(TEST_TIMEOUT, async {
         let configuration =
             GooseConfiguration::parse_args_default(&["--mcp", "--mcp-host", "0.0.0.0"]).unwrap();
@@ -650,22 +694,23 @@ async fn set_host_is_opt_in() {
     .expect("test timed out");
 }
 
-/// A `tools/list` request on a raw connection to `port`: the response, or
-/// `None` when the server closed the connection before any of it.
-async fn raw_list(port: u16) -> Option<String> {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+/// Write a keep-alive `tools/list` request to `stream`, connected to `port`.
+async fn send_list(stream: &mut TcpStream, port: u16) -> std::io::Result<()> {
     let body = request("tools/list", json!({}));
     let head = format!(
         "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\n\r\n",
         body.len()
     );
+    stream.write_all(format!("{head}{body}").as_bytes()).await
+}
+
+/// A `tools/list` request on a raw connection to `port`: the response, or
+/// `None` when the server closed the connection before any of it.
+async fn raw_list(port: u16) -> Option<String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     // A connection over the cap may be closed before the request is
     // written; that is the same refusal.
-    if stream
-        .write_all(format!("{head}{body}").as_bytes())
-        .await
-        .is_err()
-    {
+    if send_list(&mut stream, port).await.is_err() {
         return None;
     }
     let mut reply = Vec::new();
@@ -727,19 +772,14 @@ async fn connection_cap() {
         // counted another against, such as the start's own probe, closing:
         // it is opened again.
         let mut held = Vec::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while held.len() < 16 {
             assert!(
                 tokio::time::Instant::now() < deadline,
-                "could not hold 16 connections"
+                "could not hold 16 connections within 2 seconds"
             );
             let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-            let body = request("tools/list", json!({}));
-            let head = format!(
-                "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\n\r\n",
-                body.len()
-            );
-            if stream.write_all(format!("{head}{body}").as_bytes()).await.is_err() {
+            if send_list(&mut stream, port).await.is_err() {
                 continue;
             }
             let mut buf = [0u8; 16];
