@@ -1891,14 +1891,6 @@ impl GooseAttack {
                 WORKER_FINAL_TIMEOUT.as_secs()
             )
         };
-        // A unit test's fault: a processor that never answers. The command
-        // is held unsent, its reply channel open, while the wait runs out.
-        #[cfg(test)]
-        if self.gaggle.test_faults.silent_final {
-            let _unsent = command;
-            let _ = answered(done, WORKER_FINAL_TIMEOUT).await;
-            return Err(worker_failed(&run.link, no_final()).await);
-        }
         // A unit test's fault: a processor that takes the command late.
         #[cfg(test)]
         let command = self

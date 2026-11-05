@@ -3313,17 +3313,23 @@ mod built_as_it_goes {
     /// A final delta whose rows reach back to seconds long built, as an
     /// honest worker's final may, is never taken for a late row: it builds
     /// every figure again anyway, so it neither warns nor spends the
-    /// worker's one late row build of its lag window.
+    /// worker's one late row build of its lag window, and the build after
+    /// it holds what one from nothing does.
     #[test]
     fn a_final_delta_is_no_late_row() {
-        let mut accumulator = lagged(120);
-        accumulator.apply(0, second(0, 1, 1, 0..190, 2)).unwrap();
+        let (mut accumulator, mut fresh) = (lagged(120), lagged(120));
+        let first = second(0, 1, 1, 0..190, 2);
+        fresh.apply(0, first.clone()).unwrap();
+        accumulator.apply(0, first).unwrap();
         let graph = accumulator.merged_and_excluded(GraphData::new()).1;
         let mut last = second(0, 2, 2, 0..191, 2);
         last.kind = DeltaKind::Final;
+        fresh.apply(0, last.clone()).unwrap();
         accumulator.apply(0, last).unwrap();
         assert_eq!(accumulator.late_rebuilt(0), None);
-        drop(accumulator.merged_and_excluded(graph));
+        let (_, built, _) = accumulator.merged_and_excluded(graph);
+        let (_, expected, _) = fresh.merged_and_excluded(GraphData::new());
+        assert_eq!(built.gaggle_diff(&expected), Vec::<String>::new());
     }
 
     /// Every worker left out of the merge mid run, the series origin

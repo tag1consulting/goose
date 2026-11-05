@@ -20,8 +20,6 @@ pub(crate) struct TestFaults {
     /// Send only deltas the manager refuses from this sequence number on,
     /// 0 for none.
     pub(crate) refuse_from: u64,
-    /// The metrics processor never sends the final metrics.
-    pub(crate) silent_final: bool,
     /// The metrics processor never answers a reset.
     pub(crate) silent_reset: bool,
     /// What the worker does with its `Prepare`.

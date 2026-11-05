@@ -200,7 +200,8 @@ impl GooseConfiguration {
                 option,
                 "set",
                 format!(
-                    "{option} can't be used with --worker: the manager gives every option that shapes the load, the metrics, the reports and the logs, and a worker runs no Controller or dashboard. A worker keeps --output-dir, --goose-log and verbosity."
+                    "{option} can't be used with --worker: the manager gives every option that shapes the load, the metrics, the reports and the logs, and a worker runs no Controller or dashboard. A worker keeps only {}.",
+                    WORKER_KEEPS.join(", ")
                 ),
             ));
         }
@@ -459,6 +460,20 @@ mod tests {
         match result {
             Err(GooseError::InvalidOption { detail, .. }) => detail,
             other => panic!("{:?} was not refused: {:?}", args, other),
+        }
+    }
+
+    /// A worker refusing an option names every option it keeps.
+    #[test]
+    fn a_worker_refusal_names_every_kept_option() {
+        let detail = refusal(&["--worker", "--manager-host", "m", "--users", "3"]);
+        assert!(
+            detail.starts_with("--users can't be used with --worker"),
+            "{}",
+            detail
+        );
+        for kept in WORKER_KEEPS {
+            assert!(detail.contains(kept), "{} is not named: {}", kept, detail);
         }
     }
 

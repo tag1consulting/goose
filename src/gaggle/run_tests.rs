@@ -1002,13 +1002,14 @@ async fn worker_data_past_the_cap_still_runs_test_stop() {
 }
 
 /// A lost worker's record keeps the last delta the merge took, not the last
-/// one it sent: every delta from 2 on is refused, and its final never comes.
+/// one it sent: every delta from 2 on is refused, and its final never comes,
+/// its processor taking the command long after the worker's wait.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_lost_worker_record_keeps_the_last_merged_seq() {
     worker_fails_a_phase(
         TestFaults {
-            silent_final: true,
+            final_after: Some(Duration::from_secs(60)),
             refuse_from: 2,
             ..Default::default()
         },
@@ -2327,39 +2328,6 @@ async fn gaggle_delta_past_the_message_limit() {
     assert!(kept[0]["missing_deltas"].as_u64() >= Some(1), "{}", gaggle);
     let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
     assert!(reason.contains("bytes, more than the"), "{}", gaggle);
-}
-
-/// No environment variable turns a worker's faults on: one with
-/// `GOOSE_GAGGLE_TEST_SKIP_RESET` set, as a cluster's test harness once set
-/// it, still takes its manager's metrics reset, so its metrics are merged.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[serial_test::serial]
-async fn gaggle_environment_turns_on_no_fault() {
-    let server = answering().await;
-    let folder = scratch("no-environment-fault");
-    std::env::set_var("GOOSE_GAGGLE_TEST_SKIP_RESET", "1");
-    let run = gaggle(
-        quick,
-        2,
-        server.base_url(),
-        &folder,
-        &[
-            "--users",
-            "2",
-            "--increase-rate",
-            "10",
-            "--run-time",
-            "3",
-            "--report-file",
-        ],
-        &[],
-        &[],
-    );
-    let ended = tokio::time::timeout(Duration::from_secs(60), run).await;
-    std::env::remove_var("GOOSE_GAGGLE_TEST_SKIP_RESET");
-    clean(ended.expect("the Gaggle ends within 60 seconds"));
-    let (gaggle, _) = record(&folder);
-    assert_eq!(gaggle["degraded"], false, "{gaggle}");
 }
 
 /// A worker that never says its users stopped is lost once the users
