@@ -682,7 +682,9 @@ Controllers:
           MCP auth token
 
           The token every MCP request must send, as an Authorization: Bearer
-          header. Needed when --mcp-host is not a loopback address.
+          header. Needed when --mcp-host is not a loopback address. Better read
+          from the GOOSE_MCP_TOKEN environment variable: Goose never shows it,
+          but on a command line it shows in ps and shell history.
 
           Set in code with GooseDefault::McpToken.
 

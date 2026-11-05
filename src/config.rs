@@ -72,6 +72,10 @@ const DEFAULT_WEBSOCKET_PORT: u16 = 5117;
 /// [`GooseDefault::McpPort`] sets one.
 const DEFAULT_MCP_PORT: u16 = 5119;
 
+/// The environment variable the MCP Controller's token is read from when
+/// `--mcp-token` is not given.
+const MCP_TOKEN_ENV: &str = "GOOSE_MCP_TOKEN";
+
 /// The request timeout, in milliseconds, when neither `--timeout` nor
 /// [`GooseDefault::Timeout`] sets one.
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
@@ -886,7 +890,9 @@ pub struct GooseConfiguration {
     /// MCP auth token
     ///
     /// The token every MCP request must send, as an Authorization: Bearer header. Needed
-    /// when --mcp-host is not a loopback address.
+    /// when --mcp-host is not a loopback address. Better read from the GOOSE_MCP_TOKEN
+    /// environment variable: Goose never shows it, but on a command line it shows in ps
+    /// and shell history.
     ///
     /// Set in code with GooseDefault::McpToken.
     #[arg(help_heading = "Controllers", long, value_name = "TOKEN")]
@@ -3130,6 +3136,18 @@ pub(crate) fn is_loopback_bind(host: &str) -> bool {
     }
 }
 
+/// The MCP Controller's token: `--mcp-token` (`flag`), then the
+/// [`MCP_TOKEN_ENV`] environment variable (`env`), then
+/// [`GooseDefault::McpToken`] (`default`). An empty `--mcp-token` sets no
+/// token, as it always has; an empty variable is as if it were unset.
+fn chosen_mcp_token(
+    flag: Option<String>,
+    env: Option<String>,
+    default: Option<String>,
+) -> Option<String> {
+    flag.or(env.filter(|token| !token.is_empty())).or(default)
+}
+
 /// Used internally to configure [`GooseConfiguration`] values based on precedence rules.
 #[derive(Debug, Clone)]
 pub(crate) struct GooseValue<'a, T> {
@@ -4029,20 +4047,17 @@ impl GooseConfiguration {
                 message: "",
             },
         ]);
-        self.mcp_token = self.get_value(vec![
-            // Use --mcp-token if set.
-            GooseValue {
-                value: self.mcp_token.clone(),
-                filter: self.mcp_token.is_none(),
-                message: "",
-            },
-            // Otherwise use GooseDefault if set.
-            GooseValue {
-                value: defaults.mcp_token.clone(),
-                filter: defaults.mcp_token.is_none(),
-                message: "",
-            },
-        ]);
+        // The environment is read only for an MCP Controller that is on.
+        let mcp_token_env = if self.mcp {
+            std::env::var(MCP_TOKEN_ENV).ok()
+        } else {
+            None
+        };
+        self.mcp_token = chosen_mcp_token(
+            self.mcp_token.take(),
+            mcp_token_env,
+            defaults.mcp_token.clone(),
+        );
 
         // Configure `dashboard`.
         self.dashboard = self
@@ -5486,7 +5501,7 @@ impl GooseConfiguration {
                 option: "`configuration.mcp_host`".to_string(),
                 value: host.to_string(),
                 detail: format!(
-                    "`configuration.mcp` is enabled with non-loopback host `{host}`; set `configuration.mcp_token` (--mcp-token) when `configuration.mcp_host` (--mcp-host) is not a loopback address"
+                    "`configuration.mcp` is enabled with non-loopback host `{host}`; set `configuration.mcp_token` (--mcp-token, or the {MCP_TOKEN_ENV} environment variable) when `configuration.mcp_host` (--mcp-host) is not a loopback address"
                 ),
             });
         }
@@ -5691,7 +5706,19 @@ mod test {
             configuration.configure(&goose_attack.defaults).unwrap();
             configuration
         };
-        for configuration in [from_line, from_default] {
+        // As configure takes it from GOOSE_MCP_TOKEN, without setting the
+        // variable in this process.
+        let from_env = {
+            let mut configuration = GooseConfiguration::parse_args_default(&["--mcp"]).unwrap();
+            configuration.mcp_token = chosen_mcp_token(
+                configuration.mcp_token.take(),
+                Some(token.to_string()),
+                None,
+            );
+            configuration.configure(&GooseDefaults::default()).unwrap();
+            configuration
+        };
+        for configuration in [from_line, from_default, from_env] {
             for (path, text) in [
                 ("json", serde_json::to_string(&configuration).unwrap()),
                 ("debug", format!("{:?}", configuration)),
@@ -5708,6 +5735,36 @@ mod test {
             // The token Goose checks is still the real one.
             assert_eq!(configuration.mcp_token(), Some(token));
         }
+    }
+
+    /// The token comes from `--mcp-token`, then `GOOSE_MCP_TOKEN`, then
+    /// `GooseDefault::McpToken`; an empty variable counts as unset, and an
+    /// empty flag still sets no token.
+    #[test]
+    fn mcp_token_precedence() {
+        let some = |token: &str| Some(token.to_string());
+        let cases = [
+            ((None, None, None), None),
+            ((some("flag"), None, None), some("flag")),
+            ((None, some("env"), None), some("env")),
+            ((None, None, some("default")), some("default")),
+            ((some("flag"), some("env"), some("default")), some("flag")),
+            ((None, some("env"), some("default")), some("env")),
+            ((some("flag"), None, some("default")), some("flag")),
+            ((some("flag"), some("env"), None), some("flag")),
+            // An empty variable is as if it were unset.
+            ((None, some(""), None), None),
+            ((None, some(""), some("default")), some("default")),
+            // An empty flag wins and sets no token, as before.
+            ((some(""), some("env"), some("default")), some("")),
+        ];
+        for ((flag, env, default), expected) in cases {
+            let case = format!("{:?} {:?} {:?}", flag, env, default);
+            assert_eq!(chosen_mcp_token(flag, env, default), expected, "{}", case);
+        }
+        let mut empty_flag = GooseConfiguration::parse_args_default(&["--mcp"]).unwrap();
+        empty_flag.mcp_token = chosen_mcp_token(some(""), some("env"), None);
+        assert_eq!(empty_flag.mcp_token(), None);
     }
 
     /// `--mcp` without the feature fails as `--dashboard` does without its
@@ -5742,7 +5799,15 @@ mod test {
                 "{}",
                 refused
             );
+            assert!(refused.contains("GOOSE_MCP_TOKEN"), "{}", refused);
             assert!(validate(&["--mcp", "--mcp-host", "0.0.0.0", "--mcp-token", "t"]).is_ok());
+            // A token from the environment is accepted as one from the flag.
+            let mut from_env =
+                GooseConfiguration::parse_args_default(&["--mcp", "--mcp-host", "0.0.0.0"])
+                    .unwrap();
+            from_env.mcp_token = chosen_mcp_token(None, Some("t".to_string()), None);
+            from_env.configure(&GooseDefaults::default()).unwrap();
+            assert!(from_env.validate().is_ok());
             assert!(validate(&["--mcp", "--mcp-host", "::1"]).is_ok());
             // Port 0 is refused, as for telnet and WebSocket.
             let zero = detail(validate(&["--mcp", "--mcp-port", "0"]).unwrap_err());

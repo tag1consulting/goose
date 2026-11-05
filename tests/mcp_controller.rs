@@ -506,7 +506,9 @@ async fn off_loopback_needs_a_token() {
             GooseError::InvalidOption { option, detail, .. } => {
                 assert_eq!(option, "`configuration.mcp_host`");
                 assert!(
-                    detail.contains("--mcp-token") && detail.contains("--mcp-host"),
+                    detail.contains("--mcp-token")
+                        && detail.contains("GOOSE_MCP_TOKEN")
+                        && detail.contains("--mcp-host"),
                     "{}",
                     detail
                 );
