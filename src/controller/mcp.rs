@@ -37,6 +37,7 @@ use rmcp::transport::streamable_http_server::session::never::NeverSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -413,8 +414,9 @@ pub(crate) struct McpOptions {
     read_only: bool,
     /// `--mcp-set-host`.
     set_host: bool,
-    /// The `Host` values a request may name: the loopback names on a loopback
-    /// bind, and the configured host with its addresses on any other.
+    /// The `Host` values a request may name: the address the listener bound,
+    /// the configured host as typed, and the loopback names on a loopback
+    /// bind. No name is resolved.
     allowed_hosts: Vec<String>,
     /// The browser origins a request may come from: loopback, and the
     /// configured host.
@@ -424,9 +426,10 @@ pub(crate) struct McpOptions {
 }
 
 impl McpOptions {
-    /// The options `configuration` gives, resolving `--mcp-host` to its
-    /// addresses when it is not loopback.
-    pub(crate) async fn new(configuration: &GooseConfiguration) -> Self {
+    /// The options `configuration` gives, for a listener bound to `bound`.
+    /// The `Host` list is built from what is known without asking a
+    /// resolver, so a stalled one can not stall startup.
+    pub(crate) fn new(configuration: &GooseConfiguration, bound: SocketAddr) -> Self {
         let host = configuration.mcp_host().trim();
         let bare = host
             .trim_start_matches('[')
@@ -436,9 +439,8 @@ impl McpOptions {
         let mut names: Vec<String> = Vec::new();
         if is_loopback_bind(host) {
             names.extend(loopback.iter().map(|name| name.to_string()));
-        } else if let Ok(addresses) = tokio::net::lookup_host((bare.as_str(), 0)).await {
-            names.extend(addresses.map(|address| address.ip().to_string()));
         }
+        names.push(bound.ip().to_string());
         names.push(bare.clone());
         names.sort();
         names.dedup();
@@ -776,6 +778,32 @@ mod tests {
         assert_eq!(help_line("start"), Some("start an idle load test"));
     }
 
+    /// The address a listener on `ip` bound, at the default MCP port.
+    fn bound(ip: &str) -> SocketAddr {
+        SocketAddr::new(ip.parse().unwrap(), 5119)
+    }
+
+    /// The Host list comes from the bound address and the host as typed,
+    /// with no name resolved: a loopback bind gives the three loopback names,
+    /// an address gives itself, and a name gives itself and its bound address.
+    #[test]
+    fn host_list_needs_no_resolver() {
+        let hosts = |host: &str, ip: &str| {
+            let configuration =
+                GooseConfiguration::parse_args_default(&["--mcp", "--mcp-host", host]).unwrap();
+            McpOptions::new(&configuration, bound(ip)).allowed_hosts
+        };
+        let loopback = ["127.0.0.1", "::1", "localhost"];
+        assert_eq!(hosts("127.0.0.1", "127.0.0.1"), loopback);
+        assert_eq!(hosts("localhost", "127.0.0.1"), loopback);
+        assert_eq!(hosts("[::1]", "::1"), loopback);
+        assert_eq!(hosts("192.0.2.7", "192.0.2.7"), ["192.0.2.7"]);
+        assert_eq!(
+            hosts("loadtest.internal", "127.0.0.2"),
+            ["127.0.0.2", "loadtest.internal"]
+        );
+    }
+
     /// `set_host` is listed and answered only with `--mcp-set-host`, and
     /// `--mcp-read-only` lists the two that read whatever it says.
     #[test]
@@ -812,19 +840,15 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(30), async {
             let configuration =
                 |args: &[&str]| GooseConfiguration::parse_args_default(args).unwrap();
-            let loopback = McpOptions::new(&configuration(&["--mcp"])).await;
+            let loopback = McpOptions::new(&configuration(&["--mcp"]), bound("127.0.0.1"));
             assert_eq!(loopback.allowed_hosts, ["127.0.0.1", "::1", "localhost"]);
             assert!(loopback
                 .allowed_origins
                 .contains(&"http://[::1]:*".to_string()));
-            let mut options = McpOptions::new(&configuration(&[
-                "--mcp",
-                "--mcp-host",
-                "192.0.2.7",
-                "--mcp-token",
-                "t",
-            ]))
-            .await;
+            let mut options = McpOptions::new(
+                &configuration(&["--mcp", "--mcp-host", "192.0.2.7", "--mcp-token", "t"]),
+                bound("192.0.2.7"),
+            );
             assert_eq!(options.allowed_hosts, ["192.0.2.7"]);
             assert!(options
                 .allowed_origins

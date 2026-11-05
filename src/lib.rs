@@ -2300,13 +2300,21 @@ impl GooseAttack {
             if let Some(listener) =
                 controller::bind_controller(&self.configuration, ControllerProtocol::Mcp).await
             {
-                // Runs until Goose exits, as the other Controllers do.
-                tokio::spawn(controller::mcp::serve(
-                    listener,
-                    control_tx.clone(),
-                    controller::mcp::McpOptions::new(&self.configuration).await,
-                ));
-                listening.mcp = true;
+                match listener.local_addr() {
+                    Ok(bound) => {
+                        let options = controller::mcp::McpOptions::new(&self.configuration, bound);
+                        // Runs until Goose exits, as the other Controllers do.
+                        tokio::spawn(controller::mcp::serve(
+                            listener,
+                            control_tx.clone(),
+                            options,
+                        ));
+                        listening.mcp = true;
+                    }
+                    Err(e) => error!(
+                        "[controller]: the Mcp Controller's bound address is unknown: {e}; the load test runs without it"
+                    ),
+                }
             }
         }
 
