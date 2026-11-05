@@ -656,7 +656,13 @@ async fn run_standalone_test(protocol: Protocol) {
         // Also test writing a report-file when stopping load test through controller.
         Protocol::Telnet => vec!["--no-websocket", "--report-file", REPORT_FILE],
         #[cfg(feature = "mcp")]
-        Protocol::Mcp => vec!["--mcp", "--mcp-port", &mcp_port_text, "--no-telnet"],
+        Protocol::Mcp => vec![
+            "--mcp",
+            "--mcp-set-host",
+            "--mcp-port",
+            &mcp_port_text,
+            "--no-telnet",
+        ],
     };
 
     // Build common configuration elements.

@@ -906,6 +906,16 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::McpReadOnly.
     #[arg(help_heading = "Controllers", long)]
     pub mcp_read_only: bool,
+    /// Offer the MCP set_host tool
+    ///
+    /// The MCP Controller lists and answers set_host, which points the load test at another
+    /// host. Off by default: text from the target reaches the agent through get_metrics, and
+    /// could lead it to aim the load at a host that text names. Ignored with
+    /// --mcp-read-only.
+    ///
+    /// Set in code with GooseDefault::McpSetHost.
+    #[arg(help_heading = "Controllers", long)]
+    pub mcp_set_host: bool,
 
     /// Request timeout in seconds [default: 60]
     ///
@@ -1179,6 +1189,7 @@ impl std::fmt::Debug for GooseConfiguration {
             mcp_port,
             mcp_token,
             mcp_read_only,
+            mcp_set_host,
             timeout,
             no_gzip,
             sticky_follow,
@@ -1294,6 +1305,7 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("mcp_port", mcp_port)
             .field("mcp_token", &shown_token(mcp_token))
             .field("mcp_read_only", mcp_read_only)
+            .field("mcp_set_host", mcp_set_host)
             .field("timeout", timeout)
             .field("no_gzip", no_gzip)
             .field("sticky_follow", sticky_follow)
@@ -1814,6 +1826,8 @@ pub(crate) struct GooseDefaults {
     pub mcp_token: Option<String>,
     /// An optional default for listing only the MCP tools that read.
     pub mcp_read_only: Option<bool>,
+    /// An optional default for listing the MCP set_host tool.
+    pub mcp_set_host: Option<bool>,
     /// An optional default for enabling the live web dashboard.
     pub dashboard: Option<bool>,
     /// An optional default for enabling dashboard control endpoints.
@@ -2021,6 +2035,8 @@ pub enum GooseDefault {
     McpToken,
     /// An optional default for listing only the MCP tools that read.
     McpReadOnly,
+    /// An optional default for listing the MCP `set_host` tool, which is off by default.
+    McpSetHost,
     /// An optional default for enabling the live web dashboard.
     Dashboard,
     /// An optional default for enabling dashboard control endpoints.
@@ -2143,6 +2159,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoWebSocket`]
 ///  - [`GooseDefault::Mcp`]
 ///  - [`GooseDefault::McpReadOnly`]
+///  - [`GooseDefault::McpSetHost`]
 ///  - [`GooseDefault::NoAutoStart`]
 ///  - [`GooseDefault::NoGzip`]
 ///  - [`GooseDefault::NoStatusCodes`]
@@ -2269,6 +2286,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::Mcp
             | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2410,6 +2428,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::Mcp
             | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2485,6 +2504,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
             GooseDefault::Mcp => self.defaults.mcp = Some(value),
             GooseDefault::McpReadOnly => self.defaults.mcp_read_only = Some(value),
+            GooseDefault::McpSetHost => self.defaults.mcp_set_host = Some(value),
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
             GooseDefault::AcceptInvalidCerts => self.defaults.accept_invalid_certs = Some(value),
@@ -2626,6 +2646,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::Mcp
             | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2769,6 +2790,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::Mcp
             | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2958,6 +2980,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::Mcp
             | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -3973,8 +3996,8 @@ impl GooseConfiguration {
             },
         ]);
 
-        // Configure `mcp`, `mcp_read_only`, `mcp_host`, `mcp_port` and `mcp_token`, with
-        // the built in host and port when the MCP Controller is enabled.
+        // Configure `mcp`, `mcp_read_only`, `mcp_set_host`, `mcp_host`, `mcp_port` and
+        // `mcp_token`, with the built in host and port when the MCP Controller is enabled.
         self.mcp = self
             .get_value(vec![
                 // Use --mcp if set.
@@ -4003,6 +4026,22 @@ impl GooseConfiguration {
                 GooseValue {
                     value: defaults.mcp_read_only,
                     filter: defaults.mcp_read_only.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+        self.mcp_set_host = self
+            .get_value(vec![
+                // Use --mcp-set-host if set.
+                GooseValue {
+                    value: Some(self.mcp_set_host),
+                    filter: !self.mcp_set_host,
+                    message: "mcp_set_host",
+                },
+                // Use default if --mcp-set-host hasn't been set.
+                GooseValue {
+                    value: defaults.mcp_set_host,
+                    filter: defaults.mcp_set_host.is_none(),
                     message: "",
                 },
             ])
@@ -5778,7 +5817,7 @@ mod test {
         };
         // Off by default, and the defaults it takes when on.
         let off = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
-        assert!(!off.mcp && !off.mcp_read_only && off.mcp_token().is_none());
+        assert!(!off.mcp && !off.mcp_read_only && !off.mcp_set_host && off.mcp_token().is_none());
         assert_eq!((off.mcp_host(), off.mcp_port()), ("127.0.0.1", 5119));
         assert!(validate(&[]).is_ok());
         let on = validate(&["--mcp"]);
@@ -5948,6 +5987,8 @@ mod test {
             .set_default(GooseDefault::McpPort, 6119)
             .unwrap()
             .set_default(GooseDefault::McpReadOnly, true)
+            .unwrap()
+            .set_default(GooseDefault::McpSetHost, true)
             .unwrap();
 
         assert!(goose_attack.defaults.host == Some(host));
@@ -5995,6 +6036,7 @@ mod test {
         assert!(goose_attack.defaults.mcp_host == Some("127.0.0.2".to_string()));
         assert!(goose_attack.defaults.mcp_port == Some(6119));
         assert!(goose_attack.defaults.mcp_read_only == Some(true));
+        assert!(goose_attack.defaults.mcp_set_host == Some(true));
         assert!(goose_attack.defaults.dashboard_max_clients == Some(64));
     }
 

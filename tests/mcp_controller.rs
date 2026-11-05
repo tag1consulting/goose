@@ -1,6 +1,6 @@
 //! The MCP Controller's own rules: the tools it lists and how, read only
-//! mode, its Origin, Host and token checks, its body limit and connection
-//! cap, the refusals it returns as
+//! mode, `set_host` only with `--mcp-set-host`, its Origin, Host and token
+//! checks, its body limit and connection cap, the refusals it returns as
 //! tool errors, and that it is off unless `--mcp` is given. What
 //! every command does through it is in tests/controller.rs and
 //! tests/control_agreement.rs, shared with telnet and WebSocket.
@@ -192,6 +192,7 @@ async fn tools_listed_refused_and_redacted() {
         let running = Running::start(1, Some(mcp_token), |ports| {
             strings(&[
                 "--mcp",
+                "--mcp-set-host",
                 "--mcp-port",
                 &ports[0],
                 "--mcp-token",
@@ -356,11 +357,13 @@ async fn tools_listed_refused_and_redacted() {
 async fn read_only_lists_two_tools() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         // Read only, the MCP Controller can not start the test: telnet stays on
-        // for --no-autostart, on a port of its own.
+        // for --no-autostart, on a port of its own. --mcp-set-host changes
+        // nothing here.
         let running = Running::start(1, None, |ports| {
             strings(&[
                 "--mcp",
                 "--mcp-read-only",
+                "--mcp-set-host",
                 "--mcp-port",
                 &ports[0],
                 "--telnet-port",
@@ -378,7 +381,7 @@ async fn read_only_lists_two_tools() {
         let unknown = mcp
             .rpc("tools/call", json!({ "name": "nope", "arguments": {} }))
             .await;
-        for tool in ["start", "set_users", "shutdown"] {
+        for tool in ["start", "set_users", "shutdown", "set_host"] {
             let refused = mcp
                 .rpc(
                     "tools/call",
@@ -556,6 +559,82 @@ async fn off_without_the_option() {
             .expect("Goose exits on shutdown")
             .expect("join load test")
             .expect("load test");
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// The names `tools/list` lists.
+async fn names(mcp: &mut Mcp) -> Vec<String> {
+    mcp.tools()
+        .await
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// `set_host` is off by default: 13 tools, and a call to it is refused as an
+/// unknown tool is. With `--mcp-set-host` it is listed, 14 tools, and
+/// answers as telnet's `host` does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn set_host_is_opt_in() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let running = Running::start(0, None, |ports| {
+            strings(&["--mcp", "--mcp-port", &ports[0], "--no-telnet"])
+        })
+        .await;
+        let mut mcp = Mcp::new(running.port());
+        let listed = names(&mut mcp).await;
+        assert_eq!(listed.len(), 13, "{:?}", listed);
+        assert!(!listed.iter().any(|name| name == "set_host"));
+        let unknown = mcp
+            .rpc("tools/call", json!({ "name": "nope", "arguments": {} }))
+            .await;
+        let refused = mcp
+            .rpc(
+                "tools/call",
+                json!({ "name": "set_host", "arguments": { "host": "http://192.0.2.1/" } }),
+            )
+            .await;
+        assert!(refused["result"].is_null(), "{}", refused);
+        assert_eq!(refused["error"]["code"], unknown["error"]["code"]);
+        assert_eq!(refused["error"]["message"], "Unknown tool: set_host");
+        running.shutdown(&mut mcp).await;
+
+        let running = Running::start(1, None, |ports| {
+            strings(&[
+                "--mcp",
+                "--mcp-set-host",
+                "--mcp-port",
+                &ports[0],
+                "--telnet-port",
+                &ports[1],
+            ])
+        })
+        .await;
+        let telnet_port = running.ports[1];
+        let mut mcp = Mcp::new(running.port());
+        let listed = names(&mut mcp).await;
+        assert_eq!(listed.len(), 14, "{:?}", listed);
+        assert_eq!(listed[6], "set_host");
+        for host in [
+            "http://192.0.2.1/",
+            "ftp://192.0.2.1/",
+            "http://user:pw@192.0.2.1/",
+        ] {
+            let telnet_says = telnet(telnet_port, &format!("host {host}")).await;
+            let called = mcp.call("set_host", json!({ "host": host })).await;
+            assert_eq!(called.text, telnet_says, "{}", host);
+            assert_eq!(
+                called.ok,
+                called.structured["ok"] == json!(true),
+                "{}",
+                host
+            );
+        }
+        let config = mcp.call("get_config", json!({})).await;
+        assert_eq!(config.structured["host"], "http://192.0.2.1/");
+        running.shutdown(&mut mcp).await;
     })
     .await
     .expect("test timed out");

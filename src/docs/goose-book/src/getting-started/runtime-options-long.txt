@@ -696,6 +696,16 @@ Controllers:
 
           Set in code with GooseDefault::McpReadOnly.
 
+      --mcp-set-host
+          Offer the MCP set_host tool
+
+          The MCP Controller lists and answers set_host, which points the load
+          test at another host. Off by default: text from the target reaches the
+          agent through get_metrics, and could lead it to aim the load at a host
+          that text names. Ignored with --mcp-read-only.
+
+          Set in code with GooseDefault::McpSetHost.
+
 HTTP client:
       --timeout <SECS>
           Request timeout in seconds [default: 60]

@@ -735,6 +735,7 @@ mod tests {
             &["--mcp-port", "1"],
             &["--mcp-token", "t"],
             &["--mcp-read-only"],
+            &["--mcp-set-host"],
             &["--no-gzip"],
             &["--sticky-follow"],
             &["--accept-invalid-certs"],

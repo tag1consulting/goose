@@ -320,7 +320,7 @@ async fn test_control_agreement() {
         &output_dir,
     ];
     #[cfg(feature = "mcp")]
-    args.extend(["--mcp", "--mcp-port", mcp_port.as_str()]);
+    args.extend(["--mcp", "--mcp-set-host", "--mcp-port", mcp_port.as_str()]);
     let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
     let goose_attack = GooseAttack::initialize_with_config(configuration)
         .unwrap()
