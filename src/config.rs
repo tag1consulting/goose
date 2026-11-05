@@ -3284,6 +3284,17 @@ impl GooseConfiguration {
     ///
     /// Fails when a time span is too long.
     pub(crate) fn configure(&mut self, defaults: &GooseDefaults) -> Result<(), GooseError> {
+        self.configure_with_env(defaults, |name| std::env::var(name).ok())
+    }
+
+    /// [`GooseConfiguration::configure`], reading the MCP token's environment
+    /// variable through `env`, so a test can give it a value without setting
+    /// one in its process.
+    pub(crate) fn configure_with_env(
+        &mut self,
+        defaults: &GooseDefaults,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> Result<(), GooseError> {
         #[cfg(feature = "gaggle")]
         self.configure_gaggle();
 
@@ -4087,11 +4098,7 @@ impl GooseConfiguration {
             },
         ]);
         // The environment is read only for an MCP Controller that is on.
-        let mcp_token_env = if self.mcp {
-            std::env::var(MCP_TOKEN_ENV).ok()
-        } else {
-            None
-        };
+        let mcp_token_env = if self.mcp { env(MCP_TOKEN_ENV) } else { None };
         self.mcp_token = chosen_mcp_token(
             self.mcp_token.take(),
             mcp_token_env,
@@ -5742,19 +5749,20 @@ mod test {
             .unwrap();
             assert_eq!(goose_attack.defaults.mcp_token.as_deref(), Some(token));
             let mut configuration = goose_attack.configuration.clone();
-            configuration.configure(&goose_attack.defaults).unwrap();
+            configuration
+                .configure_with_env(&goose_attack.defaults, no_env)
+                .unwrap();
             configuration
         };
-        // As configure takes it from GOOSE_MCP_TOKEN, without setting the
+        // From GOOSE_MCP_TOKEN, given to configure without setting the
         // variable in this process.
         let from_env = {
             let mut configuration = GooseConfiguration::parse_args_default(&["--mcp"]).unwrap();
-            configuration.mcp_token = chosen_mcp_token(
-                configuration.mcp_token.take(),
-                Some(token.to_string()),
-                None,
-            );
-            configuration.configure(&GooseDefaults::default()).unwrap();
+            configuration
+                .configure_with_env(&GooseDefaults::default(), |name| {
+                    (name == MCP_TOKEN_ENV).then(|| token.to_string())
+                })
+                .unwrap();
             configuration
         };
         for configuration in [from_line, from_default, from_env] {
@@ -5774,6 +5782,12 @@ mod test {
             // The token Goose checks is still the real one.
             assert_eq!(configuration.mcp_token(), Some(token));
         }
+    }
+
+    /// An environment with no variables, for tests whose result a
+    /// `GOOSE_MCP_TOKEN` exported where they run must not change.
+    fn no_env(_name: &str) -> Option<String> {
+        None
     }
 
     /// The token comes from `--mcp-token`, then `GOOSE_MCP_TOKEN`, then
@@ -5812,7 +5826,7 @@ mod test {
     fn mcp_validation() {
         let validate = |args: &[&str]| {
             let mut configuration = GooseConfiguration::parse_args_default(args).unwrap();
-            configuration.configure(&GooseDefaults::default())?;
+            configuration.configure_with_env(&GooseDefaults::default(), no_env)?;
             configuration.validate()
         };
         // Off by default, and the defaults it takes when on.
@@ -5844,9 +5858,16 @@ mod test {
             let mut from_env =
                 GooseConfiguration::parse_args_default(&["--mcp", "--mcp-host", "0.0.0.0"])
                     .unwrap();
-            from_env.mcp_token = chosen_mcp_token(None, Some("t".to_string()), None);
-            from_env.configure(&GooseDefaults::default()).unwrap();
+            from_env
+                .configure_with_env(&GooseDefaults::default(), |_| Some("t".to_string()))
+                .unwrap();
+            assert_eq!(from_env.mcp_token(), Some("t"));
             assert!(from_env.validate().is_ok());
+            // The variable is read only with --mcp.
+            let mut off = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+            off.configure_with_env(&GooseDefaults::default(), |_| Some("t".to_string()))
+                .unwrap();
+            assert_eq!(off.mcp_token, None);
             assert!(validate(&["--mcp", "--mcp-host", "::1"]).is_ok());
             // Port 0 is refused, as for telnet and WebSocket.
             let zero = detail(validate(&["--mcp", "--mcp-port", "0"]).unwrap_err());
