@@ -585,7 +585,9 @@ impl GooseAttack {
 
     /// The manager, before its first run: listen and wait for every worker.
     async fn gaggle_manager_join(&mut self) -> Result<(), GooseError> {
-        // Ctrl-C cancels the waits before the run too.
+        // A new run starts without the previous run's cancel, as a run in
+        // one process does, and Ctrl-C cancels the waits before it too.
+        crate::reset_killswitch();
         crate::util::setup_ctrlc_handler();
         let (host, port) = self.configuration.manager_bind();
         let expected = self.configuration.expect_workers.unwrap_or(1);
@@ -1740,6 +1742,10 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         run: &mut ManagerRun,
     ) {
+        // A cancel already set ended the run; one set while the processor
+        // works through its queue is a Ctrl-C during the wait, unless a
+        // threshold rule queued before Stop set it.
+        let canceled = crate::is_killswitch_triggered();
         #[cfg(test)]
         super::faults::MANAGER_STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
         run.stop_sent = true;
@@ -1757,25 +1763,26 @@ impl GooseAttack {
         // is done first: a rule that fails now triggers the killswitch before
         // the cancel is set aside, never during the wait, where it would read
         // as Ctrl-C. The main loop, held here, sends no other check.
-        // GetMetrics is only a barrier here: its reply is dropped on purpose.
         let (respond, drained) = tokio::sync::oneshot::channel();
-        if goose_attack_run_state
+        let threshold_failed = goose_attack_run_state
             .metrics_cmd_tx
-            .send(MetricsCommand::GetMetrics {
-                duration: self.metrics.duration,
-                total_users: self.metrics.total_users,
-                maximum_users: self.metrics.maximum_users,
-                history: Vec::new(),
-                respond,
-            })
+            .send(MetricsCommand::GaggleDrained { respond })
             .is_ok()
-        {
-            let _ = tokio::time::timeout(FINAL_TIMEOUT, drained).await;
-        }
+            && match tokio::time::timeout(FINAL_TIMEOUT, drained).await {
+                Ok(Ok(failed)) => failed,
+                // No answer, in time or at all: a rule queued before Stop
+                // may have set the cancel, so one set now is set aside.
+                _ => crate::is_killswitch_triggered(),
+            };
         // A cancel that ended the run is set aside while the workers send
         // their final metrics, so a Ctrl-C now ends the wait rather than the
-        // process; it is put back for test_stop and the log collection.
-        let aside = set_cancel_aside();
+        // process; it is put back for test_stop and the log collection. One
+        // that came during the drain stays, and ends the wait at once.
+        let aside = if canceled || threshold_failed {
+            set_cancel_aside()
+        } else {
+            None
+        };
         run.canceled_at_stop = aside.is_some();
         let reason = match &self.ended_by {
             Some((EndedBy::Canceled, Some(reason))) => format!("canceled: {reason}"),
@@ -1885,14 +1892,6 @@ impl GooseAttack {
                 WORKER_FINAL_TIMEOUT.as_secs()
             )
         };
-        // A unit test's fault: a processor that never answers. The command
-        // is held unsent, its reply channel open, while the wait runs out.
-        #[cfg(test)]
-        if self.gaggle.test_faults.silent_final {
-            let _unsent = command;
-            let _ = answered(done, WORKER_FINAL_TIMEOUT).await;
-            return Err(worker_failed(&run.link, no_final()).await);
-        }
         // A unit test's fault: a processor that takes the command late.
         #[cfg(test)]
         let command = self

@@ -185,6 +185,8 @@ impl MetricsProcessor {
             cmd @ (MetricsCommand::UserStarted { .. } | MetricsCommand::RecordUsers { .. }) => {
                 self.dispatch_command(cmd)
             }
+            // Answered in queue order, with nothing built.
+            cmd @ MetricsCommand::GaggleDrained { .. } => self.dispatch_command(cmd),
             cmd => {
                 let reset = matches!(cmd, MetricsCommand::Reset { .. });
                 // What a report, a Controller or the end of a run reads is

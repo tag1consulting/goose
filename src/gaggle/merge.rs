@@ -100,6 +100,43 @@ struct Merged {
 /// order, gives.
 type EventKey = (u64, u32, usize);
 
+/// Put `new` events in their places among `events`, held in the order of
+/// `keys`, in one pass: `new` sorted by key, every held event from the first
+/// new one's place on taken out once and merged back with them, so the work
+/// is the held list's tail and `new`, never their product. New events that
+/// all follow the held ones, as each second's do, move none.
+fn place_events(
+    keys: &mut Vec<EventKey>,
+    events: &mut Vec<CoEvent>,
+    mut new: Vec<(EventKey, CoEvent)>,
+) {
+    // Each key is unique: a worker numbers its own events.
+    new.sort_unstable_by_key(|(key, _)| *key);
+    let Some((first, _)) = new.first() else {
+        return;
+    };
+    let from = keys.partition_point(|held| held < first);
+    let tail_keys = keys.split_off(from);
+    let tail_events = events.split_off(from);
+    #[cfg(test)]
+    EVENTS_MOVED.with(|moved| moved.set(moved.get() + 2 * tail_keys.len()));
+    keys.reserve(tail_keys.len() + new.len());
+    events.reserve(tail_keys.len() + new.len());
+    let mut tail = tail_keys.into_iter().zip(tail_events).peekable();
+    for (key, event) in new {
+        while let Some((held, held_event)) = tail.next_if(|(held, _)| *held < key) {
+            keys.push(held);
+            events.push(held_event);
+        }
+        keys.push(key);
+        events.push(event);
+    }
+    for (held, held_event) in tail {
+        keys.push(held);
+        events.push(held_event);
+    }
+}
+
 /// What graph data built from the merged figures holds: every second before
 /// `before`. The graph data itself is the caller's, handed back to each
 /// build ([`GaggleAccumulator::merged_and_excluded`]).
@@ -110,8 +147,6 @@ struct GraphCache {
     users: Option<crate::graph::MergedUsers>,
     series_origin: Option<Second>,
     columns: bool,
-    /// The workers it left out.
-    excluded: Vec<u32>,
 }
 
 /// Every worker's metrics, merged on demand.
@@ -156,6 +191,10 @@ std::thread_local! {
     /// workers' totals, or added since (tests).
     #[cfg(test)]
     pub(crate) static EVENTS_GATHERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The held coordinated omission events builds on this thread moved to
+    /// put new ones in their places (tests).
+    #[cfg(test)]
+    pub(crate) static EVENTS_MOVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The most gaps an accumulator keeping them holds; past it they are
@@ -667,7 +706,9 @@ impl GaggleAccumulator {
             .collect()
     }
 
-    /// The merged figures, built again first when they are not current.
+    /// The merged figures, built again first when they are not current: a
+    /// build again drops the graph cache, so the workers a cache's build
+    /// left out are always those left out now.
     fn current(&self) -> std::cell::RefMut<'_, Merged> {
         let mut merged = self.merged.borrow_mut();
         if !merged.current {
@@ -723,15 +764,12 @@ impl GaggleAccumulator {
         // The graph data built so far, when it still holds: only the
         // seconds completed since are added. Every second before the last
         // build's `before` is unchanged, or the cache was dropped.
-        // Once every worker is done, nothing is left out of it.
-        let excluded: Vec<u32> = merged.excluded.iter().map(|&(id, _)| id).collect();
         // Once every worker is done the graph data is built from nothing,
         // once, so the final graph equals a build from nothing exactly,
         // though its provisional seconds were added a delta at a time.
         let reusable = merged.built.take().filter(|built| {
             built.series_origin == series_origin
                 && built.columns == self.settings.columns
-                && built.excluded == excluded
                 && complete.is_none_or(|complete| complete >= built.before)
                 && !(merged.late && complete.is_none())
                 && !(complete.is_none() && built.before != Second::MAX)
@@ -759,7 +797,6 @@ impl GaggleAccumulator {
                     users: None,
                     series_origin,
                     columns: self.settings.columns,
-                    excluded,
                 },
             ),
         };
@@ -827,11 +864,7 @@ impl GaggleAccumulator {
             if events.len() == keys.len() {
                 #[cfg(test)]
                 EVENTS_GATHERED.with(|gathered| gathered.set(gathered.get() + new.len()));
-                for (key, event) in new {
-                    let at = keys.partition_point(|held| *held < key);
-                    keys.insert(at, key);
-                    events.insert(at, event);
-                }
+                place_events(keys, &mut events, new);
                 return events;
             }
         }

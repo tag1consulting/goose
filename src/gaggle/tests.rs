@@ -2482,6 +2482,149 @@ fn gaggle_refreshes_take_only_new_co_events() {
     assert_eq!(events(&merged), events(&expected));
 }
 
+/// A refresh whose 1,000 coordinated omission events, a delta's most, are
+/// all older than every event already merged, as a worker's that were
+/// stamped at the run's first second: each held event moves at most twice
+/// to put them in their places, never once for each new event, so the
+/// refresh costs the held list's length and theirs, not their product; and
+/// the events stay in the order a merge built from nothing gives them.
+#[test]
+fn old_co_events_are_placed_in_one_pass() {
+    use crate::graph::GraphSettings;
+    let settings = GraphSettings {
+        records: true,
+        latency: true,
+        synthetic: false,
+        columns: false,
+    };
+    let new = || GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+    let (mut accumulator, mut fresh) = (new(), new());
+    const HELD_DELTAS: u64 = 20;
+    // Worker 0 holds 20,000 events, from second 1,000 on; worker 1 is
+    // merged with none yet.
+    let mut deltas = Vec::new();
+    for at in 0..HELD_DELTAS {
+        let events = (0..1_000).map(|_| co_event(0, 1_000 + at)).collect();
+        deltas.push((0, co_delta(0, at, events)));
+    }
+    deltas.push((1, co_delta(1, 0, Vec::new())));
+    for (worker, delta) in deltas {
+        fresh.apply(worker, delta.clone()).unwrap();
+        accumulator.apply(worker, delta).unwrap();
+    }
+    let (metrics, mut graph, _) = accumulator.merged_and_excluded(GraphData::new());
+    let held = metrics
+        .coordinated_omission_metrics
+        .map(|co| co.co_events)
+        .unwrap_or_default();
+    assert_eq!(held.len(), 20_000);
+    accumulator.hand_back_events(held);
+    // Worker 1's next delta: 1,000 events stamped at second 0, in no order
+    // of their own but the worker's.
+    let events: Vec<_> = (0..1_000).map(|at| co_event(1, (at * 7) % 3)).collect();
+    let delta = co_delta(1, 1, events);
+    fresh.apply(1, delta.clone()).unwrap();
+    accumulator.apply_live(1, delta, &mut graph).unwrap();
+    super::merge::EVENTS_MOVED.with(|moved| moved.set(0));
+    super::merge::EVENTS_GATHERED.with(|gathered| gathered.set(0));
+    let (metrics, _, _) = accumulator.merged_and_excluded(graph);
+    let moved = super::merge::EVENTS_MOVED.with(std::cell::Cell::get);
+    // Only the new events were taken: the held ones were placed among.
+    assert_eq!(
+        super::merge::EVENTS_GATHERED.with(std::cell::Cell::get),
+        1_000,
+        "the held events were gathered again"
+    );
+    assert!(
+        moved <= 2 * (20_000 + 1_000),
+        "{} held events moved to place 1,000",
+        moved
+    );
+    let (expected, _) = fresh.merged();
+    let events = |metrics: &GooseMetrics| {
+        metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .map(|co| co.co_events.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(events(&metrics).len(), 21_000);
+    assert_eq!(events(&metrics), events(&expected));
+}
+
+/// What a delta of 20,000 request names of 6 bytes holds once decoded, for
+/// each name's rows: measured with a counting allocator over the decode,
+/// Rust 1.99 on x86_64 Linux. The decode fills each map in key order,
+/// which keeps 6 of each tree node's 11 slots, and a map of up to 11
+/// entries takes a whole node, so a name costs about 99 bytes with no rows
+/// and 291 with one.
+const DECODED_NAME_BYTES: [(u64, usize); 3] = [(0, 99), (1, 291), (12, 771)];
+
+/// A delta of many short distinct names, with no rows or a few each, is
+/// estimated at no less than it holds decoded, and each other map of names
+/// to rows at least as the requests map is: an estimate below it lets the
+/// deltas the manager queues hold more than the byte budget it bounds them
+/// by.
+#[test]
+fn short_names_are_estimated_at_no_less_than_they_hold() {
+    const NAMES: usize = 20_000;
+    for (rows, measured) in DECODED_NAME_BYTES {
+        let names = || (0..NAMES).map(|name| format!("{name:06}"));
+        let mut delta = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
+        let graph = &mut delta.graph;
+        for name in names() {
+            graph
+                .requests
+                .insert(name.clone(), (0..rows).map(|second| (second, 1)).collect());
+        }
+        let decoded = GaggleDelta::decode(&delta.encode().unwrap()).unwrap();
+        let estimated = decoded.decoded_bytes();
+        assert!(
+            estimated >= NAMES * measured,
+            "{} rows a name: {} bytes estimated, {} held",
+            rows,
+            estimated,
+            NAMES * measured
+        );
+        // Each other map of names to rows is counted at least as the
+        // requests map is.
+        let mut every = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
+        for name in names() {
+            let seconds = 0..rows;
+            let graph = &mut every.graph;
+            graph.errors.insert(
+                name.clone(),
+                seconds.clone().map(|second| (second, 1)).collect(),
+            );
+            graph.averages.insert(
+                name.clone(),
+                seconds
+                    .clone()
+                    .map(|second| (second, Default::default()))
+                    .collect(),
+            );
+            graph.latency.insert(
+                name.clone(),
+                seconds
+                    .clone()
+                    .map(|second| (second, Default::default()))
+                    .collect(),
+            );
+            graph.synthetic.insert(
+                name,
+                seconds.map(|second| (second, Default::default())).collect(),
+            );
+        }
+        assert!(
+            every.decoded_bytes() >= 4 * NAMES * measured,
+            "{} rows a name, every other map: {} bytes estimated, {} held at least",
+            rows,
+            every.decoded_bytes(),
+            4 * NAMES * measured
+        );
+    }
+}
+
 /// The users levels a manager records itself between builds, as its main
 /// loop and dashboard do, never reach the merged graph: each build owns
 /// every users second it built, as one that copied its cache did.
@@ -3179,17 +3322,23 @@ mod built_as_it_goes {
     /// A final delta whose rows reach back to seconds long built, as an
     /// honest worker's final may, is never taken for a late row: it builds
     /// every figure again anyway, so it neither warns nor spends the
-    /// worker's one late row build of its lag window.
+    /// worker's one late row build of its lag window, and the build after
+    /// it holds what one from nothing does.
     #[test]
     fn a_final_delta_is_no_late_row() {
-        let mut accumulator = lagged(120);
-        accumulator.apply(0, second(0, 1, 1, 0..190, 2)).unwrap();
+        let (mut accumulator, mut fresh) = (lagged(120), lagged(120));
+        let first = second(0, 1, 1, 0..190, 2);
+        fresh.apply(0, first.clone()).unwrap();
+        accumulator.apply(0, first).unwrap();
         let graph = accumulator.merged_and_excluded(GraphData::new()).1;
         let mut last = second(0, 2, 2, 0..191, 2);
         last.kind = DeltaKind::Final;
+        fresh.apply(0, last.clone()).unwrap();
         accumulator.apply(0, last).unwrap();
         assert_eq!(accumulator.late_rebuilt(0), None);
-        drop(accumulator.merged_and_excluded(graph));
+        let (_, built, _) = accumulator.merged_and_excluded(graph);
+        let (_, expected, _) = fresh.merged_and_excluded(GraphData::new());
+        assert_eq!(built.gaggle_diff(&expected), Vec::<String>::new());
     }
 
     /// Every worker left out of the merge mid run, the series origin
@@ -3277,8 +3426,10 @@ mod built_as_it_goes {
     /// from every worker, with a row for a request of 2 to 5 seconds that
     /// started before it, and builds the merge. With `stalls`, 10 workers
     /// with coordinated omission mitigation on, each stalling once a second,
-    /// its event and a synthetic response time in each second.
-    fn refresh_cost(seconds: u64, stalls: bool) -> std::time::Duration {
+    /// its event and a synthetic response time in each second; with
+    /// `late_events` too, stamped with the second the slow request started,
+    /// out of order with the events already merged.
+    fn refresh_cost(seconds: u64, stalls: bool, late_events: bool) -> std::time::Duration {
         let workers: u32 = if stalls { 10 } else { 50 };
         const NAMES: usize = 30;
         let settings = GraphSettings {
@@ -3354,7 +3505,10 @@ mod built_as_it_goes {
                     },
                 );
                 if stalls {
-                    stalled(&mut delta, worker, at..at + 1);
+                    // Stamped with the second it started, with
+                    // `late_events`, as the slow request's row is.
+                    let stall = if late_events { late } else { at };
+                    stalled(&mut delta, worker, stall..stall + 1);
                 }
                 // As the manager's processor takes it, with the graph data.
                 accumulator.apply_live(worker, delta, &mut graph).unwrap();
@@ -3409,12 +3563,15 @@ mod built_as_it_goes {
     #[test]
     #[ignore]
     fn merge_refresh_cost() {
-        for stalls in [false, true] {
-            let hour = refresh_cost(3_600, stalls);
-            let four = refresh_cost(4 * 3_600, stalls);
+        for (stalls, late_events, name) in [
+            (false, false, ""),
+            (true, false, " with stalls"),
+            (true, true, " with late stalls"),
+        ] {
+            let hour = refresh_cost(3_600, stalls, late_events);
+            let four = refresh_cost(4 * 3_600, stalls, late_events);
             eprintln!(
-                "median refresh{}: 1 h {hour:?}, 4 h {four:?}, {:.2} times",
-                if stalls { " with stalls" } else { "" },
+                "median refresh{name}: 1 h {hour:?}, 4 h {four:?}, {:.2} times",
                 four.as_secs_f64() / hour.as_secs_f64()
             );
         }

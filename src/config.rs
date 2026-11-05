@@ -3269,7 +3269,7 @@ impl GooseConfiguration {
             // whose manager gives its users.
             GooseValue {
                 value: default_users,
-                filter: self.test_plan.is_some() || self.gaggle_worker_flag(),
+                filter: self.test_plan.is_some() || self.is_worker(),
                 message: "users defaulted to number of CPUs",
             },
         ]);
@@ -4417,16 +4417,6 @@ impl GooseConfiguration {
         self.report_in_folder() || self.logs_in_folder() || (self.dashboard && !self.no_metrics)
     }
 
-    /// Whether this is a Gaggle worker, false without the `gaggle` feature.
-    pub(crate) fn gaggle_worker_flag(&self) -> bool {
-        #[cfg(feature = "gaggle")]
-        {
-            self.worker
-        }
-        #[cfg(not(feature = "gaggle"))]
-        false
-    }
-
     /// Each request, transaction, scenario, error and debug log and its
     /// format, in [`LOG_NAMES`](crate::runs::LOG_NAMES) order.
     pub(crate) fn logs_mut(
@@ -5005,7 +4995,7 @@ impl GooseConfiguration {
         // --output-dir sets the folder that output flags given without a path write to.
         // A Gaggle worker keeps it for the logs its manager may ask for.
         if let Some(output_dir) = self.output_dir() {
-            if !self.uses_run_folder() && !self.gaggle_worker_flag() {
+            if !self.uses_run_folder() && !self.is_worker() {
                 let detail = if self.no_metrics {
                     "`configuration.output_dir` (--output-dir) would hold nothing: --dashboard and a bare --report-file write into it except under --no-metrics, which is given here, so give a bare --goose-log or --debug-log."
                 } else {

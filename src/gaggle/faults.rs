@@ -20,8 +20,6 @@ pub(crate) struct TestFaults {
     /// Send only deltas the manager refuses from this sequence number on,
     /// 0 for none.
     pub(crate) refuse_from: u64,
-    /// The metrics processor never sends the final metrics.
-    pub(crate) silent_final: bool,
     /// The metrics processor never answers a reset.
     pub(crate) silent_reset: bool,
     /// What the worker does with its `Prepare`.
@@ -201,6 +199,31 @@ pub(crate) static HELD_TO_STOP: std::sync::atomic::AtomicBool =
 pub(crate) static MANAGER_STOPPING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Armed by a test: the held threshold check triggers the killswitch, as
+/// Ctrl-C on the manager, once the manager is stopping, while the stop
+/// waits behind it.
+pub(crate) static CANCEL_IN_HELD_CHECK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Armed by a test: the manager's processor answers its stop's drain
+/// ([`MetricsCommand::GaggleDrained`]) a second after the manager stops
+/// waiting for it, blocking the thread it runs on meanwhile.
+pub(crate) static SLOW_DRAIN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Answer the stop's drain late, as [`SLOW_DRAIN`] says.
+pub(crate) fn slow_drain() {
+    if SLOW_DRAIN.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        tokio::task::block_in_place(|| {
+            std::thread::sleep(super::run::FINAL_TIMEOUT + Duration::from_secs(1));
+        });
+    }
+}
+
+/// When the held threshold check let the processor go on.
+pub(crate) static HELD_CHECK_ENDED: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
 /// Hold a threshold check, as [`HOLD_THRESHOLD_CHECK`] says, once there are
 /// requests to judge.
 pub(crate) fn hold_threshold_check(has_requests: bool) {
@@ -216,7 +239,11 @@ pub(crate) fn hold_threshold_check(has_requests: bool) {
             std::thread::sleep(Duration::from_millis(10));
         }
         HELD_TO_STOP.store(MANAGER_STOPPING.load(SeqCst), SeqCst);
+        if MANAGER_STOPPING.load(SeqCst) && CANCEL_IN_HELD_CHECK.swap(false, SeqCst) {
+            crate::trigger_killswitch("a test's Ctrl-C during the stop drain");
+        }
         std::thread::sleep(Duration::from_millis(300));
+        *HELD_CHECK_ENDED.lock().unwrap() = Some(std::time::Instant::now());
     });
 }
 
