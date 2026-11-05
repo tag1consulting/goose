@@ -585,7 +585,9 @@ impl GooseAttack {
 
     /// The manager, before its first run: listen and wait for every worker.
     async fn gaggle_manager_join(&mut self) -> Result<(), GooseError> {
-        // Ctrl-C cancels the waits before the run too.
+        // A new run starts without the previous run's cancel, as a run in
+        // one process does, and Ctrl-C cancels the waits before it too.
+        crate::reset_killswitch();
         crate::util::setup_ctrlc_handler();
         let (host, port) = self.configuration.manager_bind();
         let expected = self.configuration.expect_workers.unwrap_or(1);

@@ -147,8 +147,6 @@ struct GraphCache {
     users: Option<crate::graph::MergedUsers>,
     series_origin: Option<Second>,
     columns: bool,
-    /// The workers it left out.
-    excluded: Vec<u32>,
 }
 
 /// Every worker's metrics, merged on demand.
@@ -708,7 +706,9 @@ impl GaggleAccumulator {
             .collect()
     }
 
-    /// The merged figures, built again first when they are not current.
+    /// The merged figures, built again first when they are not current: a
+    /// build again drops the graph cache, so the workers a cache's build
+    /// left out are always those left out now.
     fn current(&self) -> std::cell::RefMut<'_, Merged> {
         let mut merged = self.merged.borrow_mut();
         if !merged.current {
@@ -764,15 +764,12 @@ impl GaggleAccumulator {
         // The graph data built so far, when it still holds: only the
         // seconds completed since are added. Every second before the last
         // build's `before` is unchanged, or the cache was dropped.
-        // Once every worker is done, nothing is left out of it.
-        let excluded: Vec<u32> = merged.excluded.iter().map(|&(id, _)| id).collect();
         // Once every worker is done the graph data is built from nothing,
         // once, so the final graph equals a build from nothing exactly,
         // though its provisional seconds were added a delta at a time.
         let reusable = merged.built.take().filter(|built| {
             built.series_origin == series_origin
                 && built.columns == self.settings.columns
-                && built.excluded == excluded
                 && complete.is_none_or(|complete| complete >= built.before)
                 && !(merged.late && complete.is_none())
                 && !(complete.is_none() && built.before != Second::MAX)
@@ -800,7 +797,6 @@ impl GaggleAccumulator {
                     users: None,
                     series_origin,
                     columns: self.settings.columns,
-                    excluded,
                 },
             ),
         };
