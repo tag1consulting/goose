@@ -1770,18 +1770,21 @@ impl GooseAttack {
             .send(MetricsCommand::GaggleDrained { respond })
             .is_ok()
         {
-            if let Ok(Ok(failed)) = tokio::time::timeout(FINAL_TIMEOUT, drained).await {
-                threshold_failed = failed;
-            }
+            threshold_failed = match tokio::time::timeout(FINAL_TIMEOUT, drained).await {
+                Ok(Ok(failed)) => failed,
+                // No answer, in time or at all: a rule queued before Stop
+                // may have set the cancel, so one set now is set aside.
+                _ => crate::is_killswitch_triggered(),
+            };
         }
         // A cancel that ended the run is set aside while the workers send
         // their final metrics, so a Ctrl-C now ends the wait rather than the
         // process; it is put back for test_stop and the log collection. One
         // that came during the drain stays, and ends the wait at once.
-        let mut aside = set_cancel_aside();
-        if !(canceled || threshold_failed) {
-            put_back_cancel(aside.take());
-        }
+        let aside = match canceled || threshold_failed {
+            true => set_cancel_aside(),
+            false => None,
+        };
         run.canceled_at_stop = aside.is_some();
         let reason = match &self.ended_by {
             Some((EndedBy::Canceled, Some(reason))) => format!("canceled: {reason}"),
