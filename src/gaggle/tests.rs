@@ -2482,6 +2482,69 @@ fn gaggle_refreshes_take_only_new_co_events() {
     assert_eq!(events(&merged), events(&expected));
 }
 
+/// A refresh whose 1,000 coordinated omission events, a delta's most, are
+/// all older than every event already merged, as a worker's that were
+/// stamped at the run's first second: each held event moves at most twice
+/// to put them in their places, never once for each new event, so the
+/// refresh costs the held list's length and theirs, not their product; and
+/// the events stay in the order a merge built from nothing gives them.
+#[test]
+fn old_co_events_are_placed_in_one_pass() {
+    use crate::graph::GraphSettings;
+    let settings = GraphSettings {
+        records: true,
+        latency: true,
+        synthetic: false,
+        columns: false,
+    };
+    let new = || GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+    let (mut accumulator, mut fresh) = (new(), new());
+    const HELD_DELTAS: u64 = 20;
+    // Worker 0 holds 20,000 events, from second 1,000 on; worker 1 is
+    // merged with none yet.
+    let mut deltas = Vec::new();
+    for at in 0..HELD_DELTAS {
+        let events = (0..1_000).map(|_| co_event(0, 1_000 + at)).collect();
+        deltas.push((0, co_delta(0, at, events)));
+    }
+    deltas.push((1, co_delta(1, 0, Vec::new())));
+    for (worker, delta) in deltas {
+        fresh.apply(worker, delta.clone()).unwrap();
+        accumulator.apply(worker, delta).unwrap();
+    }
+    let (metrics, mut graph, _) = accumulator.merged_and_excluded(GraphData::new());
+    let held = metrics
+        .coordinated_omission_metrics
+        .map(|co| co.co_events)
+        .unwrap_or_default();
+    assert_eq!(held.len(), 20_000);
+    accumulator.hand_back_events(held);
+    // Worker 1's next delta: 1,000 events stamped at second 0, in no order
+    // of their own but the worker's.
+    let events: Vec<_> = (0..1_000).map(|at| co_event(1, (at * 7) % 3)).collect();
+    let delta = co_delta(1, 1, events);
+    fresh.apply(1, delta.clone()).unwrap();
+    accumulator.apply_live(1, delta, &mut graph).unwrap();
+    super::merge::EVENTS_MOVED.with(|moved| moved.set(0));
+    let (metrics, _, _) = accumulator.merged_and_excluded(graph);
+    let moved = super::merge::EVENTS_MOVED.with(std::cell::Cell::get);
+    assert!(
+        moved <= 2 * (20_000 + 1_000),
+        "{} held events moved to place 1,000",
+        moved
+    );
+    let (expected, _) = fresh.merged();
+    let events = |metrics: &GooseMetrics| {
+        metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .map(|co| co.co_events.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(events(&metrics).len(), 21_000);
+    assert_eq!(events(&metrics), events(&expected));
+}
+
 /// The users levels a manager records itself between builds, as its main
 /// loop and dashboard do, never reach the merged graph: each build owns
 /// every users second it built, as one that copied its cache did.

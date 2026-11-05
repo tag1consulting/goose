@@ -156,6 +156,10 @@ std::thread_local! {
     /// workers' totals, or added since (tests).
     #[cfg(test)]
     pub(crate) static EVENTS_GATHERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The held coordinated omission events builds on this thread moved to
+    /// put new ones in their places (tests).
+    #[cfg(test)]
+    pub(crate) static EVENTS_MOVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The most gaps an accumulator keeping them holds; past it they are
@@ -829,6 +833,8 @@ impl GaggleAccumulator {
                 EVENTS_GATHERED.with(|gathered| gathered.set(gathered.get() + new.len()));
                 for (key, event) in new {
                     let at = keys.partition_point(|held| *held < key);
+                    #[cfg(test)]
+                    EVENTS_MOVED.with(|moved| moved.set(moved.get() + keys.len() - at));
                     keys.insert(at, key);
                     events.insert(at, event);
                 }
