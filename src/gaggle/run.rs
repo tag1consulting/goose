@@ -1764,26 +1764,24 @@ impl GooseAttack {
         // the cancel is set aside, never during the wait, where it would read
         // as Ctrl-C. The main loop, held here, sends no other check.
         let (respond, drained) = tokio::sync::oneshot::channel();
-        let mut threshold_failed = false;
-        if goose_attack_run_state
+        let threshold_failed = goose_attack_run_state
             .metrics_cmd_tx
             .send(MetricsCommand::GaggleDrained { respond })
             .is_ok()
-        {
-            threshold_failed = match tokio::time::timeout(FINAL_TIMEOUT, drained).await {
+            && match tokio::time::timeout(FINAL_TIMEOUT, drained).await {
                 Ok(Ok(failed)) => failed,
                 // No answer, in time or at all: a rule queued before Stop
                 // may have set the cancel, so one set now is set aside.
                 _ => crate::is_killswitch_triggered(),
             };
-        }
         // A cancel that ended the run is set aside while the workers send
         // their final metrics, so a Ctrl-C now ends the wait rather than the
         // process; it is put back for test_stop and the log collection. One
         // that came during the drain stays, and ends the wait at once.
-        let aside = match canceled || threshold_failed {
-            true => set_cancel_aside(),
-            false => None,
+        let aside = if canceled || threshold_failed {
+            set_cancel_aside()
+        } else {
+            None
         };
         run.canceled_at_stop = aside.is_some();
         let reason = match &self.ended_by {

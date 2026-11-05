@@ -472,6 +472,11 @@ mod tests {
             "{}",
             detail
         );
+        assert!(
+            detail.ends_with(". A worker keeps only --output-dir, --goose-log, --verbose, --quiet, --log-level, --no-print-metrics, --no-error-summary, --help, --version, --list, --scenarios-list, --worker, --manager-host, --manager-port, --gaggle-connect-timeout, --gaggle-token, --gaggle-heartbeat-timeout."),
+            "{}",
+            detail
+        );
         for kept in WORKER_KEEPS {
             assert!(detail.contains(kept), "{} is not named: {}", kept, detail);
         }

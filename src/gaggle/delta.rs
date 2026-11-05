@@ -440,7 +440,8 @@ impl GaggleDelta {
         postcard::from_bytes(bytes)
     }
 
-    /// About how many bytes this delta holds decoded, at least: its fixed
+    /// About how many bytes this delta holds decoded, never fewer than it
+    /// holds: its fixed
     /// parts, each map's tree nodes ([`map_bytes`]), and what its vectors
     /// and strings hold on the heap ([`string_bytes`]). A map of one entry
     /// takes a whole tree node, so a name with one row of 2 bytes on the
@@ -562,14 +563,16 @@ impl GaggleDelta {
 /// fills it: in key order, which leaves 6 of each node's 11 slots full, a
 /// node of a map of up to 11 entries whole, and one node above each 6
 /// below it at most. Each node holds its parent, its place and length, and
-/// 11 slots; one above others, 12 child pointers more. Every level up holds
+/// 11 slots, padded to a pointer's alignment; one above others, 12 child
+/// pointers more. Every level up holds
 /// at most a sixth of the one below, so the nodes above the leaves are at
 /// most a fifth of the leaves, and the root.
 fn map_bytes(len: usize, slot: usize) -> usize {
     if len == 0 {
         return 0;
     }
-    let leaf = 2 * std::mem::size_of::<usize>() + 11 * slot;
+    let leaf = (2 * std::mem::size_of::<usize>() + 11 * slot)
+        .next_multiple_of(std::mem::size_of::<usize>());
     if len <= 11 {
         return leaf;
     }
@@ -590,8 +593,9 @@ fn string_bytes(string: &str) -> usize {
 /// How many times its encoded bytes a reader holds of the manager's event
 /// budget while a delta decodes: an entry of two 1 byte varints in a long
 /// map is about 34 bytes decoded, about 16 times. Once decoded, it holds
-/// what [`GaggleDelta::decoded_bytes`] counts, more for maps of a few
-/// entries, each a whole tree node, and less for long vectors.
+/// what [`GaggleDelta::decoded_bytes`] counts: more than 16 times its
+/// encoded bytes for maps of a few entries, each a whole tree node, and
+/// less for long vectors.
 pub(crate) const DECODED_PER_ENCODED: usize = 16;
 
 /// Response times in microseconds, as [`GooseRequestMetricTimingData`] holds
