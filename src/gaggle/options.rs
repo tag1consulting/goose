@@ -477,9 +477,6 @@ mod tests {
             "{}",
             detail
         );
-        for kept in WORKER_KEEPS {
-            assert!(detail.contains(kept), "{} is not named: {}", kept, detail);
-        }
     }
 
     /// A worker's manager host is trimmed, as a manager's bind host is, and

@@ -2456,6 +2456,10 @@ async fn queued_threshold_failure(slow_drain: bool) {
             super::faults::HELD_TO_STOP.swap(false, SeqCst),
             "the held check was released before the manager stopped"
         );
+        assert!(
+            !super::faults::SLOW_DRAIN.swap(false, SeqCst),
+            "the drain was not answered late"
+        );
         // The held check judged, and failed, the run.
         assert!(
             matches!(manager, Err(crate::GooseError::ThresholdsFailed { .. })),

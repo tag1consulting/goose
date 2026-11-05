@@ -441,9 +441,9 @@ impl GaggleDelta {
     }
 
     /// About how many bytes this delta holds decoded, never fewer than it
-    /// holds: its fixed
-    /// parts, each map's tree nodes ([`map_bytes`]), and what its vectors
-    /// and strings hold on the heap ([`string_bytes`]). A map of one entry
+    /// holds but for a vector past 1 MiB, which may hold up to twice its
+    /// length: its fixed parts, each map's tree nodes ([`map_bytes`]), and
+    /// what its vectors and strings hold on the heap ([`string_bytes`]). A map of one entry
     /// takes a whole tree node, so a name with one row of 2 bytes on the
     /// wire holds about 290 bytes decoded: the encoded size understates a
     /// delta's memory, often more than [`DECODED_PER_ENCODED`] times.
@@ -564,9 +564,10 @@ impl GaggleDelta {
 /// node of a map of up to 11 entries whole, and one node above each 6
 /// below it at most. Each node holds its parent, its place and length, and
 /// 11 slots, padded to a pointer's alignment; one above others, 12 child
-/// pointers more. Every level up holds
-/// at most a sixth of the one below, so the nodes above the leaves are at
-/// most a fifth of the leaves, and the root.
+/// pointers more. Every level up holds at most a sixth of the one below,
+/// so the nodes above the leaves are at most a fifth of the leaves, and the
+/// root. Keys a worker sends out of order still leave at least 5 entries a
+/// node, so the figure holds then to within a node a level.
 fn map_bytes(len: usize, slot: usize) -> usize {
     if len == 0 {
         return 0;
@@ -592,7 +593,7 @@ fn string_bytes(string: &str) -> usize {
 
 /// How many times its encoded bytes a reader holds of the manager's event
 /// budget while a delta decodes: an entry of two 1 byte varints in a long
-/// map is about 34 bytes decoded, about 16 times. Once decoded, it holds
+/// map is about 34 bytes decoded, about 17 times, near the 16 counted. Once decoded, it holds
 /// what [`GaggleDelta::decoded_bytes`] counts: more than 16 times its
 /// encoded bytes for maps of a few entries, each a whole tree node, and
 /// less for long vectors.
