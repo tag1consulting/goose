@@ -2545,6 +2545,76 @@ fn old_co_events_are_placed_in_one_pass() {
     assert_eq!(events(&metrics), events(&expected));
 }
 
+/// What a delta of 20,000 request names of 6 bytes holds once decoded, for
+/// each name's rows: measured with a counting allocator over the decode,
+/// Rust 1.99 on x86_64 Linux. The decode fills each map in key order,
+/// which keeps 6 of each tree node's 11 slots, and a map of up to 11
+/// entries takes a whole node, so a name costs about 99 bytes with no rows
+/// and 291 with one.
+const DECODED_NAME_BYTES: [(u64, usize); 3] = [(0, 99), (1, 291), (12, 771)];
+
+/// A delta of many short distinct names, with no rows or a few each, is
+/// estimated at no less than it holds decoded, in every map of names to
+/// rows: an estimate below it lets the deltas the manager queues hold more
+/// than the byte budget it bounds them by.
+#[test]
+fn short_names_are_estimated_at_no_less_than_they_hold() {
+    const NAMES: usize = 20_000;
+    for (rows, measured) in DECODED_NAME_BYTES {
+        let names = || (0..NAMES).map(|name| format!("{name:06}"));
+        let mut delta = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
+        let graph = &mut delta.graph;
+        for name in names() {
+            graph
+                .requests
+                .insert(name.clone(), (0..rows).map(|second| (second, 1)).collect());
+        }
+        let decoded = GaggleDelta::decode(&delta.encode().unwrap()).unwrap();
+        let estimated = decoded.decoded_bytes();
+        assert!(
+            estimated >= NAMES * measured,
+            "{} rows a name: {} bytes estimated, {} held",
+            rows,
+            estimated,
+            NAMES * measured
+        );
+        // Each map of names to rows is counted the same way.
+        let mut every = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
+        for name in names() {
+            let seconds = 0..rows;
+            let graph = &mut every.graph;
+            graph
+                .errors
+                .insert(name.clone(), seconds.clone().map(|second| (second, 1)).collect());
+            graph.averages.insert(
+                name.clone(),
+                seconds
+                    .clone()
+                    .map(|second| (second, Default::default()))
+                    .collect(),
+            );
+            graph.latency.insert(
+                name.clone(),
+                seconds
+                    .clone()
+                    .map(|second| (second, Default::default()))
+                    .collect(),
+            );
+            graph.synthetic.insert(
+                name,
+                seconds.map(|second| (second, Default::default())).collect(),
+            );
+        }
+        assert!(
+            every.decoded_bytes() >= 4 * NAMES * measured,
+            "{} rows a name, every other map: {} bytes estimated, {} held at least",
+            rows,
+            every.decoded_bytes(),
+            4 * NAMES * measured
+        );
+    }
+}
+
 /// The users levels a manager records itself between builds, as its main
 /// loop and dashboard do, never reach the merged graph: each build owns
 /// every users second it built, as one that copied its cache did.
