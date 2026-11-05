@@ -32,7 +32,7 @@ Once on, the tools are served over Streamable HTTP at `http://127.0.0.1:5119/mcp
 | `--mcp-token TOKEN` | none | A token every request must send as `Authorization: Bearer TOKEN`. `GooseDefault::McpToken`. |
 | `--mcp-read-only` | off | List and answer only `get_config` and `get_metrics`. `GooseDefault::McpReadOnly`. |
 
-With `--no-autostart`, the MCP Controller counts as a Controller that can start the test, unless it is read only. The dashboard's `/api/v1/health` names it under `controllers.mcp`, and the read-only dashboard says where it listens, beside telnet and WebSocket.
+With `--no-autostart`, the MCP Controller counts as a Controller that can start the test, unless it is read only. The dashboard's `/api/v1/health` names it under `controllers.mcp`, and the read-only dashboard says where it listens, beside telnet and WebSocket; a read only MCP Controller, which can not control the test, is not named there.
 
 ## Connecting a client
 
@@ -105,7 +105,8 @@ With `--mcp-read-only`, `tools/list` lists only `get_config` and `get_metrics`, 
   ```
 
   With a token it starts, and warns that the token is all that guards it. There is no TLS, so the token crosses the network in clear text: an ssh forward (`ssh -L 5119:127.0.0.1:5119 loadtest`) to a loopback bind is safer.
-- **The token.** With `--mcp-token`, every request needs `Authorization: Bearer TOKEN`, compared in constant time; a missing or wrong one gets `401`. A token in the query string is not read.
+- **The token.** With `--mcp-token`, every request needs `Authorization: Bearer TOKEN`, compared in constant time; a missing or wrong one gets `401`. A token in the query string is not read. A token on the command line shows in `ps` to other users of the machine; a load test can set it in code with `GooseDefault::McpToken` instead.
+- **Without a token, loopback is trusted.** On a loopback bind with no `--mcp-token`, any program on the machine can call the tools, and so can a page served from `localhost` or `127.0.0.1` on any port. Set `--mcp-token` on a shared machine.
 - **Origin and Host checks.** A request from a browser page on another site, whose `Origin` is not loopback or the configured host, gets `403`, and so does one whose `Host` does not name the Controller: on a loopback bind only `localhost`, `127.0.0.1` and `::1`, otherwise only the configured host and its addresses. This stops a web page from reaching the Controller through DNS rebinding. With a wildcard host such as `0.0.0.0`, clients must send that host, so bind the address clients use.
 - **An agent with the control tools can aim traffic at any host it is told to.** `set_host` and `start` send load wherever the agent is asked to send it, by you or by text it read. Give an agent you do not fully trust `--mcp-read-only`.
 - **Text from the target reaches the model.** Request names, hosts and error messages in `get_metrics` come from the load test and the server under load, which may be someone else's. The two tools that read say so in their descriptions, but a model can still be misled by text crafted to look like instructions.

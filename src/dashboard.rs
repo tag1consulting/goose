@@ -987,7 +987,8 @@ struct HealthResponse {
 struct HealthControllers {
     telnet: Option<String>,
     websocket: Option<String>,
-    /// The MCP Controller's address; its tools are served at `/mcp` there.
+    /// The MCP Controller's address, its tools served at `/mcp` there;
+    /// `None` too when it is read only, as it then can not control the test.
     mcp: Option<String>,
 }
 
@@ -1082,8 +1083,9 @@ pub(crate) async fn setup_dashboard(
                     configuration.websocket_port(),
                 )
             }),
-            mcp: listening
-                .mcp
+            // A read only MCP Controller can not control the test, so the
+            // read-only dashboard does not offer it.
+            mcp: (listening.mcp && configuration.mcp_controls())
                 .then(|| format_bind_address(configuration.mcp_host(), configuration.mcp_port())),
         },
     };
@@ -4100,6 +4102,27 @@ mod tests {
             health["controllers"],
             serde_json::json!({"telnet": null, "websocket": null, "mcp": "[::1]:6119"})
         );
+        // Read only, it can not control the test, so it is not named.
+        let config = GooseConfiguration {
+            mcp_read_only: true,
+            ..config
+        };
+        let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
+            .await
+            .expect("bind")
+            .expect("enabled");
+        let health: serde_json::Value = client
+            .get(format!(
+                "http://127.0.0.1:{}/api/v1/health",
+                setup.bound_port
+            ))
+            .send()
+            .await
+            .expect("health")
+            .json()
+            .await
+            .expect("json");
+        assert_eq!(health["controllers"]["mcp"], serde_json::Value::Null);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

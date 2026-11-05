@@ -9,11 +9,7 @@ use std::time::{Duration, Instant};
 /// MCP Controller, like telnet and WebSocket, refuses port 0, so a test binds
 /// an ephemeral port, reads it, and frees it for Goose.
 pub fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind an ephemeral port")
-        .local_addr()
-        .expect("local address")
-        .port()
+    free_ports(1)[0]
 }
 
 /// `n` distinct free ports, each held until all are found, so no two are the
@@ -160,12 +156,20 @@ impl Mcp {
 }
 
 /// The MCP tool and arguments for a Controller line: the same verbs and
-/// aliases the line parser takes, with the value as the tool's argument; a
+/// aliases the line parser takes (a copy, as a test can not reach the
+/// crate's own table; tests/controller.rs and control_agreement.rs fail if
+/// it falls behind the lines they send), with the value as the tool's argument; a
 /// number-typed argument is sent as a JSON number when the value is one.
 pub fn tool_for_line(line: &str) -> Option<(&'static str, Value)> {
     let line = line.trim();
     let (verb, value) = line.split_once(' ').unwrap_or((line, ""));
+    // An integer too large for a u64 stays text, so it reaches the parser
+    // as typed rather than as a float.
     let number = || {
+        let digits = !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
+        if digits && value.parse::<u64>().is_err() {
+            return Value::String(value.to_string());
+        }
         serde_json::from_str::<serde_json::Number>(value)
             .map(Value::Number)
             .unwrap_or_else(|_| Value::String(value.to_string()))

@@ -5749,9 +5749,11 @@ mod test {
             assert!(zero.starts_with("`configuration.mcp_port`"), "{}", zero);
             // A read only MCP Controller can not start the test.
             assert!(validate(&["--no-autostart", "--no-telnet", "--mcp"]).is_ok());
-            assert!(
-                validate(&["--no-autostart", "--no-telnet", "--mcp", "--mcp-read-only"]).is_err()
-            );
+            assert!(matches!(
+                validate(&["--no-autostart", "--no-telnet", "--mcp", "--mcp-read-only"]),
+                Err(GooseError::InvalidOption { ref option, .. })
+                    if option == "`configuration.no_autostart`"
+            ));
         } else {
             match on {
                 Err(GooseError::FeatureNotEnabled { feature, detail }) => {

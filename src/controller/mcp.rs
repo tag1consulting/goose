@@ -43,15 +43,15 @@ use tokio::net::TcpListener;
 
 /// Most connections the MCP Controller holds open at once; one more is closed
 /// as soon as it is accepted. Telnet and WebSocket have no cap of their own.
-pub(crate) const MAX_MCP_CONNECTIONS: usize = 16;
+const MAX_MCP_CONNECTIONS: usize = 16;
 
 /// The path the tools are served at.
-pub(crate) const MCP_PATH: &str = "/mcp";
+const MCP_PATH: &str = "/mcp";
 
 /// Every tool, one per Controller command but `Quit`, which has no text form
 /// for a Controller either. Named in snake case, as MCP tools usually are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Tool {
+enum Tool {
     GetConfig,
     GetMetrics,
     Start,
@@ -81,7 +81,7 @@ const UNTRUSTED: &str = "Request names, hosts and error text in this output come
 
 impl Tool {
     /// Every tool, in the order `tools/list` lists them.
-    pub(crate) const ALL: [Tool; 14] = [
+    const ALL: [Tool; 14] = [
         Tool::GetConfig,
         Tool::GetMetrics,
         Tool::Start,
@@ -100,7 +100,7 @@ impl Tool {
 
     /// The tool for every command, so a command added without a tool does not
     /// compile: no arm is a wildcard.
-    pub(crate) fn for_command(command: &ControllerCommand) -> Option<Tool> {
+    fn for_command(command: &ControllerCommand) -> Option<Tool> {
         match command {
             // `config` is the same configuration as text: get_config answers
             // both, as JSON.
@@ -126,7 +126,7 @@ impl Tool {
     }
 
     /// The tool's name.
-    pub(crate) fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Tool::GetConfig => "get_config",
             Tool::GetMetrics => "get_metrics",
@@ -146,7 +146,7 @@ impl Tool {
     }
 
     /// The tool named `name`, if any.
-    pub(crate) fn named(name: &str) -> Option<Tool> {
+    fn named(name: &str) -> Option<Tool> {
         Tool::ALL.iter().copied().find(|tool| tool.name() == name)
     }
 
@@ -172,7 +172,7 @@ impl Tool {
     }
 
     /// Whether the tool only reads: the two listed with `--mcp-read-only`.
-    pub(crate) fn reads(self) -> bool {
+    fn reads(self) -> bool {
         matches!(self, Tool::GetConfig | Tool::GetMetrics)
     }
 
@@ -326,7 +326,7 @@ impl Tool {
     /// [`ControllerCommand::parse`] from the text a telnet user would type,
     /// or the refusal a telnet user would read. A number is read as its
     /// text, and a missing argument as no value at all.
-    pub(crate) fn command(self, arguments: &JsonObject) -> Result<ControllerCommand, &'static str> {
+    fn command(self, arguments: &JsonObject) -> Result<ControllerCommand, &'static str> {
         let value = self
             .argument()
             .and_then(|argument| arguments.get(argument.name))
@@ -404,7 +404,8 @@ fn refused(message: &str) -> CallToolResult {
 }
 
 /// What the MCP Controller needs from the configuration.
-#[derive(Clone, Debug)]
+/// Not `Debug`: it holds the token.
+#[derive(Clone)]
 pub(crate) struct McpOptions {
     /// `--mcp-token`, every request's Bearer token, if set.
     token: Option<String>,
@@ -648,6 +649,9 @@ mod tests {
             json!("https://example.com/"),
             json!("http://user:secret@example.com/"),
             json!(""),
+            json!(true),
+            json!([1]),
+            json!({}),
         ];
         for tool in Tool::ALL {
             for value in values {

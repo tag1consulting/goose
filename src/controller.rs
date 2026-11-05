@@ -4730,6 +4730,26 @@ pub(crate) mod tests {
         }
     }
 
+    /// With `--no-autostart`, a listening read only MCP Controller can not
+    /// start the test; any other listening Controller can.
+    #[test]
+    fn listening_controllers_that_can_start() {
+        let configuration = |args: &[&str]| GooseConfiguration::parse_args_default(args).unwrap();
+        let mcp_only = ListeningControllers {
+            mcp: true,
+            ..Default::default()
+        };
+        assert!(mcp_only.can_start(&configuration(&["--mcp"])));
+        assert!(!mcp_only.can_start(&configuration(&["--mcp", "--mcp-read-only"])));
+        assert!(!ListeningControllers::default().can_start(&configuration(&["--mcp"])));
+        let telnet = ListeningControllers {
+            telnet: true,
+            mcp: true,
+            ..Default::default()
+        };
+        assert!(telnet.can_start(&configuration(&["--mcp", "--mcp-read-only"])));
+    }
+
     /// A client that closes the connection gets the close echoed, so the
     /// closing handshake completes and the client sees a normal close, not
     /// a dropped connection (1006).

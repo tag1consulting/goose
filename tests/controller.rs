@@ -690,13 +690,23 @@ async fn run_standalone_test(protocol: Protocol) {
 // Test controlling a load test with Telnet.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_telnet_controller() {
-    run_standalone_test(Protocol::Telnet).await;
+    tokio::time::timeout(
+        time::Duration::from_secs(120),
+        run_standalone_test(Protocol::Telnet),
+    )
+    .await
+    .expect("test timed out");
 }
 
 // Test controlling a load test with WebSocket controller.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_websocket_controller() {
-    run_standalone_test(Protocol::WebSocket).await;
+    tokio::time::timeout(
+        time::Duration::from_secs(120),
+        run_standalone_test(Protocol::WebSocket),
+    )
+    .await
+    .expect("test timed out");
 }
 
 // Test controlling a load test with the MCP Controller, through the same
