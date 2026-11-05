@@ -1009,7 +1009,7 @@ async fn worker_data_past_the_cap_still_runs_test_stop() {
 async fn gaggle_lost_worker_record_keeps_the_last_merged_seq() {
     worker_fails_a_phase(
         TestFaults {
-            final_after: Some(Duration::from_secs(60)),
+            final_after: Some(Duration::from_secs(10)),
             refuse_from: 2,
             ..Default::default()
         },

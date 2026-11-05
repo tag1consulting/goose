@@ -562,8 +562,10 @@ impl GaggleDelta {
 /// fills it: in key order, which leaves 6 of each node's 11 slots full, a
 /// node of a map of up to 11 entries whole, and one node above each 6
 /// below it at most. Each node holds its parent, its place and length, and
-/// 11 slots; one above others, 12 child pointers more.
-pub(crate) fn map_bytes(len: usize, slot: usize) -> usize {
+/// 11 slots; one above others, 12 child pointers more. Every level up holds
+/// at most a sixth of the one below, so the nodes above the leaves are at
+/// most a fifth of the leaves, and the root.
+fn map_bytes(len: usize, slot: usize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -578,7 +580,7 @@ pub(crate) fn map_bytes(len: usize, slot: usize) -> usize {
 
 /// The heap bytes a string holds: none when it is empty, or its length
 /// rounded up to 16, as an allocator gives no less.
-pub(crate) fn string_bytes(string: &str) -> usize {
+fn string_bytes(string: &str) -> usize {
     match string.len() {
         0 => 0,
         len => len.div_ceil(16) * 16,

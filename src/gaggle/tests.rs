@@ -2526,8 +2526,15 @@ fn old_co_events_are_placed_in_one_pass() {
     fresh.apply(1, delta.clone()).unwrap();
     accumulator.apply_live(1, delta, &mut graph).unwrap();
     super::merge::EVENTS_MOVED.with(|moved| moved.set(0));
+    super::merge::EVENTS_GATHERED.with(|gathered| gathered.set(0));
     let (metrics, _, _) = accumulator.merged_and_excluded(graph);
     let moved = super::merge::EVENTS_MOVED.with(std::cell::Cell::get);
+    // Only the new events were taken: the held ones were placed among.
+    assert_eq!(
+        super::merge::EVENTS_GATHERED.with(std::cell::Cell::get),
+        1_000,
+        "the held events were gathered again"
+    );
     assert!(
         moved <= 2 * (20_000 + 1_000),
         "{} held events moved to place 1,000",
@@ -2554,9 +2561,10 @@ fn old_co_events_are_placed_in_one_pass() {
 const DECODED_NAME_BYTES: [(u64, usize); 3] = [(0, 99), (1, 291), (12, 771)];
 
 /// A delta of many short distinct names, with no rows or a few each, is
-/// estimated at no less than it holds decoded, in every map of names to
-/// rows: an estimate below it lets the deltas the manager queues hold more
-/// than the byte budget it bounds them by.
+/// estimated at no less than it holds decoded, and each other map of names
+/// to rows at least as the requests map is: an estimate below it lets the
+/// deltas the manager queues hold more than the byte budget it bounds them
+/// by.
 #[test]
 fn short_names_are_estimated_at_no_less_than_they_hold() {
     const NAMES: usize = 20_000;
@@ -2578,7 +2586,8 @@ fn short_names_are_estimated_at_no_less_than_they_hold() {
             estimated,
             NAMES * measured
         );
-        // Each map of names to rows is counted the same way.
+        // Each other map of names to rows is counted at least as the
+        // requests map is.
         let mut every = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
         for name in names() {
             let seconds = 0..rows;
