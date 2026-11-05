@@ -387,11 +387,12 @@ fn tool_result(ok: bool, message: String, structured: Value) -> CallToolResult {
     result
 }
 
-/// A result whose text is `json` and whose structured content is the same
-/// JSON parsed.
-fn json_result(json: String) -> CallToolResult {
-    let structured = serde_json::from_str(&json).unwrap_or(Value::Null);
-    tool_result(true, json, structured)
+/// A result whose text is `value` as [`to_json`] writes it, `config-json`'s
+/// and `metrics-json`'s to the byte, and whose structured content is `value`
+/// serialized once more as a [`Value`], never the text parsed back.
+fn json_result<T: serde::Serialize>(value: &T) -> CallToolResult {
+    let structured = serde_json::to_value(value).unwrap_or(Value::Null);
+    tool_result(true, to_json(value), structured)
 }
 
 /// A refusal with no outcome from the parent: a value the parser refused, a
@@ -522,8 +523,8 @@ impl GooseTools {
             // The configuration the parent answers with is already as
             // `config-json` shows it, its tokens read `(set)`; the text is
             // `config-json`'s and `metrics-json`'s to the byte.
-            Ok(ControlReply::Config(config)) => json_result(to_json(&config)),
-            Ok(ControlReply::Metrics(metrics)) => json_result(to_json(metrics.as_ref())),
+            Ok(ControlReply::Config(config)) => json_result(&config),
+            Ok(ControlReply::Metrics(metrics)) => json_result(metrics.as_ref()),
             Err(SendError::Timeout) => refused(CONTROL_TIMED_OUT),
             Err(SendError::Unavailable) => refused(CHANNEL_CLOSED),
         }
@@ -830,6 +831,22 @@ mod tests {
                 assert_eq!(listed.contains(&tool), tools.tool(tool.name()).is_some());
             }
         }
+    }
+
+    /// The text of a reading tool's result is `to_json`'s, and its structured
+    /// content is the same JSON.
+    #[test]
+    fn json_result_text_and_structure_agree() {
+        let value =
+            json!({"host": "http://example.com/", "users": 3, "rate": 1.5, "list": [1, null]});
+        let result = json_result(&value);
+        assert_eq!(result.is_error, Some(false));
+        let text = format!("{:?}", result.content);
+        assert_eq!(
+            text,
+            format!("{:?}", vec![ContentBlock::text(to_json(&value))])
+        );
+        assert_eq!(result.structured_content, Some(value));
     }
 
     /// Off loopback, the Host list is the configured host and its addresses,

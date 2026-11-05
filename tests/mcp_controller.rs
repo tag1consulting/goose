@@ -763,3 +763,61 @@ async fn connection_cap() {
     .await
     .expect("test timed out");
 }
+
+/// On a run that made requests, `get_config` and `get_metrics` return text
+/// that is `config-json` and `metrics-json` to the byte, and structured
+/// content equal to that text parsed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn structured_content_is_the_text() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let running = Running::start(1, None, |ports| {
+            strings(&["--mcp", "--mcp-port", &ports[0], "--telnet-port", &ports[1]])
+        })
+        .await;
+        let telnet_port = running.ports[1];
+        let mut mcp = Mcp::new(running.port());
+        assert!(mcp.call("start", json!({})).await.ok);
+        // Until at least one request is in the metrics.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let metrics = mcp.call("get_metrics", json!({})).await;
+            if metrics.structured["requests"]
+                .as_object()
+                .is_some_and(|requests| !requests.is_empty())
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no request within 30 seconds"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        // Stopped, the metrics hold still, so telnet reads the same.
+        assert!(mcp.call("stop", json!({})).await.ok);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        // A stop is refused, naming the phase, until the users have stopped.
+        while mcp.call("stop", json!({})).await.structured["phase"] != "idle" {
+            assert!(tokio::time::Instant::now() < deadline, "never stopped");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        for (tool, line) in [
+            ("get_config", "config-json"),
+            ("get_metrics", "metrics-json"),
+        ] {
+            let called = mcp.call(tool, json!({})).await;
+            assert!(called.ok, "{}", tool);
+            let parsed: Value = serde_json::from_str(&called.text).unwrap();
+            assert_eq!(called.structured, parsed, "{}", tool);
+            assert_eq!(called.text, telnet(telnet_port, line).await, "{}", tool);
+        }
+        let metrics = mcp.call("get_metrics", json!({})).await;
+        assert!(!metrics.structured["requests"]
+            .as_object()
+            .unwrap()
+            .is_empty());
+        running.shutdown(&mut mcp).await;
+    })
+    .await
+    .expect("test timed out");
+}
