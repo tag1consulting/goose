@@ -704,5 +704,10 @@ async fn test_websocket_controller() {
 #[cfg(feature = "mcp")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_mcp_controller() {
-    run_standalone_test(Protocol::Mcp).await;
+    tokio::time::timeout(
+        time::Duration::from_secs(120),
+        run_standalone_test(Protocol::Mcp),
+    )
+    .await
+    .expect("test timed out");
 }

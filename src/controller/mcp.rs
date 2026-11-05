@@ -753,4 +753,99 @@ mod tests {
         );
         assert_eq!(help_line("start"), Some("start an idle load test"));
     }
+
+    /// Off loopback, the Host list is the configured host and its addresses,
+    /// never the loopback names rmcp allows by default, and the router
+    /// enforces Goose's list, not rmcp's.
+    #[tokio::test]
+    async fn host_list_is_goose_s_own() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let configuration =
+                |args: &[&str]| GooseConfiguration::parse_args_default(args).unwrap();
+            let loopback = McpOptions::new(&configuration(&["--mcp"])).await;
+            assert_eq!(loopback.allowed_hosts, ["127.0.0.1", "::1", "localhost"]);
+            assert!(loopback
+                .allowed_origins
+                .contains(&"http://[::1]:*".to_string()));
+            let mut options = McpOptions::new(&configuration(&[
+                "--mcp",
+                "--mcp-host",
+                "192.0.2.7",
+                "--mcp-token",
+                "t",
+            ]))
+            .await;
+            assert_eq!(options.allowed_hosts, ["192.0.2.7"]);
+            assert!(options
+                .allowed_origins
+                .contains(&"https://192.0.2.7:*".to_string()));
+            // Serve that list on loopback, without the token, and ask with
+            // each Host.
+            options.token = None;
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (channel_tx, _channel_rx) = flume::unbounded();
+            let server = tokio::spawn(serve(listener, channel_tx, options));
+            let list = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
+            for (host, status) in [
+                (format!("localhost:{port}"), 403),
+                (format!("127.0.0.1:{port}"), 403),
+                (format!("192.0.2.7:{port}"), 200),
+            ] {
+                let reply = reqwest::Client::new()
+                    .post(format!("http://127.0.0.1:{port}{MCP_PATH}"))
+                    .header("Host", host.as_str())
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream")
+                    .body(list)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(reply.status().as_u16(), status, "Host {}", host);
+            }
+            server.abort();
+        })
+        .await
+        .expect("test timed out");
+    }
+
+    /// A parent that does not answer in time, or has gone, is a tool error
+    /// with the text telnet prints, never a JSON-RPC error.
+    #[tokio::test]
+    async fn timeout_and_closed_channel_are_tool_errors() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let (channel_tx, channel_rx) = flume::unbounded();
+            let tools = GooseTools {
+                channel_tx,
+                read_only: false,
+                timeout: Duration::from_millis(50),
+            };
+            let seen = |result: CallToolResult| {
+                (
+                    result.is_error,
+                    format!("{:?}", result.content),
+                    result.structured_content.map(|s| s["ok"].clone()),
+                )
+            };
+            let expect = |text: &str| {
+                (
+                    Some(true),
+                    format!("{:?}", vec![ContentBlock::text(text)]),
+                    Some(json!(false)),
+                )
+            };
+            // Held but never read: the call times out.
+            assert_eq!(
+                seen(tools.call(Tool::Start, &JsonObject::new()).await),
+                expect(CONTROL_TIMED_OUT)
+            );
+            drop(channel_rx);
+            assert_eq!(
+                seen(tools.call(Tool::Start, &JsonObject::new()).await),
+                expect(CHANNEL_CLOSED)
+            );
+        })
+        .await
+        .expect("test timed out");
+    }
 }

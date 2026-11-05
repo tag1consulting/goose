@@ -1492,11 +1492,9 @@ impl ListeningControllers {
     /// Whether a listening Controller can start the load test: a read only MCP
     /// Controller can not.
     pub(crate) fn can_start(&self, configuration: &GooseConfiguration) -> bool {
-        self.telnet || self.websocket || (self.mcp && !configuration.mcp_read_only)
+        self.telnet || self.websocket || (self.mcp && configuration.mcp_controls())
     }
-}
 
-impl ListeningControllers {
     /// Every Controller `configuration` turns on, as if each one bound.
     #[cfg(all(test, feature = "dashboard"))]
     pub(crate) fn configured(configuration: &GooseConfiguration) -> Self {

@@ -145,7 +145,7 @@ pub(crate) fn bearer_token_from_headers(headers: &HeaderMap) -> Option<&str> {
     let mut parts = s.split_whitespace();
     let scheme = parts.next()?;
     let token = parts.next()?;
-    // Reject `Bearer tok extra` — only scheme + single token credential.
+    // Reject `Bearer tok extra`: only the scheme and a single token credential.
     if parts.next().is_some() {
         return None;
     }

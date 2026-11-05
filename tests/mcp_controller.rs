@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 
 use goose::config::GooseConfiguration;
 use goose::prelude::*;
-use mcp_client::{free_port, Mcp};
+use mcp_client::{free_port, free_ports, Mcp};
 
 /// How long any test here may take.
 const TEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -110,8 +110,8 @@ async fn telnet(port: u16, line: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn tools_listed_refused_and_redacted() {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let port = free_port();
-        let telnet_port = free_port();
+        let ports = free_ports(2);
+        let (port, telnet_port) = (ports[0], ports[1]);
         let (port_text, telnet_text) = (port.to_string(), telnet_port.to_string());
         let mcp_token = "mcp-secret-token";
         let dashboard_token = "dashboard-secret-token";
@@ -259,11 +259,12 @@ async fn tools_listed_refused_and_redacted() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn read_only_lists_two_tools() {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let port = free_port();
+        let ports = free_ports(2);
+        let port = ports[0];
         let port_text = port.to_string();
         // Read only, the MCP Controller can not start the test: telnet stays on
         // for --no-autostart, on a port of its own.
-        let telnet_text = free_port().to_string();
+        let telnet_text = ports[1].to_string();
         let running = Running::start(&[
             "--mcp",
             "--mcp-read-only",
@@ -441,7 +442,9 @@ async fn off_without_the_option() {
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        if free {
+        if !free {
+            eprintln!("5119 is held by another process: not checked here");
+        } else {
             assert!(
                 TcpStream::connect(("127.0.0.1", 5119)).await.is_err(),
                 "something listens on 5119 without --mcp"

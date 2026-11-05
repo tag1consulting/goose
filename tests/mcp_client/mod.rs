@@ -16,6 +16,17 @@ pub fn free_port() -> u16 {
         .port()
 }
 
+/// `n` distinct free ports, each held until all are found, so no two are the
+/// same.
+pub fn free_ports(n: usize) -> Vec<u16> {
+    let held: Vec<_> = (0..n)
+        .map(|_| std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port"))
+        .collect();
+    held.iter()
+        .map(|listener| listener.local_addr().expect("local address").port())
+        .collect()
+}
+
 /// The answer to one HTTP request: its status and body.
 pub struct Reply {
     pub status: u16,
@@ -51,7 +62,11 @@ impl Mcp {
     /// A client of the MCP Controller on 127.0.0.1:`port`.
     pub fn new(port: u16) -> Self {
         Mcp {
-            client: reqwest::Client::new(),
+            // Every request ends within 30 seconds: a tool answers within 15.
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("client"),
             url: format!("http://127.0.0.1:{port}/mcp"),
             token: None,
             next_id: 0,
