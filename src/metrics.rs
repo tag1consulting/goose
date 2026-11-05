@@ -3948,6 +3948,8 @@ impl MetricsProcessor {
             | MetricsCommand::GaggleMaxUsers { .. } => false,
             #[cfg(feature = "gaggle")]
             MetricsCommand::GaggleDrained { respond } => {
+                #[cfg(test)]
+                crate::gaggle::faults::slow_drain();
                 let _ = respond.send(self.metrics.threshold_abort.is_some());
                 false
             }

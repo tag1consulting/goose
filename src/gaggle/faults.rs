@@ -205,6 +205,21 @@ pub(crate) static MANAGER_STOPPING: std::sync::atomic::AtomicBool =
 pub(crate) static CANCEL_IN_HELD_CHECK: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Armed by a test: the manager's processor answers its stop's drain
+/// ([`MetricsCommand::GaggleDrained`]) a second after the manager stops
+/// waiting for it, blocking the thread it runs on meanwhile.
+pub(crate) static SLOW_DRAIN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Answer the stop's drain late, as [`SLOW_DRAIN`] says.
+pub(crate) fn slow_drain() {
+    if SLOW_DRAIN.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        tokio::task::block_in_place(|| {
+            std::thread::sleep(super::run::FINAL_TIMEOUT + Duration::from_secs(1));
+        });
+    }
+}
+
 /// When the held threshold check let the processor go on.
 pub(crate) static HELD_CHECK_ENDED: std::sync::Mutex<Option<std::time::Instant>> =
     std::sync::Mutex::new(None);

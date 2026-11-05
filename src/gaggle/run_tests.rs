@@ -2387,13 +2387,31 @@ async fn gaggle_worker_whose_users_never_stop_is_lost_at_the_deadline() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
+    queued_threshold_failure(false).await;
+}
+
+/// As [`gaggle_queued_threshold_failure_is_not_a_ctrl_c`], the processor
+/// answering the stop's drain only after the manager stopped waiting for it:
+/// a cancel set by then is still set aside, never read as Ctrl-C.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_queued_threshold_failure_with_an_unanswered_drain_is_not_a_ctrl_c() {
+    queued_threshold_failure(true).await;
+}
+
+/// A failing threshold check held in the manager's processor until the run
+/// stops, the drain after it answered late with `slow_drain`: the worker's
+/// late final metrics are kept, and the threshold fails the run.
+async fn queued_threshold_failure(slow_drain: bool) {
     use std::sync::atomic::Ordering::SeqCst;
     // Disarmed however the test ends, so no later test meets the hold.
     struct Disarm;
     impl Drop for Disarm {
         fn drop(&mut self) {
             super::faults::HOLD_THRESHOLD_CHECK.store(false, SeqCst);
+            super::faults::SLOW_DRAIN.store(false, SeqCst);
             super::faults::MANAGER_STOPPING.store(false, SeqCst);
+            crate::reset_killswitch();
         }
     }
     let _disarm = Disarm;
@@ -2402,6 +2420,7 @@ async fn gaggle_queued_threshold_failure_is_not_a_ctrl_c() {
         let folder = scratch("queued-threshold");
         super::faults::MANAGER_STOPPING.store(false, SeqCst);
         super::faults::HOLD_THRESHOLD_CHECK.store(true, SeqCst);
+        super::faults::SLOW_DRAIN.store(slow_drain, SeqCst);
         super::faults::HELD_TO_STOP.store(false, SeqCst);
         let faults = [TestFaults {
             final_after: Some(Duration::from_secs(1)),
@@ -2470,6 +2489,7 @@ async fn gaggle_killswitch_during_the_stop_drain() {
             super::faults::HOLD_THRESHOLD_CHECK.store(false, SeqCst);
             super::faults::CANCEL_IN_HELD_CHECK.store(false, SeqCst);
             super::faults::MANAGER_STOPPING.store(false, SeqCst);
+            crate::reset_killswitch();
         }
     }
     let _disarm = Disarm;
