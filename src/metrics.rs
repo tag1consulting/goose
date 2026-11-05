@@ -4017,6 +4017,12 @@ impl MetricsProcessor {
                         series_keys: self.graph_data.latency_series_keys(),
                     },
                 );
+                // On a Gaggle manager, its workers, read from what it keeps.
+                #[cfg(feature = "gaggle")]
+                {
+                    snapshot.gaggle =
+                        self.gaggle_dashboard(&snapshot.series, snapshot.settings.throttle);
+                }
                 snapshot.build_time = started.elapsed();
                 let _ = respond.send(snapshot);
                 // After export, drop series older than the dashboard window so

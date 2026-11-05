@@ -94,3 +94,10 @@ export function formatDuration(secs: number | undefined): string {
   if (m > 0) return m + "m " + s + "s";
   return s + "s";
 }
+
+/** `second` as `mm:ss`, minutes past 99 in full. */
+export function clock(second: number): string {
+  const s = Math.max(0, Math.floor(second));
+  const pad = (n: number): string => (n < 10 ? "0" : "") + n;
+  return pad(Math.floor(s / 60)) + ":" + pad(s % 60);
+}

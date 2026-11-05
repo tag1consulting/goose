@@ -385,6 +385,248 @@
         "--report-file",
         "report.json"
       ]
+    },
+    "gaggle-six": {
+      "example": "simple",
+      "features": [
+        "dashboard",
+        "gaggle"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "gaggle": {
+        "workers": 6,
+        "name": "load-{n}",
+        "port": 5135
+      },
+      "flags": [
+        "--dashboard",
+        "--dashboard-control",
+        "--dashboard-auth-token",
+        "gaggle-shots-token",
+        "--gaggle-rebalance",
+        "--no-telnet",
+        "-q",
+        "-u",
+        "120",
+        "-r",
+        "20",
+        "--throttle-requests",
+        "60",
+        "-t",
+        "10m"
+      ],
+      "token": "gaggle-shots-token",
+      "dashboard": "http://127.0.0.1:5118",
+      "limit": 900,
+      "console": true,
+      "allowFailures": true,
+      "attempts": 1,
+      "events": [
+        {
+          "name": "users 120 to 180 from the dashboard",
+          "at": 120,
+          "actions": [
+            {
+              "do": "fill",
+              "selector": "#ctrl-target",
+              "value": "180"
+            },
+            {
+              "do": "click",
+              "selector": "#ctrl-apply"
+            }
+          ]
+        },
+        {
+          "name": "throttle 60 to 30 from the dashboard",
+          "at": 180,
+          "actions": [
+            {
+              "do": "fill",
+              "selector": "#ctrl-throttle",
+              "value": "30"
+            },
+            {
+              "do": "click",
+              "selector": "#ctrl-throttle-apply"
+            }
+          ]
+        },
+        {
+          "name": "lose worker 3",
+          "at": 240,
+          "actions": [
+            {
+              "do": "signal",
+              "worker": 3,
+              "signal": "SIGKILL"
+            }
+          ]
+        },
+        {
+          "name": "a CPU hog on every core",
+          "at": 300,
+          "actions": [
+            {
+              "do": "hog",
+              "seconds": 120
+            }
+          ]
+        },
+        {
+          "name": "stop worker 4",
+          "at": 390,
+          "actions": [
+            {
+              "do": "signal",
+              "worker": 4,
+              "signal": "SIGSTOP"
+            }
+          ]
+        },
+        {
+          "name": "continue worker 4",
+          "at": 396,
+          "actions": [
+            {
+              "do": "signal",
+              "worker": 4,
+              "signal": "SIGCONT"
+            }
+          ]
+        },
+        {
+          "name": "the end of the 10 minute run",
+          "at": 600,
+          "actions": [
+            {
+              "do": "waitFor",
+              "selector": "#workers-summary"
+            }
+          ]
+        }
+      ]
+    },
+    "gaggle-48": {
+      "example": "simple",
+      "features": [
+        "dashboard",
+        "gaggle"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "gaggle": {
+        "workers": 48,
+        "name": "load-{n}",
+        "port": 5135
+      },
+      "flags": [
+        "--dashboard",
+        "--dashboard-control",
+        "--dashboard-auth-token",
+        "gaggle-shots-token",
+        "--gaggle-rebalance",
+        "--no-telnet",
+        "-q",
+        "-u",
+        "240",
+        "-r",
+        "40",
+        "--throttle-requests",
+        "96",
+        "-t",
+        "6m"
+      ],
+      "token": "gaggle-shots-token",
+      "dashboard": "http://127.0.0.1:5118",
+      "limit": 660,
+      "console": true,
+      "allowFailures": true,
+      "attempts": 1,
+      "events": [
+        {
+          "name": "users 240 to 288 from the dashboard",
+          "at": 120,
+          "actions": [
+            {
+              "do": "fill",
+              "selector": "#ctrl-target",
+              "value": "288"
+            },
+            {
+              "do": "click",
+              "selector": "#ctrl-apply"
+            }
+          ]
+        },
+        {
+          "name": "throttle 96 to 144 from the dashboard",
+          "at": 150,
+          "actions": [
+            {
+              "do": "fill",
+              "selector": "#ctrl-throttle",
+              "value": "144"
+            },
+            {
+              "do": "click",
+              "selector": "#ctrl-throttle-apply"
+            }
+          ]
+        },
+        {
+          "name": "lose worker 31",
+          "at": 185,
+          "actions": [
+            {
+              "do": "signal",
+              "worker": 31,
+              "signal": "SIGKILL"
+            }
+          ]
+        },
+        {
+          "name": "a CPU hog on every core",
+          "at": 210,
+          "actions": [
+            {
+              "do": "hog",
+              "seconds": 120
+            }
+          ]
+        },
+        {
+          "name": "stop worker 42",
+          "at": 245,
+          "actions": [
+            {
+              "do": "signal",
+              "worker": 42,
+              "signal": "SIGSTOP"
+            }
+          ]
+        },
+        {
+          "name": "continue worker 42",
+          "at": 251,
+          "actions": [
+            {
+              "do": "signal",
+              "worker": 42,
+              "signal": "SIGCONT"
+            }
+          ]
+        },
+        {
+          "name": "the end of the 6 minute run",
+          "at": 360,
+          "actions": [
+            {
+              "do": "waitFor",
+              "selector": "#workers-summary"
+            }
+          ]
+        }
+      ]
     }
   },
   "shots": [
@@ -967,6 +1209,113 @@
         "file": "report.html",
         "selector": "div.co-metrics",
         "pad": 8
+      }
+    },
+    {
+      "name": "gaggle-control",
+      "output": "gaggle/dashboard-control.png",
+      "run": "gaggle-six",
+      "at": 183,
+      "capture": {
+        "type": "element",
+        "selector": "#control-panel",
+        "text": "Applied throttle 30",
+        "pad": 4
+      }
+    },
+    {
+      "name": "gaggle-workers-panel",
+      "output": "gaggle/dashboard-workers-panel.png",
+      "run": "gaggle-six",
+      "at": 394.5,
+      "capture": {
+        "type": "element",
+        "selector": "#workers-panel",
+        "text": "lagging",
+        "pad": 4
+      }
+    },
+    {
+      "name": "gaggle-dashboard-dark",
+      "output": "gaggle/dashboard-dark.png",
+      "run": "gaggle-48",
+      "at": 249,
+      "actions": [
+        {
+          "do": "theme",
+          "scheme": "dark"
+        }
+      ],
+      "settle": 1,
+      "capture": {
+        "type": "viewport",
+        "ready": "#workers-summary",
+        "text": "lagging"
+      }
+    },
+    {
+      "name": "gaggle-dashboard-light",
+      "output": "gaggle/dashboard-light.png",
+      "run": "gaggle-48",
+      "at": 250.5,
+      "actions": [
+        {
+          "do": "theme",
+          "scheme": "light"
+        }
+      ],
+      "settle": 0.5,
+      "capture": {
+        "type": "viewport",
+        "ready": "#workers-summary"
+      }
+    },
+    {
+      "name": "gaggle-grid-48",
+      "output": "gaggle/dashboard-grid.png",
+      "run": "gaggle-48",
+      "at": 253,
+      "capture": {
+        "type": "band",
+        "from": "#worker-grid",
+        "to": ".worker-legend",
+        "pad": 6
+      }
+    },
+    {
+      "name": "gaggle-rps-by-worker",
+      "output": "gaggle/dashboard-rps-by-worker.png",
+      "run": "gaggle-48",
+      "at": 256,
+      "actions": [
+        {
+          "do": "click",
+          "selector": "#rps-view button:last-child"
+        }
+      ],
+      "settle": 2,
+      "capture": {
+        "type": "element",
+        "selector": ".chart-marker-card",
+        "pad": 4
+      }
+    },
+    {
+      "name": "gaggle-data-table",
+      "output": "gaggle/dashboard-data-table.png",
+      "run": "gaggle-48",
+      "at": 262,
+      "actions": [
+        {
+          "do": "open",
+          "selector": "#workers-data"
+        }
+      ],
+      "settle": 1,
+      "capture": {
+        "type": "element",
+        "selector": "#workers-data",
+        "pad": 4
       }
     }
   ]

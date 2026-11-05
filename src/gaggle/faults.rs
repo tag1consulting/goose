@@ -30,6 +30,8 @@ pub(crate) struct TestFaults {
     pub(crate) logs: LogsFault,
     /// End with an error a second into the run, its link dropped.
     pub(crate) exit_mid_run: bool,
+    /// End as `exit_mid_run` does, this many seconds into the run instead.
+    pub(crate) exit_after_secs: Option<usize>,
     /// Send a final delta the manager refuses, and stop as told.
     pub(crate) refused_final: bool,
     /// Trigger the killswitch, as Ctrl-C on the manager, as `Stop` arrives,
@@ -65,6 +67,15 @@ pub(crate) struct TestFaults {
 }
 
 impl TestFaults {
+    /// The second into the run the worker ends with an error at, if it
+    /// does.
+    pub(crate) fn exit_at_secs(&self) -> Option<usize> {
+        match self.exit_mid_run {
+            true => Some(1),
+            false => self.exit_after_secs,
+        }
+    }
+
     /// What the worker makes of the run spec it decoded, `decoded`, as
     /// [`Self::prepare`] says: what it answers, or the error it ends with.
     pub(crate) async fn on_prepare(

@@ -20,6 +20,7 @@
 
 pub(crate) mod compare;
 pub(crate) mod control;
+pub(crate) mod dashboard;
 pub(crate) mod delta;
 pub(crate) mod health;
 pub(crate) mod link;

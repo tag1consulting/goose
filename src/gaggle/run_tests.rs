@@ -3580,3 +3580,304 @@ async fn gaggle_worker_cpu_is_timed_by_the_workers_clock() {
         .await
         .expect("within 120 seconds");
 }
+
+/// The manager's dashboard snapshot, read with `token`, as text: `None`
+/// until the dashboard answers with one.
+#[cfg(feature = "dashboard")]
+async fn dashboard_snapshot(port: u16, token: &str) -> Option<String> {
+    let response = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{port}/api/v1/snapshot"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response.text().await.ok()
+}
+
+/// The first snapshot within `within` that `test` passes, its JSON and its
+/// text.
+#[cfg(feature = "dashboard")]
+async fn dashboard_until(
+    port: u16,
+    token: &str,
+    within: Duration,
+    what: &str,
+    test: impl Fn(&serde_json::Value) -> bool,
+) -> (serde_json::Value, String) {
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        let text = dashboard_snapshot(port, token).await.unwrap_or_default();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        if test(&json) {
+            return (json, text);
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} within {:?}: {} (phase {}, {} bytes)",
+            what,
+            within,
+            json["gaggle"],
+            json["phase"],
+            text.len()
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// A manager's dashboard shows its workers: three running; a users change
+/// through the dashboard's settings route as an event saying every worker
+/// acknowledged it, and in each worker's users; and a worker that stops a
+/// few seconds in, lost, with an event. The snapshot names workers only:
+/// no address, no port of a peer, no token.
+#[cfg(feature = "dashboard")]
+#[test]
+#[serial_test::serial]
+fn gaggle_dashboard_shows_the_workers() {
+    // On its own thread, waited on for at most 150 seconds: a failure
+    // leaves the load test's users running, and their runtime would never
+    // finish dropping.
+    let (done, ended) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(dashboard_shows_the_workers());
+            let _ = done.send(());
+        })
+        .unwrap();
+    ended
+        .recv_timeout(Duration::from_secs(150))
+        .expect("the test ends within 150 seconds, without a failure");
+}
+
+#[cfg(feature = "dashboard")]
+async fn dashboard_shows_the_workers() {
+    const DASHBOARD: u16 = 5248;
+    const TOKEN: &str = "gaggle-dashboard-panel-token";
+    let test = async {
+        no_token_from_the_environment();
+        let server = answering().await;
+        // The target by name, so no address of the test's own is in the
+        // snapshot's hosts.
+        let host = server.base_url().replace("127.0.0.1", "localhost");
+        let folder = scratch("dashboard-workers");
+        let dashboard_port = DASHBOARD.to_string();
+        let manager_folder = folder.join("manager").display().to_string();
+        let args = [
+            "--manager",
+            "--expect-workers",
+            "3",
+            "--manager-bind-port",
+            "0",
+            "--no-telnet",
+            "--users",
+            "6",
+            "--increase-rate",
+            "60",
+            "--run-time",
+            "20",
+            "--throttle-requests",
+            "300",
+            "--dashboard",
+            "--dashboard-port",
+            &dashboard_port,
+            "--dashboard-control",
+            "--dashboard-auth-token",
+            TOKEN,
+            "--quiet",
+            "--output-dir",
+            &manager_folder,
+            "--host",
+            &host,
+        ];
+        let (bound, address) = tokio::sync::oneshot::channel();
+        let manager = standard(configuration(&args), None).report_manager_address(bound);
+        let manager = tokio::spawn(manager.execute());
+        let manager_port = address.await.expect("the manager listens").port();
+        let port = manager_port.to_string();
+        let mut workers = Vec::new();
+        for worker in 0..3 {
+            let worker_folder = folder.join(format!("worker{worker}")).display().to_string();
+            let args = [
+                "--worker",
+                "--manager-host",
+                "127.0.0.1",
+                "--manager-port",
+                &port,
+                "--quiet",
+                "--output-dir",
+                &worker_folder,
+            ];
+            // The second worker stops on its own 8 seconds in.
+            let faults = TestFaults {
+                exit_after_secs: (worker == 1).then_some(8),
+                ..Default::default()
+            };
+            let attack = standard(configuration(&args), Some(worker)).gaggle_test_faults(faults);
+            workers.push(tokio::spawn(attack.execute()));
+        }
+
+        // Three workers running, each in the grid.
+        let (running, _) = dashboard_until(
+            DASHBOARD,
+            TOKEN,
+            Duration::from_secs(20),
+            "3 running",
+            |s| s["gaggle"]["summary"]["running"] == 3,
+        )
+        .await;
+        let gaggle = &running["gaggle"];
+        assert_eq!(gaggle["expected_workers"], 3);
+        assert_eq!(gaggle["grid"]["names"].as_array().unwrap().len(), 3);
+        assert_eq!(gaggle["grid"]["states"], serde_json::json!([2, 2, 2]));
+        assert_eq!(gaggle["previews"]["workers"], 3);
+        assert_eq!(
+            gaggle["previews"]["users"],
+            serde_json::json!([{"value": 2, "workers": 3}])
+        );
+
+        // A users change through the dashboard: its reply says all three
+        // acknowledged it, an event says so, and each worker runs its share.
+        // A running load test takes users through the users route; the
+        // settings route refuses them then.
+        let body = dashboard_post_token(DASHBOARD, TOKEN, "users", r#"{"users": 9}"#).await;
+        assert_eq!(body["ok"], true, "{}", body);
+        assert_eq!(body["acks"]["acknowledged"], 3, "{}", body);
+        assert_eq!(body["acks"]["workers"], 3, "{}", body);
+        let (changed, _) = dashboard_until(
+            DASHBOARD,
+            TOKEN,
+            Duration::from_secs(10),
+            "users event",
+            |s| {
+                let gaggle = &s["gaggle"];
+                let users = gaggle["grid"]["users"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let event = gaggle["events"]["texts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|text| {
+                        text.as_str().is_some_and(|text| {
+                            text.starts_with("users 6 to 9, acknowledged by 3 of 3")
+                        })
+                    });
+                event && users.iter().all(|users| users == 3)
+            },
+        )
+        .await;
+        let events = &changed["gaggle"]["events"];
+        let at = events["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|kind| kind == "users_changed")
+            .unwrap();
+        assert_eq!(events["labels"][at], "users 9");
+        assert_eq!(changed["gaggle"]["summary"]["last_users_change"]["to"], 9);
+
+        // A throttle change through the settings route: an event, and the
+        // preview of its split over the three workers' 3 users each.
+        let body = dashboard_post_token(DASHBOARD, TOKEN, "settings", r#"{"throttle": 240}"#).await;
+        assert_eq!(body["ok"], true, "{}", body);
+        assert_eq!(body["acks"]["acknowledged"], 3, "{}", body);
+        let (throttled, _) = dashboard_until(
+            DASHBOARD,
+            TOKEN,
+            Duration::from_secs(10),
+            "throttle event",
+            |s| {
+                s["gaggle"]["previews"]["throttle"]
+                    == serde_json::json!([{"value": 80, "workers": 3}])
+            },
+        )
+        .await;
+        let labels = &throttled["gaggle"]["events"]["labels"];
+        assert!(
+            labels.as_array().unwrap().contains(&"throttle 240".into()),
+            "{}",
+            labels
+        );
+
+        // The worker that stops is lost, with an event.
+        let (lost, text) =
+            dashboard_until(DASHBOARD, TOKEN, Duration::from_secs(20), "1 lost", |s| {
+                s["gaggle"]["summary"]["lost"] == 1
+            })
+            .await;
+        let gaggle = &lost["gaggle"];
+        assert_eq!(gaggle["summary"]["running"], 2);
+        assert!(
+            gaggle["events"]["kinds"]
+                .as_array()
+                .unwrap()
+                .contains(&"worker_lost".into()),
+            "{}",
+            gaggle["events"]
+        );
+        let first = gaggle["workers"]["workers"][0].as_u64().unwrap() as usize;
+        assert_eq!(
+            gaggle["grid"]["states"][first], 6,
+            "the lost worker is the first row"
+        );
+        assert_eq!(gaggle["workers"]["flags"][0], serde_json::json!(["lost"]));
+        assert!(gaggle["summary"]["attention"]
+            .as_str()
+            .unwrap()
+            .starts_with("1 worker needs attention: "));
+
+        // Names only: no address and no token anywhere in the snapshot, and
+        // in the gaggle section no host name nor the manager's port.
+        assert!(!text.contains("127.0.0.1"), "{}", text);
+        assert!(!text.contains(TOKEN), "{}", text);
+        let section = gaggle.to_string();
+        for address in ["localhost", "[::1]", "0.0.0.0", "http"] {
+            assert!(!section.contains(address), "{} in {}", address, section);
+        }
+        assert!(
+            !section.contains(&format!(":{port}")) && !section.contains(&format!("{port},")),
+            "the manager's port {} in {}",
+            port,
+            section
+        );
+
+        manager.await.unwrap().expect("the manager exits cleanly");
+        for (worker, end) in workers.into_iter().enumerate() {
+            let end = end.await.unwrap();
+            assert_eq!(
+                end.is_err(),
+                worker == 1,
+                "worker {}: {:?}",
+                worker,
+                end.map(|_| ())
+            );
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(120), Box::pin(test))
+        .await
+        .expect("within 120 seconds");
+}
+
+/// A dashboard control POST with `token`: the reply's JSON.
+#[cfg(feature = "dashboard")]
+async fn dashboard_post_token(port: u16, token: &str, path: &str, body: &str) -> serde_json::Value {
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/api/v1/control/{path}"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(body.to_string())
+        .send()
+        .await
+        .expect("dashboard POST");
+    assert_eq!(response.status(), 200);
+    response.json().await.unwrap()
+}

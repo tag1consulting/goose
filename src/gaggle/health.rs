@@ -422,7 +422,7 @@ impl WorkerHealth {
     /// over the spans of its samples since, on its own clock when they carry
     /// it: a worker that goes quiet is not taken as saturated for want of
     /// samples.
-    fn saturated_for(&self) -> Duration {
+    pub(crate) fn saturated_for(&self) -> Duration {
         match self.above_since {
             Some(_) => self.saturated_run,
             None => Duration::ZERO,
@@ -436,13 +436,13 @@ impl WorkerHealth {
     }
 
     /// Whether it runs its share.
-    fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         self.state == WorkerState::Running
     }
 
     /// How long since its last delta was merged while running, as of `now`:
     /// since it started running, before its first.
-    fn delta_gap(&self, now: Instant) -> Option<Duration> {
+    pub(crate) fn delta_gap(&self, now: Instant) -> Option<Duration> {
         if !self.is_running() {
             return None;
         }
@@ -498,6 +498,11 @@ impl GaggleHealth {
     #[cfg(test)]
     pub(crate) fn worker(&self, id: u32) -> Option<&WorkerHealth> {
         self.workers.get(&id)
+    }
+
+    /// Every worker, in id order: what the dashboard shows of each.
+    pub(crate) fn workers(&self) -> impl Iterator<Item = &WorkerHealth> {
+        self.workers.values()
     }
 
     /// Worker `id`, kept from now on, named `name` and with `cores`.
@@ -563,7 +568,7 @@ impl GaggleHealth {
     /// Worker `id` was lost in an earlier run, at `at`, for `why`.
     pub(crate) fn lost_before(&mut self, id: u32, at: chrono::DateTime<chrono::Utc>, why: &str) {
         let worker = self.entry(id);
-        worker.lost = Some((at, 0, why.to_string()));
+        worker.lost = Some((at, 0, bounded(why)));
         worker.state = WorkerState::Lost;
     }
 
@@ -583,13 +588,15 @@ impl GaggleHealth {
         if worker.state == WorkerState::Lost {
             return false;
         }
-        worker.lost = Some((chrono::Utc::now(), second, why.to_string()));
+        // A worker's own words can reach `why`: kept bounded, as an event's
+        // text is, as the dashboard sends it every second.
+        worker.lost = Some((chrono::Utc::now(), second, bounded(why)));
         self.set_state(id, WorkerState::Lost, now);
         let name = self.entry(id).name.clone();
         self.event(
             GaggleEventKind::WorkerLost,
             Some(&name),
-            format!("{name} lost: {why}"),
+            lost_text(&name, why),
         );
         true
     }
@@ -748,7 +755,7 @@ impl GaggleHealth {
                 self.event(
                     GaggleEventKind::WorkerExcluded,
                     Some(&name),
-                    format!("{name}'s metrics left out: {why}"),
+                    excluded_text(&name, &why),
                 );
             }
             self.entry(id).merge.excluded = Some(why);
@@ -780,11 +787,7 @@ impl GaggleHealth {
         // A worker's words reach the text, through the reasons it gives:
         // no control character, so none reaches a terminal or a report, and
         // at most MAX_EVENT_TEXT characters.
-        let text: String = text
-            .chars()
-            .map(|c| if c.is_control() { ' ' } else { c })
-            .take(MAX_EVENT_TEXT)
-            .collect();
+        let text = bounded(&text);
         if self.events.len() >= GaggleRecord::MAX_EVENTS {
             self.events.pop_front();
             self.events_dropped += 1;
@@ -821,20 +824,17 @@ impl GaggleHealth {
             }
             let name = &worker.name;
             if live.saturated && !worker.live.saturated {
-                let percent = worker.cpu_percent.unwrap_or(0.0).round();
-                let secs = worker.saturated_for().as_secs();
                 events.push((
                     GaggleEventKind::WorkerSaturated,
                     name.clone(),
-                    format!("{name} saturated (CPU {percent}% for {secs} s)"),
+                    saturated_text(name, worker.cpu_percent, worker.saturated_for()),
                 ));
             }
             if live.lagging && !worker.live.lagging {
-                let secs = worker.delta_gap(now).unwrap_or_default().as_secs();
                 events.push((
                     GaggleEventKind::WorkerLagging,
                     name.clone(),
-                    format!("{name} lagging (last delta {secs} s ago)"),
+                    lagging_text(name, worker.delta_gap(now).unwrap_or_default()),
                 ));
             }
             // A worker that stopped or was lost is not said to recover.
@@ -992,6 +992,54 @@ impl GaggleHealth {
             })
             .collect()
     }
+}
+
+/// `text` with no control character, so none reaches a terminal or a
+/// report, and at most [`MAX_EVENT_TEXT`] characters: a worker's words can
+/// reach it, through the reasons it gives.
+fn bounded(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_EVENT_TEXT)
+        .collect()
+}
+
+/// What an event says of a worker that turned saturated, and what the
+/// dashboard's attention banner says of one while it is: `load-17 saturated
+/// (CPU 97% for 42 s)`, its CPU use now and how long it has stayed high.
+pub(crate) fn saturated_text(name: &str, cpu_percent: Option<f64>, for_: Duration) -> String {
+    let percent = cpu_percent.unwrap_or(0.0).round();
+    let secs = for_.as_secs();
+    format!("{name} saturated (CPU {percent}% for {secs} s)")
+}
+
+/// What an event says of a worker that turned lagging, and the banner of
+/// one while it is: `load-42 lagging (last delta 5 s ago)`.
+pub(crate) fn lagging_text(name: &str, gap: Duration) -> String {
+    let secs = gap.as_secs();
+    format!("{name} lagging (last delta {secs} s ago)")
+}
+
+/// What an event says of a worker lost: `load-31 lost: connection reset`.
+pub(crate) fn lost_text(name: &str, why: &str) -> String {
+    format!("{name} lost: {why}")
+}
+
+/// What the banner says of a worker lost, with the run's series second it
+/// was lost in as `mm:ss`: `load-31 lost at 03:05 (connection reset)`.
+pub(crate) fn lost_at_text(name: &str, second: u64, why: &str) -> String {
+    format!("{name} lost at {} ({why})", minutes_seconds(second))
+}
+
+/// What an event says, and the banner, of a worker the merge left out:
+/// `load-9's metrics left out: why`.
+pub(crate) fn excluded_text(name: &str, why: &str) -> String {
+    format!("{name}'s metrics left out: {why}")
+}
+
+/// `second` as `mm:ss`, minutes past 99 in full: `03:05`, `125:00`.
+pub(crate) fn minutes_seconds(second: u64) -> String {
+    format!("{:02}:{:02}", second / 60, second % 60)
 }
 
 /// The median of `values`, `None` with fewer than

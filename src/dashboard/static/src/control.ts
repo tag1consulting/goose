@@ -10,7 +10,7 @@ import {
   removeDescribedBy,
   setReadOnly,
 } from "./follow";
-import { formatInt } from "./format";
+import { clock, formatInt } from "./format";
 import { settingsSummary } from "./run-settings";
 import { SettingsBody, SettingsForm } from "./settings-form";
 import { announce, setBanner } from "./status";
@@ -31,6 +31,8 @@ interface ControlResultBody {
   settings?: SnapshotSettings;
   /** Why a request was refused as cross site or from another host name. */
   reason?: string;
+  /** On a Gaggle manager, how many workers acknowledged the change. */
+  acks?: { acknowledged: number; workers: number; secs: number };
 }
 
 /** Where each Controller listens, or null when it is off. */
@@ -460,6 +462,8 @@ function handleControlBody(res: Response): Promise<ControlResultBody | null> {
         setControlStatus(
           data.command === "quit"
             ? "Goose is shutting down."
+            : data.acks && sending
+            ? appliedText(sending, lastSnap ? lastSnap.duration_secs : 0, data.acks)
             : data.message || "OK",
           "ok"
         );
@@ -499,14 +503,60 @@ function refusalText(reason: string | undefined): string {
   return "Control rejected";
 }
 
+/** What the change in flight sets, as its success sentence names it. */
+let sending = "";
+
+/**
+ * The status after a change a Gaggle manager's workers acknowledged:
+ * `Applied users 900 at 02:00: acknowledged by 48 of 48 workers in 0.4 s.`
+ */
+export function appliedText(
+  what: string,
+  second: number,
+  acks: { acknowledged: number; workers: number; secs: number }
+): string {
+  const lost = acks.workers - acks.acknowledged;
+  return (
+    "Applied " +
+    what +
+    " at " +
+    clock(second) +
+    ": acknowledged by " +
+    formatInt(acks.acknowledged) +
+    " of " +
+    formatInt(acks.workers) +
+    " workers in " +
+    acks.secs.toFixed(1) +
+    " s" +
+    (lost > 0
+      ? "; " + formatInt(lost) + (lost === 1 ? " worker was" : " workers were") + " lost during the change."
+      : ".")
+  );
+}
+
+/** What a settings change sets, for its success sentence. */
+function settingsWhat(body: SettingsBody): string {
+  const parts: string[] = [];
+  if (body.users !== undefined) parts.push("users " + formatInt(body.users));
+  if (body.throttle !== undefined) {
+    parts.push(body.throttle === null ? "no throttle" : "throttle " + formatInt(body.throttle));
+  }
+  if (body.host !== undefined) parts.push("the host");
+  const ramps = ["increase_rate", "increase_time_secs", "decrease_rate", "decrease_time_secs", "run_time_secs"];
+  if (ramps.some((key) => (body as Record<string, unknown>)[key] !== undefined)) parts.push("the run settings");
+  return parts.length ? parts.join(", ") : "the settings";
+}
+
 function runControl(
   path: string,
   body?: { users: number } | SettingsBody,
   appliedUsers?: number,
-  settled?: (data: ControlResultBody | null) => void
+  settled?: (data: ControlResultBody | null) => void,
+  what = ""
 ): void {
   if (inFlight || !controlEnabled || !hasAccess()) return;
   inFlight = true;
+  sending = what;
   updateControlEnablement();
   // The status line is about to stop describing an invalid Target.
   setTargetInvalid(false);
@@ -539,6 +589,7 @@ function sendSettings(path: string): void {
     targetField.sending(String(users));
   }
   form.sending();
+  const what = settingsWhat(body);
   runControl(path, body, users, (data) => {
     const ok = !!(data && data.ok);
     form.settled(ok, data && data.settings ? data.settings : null);
@@ -553,7 +604,7 @@ function sendSettings(path: string): void {
         form.focusField(data.field);
       }
     }
-  });
+  }, what);
 }
 
 /**
@@ -696,7 +747,28 @@ function onQuitClick(): void {
 /** Send `users` to `/users`, the field showing it until the reply. */
 function sendUsers(users: number): void {
   if (targetField) targetField.sending(String(users));
-  runControl("/api/v1/control/users", { users: users }, users);
+  runControl("/api/v1/control/users", { users: users }, users, undefined, "users " + formatInt(users));
+}
+
+/**
+ * Sends a throttle change from a Gaggle manager's throttle field: false
+ * when a request is in flight or control is off, so nothing was sent.
+ */
+export function sendThrottle(throttle: number): boolean {
+  if (inFlight || !controlEnabled || !hasAccess()) return false;
+  runControl(
+    "/api/v1/control/settings",
+    { throttle },
+    undefined,
+    undefined,
+    "throttle " + formatInt(throttle)
+  );
+  return true;
+}
+
+/** Whether the Target field holds an edit not yet sent: its text, or null. */
+export function targetEdit(): string | null {
+  return targetField && targetField.pending() ? targetField.text() : null;
 }
 
 function onApplyClick(): void {
@@ -746,15 +818,24 @@ function controllersText(lead: string): string {
   return lead + parts.join(" or ") + ".";
 }
 
+/** What the subtitle starts with: `Gaggle manager` on one. */
+let subtitleLead = "Live dashboard";
+
+/** Starts the subtitle with `lead` from now on. */
+export function setSubtitleLead(lead: string): void {
+  subtitleLead = lead;
+  applyControlChrome();
+}
+
 function applyControlChrome(): void {
   if (subtitleEl) {
     subtitleEl.textContent = controlEnabled
       ? noAuth
-        ? "Live dashboard · control, no token"
-        : "Live dashboard · control"
+        ? subtitleLead + " · control, no token"
+        : subtitleLead + " · control"
       : probeFailed
-        ? "Live dashboard"
-        : "Live dashboard · read-only";
+        ? subtitleLead
+        : subtitleLead + " · read-only";
   }
   if (footerNoteEl) {
     const sentences = controlEnabled

@@ -16,7 +16,7 @@ interface SortState<K extends string> {
 }
 
 /** One column: the row field a `th[data-sort]` names, and its cell text. */
-interface Column<R> {
+export interface Column<R> {
   key: keyof R & string;
   type: SortType;
   format: (row: R) => string;
@@ -44,7 +44,7 @@ interface TableOptions<R> {
   rowKey: (row: R) => string;
 }
 
-interface SortableTable<R> {
+export interface SortableTable<R> {
   setRows(rows: R[], flags: SnapshotFlags | null): void;
   /** Wires the sortable headers and the filter input. */
   init(): void;
@@ -75,7 +75,7 @@ function sortRows<T, K extends keyof T & string>(
   return copy;
 }
 
-function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
+export function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
   const { body, columns, filter } = options;
   let sort = options.sort;
   let rows: R[] = [];

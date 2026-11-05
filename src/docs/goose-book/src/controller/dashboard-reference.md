@@ -607,6 +607,24 @@ Names are the command line's flags in snake case, durations are whole seconds wi
 
 `phase` alone cannot say this: `decrease` with `stopping` false is a Users decrease, the configured ramp down, or a test plan step to fewer users. After Users during a ramp down, `run_time_secs` is unchanged while `stage` reads `hold_until_stopped`.
 
+### The Gaggle section in the snapshot {#the-gaggle-section-in-the-snapshot}
+
+On a [Gaggle](../gaggle/overview.md) manager, the snapshot gains a `gaggle` section, added in 0.20 and additive under `version` 1; on one process it is absent and the snapshot is byte for byte what it was. It is built inside the manager's snapshot build, so only while a page watches, and only from what the manager already keeps: the [worker health model](../gaggle/manager.md#worker-health) for every figure, flag, event and sentence, the merge's own per worker rows for the RPS lines by worker, and the manager's split rules for the control previews. Its lists are parallel arrays, one entry per worker, row or event, which keeps it within 64 KiB at 1,024 workers with names of up to about 10 characters, such as `load-1023`: each name is sent every second, and 1,024 names of the longest a manager allows, 64 characters, take 68 KB alone. It copies the health model's words cut to a byte budget where a worker's own words can reach them: an event's sentence to 160 bytes and the events to 12 KiB in all, older ones then left out; a lost worker's reason to 120 bytes and the reasons to 6 KiB in all, any further one reading `its reason is in the run's report`; and each summary sentence to 1,500 bytes. A reader of the snapshot, with the read token or on a dashboard without one, sees each worker's name (by default its `HOSTNAME`), its figures and flags, why a worker was lost, which may quote what the worker itself said, and the event log; the run's reports already held them. It holds no worker's address, port or token: a worker appears under its name, which is what it gave itself, by default its `HOSTNAME`, made safe as a folder name.
+
+| Field | Meaning |
+|-------|---------|
+| `expected_workers` | `--expect-workers` |
+| `summary` | Counts over every worker: `expected`, `running`, `stopped`, `lost`, `excluded`, `saturated`, `lagging`, `outliers` (each live, over the last 10 seconds) and `healthy` (running and neither saturated, lagging nor left out); `attention`, the banner's sentence, `null` when no worker needs attention; `degraded` and `checks`, the "Degraded:" and "Check:" sentences the reports would open with now; and `last_users_change`, `{second, from, to}`, absent before one |
+| `workers` | The most urgent 100 workers as rows, lost first, then left out, saturated, lagging, outlier, refused or missing, then the rest, each group by name: `workers` (each row's index in the grid), `cores`, `fail_percent`, `avg_ms`, `requests_per_user_per_second`, `last_delta_secs`, `flags`, `saturated_secs`, `p95_gap_percent`, `lost_reason` (an index into `reasons`, the distinct reasons, as many workers lost at once share one) and `lost_second`, the figures over the last 10 seconds |
+| `workers_truncated` | `true` when `workers` leaves some out; `summary` and `grid` count every worker |
+| `grid` | Every worker in id order: `names`, `states` (0 joining, 1 ready, 2 running, 3 stopping, 4 finished, 5 users exited, 6 lost), `flags` (its most severe live flag but a loss: 0 none, 1 left out, 2 saturated, 3 lagging, 4 outlier, 5 refused or missing), `load` (its requests per second as a percent of the busiest worker's, 0 to 100), `users`, `cpu` (whole percent of its cores, while it runs), `rps` and `p95` over the last 10 seconds, each -1 when there is none, and `gap`, how far its requests per user per second are from the median of the running workers, in percent, when past the outlier threshold, otherwise 0 |
+| `by_worker` | The RPS chart's lines by worker: `workers`, the 8 busiest over the last 10 seconds, `rps`, each one's requests started in each second of the series window, and `others_workers`, how many the rest add up. The rest's line is `series.rps` less these |
+| `events` | What happened to the Gaggle, newest first, at most 200: `seconds`, `kinds` (the run record's event kinds), `labels` (a few words for the chart's marker, for one event of each second within the series window, a lost worker's or else the newest, `null` for the rest) and `texts` (the event's sentence) |
+| `events_truncated` | `true` when older events are left out |
+| `previews` | How a change splits now, by the manager's own rules: `workers`, the running workers a change goes to, `users` and `throttle` (`null` without one), each as groups `{value, workers}`, largest first |
+
+A dashboard control reply on a Gaggle manager also carries `acks`, `{acknowledged, workers, secs}`: how many workers said they received the change, of how many it went to, and how long the last took.
+
 ## Health endpoint exception
 
 `GET /api/v1/health` is intentionally **unauthenticated** so external monitors can check that the dashboard process is up without holding the metrics secret. Example response:
@@ -667,6 +685,35 @@ Transaction times cover the whole transaction function, so they include `--throt
 When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test. The page footer names the address each Controller listens on, as `GET /api/v1/health` reports it, or says none is running.
 
 When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the **Whole run** card and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. The KPI tiles and the **Whole run** card label them "adjusted", the requests table says so in a note above it, and hovering a value shows the measured one. The **Whole run** card shows both. The maximum is adjusted too; the minimum has no adjusted value and is always the measured one. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, as the printed metrics and the reports do.
+
+### On a Gaggle manager
+
+A [Gaggle](../gaggle/overview.md) manager's page says, at a glance, whether every worker is healthy and pulling its weight, from the snapshot's [`gaggle` section](#the-gaggle-section-in-the-snapshot). Nothing here appears on one process.
+
+- **Header**: the subtitle reads `Gaggle manager`, followed by the workers expected, such as `48 workers expected`. The snapshot carries no load test name, so the header shows none.
+- **Attention banner**, under the page's banner, only while a worker needs attention: one sentence naming each, saturated, lagging, left out and lost, in the health model's words, such as `2 workers need attention: load-17 saturated (CPU 97% for 42 s), load-31 lost at 03:05 (connection reset). 45 workers healthy.`
+- **KPI row**: each tile gains a subtitle: the last users change (`+300 at 02:00`), the throttle (`throttle 3,000 /s`), the failures a second (`9 /s failing`), and `merged across workers` under p95 and average. A sixth tile, Workers, shows the running workers of those expected, `47 / 48`, with `1 lost, 1 saturated, 1 lagging` or `all healthy` under it, in the warning colour while a worker is lost, saturated or lagging.
+- **Workers panel**, beside the RPS chart at 1200 pixels wide and above, above it below that: a summary line (`47 of 48 running | 1 saturated | 1 lagging | 1 lost`), any "Degraded:" and "Check:" sentences the reports would open with, then the grid, one square tile per worker, 16 to a row, 32 past 256 workers, so 1,024 fit without scrolling. A running tile is green, darker or lighter by its share of the load; saturated is amber with `!`, lagging an amber outline with `~`, lost a red outline with `x`, left out a red outline with `/`, an outlier keeps its green with `*`, joining or ready shows `.` and stopped `s`; a legend says which. Hover or focus a tile for its card: name and state, its CPU (`CPU 97% of 4 cores for 42 s`), and its requests a second with how far it is from the median when past the outlier threshold, and its p95 (`41 req/s (-35%), p95 212 ms`). The grid is one tab stop: the arrow keys, Home and End move between tiles, and Escape closes the card.
+- **Compact table**: the 6 most urgent workers, with their state, users, requests a second, p95, CPU (a dash when a worker sends none), seconds since their last metrics, and their flags as coloured words, such as `lost 03:05` in red and `saturated` in amber. **Show data table** opens every row sent, sortable, with failure percent, average and requests per user per second too: the grid's text fallback.
+- **Recent gaggle events**: newest first, each with its time from the start of the run, such as `03:05 load-31 lost: connection reset`; the newest 8, the rest in a scrolling region. A worker becoming lost, left out, saturated or lagging, or recovering, is announced to screen readers once, as it happens, at most three in one second and the rest counted.
+- **RPS chart**: a **Total** / **By worker** toggle, remembered for each viewer. By worker stacks the 8 busiest workers' lines in colour and the rest in grey, with a legend. Gaggle events within the window are thin dashed lines with a few words at the top (`users 900`, `throttle 3,000`, `load-31 lost` in red); words that would overlap are left out. Hover a line, or focus the chart and use the arrow keys, for the event's sentence; the chart's data table lists each with its second.
+- **Control card**: the note `changes go to every worker`; under the users field how a change splits (`split: 20 users on 7 workers, 19 on 40`), and under a throttle field, shown when the run has a throttle, how it splits (`split: 64 req/s on 39 workers, 63 on 8`), both as you type; beside the host, `same on all 47`. An applied change reads `Applied users 900 at 02:00: acknowledged by 48 of 48 workers in 0.4 s.`, and says how many workers were lost during it; a refusal says why. The previews follow the manager's own rules: a typed number of users is dealt one at a time to the worker running fewest, and the throttle is split by each worker's share of the users, which a test checks against the manager on 1,000 random cases. After a lost worker's users were moved with `--gaggle-rebalance`, a typed decrease may stop users on other workers than the preview says.
+
+![A Gaggle manager's dashboard at 1440 by 900: the attention banner, the Control card with its split previews, the KPI row with the Workers tile, and the Workers panel beside the RPS chart with its event markers](../gaggle/dashboard-light.png)
+
+*48 workers on one laptop, four minutes in: one worker lost at 03:03, one lagging while it was stopped for 6 seconds.*
+
+![The Workers panel of 6 workers: the summary line, the grid with a lost and a lagging tile, the compact table and the recent events](../gaggle/dashboard-workers-panel.png)
+
+![The worker grid with one saturated tile and its hover card: load-03 saturated, CPU 99% of 4 cores for 23 s, 2,172 requests a second, p95 43 ms](../gaggle/dashboard-saturated-card.png)
+
+*A worker limited to 4 CPUs that inflates a 4.2 MB page on every request, next to five light workers: its own CPU stays near 100%, so it is flagged saturated after 5 seconds.*
+
+![The RPS chart by worker: the 8 busiest workers stacked in colour, the others in grey, and dashed markers for the users and throttle changes and the lost worker](../gaggle/dashboard-rps-by-worker.png)
+
+![The Control card on a Gaggle manager: the users and throttle split previews and the sentence for an applied change](../gaggle/dashboard-control.png)
+
+The flags, their thresholds and the sentences are the health model's; see [Worker health](../gaggle/manager.md#worker-health). Worker addresses are never shown, only the workers' names: by default each worker's `HOSTNAME`.
 
 ### UI walkthrough (control panel)
 

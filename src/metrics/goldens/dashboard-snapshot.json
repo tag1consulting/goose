@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "generated_at": "2026-11-03T10:00:30Z",
+  "goose_version": "golden",
+  "phase": "maintain",
+  "stopping": false,
+  "duration_secs": 60,
+  "active_users": 3,
+  "maximum_users": 3,
+  "target_users": 3,
+  "total_users": 3,
+  "hosts": [],
+  "aggregate": {
+    "total_requests": 9,
+    "total_failures": 1,
+    "requests_per_second": 0.15000000596046448,
+    "failures_per_second": 0.01666666753590107,
+    "failure_rate": 0.1111111111111111,
+    "response_time_avg_ms": 0.6466666666666666,
+    "response_time_min_ms": 0,
+    "response_time_max_ms": 0,
+    "percentile_ms": {
+      "p50": 0,
+      "p95": 0,
+      "p99": 0
+    },
+    "response_time_us": {
+      "min": 450,
+      "max": 950,
+      "p50": 588,
+      "p95": 950,
+      "p99": 950
+    },
+    "co_active": false,
+    "co_adjusted": null
+  },
+  "requests": [
+    {
+      "method": "GET",
+      "name": "/",
+      "request_count": 9,
+      "failure_count": 1,
+      "requests_per_second": 0.15000000596046448,
+      "failures_per_second": 0.01666666753590107,
+      "response_time_avg_ms": 0.6466666666666666,
+      "response_time_min_ms": 0,
+      "response_time_max_ms": 0,
+      "percentile_ms": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "response_time_us": {
+        "min": 450,
+        "max": 950,
+        "p50": 588,
+        "p95": 950,
+        "p99": 950
+      },
+      "status_codes": [],
+      "co_adjusted": null,
+      "has_series": false
+    }
+  ],
+  "errors": [],
+  "transaction_errors": [],
+  "scenarios": [
+    {
+      "scenario_index": 0,
+      "scenario_name": "Scenario",
+      "users": 1,
+      "run_count": 2,
+      "runs_per_second": 0.03333333507180214,
+      "response_time_avg_ms": 1.55,
+      "response_time_min_ms": 1,
+      "response_time_max_ms": 1,
+      "percentile_ms": {
+        "p50": 1,
+        "p95": 1,
+        "p99": 1
+      },
+      "response_time_us": {
+        "min": 1230,
+        "max": 1870,
+        "p50": 1230,
+        "p95": 1870,
+        "p99": 1870
+      }
+    }
+  ],
+  "transactions": [
+    {
+      "scenario_index": 0,
+      "scenario_name": "Scenario",
+      "transaction_index": 0,
+      "transaction_name": "index",
+      "run_count": 3,
+      "failure_count": 0,
+      "runs_per_second": 0.05000000074505806,
+      "failures_per_second": 0.0,
+      "response_time_avg_ms": 0.65,
+      "response_time_min_ms": 0,
+      "response_time_max_ms": 0,
+      "percentile_ms": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "response_time_us": {
+        "min": 590,
+        "max": 720,
+        "p50": 644,
+        "p95": 720,
+        "p99": 720
+      }
+    }
+  ],
+  "series": {
+    "start_second": 3,
+    "rps": [
+      4.0,
+      5.5,
+      6.0
+    ],
+    "fps": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "users": [
+      2,
+      3,
+      3
+    ],
+    "avg_latency_ms": [
+      0.6,
+      0.7,
+      0.65
+    ],
+    "heatmap": null
+  },
+  "flags": {
+    "metrics_disabled": false,
+    "transaction_metrics_disabled": false,
+    "scenario_metrics_disabled": false,
+    "requests_truncated": false,
+    "errors_truncated": false,
+    "transaction_errors_truncated": false,
+    "series_seconds": 300,
+    "percentiles_over_time": true
+  },
+  "report": {
+    "save": false,
+    "graph_data": false,
+    "folder": null,
+    "paths": [],
+    "notes": null,
+    "last_report": null,
+    "last_report_name": null,
+    "error": null,
+    "writes": 0
+  },
+  "settings": {
+    "host": null,
+    "hosts": [],
+    "users": null,
+    "increase_rate": null,
+    "increase_time_secs": null,
+    "decrease_rate": null,
+    "decrease_time_secs": null,
+    "run_time_secs": null,
+    "test_plan": null,
+    "throttle": null,
+    "hold_ends_in_secs": null,
+    "stage": "idle"
+  }
+}

@@ -1538,7 +1538,13 @@ impl GooseAttack {
             AttackPhase::Increase | AttackPhase::Maintain | AttackPhase::Decrease
         );
         #[cfg(test)]
-        if running && self.gaggle.test_faults.exit_mid_run && self.series_elapsed_secs() >= 1 {
+        if running
+            && self
+                .gaggle
+                .test_faults
+                .exit_at_secs()
+                .is_some_and(|at| self.series_elapsed_secs() >= at)
+        {
             return Err(gaggle_error("ended mid run on purpose".to_string()));
         }
         #[cfg(test)]

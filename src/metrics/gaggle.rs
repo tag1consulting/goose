@@ -217,6 +217,29 @@ impl MetricsProcessor {
         }
     }
 
+    /// The dashboard snapshot's `gaggle` section, `None` unless the
+    /// processor runs as a Gaggle manager: read from the worker health
+    /// model and the merge, with `series` the snapshot's series window and
+    /// `throttle` the run's.
+    pub(super) fn gaggle_dashboard(
+        &self,
+        series: &dashboard_snapshot::SeriesWindow,
+        throttle: Option<u64>,
+    ) -> Option<Box<dashboard_snapshot::GaggleSnapshot>> {
+        let merge = self.gaggle_merge.as_ref()?;
+        let health = merge.health.lock().ok()?;
+        Some(Box::new(crate::gaggle::dashboard::section(
+            &health,
+            &merge.accumulator,
+            crate::gaggle::dashboard::SectionInput {
+                expected: self.configuration.expect_workers.unwrap_or(0),
+                series,
+                throttle,
+                now: std::time::Instant::now(),
+            },
+        )))
+    }
+
     /// Build `metrics` and `graph_data` from the merge again, when it
     /// changed. What the manager keeps of its own, its threshold state and
     /// display flags among them, stays.

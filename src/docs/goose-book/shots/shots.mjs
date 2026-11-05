@@ -115,12 +115,19 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-function startGoose(binary, args, env, cwd, logName) {
+// Starts Goose, killed `limit` seconds later if it is still up, as `timeout` would; the
+// child is Goose itself, so a signal the rig sends reaches it.
+function startGoose(binary, args, env, cwd, logName, limit) {
   const out = fs.openSync(path.join(cwd, logName), "w");
   const child = spawn(binary, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", out, out] });
   children.add(child);
+  const deadline = limit ? setTimeout(() => {
+    log(`${logName}: still up after ${limit} s, killed`);
+    child.kill("SIGKILL");
+  }, limit * 1000) : null;
   child.exited = new Promise((resolve) => child.on("exit", (code, signal) => {
     children.delete(child);
+    if (deadline) clearTimeout(deadline);
     fs.closeSync(out);
     resolve({ code, signal });
   }));
@@ -203,6 +210,32 @@ async function doAction(page, ctx, action) {
       if (r.status >= 400) throw new Error(`${action.path} answered ${r.status}`);
       break;
     }
+    case "signal": {
+      // A signal to one of a Gaggle run's workers, by index: SIGKILL to lose it,
+      // SIGSTOP and SIGCONT to make it lag and recover.
+      const worker = ctx.workers[action.worker];
+      if (!worker) throw new Error(`no worker ${action.worker}`);
+      log(`  ${action.signal} to worker ${action.worker} (pid ${worker.pid})`);
+      if (children.has(worker)) worker.kill(action.signal);
+      break;
+    }
+    case "hog": {
+      // One busy process per core, `yes > /dev/null`, for `seconds`.
+      const { availableParallelism } = await import("node:os");
+      const count = action.processes ?? availableParallelism();
+      log(`  ${count} CPU hogs for ${action.seconds} s`);
+      for (let i = 0; i < count; i++) {
+        const hog = spawn("sh", ["-c", "exec yes > /dev/null"], { stdio: "ignore" });
+        children.add(hog);
+        hog.on("exit", () => children.delete(hog));
+        setTimeout(() => hog.kill("SIGKILL"), action.seconds * 1000);
+      }
+      break;
+    }
+    case "theme":
+      // The page's colour scheme from now on: "dark" or "light".
+      await page.emulateMedia({ colorScheme: action.scheme });
+      break;
     case "telnet": {
       // One Controller command, as typed at the telnet prompt.
       const { connect } = await import("node:net");
@@ -428,9 +461,27 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
     if (code !== 0) throw new Error(`run ${name}: prelude ${i + 1} exited ${code}; see ${cwd}`);
   }
 
+  const gaggle = run.gaggle ?? null;
   const args = [...host, ...run.flags.map(expand)];
+  if (gaggle) {
+    args.push("--manager", "--expect-workers", String(gaggle.workers), "--manager-bind-port", String(gaggle.port ?? 5135));
+  }
   log(`run ${name}: ${run.example} ${args.join(" ")}`);
-  const child = startGoose(binary, args, env, cwd, "goose.log");
+  const child = startGoose(binary, args, env, cwd, "goose.log", run.limit);
+  // A Gaggle run's workers, each named as `gaggle.name` says with its number, as a pod's
+  // HOSTNAME names a worker; the manager starts the run once every one has joined.
+  const workers = [];
+  if (gaggle) {
+    // The manager listens for workers at once; its dashboard answers once they joined.
+    await sleep(1500);
+    for (let i = 0; i < gaggle.workers; i++) {
+      const workerName = (gaggle.name ?? "load-{n}").replace("{n}", String(i).padStart(2, "0"));
+      const workerArgs = ["--worker", "--manager-host", "127.0.0.1", "--manager-port", String(gaggle.port ?? 5135), "-q", ...(gaggle.flags ?? [])];
+      const worker = startGoose(binary, workerArgs, { ...env, HOSTNAME: workerName }, cwd, `worker-${workerName}.log`, run.limit);
+      workers.push(worker);
+    }
+    log(`run ${name}: ${gaggle.workers} workers started`);
+  }
   const started = Date.now();
   const context = await browser.newContext({
     viewport: manifest.defaults.viewport,
@@ -442,8 +493,13 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
   try {
     await waitForHealth(base, child, 120);
     const page = await context.newPage();
+    // The browser's console: with `console` set, any error or Content-Security-Policy report
+    // while the run is watched is a problem, and every message is kept in console.log.
+    const consoleLog = [];
+    page.on("console", (msg) => consoleLog.push(`${msg.type()}: ${msg.text()}`));
+    page.on("pageerror", (err) => consoleLog.push(`pageerror: ${err.message}`));
     await page.goto(token ? `${base}/?token=${encodeURIComponent(token)}` : `${base}/`);
-    const ctx = { base, token, cwd };
+    const ctx = { base, token, cwd, workers };
     // The images this attempt took, copied into the Book once the run passes its check.
     const taken = [];
     // Shots, and the run's own events (actions with no capture), in time order.
@@ -476,6 +532,12 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
       if (bytes > limit) problems.push(`${shot.output} is ${(bytes / 1024).toFixed(1)} KB, over ${limit / 1024} KB`);
     }
     await page.close();
+    fs.writeFileSync(path.join(cwd, "console.log"), consoleLog.join("\n") + (consoleLog.length ? "\n" : ""));
+    if (run.console) {
+      const bad = consoleLog.filter((m) => /^(error|pageerror):|Content.Security.Policy|Refused to/i.test(m));
+      log(`run ${name}: browser console, ${consoleLog.length} messages, ${bad.length} errors`);
+      for (const m of bad) problems.push(`run ${name}: browser console: ${m}`);
+    }
     // A run whose images must show no errors is taken again if any request failed.
     if (!run.allowFailures) {
       const snap = await api(base, token, "GET", "/api/v1/snapshot");
@@ -491,6 +553,7 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
   } finally {
     await context.close();
     await stopGoose(child);
+    for (const worker of workers) await stopGoose(worker);
     log(`run ${name}: stopped`);
   }
 }
