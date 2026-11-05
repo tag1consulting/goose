@@ -847,6 +847,26 @@ mod tests {
             format!("{:?}", vec![ContentBlock::text(to_json(&value))])
         );
         assert_eq!(result.structured_content, Some(value));
+        // Each form is written from the value by its own serializer: the
+        // structured content is never the text parsed back.
+        let result = json_result(&WrittenBy);
+        let text = to_json(&WrittenBy);
+        let structured = result.structured_content.unwrap();
+        assert!(
+            structured.as_str().unwrap().contains("value"),
+            "{}",
+            structured
+        );
+        assert_ne!(Some(structured), serde_json::from_str::<Value>(&text).ok());
+    }
+
+    /// A value that serializes as the type name of the serializer writing it.
+    struct WrittenBy;
+
+    impl serde::Serialize for WrittenBy {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_str(std::any::type_name::<S>())
+        }
     }
 
     /// Off loopback, the Host list is the configured host and its addresses,
