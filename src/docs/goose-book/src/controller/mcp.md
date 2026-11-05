@@ -34,6 +34,12 @@ Once on, the tools are served over Streamable HTTP at `http://127.0.0.1:5119/mcp
 
 With `--no-autostart`, the MCP Controller counts as a Controller that can start the test, unless it is read only. The dashboard's `/api/v1/health` names it under `controllers.mcp`, and the read-only dashboard says where it listens, beside telnet and WebSocket; a read only MCP Controller, which can not control the test, is not named there.
 
+![The read-only dashboard's Control card naming the telnet and MCP Controllers](mcp-dashboard-control.png)
+
+The whole dashboard of that run, the `simple` example with `--mcp --dashboard --no-autostart`, started and raised to 20 users through the MCP tools:
+
+![The live dashboard of a run driven through the MCP Controller](mcp-dashboard-full.png)
+
 ## Connecting a client
 
 Claude Code:
