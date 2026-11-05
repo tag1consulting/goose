@@ -3417,8 +3417,10 @@ mod built_as_it_goes {
     /// from every worker, with a row for a request of 2 to 5 seconds that
     /// started before it, and builds the merge. With `stalls`, 10 workers
     /// with coordinated omission mitigation on, each stalling once a second,
-    /// its event and a synthetic response time in each second.
-    fn refresh_cost(seconds: u64, stalls: bool) -> std::time::Duration {
+    /// its event and a synthetic response time in each second; with
+    /// `late_events` too, stamped with the second the slow request started,
+    /// out of order with the events already merged.
+    fn refresh_cost(seconds: u64, stalls: bool, late_events: bool) -> std::time::Duration {
         let workers: u32 = if stalls { 10 } else { 50 };
         const NAMES: usize = 30;
         let settings = GraphSettings {
@@ -3494,7 +3496,10 @@ mod built_as_it_goes {
                     },
                 );
                 if stalls {
-                    stalled(&mut delta, worker, at..at + 1);
+                    // Stamped with the second it started, with
+                    // `late_events`, as the slow request's row is.
+                    let stall = if late_events { late } else { at };
+                    stalled(&mut delta, worker, stall..stall + 1);
                 }
                 // As the manager's processor takes it, with the graph data.
                 accumulator.apply_live(worker, delta, &mut graph).unwrap();
@@ -3549,12 +3554,15 @@ mod built_as_it_goes {
     #[test]
     #[ignore]
     fn merge_refresh_cost() {
-        for stalls in [false, true] {
-            let hour = refresh_cost(3_600, stalls);
-            let four = refresh_cost(4 * 3_600, stalls);
+        for (stalls, late_events, name) in [
+            (false, false, ""),
+            (true, false, " with stalls"),
+            (true, true, " with late stalls"),
+        ] {
+            let hour = refresh_cost(3_600, stalls, late_events);
+            let four = refresh_cost(4 * 3_600, stalls, late_events);
             eprintln!(
-                "median refresh{}: 1 h {hour:?}, 4 h {four:?}, {:.2} times",
-                if stalls { " with stalls" } else { "" },
+                "median refresh{name}: 1 h {hour:?}, 4 h {four:?}, {:.2} times",
                 four.as_secs_f64() / hour.as_secs_f64()
             );
         }
