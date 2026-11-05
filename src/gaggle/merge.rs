@@ -100,6 +100,39 @@ struct Merged {
 /// order, gives.
 type EventKey = (u64, u32, usize);
 
+/// Put `new` events in their places among `events`, held in the order of
+/// `keys`, in one pass: `new` sorted by key, every held event from the first
+/// new one's place on taken out once and merged back with them, so the work
+/// is the held list's tail and `new`, never their product. New events that
+/// all follow the held ones, as each second's do, move none.
+fn place_events(keys: &mut Vec<EventKey>, events: &mut Vec<CoEvent>, mut new: Vec<(EventKey, CoEvent)>) {
+    // Each key is unique: a worker numbers its own events.
+    new.sort_unstable_by_key(|(key, _)| *key);
+    let Some((first, _)) = new.first() else {
+        return;
+    };
+    let from = keys.partition_point(|held| held < first);
+    let tail_keys = keys.split_off(from);
+    let tail_events = events.split_off(from);
+    #[cfg(test)]
+    EVENTS_MOVED.with(|moved| moved.set(moved.get() + 2 * tail_keys.len()));
+    keys.reserve(tail_keys.len() + new.len());
+    events.reserve(tail_keys.len() + new.len());
+    let mut tail = tail_keys.into_iter().zip(tail_events).peekable();
+    for (key, event) in new {
+        while let Some((held, held_event)) = tail.next_if(|(held, _)| *held < key) {
+            keys.push(held);
+            events.push(held_event);
+        }
+        keys.push(key);
+        events.push(event);
+    }
+    for (held, held_event) in tail {
+        keys.push(held);
+        events.push(held_event);
+    }
+}
+
 /// What graph data built from the merged figures holds: every second before
 /// `before`. The graph data itself is the caller's, handed back to each
 /// build ([`GaggleAccumulator::merged_and_excluded`]).
@@ -831,13 +864,7 @@ impl GaggleAccumulator {
             if events.len() == keys.len() {
                 #[cfg(test)]
                 EVENTS_GATHERED.with(|gathered| gathered.set(gathered.get() + new.len()));
-                for (key, event) in new {
-                    let at = keys.partition_point(|held| *held < key);
-                    #[cfg(test)]
-                    EVENTS_MOVED.with(|moved| moved.set(moved.get() + keys.len() - at));
-                    keys.insert(at, key);
-                    events.insert(at, event);
-                }
+                place_events(keys, &mut events, new);
                 return events;
             }
         }
