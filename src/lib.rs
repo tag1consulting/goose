@@ -7442,8 +7442,8 @@ mod tests {
         );
     }
 
-    /// Changes landing every 100 ms while a batch builds far faster than
-    /// its users may start, 50 a second: a batch for a running step builds
+    /// Changes landing every 300 ms while a batch builds far faster than
+    /// its users may start, 10 a second: a batch for a running step builds
     /// little ahead of the users it starts, so the changes leave few clients
     /// built that never start.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7453,9 +7453,9 @@ mod tests {
         let server = index_server();
         let (mut goose_attack, mut run_state) = started_attack(
             &server.base_url(),
-            &["--users", "10", "--increase-rate", "50", "--run-time", "1h"],
+            &["--users", "10", "--increase-rate", "10", "--run-time", "1h"],
             vec![index_scenario("Paced", 10)],
-            Duration::from_millis(2),
+            Duration::ZERO,
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
@@ -7467,7 +7467,7 @@ mod tests {
         for _ in 0..changes {
             for users in ["users 1010", "users 10"] {
                 assert!(control(&mut goose_attack, &mut run_state, users).await);
-                let until = std::time::Instant::now() + Duration::from_millis(100);
+                let until = std::time::Instant::now() + Duration::from_millis(300);
                 while std::time::Instant::now() < until {
                     if step(&mut goose_attack, &mut run_state).await {
                         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -7478,7 +7478,7 @@ mod tests {
         let built = clients_built(&goose_attack) - built;
         let started = goose_attack.metrics.total_users - started;
         assert!(
-            built <= started + changes * 4 * build_threads(),
+            built <= started + changes * 5 * build_threads(),
             "{} clients built for {} users started over {} increases",
             built,
             started,
@@ -7630,29 +7630,24 @@ mod tests {
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         assert!(control(&mut goose_attack, &mut run_state, "users 30").await);
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        // Each user starts after the batch it is in: ordinals 0 to 9 are
-        // the ramp's 10, 10 to 29 the increase's 20.
-        let events: Vec<UserEvent> = user_events(&goose_attack)
-            .into_iter()
-            .map(|(event, _)| event)
-            .collect();
-        let built = |users: usize| {
-            events
-                .iter()
-                .position(|&event| event == UserEvent::Built(users))
-                .unwrap_or_else(|| panic!("no batch of {} users was built", users))
-        };
-        let (ramp, increase) = (built(10), built(20));
-        for (at, &event) in events.iter().enumerate() {
-            if let UserEvent::Started(ordinal) = event {
-                let batch = if ordinal < 10 { ramp } else { increase };
-                assert!(
-                    at > batch,
-                    "user {} started before its batch was built",
-                    ordinal
-                );
+        // Users start in order, so each starts after the part it is in
+        // when the users started never outrun the users built.
+        let (mut built, mut started) = (0, 0);
+        for (event, _) in user_events(&goose_attack) {
+            match event {
+                UserEvent::Built(part) => built += part,
+                UserEvent::Started(ordinal) => {
+                    started += 1;
+                    assert!(
+                        started <= built,
+                        "user {} started before its part was built",
+                        ordinal
+                    );
+                }
+                UserEvent::DroppedOffLoop(_) => {}
             }
         }
+        assert_eq!(built, 30);
         assert_eq!(users_started(&goose_attack), 30);
     }
 
@@ -7826,30 +7821,36 @@ mod tests {
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        // 1,000 users at 50 ms each take longer than the 100 ms a step waits
-        // for its batch on up to 400 build threads.
+        // 1,000 users at 50 ms each are far from built when the next change
+        // drops them, whatever its first part started.
         assert!(control(&mut goose_attack, &mut run_state, "users 1002").await);
         step(&mut goose_attack, &mut run_state).await;
-        assert_eq!(
-            goose_attack.metrics.total_users, 2,
-            "a user started before its batch was built"
+        assert!(control(&mut goose_attack, &mut run_state, "users 2").await);
+        let (dropped, started) = (
+            clients_built(&goose_attack),
+            goose_attack.metrics.total_users,
         );
-        assert!(control(&mut goose_attack, &mut run_state, "users 4").await);
-        let dropped = clients_built(&goose_attack);
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         hold_until(&mut goose_attack, &mut run_state, |_, _| false).await;
-        assert_eq!(goose_attack.metrics.total_users, 4);
+        assert_eq!(
+            goose_attack.metrics.total_users, started,
+            "a user of the dropped batch started"
+        );
         assert!(
-            clients_built(&goose_attack) - dropped <= 2 + build_threads(),
-            "{} clients built after the batch was dropped, for 2 users started",
+            clients_built(&goose_attack) - dropped <= build_threads(),
+            "{} clients built after the batch was dropped",
             clients_built(&goose_attack) - dropped
         );
-        assert!(
-            !user_events(&goose_attack)
-                .iter()
-                .any(|(event, _)| *event == UserEvent::Built(1000)),
-            "the dropped batch was built"
-        );
+        // Setup built the first 2; the parts after it are the dropped batch's.
+        let parts: usize = user_events(&goose_attack)
+            .iter()
+            .skip(1)
+            .map(|(event, _)| match event {
+                UserEvent::Built(part) => *part,
+                _ => 0,
+            })
+            .sum();
+        assert!(parts < 1000, "the dropped batch was built");
 
         // A test plan holds its next increase's batch while it maintains.
         let (mut goose_attack, mut run_state) = started_attack(
