@@ -13,7 +13,7 @@ Load testing is a critical step in ensuring your web application can handle real
 
 * **Live Dashboard:** Opt-in web UI (compile with `--features dashboard`, run with `--dashboard`) streams live metrics (RPS, users, latency charts) over SSE while a test runs. Optional authenticated control lets you Start, Stop, and set target users from the browser—see [Live Dashboard](https://book.goose.rs/controller/dashboard.html) in the Goose Book.
 
-* **MCP Controller:** Opt-in Model Context Protocol tools for AI agents (compile with `--features mcp`, run with `--mcp`) serve every Controller command at `http://127.0.0.1:5119/mcp`, so an agent can read a running test's metrics and start, stop and change it; see [MCP Controller](https://book.goose.rs/controller/mcp.html) in the Goose Book.
+* **MCP Controller:** Opt-in Model Context Protocol tools for AI agents (compile with `--features mcp`, run with `--mcp`) serve every Controller command at `http://127.0.0.1:5119/mcp`, so an agent can read a running test's metrics and start, stop and change it; see [MCP Controller](https://book.goose.rs/controller/mcp.html) in the Goose Book (published with 0.20; until then [its source](src/docs/goose-book/src/controller/mcp.md)).
 
 * Have you ever been attacked by a goose?
 

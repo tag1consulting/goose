@@ -7,7 +7,7 @@ Source: https://github.com/tag1consulting/goose. API documentation: https://docs
 ## Start here
 
 - [What Is Goose?](https://book.goose.rs/title-page.html): the introduction to Goose
-- [Requirements](https://book.goose.rs/requirements.html): Rust and Cargo
+- [Requirements](https://book.goose.rs/requirements.html): Rust and Cargo, TLS, the Cargo features, and Chrome for PDF reports
 - [Creating A Load Test](https://book.goose.rs/getting-started/creating.html): a new Cargo project, a transaction function and a scenario, the smallest working load test
 - [Validating Requests](https://book.goose.rs/getting-started/validation.html): failing a request or transaction on what the server returned
 - [Running A Load Test](https://book.goose.rs/getting-started/running.html): building with `--release`, giving a host, and reading the output

@@ -70,7 +70,7 @@ When implementing new features:
 - HTML reports with JavaScript charts (primary format)
 - Markdown reports for text-based summaries
 - JSON reports for programmatic processing
-- PDF reports in development (Issue #628, using HTML-to-PDF via headless Chrome)
+- PDF reports with the `pdf-reports` feature (HTML printed to PDF by headless Chrome)
 
 ### Metrics Architecture
 **Coordinated Omission Mitigation**:
@@ -81,23 +81,24 @@ When implementing new features:
 
 ### Controller System
 **Runtime control interfaces**:
-- WebSocket controller for real-time control
-- Telnet controller for command-line interaction
+- Telnet controller for command-line interaction (on by default)
+- WebSocket controller for real-time control (`--websocket`)
+- MCP Controller for AI agents (`mcp` feature, `--mcp`)
+- Live dashboard, which controls the test with `--dashboard-control` (`dashboard` feature)
 - Supports dynamic test adjustment
 - Thread-safe communication patterns
 
 ### Gaggle (Distributed Testing)
-**Currently being reimplemented**:
-- Previous implementation disabled in v0.17.0
-- Considering multiple approaches (Hydro, Zenoh, gRPC/Tonic)
-- Will support distributed load generation
+**A preview in 0.20** (`gaggle` feature):
+- A manager (`--manager`) and workers (`--worker`) over gRPC (tonic)
+- See the Book's Gaggle chapter
 
 ## Configuration Management
 
 ### GooseConfiguration Pattern
 **CLI and configuration file support**:
 - Use `clap` for CLI parsing
-- Support both command-line and file-based configuration
+- Command-line options, with defaults set in code through `GooseDefault`
 - Validate options early with clear error messages
 - Document all configuration options
 
@@ -111,7 +112,7 @@ When implementing new features:
 
 ### Version Requirements
 **Maintain compatibility**:
-- Rust edition 2021
+- Rust edition 2018
 - Optional dependencies via feature flags
 - Document minimum supported Rust version (MSRV)
 
@@ -134,18 +135,6 @@ Update the `context7.json` file when:
 2. **Report Formats Change**: Update the reporting formats rule
 3. **Major Architecture Changes**: Reflect in the description or rules
 4. **Build/Test Structure Changes**: Update `excludeFolders` or `excludeFiles`
-
-### Pending Updates
-
-Track these features and update `context7.json` when they're merged:
-
-- [ ] **PDF Report Generation** (Issue #628)
-  - When merged, update rule: "Integrates with various reporting formats: HTML, Markdown, JSON, PDF"
-  - Remove the "coming soon" note about PDF support
-
-- [ ] **Gaggle Reimplementation**
-  - When complete, update rule about distributed testing
-  - Remove "(currently being reimplemented)" note
 
 ### How to Update
 
