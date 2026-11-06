@@ -885,8 +885,11 @@ impl GooseResponse {
     /// next request, as a browser does.
     ///
     /// Goose recorded the request's time when the response headers arrived, before
-    /// this method is called, so reading the body does not change any recorded time or
-    /// metric. A gzip compressed body is decompressed as it is read.
+    /// this method is called, so reading the body does not change the request's
+    /// recorded time. The time spent reading it counts toward the times of the
+    /// transaction and scenario that read it, which cover the whole transaction
+    /// function. When the client decompresses gzip, as Goose's default client does, a
+    /// gzip compressed body is decompressed as it is read.
     ///
     /// Returns the number of body bytes read (after decompression), or the error that
     /// ended the read. If the request itself failed, there is no body to read and that
@@ -1883,9 +1886,12 @@ impl GooseUser {
     /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
     ///     let response = user.post("/login", "").await?;
     ///     let response_data = response.response?;
+    ///     let status = response_data.status();
+    ///     // Read the body to the end so the connection is reused.
+    ///     let _ = response_data.bytes().await;
     ///
-    ///     if !response_data.status().is_success() {
-    ///         return Err(format!("Login failed with status: {}", response_data.status()).into());
+    ///     if !status.is_success() {
+    ///         return Err(format!("Login failed with status: {}", status).into());
     ///     }
     ///
     ///     Ok(())
@@ -1946,7 +1952,9 @@ impl GooseUser {
     ///       .build();
     ///     let goose = user.request(goose_request).await?;
     ///
-    ///     // Do stuff with goose.request and/or goose.response here.
+    ///     // Do stuff with goose.request and/or goose.response here, then read the
+    ///     // body to the end so the connection is reused.
+    ///     let _ = goose.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -2931,9 +2939,12 @@ impl GooseUser {
     /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
     ///     let mut goose = user.get("404").await?;
     ///
-    ///     if let Ok(response) = &goose.response {
+    ///     if let Ok(response) = goose.response {
+    ///         let status = response.status();
+    ///         // Read the body to the end so the connection is reused.
+    ///         let _ = response.bytes().await;
     ///         // We expect a 404 here.
-    ///         if response.status() == 404 {
+    ///         if status == 404 {
     ///             return user.set_success(&mut goose.request);
     ///         }
     ///     }
@@ -3009,6 +3020,9 @@ impl GooseUser {
     ///                     return user.set_failure("empty page", &mut goose.request, None, None);
     ///                 }
     ///             }
+    ///         } else {
+    ///             // Read the body to the end so the connection is reused.
+    ///             let _ = response.bytes().await;
     ///         }
     ///     };
     ///
@@ -3291,6 +3305,9 @@ impl GooseUser {
     ///                         );
     ///                     }
     ///                 }
+    ///             } else {
+    ///                 // Read the body to the end so the connection is reused.
+    ///                 let _ = response.bytes().await;
     ///             }
     ///         },
     ///         // No response from server.
