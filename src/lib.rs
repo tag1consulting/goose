@@ -7961,7 +7961,10 @@ mod tests {
         for user in 1..=3 {
             run_state.all_threads_shutdown_tx.send(user).unwrap();
         }
-        goose_attack.handle_user_exits(&mut run_state).await.unwrap();
+        goose_attack
+            .handle_user_exits(&mut run_state)
+            .await
+            .unwrap();
         assert_eq!(run_state.users_shutdown.len(), 3);
         assert!(
             matches!(
