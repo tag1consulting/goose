@@ -7154,9 +7154,12 @@ mod tests {
 
     /// With clients that take 20 ms each to build, a ramp of 50 users holds,
     /// and resets its metrics, only once all 50 run, and its Maintain row
-    /// says 50 users.
+    /// says 50 users; and so does a Controller increase of 50 more, whose
+    /// users are built as it runs.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_ramp_holds_once_every_user_runs() {
+        use crate::controller::tests::control;
+
         let server = index_server();
         let (mut goose_attack, mut run_state) = users_attack(
             &server.base_url(),
@@ -7182,9 +7185,23 @@ mod tests {
         let maintain = goose_attack.metrics.history.last().unwrap();
         assert!(matches!(maintain.action, TestPlanStepAction::Maintaining));
         assert_eq!(maintain.users, 50);
+
+        // 50 more, built after the change is answered.
+        assert!(control(&mut goose_attack, &mut run_state, "users 100").await);
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert_eq!(
+            users_started(&goose_attack),
+            100,
+            "users running at Maintain"
+        );
+        assert_eq!(run_state.active_users, 100);
+        let maintain = goose_attack.metrics.history.last().unwrap();
+        assert!(matches!(maintain.action, TestPlanStepAction::Maintaining));
+        assert_eq!(maintain.users, 100);
     }
 
-    /// No user starts before every client of its batch is built.
+    /// No user starts before every client of its batch is built: the 10 a
+    /// ramp starts, then the 20 a Controller increase adds.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_no_user_starts_before_its_batch_is_built() {
         use crate::controller::tests::control;
@@ -7200,24 +7217,30 @@ mod tests {
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         assert!(control(&mut goose_attack, &mut run_state, "users 30").await);
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        // Every user started counts against a batch built before it.
-        let mut built = 0;
-        let mut started = 0;
-        for (event, _) in user_events(&goose_attack) {
-            match event {
-                UserEvent::Built(users) => built += users,
-                UserEvent::Started(ordinal) => {
-                    started += 1;
-                    assert!(
-                        started <= built,
-                        "user {} started with {} users built",
-                        ordinal,
-                        built
-                    );
-                }
+        // Each user starts after the batch it is in: ordinals 0 to 9 are
+        // the ramp's 10, 10 to 29 the increase's 20.
+        let events: Vec<UserEvent> = user_events(&goose_attack)
+            .into_iter()
+            .map(|(event, _)| event)
+            .collect();
+        let built = |users: usize| {
+            events
+                .iter()
+                .position(|&event| event == UserEvent::Built(users))
+                .unwrap_or_else(|| panic!("no batch of {} users was built", users))
+        };
+        let (ramp, increase) = (built(10), built(20));
+        for (at, &event) in events.iter().enumerate() {
+            if let UserEvent::Started(ordinal) = event {
+                let batch = if ordinal < 10 { ramp } else { increase };
+                assert!(
+                    at > batch,
+                    "user {} started before its batch was built",
+                    ordinal
+                );
             }
         }
-        assert_eq!(started, 30);
+        assert_eq!(users_started(&goose_attack), 30);
     }
 
     /// A test plan's increase after a maintain step has its batch built
