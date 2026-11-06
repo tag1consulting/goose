@@ -31,13 +31,13 @@ async fn website_index(user: &mut GooseUser) -> TransactionResult {
 
 ### Read every response body
 
-A user keeps its HTTP/1.1 connection and sends its next request on it, as a browser does, but only once the last response's body has been read to the end. A response dropped with its body unread closes its connection, and the next request opens a new one. Reading the body with `text()`, `bytes()` or `json()` keeps the connection. When a transaction does not need the body, `discard_body()` reads it to the end a chunk at a time, without holding it in memory, and throws it away:
+A user keeps its HTTP/1.1 connection and sends its next request on it, as a browser does, once the last response's body has been read to the end. A response dropped with its body unread can close its connection, and the next request then opens a new one. Reading the body with `text()`, `bytes()` or `json()` keeps the connection. When a transaction does not need the body, `discard_body()` reads it to the end a chunk at a time, without holding the whole body in memory, and throws it away:
 
 ```rust,ignore
 let _ = user.get("/images/logo.png").await?.discard_body().await;
 ```
 
-Only an empty body is reliably safe to drop. Measured with 50 users against nginx, a dropped body of 512 bytes cost a new connection on 11% of requests, 4 KiB on 23%, 16 KiB on 92%, and 64 KiB or more on every request, and from 256 KiB nearly every response was cut off before the server finished sending it; a gzip compressed body held out to 512 bytes and failed from 16 KiB. Bodies read to the end kept one connection per user at every size. Against Varnish, Goose's Umami example, which dropped every image, stylesheet and script, opened a new connection for two thirds of its requests.
+Only an empty body is reliably safe to drop. Measured with 50 users against nginx, a dropped body of 512 bytes cost a new connection on 11% of requests, 4 KiB on 23%, 16 KiB on 92%, and 64 KiB or more on every request, and from 256 KiB nearly every response was cut off before the server finished sending it; a dropped gzip compressed body kept its connection up to 512 bytes and lost it from 16 KiB. Bodies read to the end kept one connection per user at every size. Against Varnish, Goose's Umami example, which dropped every image, stylesheet and script, opened a new connection for two thirds of its requests.
 
 Reading a body does not change the time Goose records for a request, which is the [time to first byte](metrics.md#response-times), but the download counts toward the time of the transaction that reads it, and of its scenario. It also downloads every byte, and decompresses a gzip body, so the load generator does more work for each request.
 

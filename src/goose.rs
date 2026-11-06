@@ -878,8 +878,8 @@ impl GooseResponse {
     /// without holding the whole body in memory.
     ///
     /// Call this when a test does not need a response's body. An HTTP/1.1 connection
-    /// goes back to the user's connection pool only once its response body has been
-    /// read to the end. A response dropped with its body unread closes its connection
+    /// goes back to the user's connection pool once its response body has been
+    /// read to the end. A response dropped with its body unread can close its connection
     /// instead, so the user's next request opens a new one, and the server may log
     /// the cut off transfer as an error. Reading the body keeps the connection for the
     /// next request, as a browser does.
@@ -892,8 +892,8 @@ impl GooseResponse {
     /// gzip compressed body is decompressed as it is read.
     ///
     /// Returns the number of body bytes read (after decompression), or the error that
-    /// ended the read. If the request itself failed, there is no body to read and that
-    /// request's error is returned.
+    /// ended the read. If Goose got no response, as when the connection failed or timed
+    /// out, there is no body to read and that error is returned.
     ///
     /// # Example
     /// ```rust
