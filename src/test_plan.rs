@@ -322,9 +322,11 @@ impl GooseAttack {
 
         // Record details about new new TestPlan step that is starting.
         if let Some(action) = action {
+            // The users running, which is the step's target unless building
+            // its users failed.
             self.metrics.history.push(TestPlanHistory::step(
                 action,
-                self.test_plan.steps[self.test_plan.current].0,
+                goose_attack_run_state.active_users,
             ));
         }
 

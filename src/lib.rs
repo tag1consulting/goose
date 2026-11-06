@@ -7508,8 +7508,12 @@ mod tests {
                 fail.store(false, std::sync::atomic::Ordering::Relaxed);
             }
             match goose_attack.attack_phase {
-                AttackPhase::Increase => goose_attack.increase_attack(&mut run_state).await.unwrap(),
-                AttackPhase::Maintain => goose_attack.maintain_attack(&mut run_state).await.unwrap(),
+                AttackPhase::Increase => {
+                    goose_attack.increase_attack(&mut run_state).await.unwrap()
+                }
+                AttackPhase::Maintain => {
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap()
+                }
                 phase => panic!("unexpected phase {:?}", phase),
             }
         }
