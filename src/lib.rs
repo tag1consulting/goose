@@ -849,6 +849,162 @@ impl UserTestHooks {
     }
 }
 
+/// A user the load test will start: the scenario it runs and the base URL
+/// its requests are relative to. Weighting builds no client: a batch builds
+/// the users a change starts, before they start.
+struct WeightedUser {
+    /// The index of the scenario this user runs.
+    scenarios_index: usize,
+    /// The machine name of the scenario this user runs.
+    machine_name: Arc<str>,
+    /// The base URL this user's requests are relative to.
+    base_url: url::Url,
+}
+
+/// What a batch of users is built from, as it was when the batch was asked
+/// for.
+struct UserBuild {
+    configuration: GooseConfiguration,
+    load_test_hash: u64,
+    client_strategy: Option<client::ClientStrategy>,
+    #[cfg(test)]
+    user_test: UserTestHooks,
+}
+
+/// Build `users` in their order, each with its own client unless one is
+/// shared, on one thread for each available CPU: the only way a user is
+/// built. `None` when `cancel` is set before every client is built, and
+/// what was built is dropped.
+fn build_users(
+    users: &[WeightedUser],
+    build: &UserBuild,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<Option<Vec<GooseUser>>, GooseError> {
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let chunk_size = users.len().div_ceil(num_cpus).max(1);
+
+    // Building a client is the expensive part. Chunks are collected back in
+    // order to keep the order users were weighted in.
+    let results: Vec<Result<Option<Vec<GooseUser>>, GooseError>> = std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(num_cpus);
+        for (chunk_idx, chunk) in users.chunks(chunk_size).enumerate() {
+            let base = chunk_idx * chunk_size;
+            handles.push(s.spawn(move || {
+                let mut built = Vec::with_capacity(chunk.len());
+                for (i, user) in chunk.iter().enumerate() {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Ok(None);
+                    }
+                    debug!(
+                        "creating user state: {} ({})",
+                        base + i,
+                        user.scenarios_index
+                    );
+                    let reqwest_client = match &build.client_strategy {
+                        None => goose::create_reqwest_client(&build.configuration)?,
+                        Some(strategy) => strategy.user_client()?,
+                    };
+                    #[cfg(test)]
+                    build.user_test.client_built();
+                    built.push(GooseUser::new(
+                        user.scenarios_index,
+                        user.machine_name.clone(),
+                        user.base_url.clone(),
+                        &build.configuration,
+                        build.load_test_hash,
+                        Some(reqwest_client),
+                    )?);
+                }
+                Ok::<Option<Vec<GooseUser>>, GooseError>(Some(built))
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    Err(GooseError::Io(io::Error::other(
+                        "user initialization thread panicked",
+                    )))
+                })
+            })
+            .collect()
+    });
+
+    let mut built = Vec::with_capacity(users.len());
+    for result in results {
+        match result? {
+            Some(chunk) => built.extend(chunk),
+            None => return Ok(None),
+        }
+    }
+    debug!("[scheduler]: built {} users", built.len());
+    #[cfg(test)]
+    build.user_test.record(UserEvent::Built(built.len()));
+    Ok(Some(built))
+}
+
+/// The users built, or being built, for the users a test plan step starts.
+/// Dropping it stops a build still running, and drops what it built.
+struct UserBatch {
+    /// The index of the test plan step that starts these users.
+    step: usize,
+    /// Set to stop a build still running.
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    users: BatchUsers,
+}
+
+/// Where a [`UserBatch`] is.
+enum BatchUsers {
+    /// Building off the main loop; the result comes on this channel.
+    Building(tokio::sync::oneshot::Receiver<Result<Option<Vec<GooseUser>>, GooseError>>),
+    /// Built, the next user to start last.
+    Built(Vec<GooseUser>),
+    /// Building failed, so its step starts none of them.
+    Failed,
+}
+
+impl UserBatch {
+    /// Build `users` for `step` in one blocking task, so the main loop
+    /// never waits on it.
+    fn build(step: usize, users: Vec<WeightedUser>, build: UserBuild) -> Self {
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (built_tx, built_rx) = tokio::sync::oneshot::channel();
+        let canceled = cancel.clone();
+        tokio::task::spawn_blocking(move || {
+            // Nobody waits for a batch that was dropped.
+            let _ = built_tx.send(build_users(&users, &build, &canceled));
+        });
+        UserBatch {
+            step,
+            cancel,
+            users: BatchUsers::Building(built_rx),
+        }
+    }
+
+    /// Whether building this batch failed.
+    fn failed(&self) -> bool {
+        matches!(self.users, BatchUsers::Failed)
+    }
+}
+
+impl Drop for UserBatch {
+    fn drop(&mut self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        // Dropping many users' clients takes long enough to hold up the main
+        // loop, so a blocking thread drops them when there is a runtime.
+        if let BatchUsers::Built(users) = &mut self.users {
+            let users = std::mem::take(users);
+            if let (false, Ok(runtime)) = (users.is_empty(), tokio::runtime::Handle::try_current())
+            {
+                runtime.spawn_blocking(move || drop(users));
+            }
+        }
+    }
+}
+
 /// Global internal state for the load test.
 pub struct GooseAttack {
     /// An optional transaction that is run one time before starting GooseUsers and running Scenarios.
@@ -859,8 +1015,13 @@ pub struct GooseAttack {
     scenarios: Vec<Scenario>,
     /// A set of all registered scenario names.
     scenario_machine_names: HashSet<String>,
-    /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
-    weighted_users: Vec<GooseUser>,
+    /// The users still to start, the next last, as weighted: which scenario
+    /// each runs, and its base URL.
+    weighted_users: Vec<WeightedUser>,
+    /// The users built, or being built, for the next users a step starts: at
+    /// most one batch, and ahead of its step only for a test plan's next
+    /// increase.
+    user_batch: Option<UserBatch>,
     /// The global ordinal of this process's first user: 0, unless it runs a
     /// share of a Gaggle's users. User indexes, the users each scenario
     /// counts and coordinated omission events all count from it.
@@ -1007,6 +1168,7 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            user_batch: None,
             #[cfg(test)]
             user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
@@ -1066,6 +1228,7 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            user_batch: None,
             #[cfg(test)]
             user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
@@ -1738,101 +1901,191 @@ impl GooseAttack {
         self.user_ordinals = users.iter().map(|&(ordinal, _)| ordinal).collect();
     }
 
-    /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
-    fn weight_scenario_users(&mut self, total_users: usize) -> Result<Vec<GooseUser>, GooseError> {
+    /// Weight the next `total_users` users across the scenarios: which
+    /// scenario each runs, in the order users start, the first last, as they
+    /// are popped. Builds no client: [`build_users`] builds the users a change
+    /// starts, before they start.
+    fn weight_scenario_users(
+        &mut self,
+        total_users: usize,
+    ) -> Result<Vec<WeightedUser>, GooseError> {
         trace!("weight_scenario_users");
 
         let weighted_scenarios = self.user_scenario_order(total_users)?;
 
-        // Allocate a state for each user that will be launched.
+        // Weight a scenario for each user that will be launched.
         info!(
             "[scheduler]: initializing {} user states...",
             self.test_plan.total_users()
         );
 
-        // Gather the parameters needed for each user. This is cheap and must be
-        // sequential to preserve the round-robin scenario assignment order (users
-        // are later .pop()'d so ordering matters).
+        // Each scenario's users share its base URL, resolved once. Sequential to
+        // keep the round-robin scenario assignment order (users are later
+        // .pop()'d so ordering matters).
         let config_host = self.get_configuration_host();
         let defaults_host = self.defaults.host.clone();
-        let mut user_params: Vec<(usize, Arc<str>, url::Url)> = Vec::with_capacity(total_users);
-        for scenarios_index in &weighted_scenarios {
-            let base_url = goose::get_base_url(
-                config_host.clone(),
-                self.scenarios[*scenarios_index].host.clone(),
-                defaults_host.clone(),
-            )?;
-            user_params.push((
-                self.scenarios[*scenarios_index].scenarios_index,
-                self.scenarios[*scenarios_index].machine_name.clone(),
-                base_url,
-            ));
-        }
-
-        // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client unless one is shared, and building it is
-        // the expensive part. Chunks are collected back in order to preserve the
-        // scenario assignment sequence.
-        let configuration = &self.configuration;
-        let client_strategy = &self.client_strategy;
-        let metrics_hash = self.metrics.hash;
-        let num_cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        let chunk_size = total_users.div_ceil(num_cpus).max(1);
-        #[cfg(test)]
-        let user_test = &self.user_test;
-
-        let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(num_cpus);
-            for (chunk_idx, chunk) in user_params.chunks(chunk_size).enumerate() {
-                let base = chunk_idx * chunk_size;
-                handles.push(s.spawn(move || {
-                    let mut users = Vec::with_capacity(chunk.len());
-                    for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
-                        debug!("creating user state: {} ({})", base + i, scenarios_index);
-                        #[cfg(test)]
-                        user_test.client_built();
-                        let reqwest_client = match client_strategy {
-                            None => goose::create_reqwest_client(configuration)?,
-                            Some(strategy) => strategy.user_client()?,
-                        };
-                        users.push(GooseUser::new(
-                            *scenarios_index,
-                            machine_name.clone(),
-                            base_url.clone(),
-                            configuration,
-                            metrics_hash,
-                            Some(reqwest_client),
-                        )?);
-                    }
-                    Ok::<Vec<GooseUser>, GooseError>(users)
-                }));
-            }
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join().unwrap_or_else(|_| {
-                        Err(GooseError::Io(io::Error::other(
-                            "user initialization thread panicked",
-                        )))
-                    })
-                })
-                .collect()
-        });
-
+        let mut base_urls: Vec<Option<url::Url>> = vec![None; self.scenarios.len()];
         let mut weighted_users = Vec::with_capacity(total_users);
-        for result in results {
-            weighted_users.extend(result?);
+        for &scenarios_index in &weighted_scenarios {
+            let scenario = &self.scenarios[scenarios_index];
+            let base_url = match &base_urls[scenarios_index] {
+                Some(base_url) => base_url.clone(),
+                None => {
+                    let base_url = goose::get_base_url(
+                        config_host.clone(),
+                        scenario.host.clone(),
+                        defaults_host.clone(),
+                    )?;
+                    base_urls[scenarios_index] = Some(base_url.clone());
+                    base_url
+                }
+            };
+            weighted_users.push(WeightedUser {
+                scenarios_index: scenario.scenarios_index,
+                machine_name: scenario.machine_name.clone(),
+                base_url,
+            });
         }
         debug!(
             "[scheduler]: created {} weighted_users",
             weighted_users.len()
         );
-        #[cfg(test)]
-        self.user_test
-            .record(UserEvent::Built(weighted_users.len()));
         Ok(weighted_users)
+    }
+
+    /// What users built now are built from.
+    fn user_build(&self) -> UserBuild {
+        UserBuild {
+            configuration: self.configuration.clone(),
+            load_test_hash: self.metrics.hash,
+            client_strategy: self.client_strategy.clone(),
+            #[cfg(test)]
+            user_test: self.user_test.clone(),
+        }
+    }
+
+    /// Take the next `users` weighted users to start, in their order.
+    fn take_weighted_users(&mut self, users: usize) -> Vec<WeightedUser> {
+        let first = self
+            .weighted_users
+            .len()
+            .checked_sub(users)
+            .expect("insufficent weighted_users");
+        self.weighted_users.split_off(first)
+    }
+
+    /// The index of the first test plan step after `step` (from the first,
+    /// for `None`) that raises the users, and how many users it adds.
+    fn next_increase(&self, step: Option<usize>) -> Option<(usize, usize)> {
+        let steps = &self.test_plan.steps;
+        let first = step.map_or(0, |step| step + 1);
+        (first..steps.len()).find_map(|index| {
+            let previous = if index == 0 { 0 } else { steps[index - 1].0 };
+            (steps[index].0 > previous).then(|| (index, steps[index].0 - previous))
+        })
+    }
+
+    /// Build the users the first increase starts, before the load test
+    /// starts, so a client that can not be built fails it now.
+    fn build_first_users(&mut self) -> Result<(), GooseError> {
+        self.user_batch = None;
+        if let Some((step, users)) = self.next_increase(None) {
+            let users = self.take_weighted_users(users);
+            let not_canceled = std::sync::atomic::AtomicBool::new(false);
+            let built = build_users(&users, &self.user_build(), &not_canceled)?
+                .expect("a build that is never canceled was canceled");
+            self.user_batch = Some(UserBatch {
+                step,
+                cancel: Arc::default(),
+                users: BatchUsers::Built(built),
+            });
+        }
+        Ok(())
+    }
+
+    /// Build one user as the new test plan's users will be built, and drop
+    /// it, so a client that can not be built fails the change at once.
+    fn check_user_client(&self) -> Result<(), GooseError> {
+        if let Some(user) = self.weighted_users.last() {
+            let not_canceled = std::sync::atomic::AtomicBool::new(false);
+            build_users(
+                std::slice::from_ref(user),
+                &self.user_build(),
+                &not_canceled,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Once a step's users have all started or stopped: when a test plan
+    /// raises the users in a later step, build the users it adds now, and
+    /// hold them until it begins. Only a test plan's steps are known ahead.
+    fn build_ahead(&mut self) {
+        if self.user_batch.is_some() || self.run_shape.is_some() || self.is_gaggle_manager() {
+            return;
+        }
+        let Some((step, users)) = self.next_increase(Some(self.test_plan.current)) else {
+            return;
+        };
+        if users > self.weighted_users.len() {
+            return;
+        }
+        debug!("[users]: building the {users} users test plan step {step} starts");
+        let users = self.take_weighted_users(users);
+        self.user_batch = Some(UserBatch::build(step, users, self.user_build()));
+    }
+
+    /// Whether the current step's batch is built, so its next user can start:
+    /// asks for a batch of the users the step still starts when there is
+    /// none, and waits up to 100 ms for one still building.
+    async fn user_batch_ready(&mut self, goose_attack_run_state: &GooseAttackRunState) -> bool {
+        let step = self.test_plan.current;
+        let usable = self.user_batch.as_ref().is_some_and(|batch| {
+            batch.step == step
+                && !matches!(&batch.users, BatchUsers::Built(users) if users.is_empty())
+        });
+        if !usable {
+            let needed = self.test_plan.steps[step].0 - goose_attack_run_state.active_users;
+            let users = self.take_weighted_users(needed);
+            self.user_batch = Some(UserBatch::build(step, users, self.user_build()));
+        }
+        let batch = self
+            .user_batch
+            .as_mut()
+            .expect("a batch was just asked for");
+        let BatchUsers::Building(built_rx) = &mut batch.users else {
+            return matches!(batch.users, BatchUsers::Built(_));
+        };
+        let Ok(built) = tokio::time::timeout(Duration::from_millis(100), built_rx).await else {
+            return false;
+        };
+        let waited = self
+            .step_started
+            .map_or(0, |started| started.elapsed().as_millis());
+        let first = self.metrics.total_users + 1;
+        let users = self.test_plan.steps[step].0 - goose_attack_run_state.active_users;
+        let failed = |e: &dyn fmt::Display| {
+            error!(
+                "[users]: failed to build users {first} to {}, starting none of them: {e}",
+                first + users - 1
+            );
+        };
+        batch.users = match built {
+            Ok(Ok(Some(built))) => {
+                info!("[users]: test plan step {step} waited {waited} ms for its {users} users to be built");
+                BatchUsers::Built(built)
+            }
+            Ok(Ok(None)) => unreachable!("a batch still held was canceled"),
+            Ok(Err(e)) => {
+                failed(&e);
+                BatchUsers::Failed
+            }
+            Err(e) => {
+                failed(&e);
+                BatchUsers::Failed
+            }
+        };
+        matches!(batch.users, BatchUsers::Built(_))
     }
 
     // Change from one attack_phase to another.
@@ -2283,8 +2536,10 @@ impl GooseAttack {
             return Ok(());
         }
 
-        // Allocate a state for each of the users we are about to start.
+        // Weight the users the test plan will start, and build those of its
+        // first increase.
         self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+        self.build_first_users()?;
 
         Ok(())
     }
@@ -3026,11 +3281,26 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        // Determine if enough users have been launched.
-        let all_users_launched =
-            goose_attack_run_state.active_users >= self.test_plan.steps[self.test_plan.current].0;
+        // Determine if enough users have been launched: or none can be, as
+        // building them failed.
+        let all_users_launched = goose_attack_run_state.active_users
+            >= self.test_plan.steps[self.test_plan.current].0
+            || self
+                .user_batch
+                .as_ref()
+                .is_some_and(|batch| batch.step == self.test_plan.current && batch.failed());
 
         if all_users_launched {
+            // No user of this step's batch is left to start.
+            if self
+                .user_batch
+                .as_ref()
+                .is_some_and(|batch| batch.step == self.test_plan.current && !batch.failed())
+            {
+                self.user_batch = None;
+            }
+            self.build_ahead();
+
             // All users were increased, delay until test_plan step time has elapsed.
             self.end_of_step_delay().await;
 
@@ -3072,12 +3342,21 @@ impl GooseAttack {
                 return Ok(());
             }
 
+            // A user starts only once its whole batch is built.
+            if !self.user_batch_ready(goose_attack_run_state).await {
+                return Ok(());
+            }
+
             // Determine if it's time to spawn a GooseUser.
             if goose_attack_run_state.adjust_due() {
-                let mut thread_user = self
-                    .weighted_users
-                    .pop()
-                    .expect("insufficent weighted_users");
+                let Some(UserBatch {
+                    users: BatchUsers::Built(built),
+                    ..
+                }) = self.user_batch.as_mut()
+                else {
+                    unreachable!("the batch is built");
+                };
+                let mut thread_user = built.pop().expect("insufficent weighted_users");
                 // The next GooseUser is due one interval, 1 second divided by the
                 // increase_rate, after this one was.
                 goose_attack_run_state
@@ -3153,9 +3432,9 @@ impl GooseAttack {
                 let thread_number = self.metrics.total_users + 1;
 
                 // Align request `elapsed` (graph second) with the continuous series
-                // clock so RPS and active-users charts share one timeline. Weighted
-                // users are often created before the run starts; mid-test increases
-                // create users later — both must report seconds since series start.
+                // clock so RPS and active-users charts share one timeline. Users are
+                // often built before the run starts, and mid-test increases build
+                // them later: both must report seconds since series start.
                 if let Some(series_started) = self.series_started {
                     thread_user.started = series_started;
                 }
@@ -3207,6 +3486,8 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        self.build_ahead();
+
         // Determine if it's time to move to the next test plan step.
         if self.test_plan.current < self.test_plan.steps.len()
             && util::ms_timer_expired(
@@ -3453,6 +3734,8 @@ impl GooseAttack {
         } else if goose_attack_run_state.active_users
             <= self.test_plan.steps[self.test_plan.current].0
         {
+            self.build_ahead();
+
             // Be sure step takes as long as it was configured to.
             self.end_of_step_delay().await;
 
@@ -3855,8 +4138,13 @@ impl GooseAttack {
                 self.users_ramp_ms(goose_attack_run_state.active_users, new_users)
             });
 
-            // Allocate more users if increasing users (hard Err on failure),
+            // Users not yet started are replaced by this change's: a batch
+            // still building stops, and one built is dropped.
+            self.user_batch = None;
+
+            // Weight more users if increasing users (hard Err on failure),
             // before anything changes: a Gaggle manager's run on its workers.
+            // They are built, off the main loop, as the increase starts.
             if new_users > goose_attack_run_state.active_users && !self.is_gaggle_manager() {
                 let weighted = self.weight_scenario_users(user_difference);
                 match weighted {
@@ -3902,7 +4190,7 @@ impl GooseAttack {
     /// Switch a running load test to `test_plan`, from its first step and
     /// the current user count, replacing a users ramp and its shape.
     ///
-    /// Hard error: `weight_scenario_users`.
+    /// Hard error: `weight_scenario_users` or `check_user_client`.
     pub(crate) fn run_test_plan(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3910,9 +4198,13 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         self.run_shape = None;
         self.test_plan = test_plan;
-        // Reallocate users: a Gaggle manager's run on its workers.
+        // The users not yet started are the old plan's.
+        self.user_batch = None;
+        // Weight the new plan's users, and check one can be built: a Gaggle
+        // manager's run on its workers.
         if !self.is_gaggle_manager() {
             self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+            self.check_user_client()?;
         }
         // Insert the current state of the test plan before the new test plan.
         let elapsed = self.step_elapsed() as usize;
@@ -3948,6 +4240,9 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        // No user not yet started will start.
+        self.user_batch = None;
+
         if goose_attack_run_state.active_users == 0 {
             // A stop or Ctrl-C in the tick of its start, or a second shutdown from Idle:
             // a plan maintaining 0 users would never end.
@@ -4239,10 +4534,6 @@ impl GooseAttack {
         self.series_started = Some(now);
         // The same start, as the reports' record gives it.
         self.output.started = Some(chrono::Utc::now());
-        // Align pre-created weighted users so request.elapsed matches series time.
-        for user in &mut self.weighted_users {
-            user.started = now;
-        }
 
         Ok(())
     }
@@ -6155,6 +6446,12 @@ mod tests {
         let mut users = goose_attack.weight_scenario_users(2).unwrap();
         users.extend(goose_attack.weight_scenario_users(2).unwrap());
         assert_eq!(users.len(), 4);
+        // Each user gets its client as users do when a batch builds them.
+        let not_canceled = std::sync::atomic::AtomicBool::new(false);
+        let built = build_users(&users, &goose_attack.user_build(), &not_canceled)
+            .unwrap()
+            .unwrap();
+        assert_eq!(built.len(), 4);
         assert_eq!(
             builds() - before,
             1,
