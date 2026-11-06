@@ -1021,22 +1021,50 @@ fn part_size(rate: f64) -> usize {
     (threads * 4).max(second)
 }
 
-/// Build `users` in parts of at most `part` users, in the order they start,
-/// handing each part to `deliver` as soon as it is built. Stops after a part
-/// that failed or was canceled, or when `deliver` says nobody takes parts.
+/// Build `users` in the order they start, in parts of at most `largest`
+/// users, handing each part to `deliver` as soon as it is built.
+///
+/// Without `taken`, every part is `largest`: a batch built ahead of its
+/// step, or at setup. With it, the batch's step is running, and the batch
+/// says on `taken` each time it takes a part, and whether it waited for it:
+/// the first part is one user a build thread, and each later part is built
+/// only once the batch took the one before, so it builds at most one part
+/// ahead of the users it starts and a change that drops it leaves few built;
+/// a part doubles, up to `largest`, after the batch waited for one, and is
+/// one user a build thread again after it did not.
+///
+/// Stops after a part that failed or was canceled, when `deliver` says
+/// nobody takes parts, or when the batch is dropped.
 fn build_parts(
     users: &[WeightedUser],
     build: &UserBuild,
-    part: usize,
+    largest: usize,
     cancel: &std::sync::atomic::AtomicBool,
+    taken: Option<std::sync::mpsc::Receiver<bool>>,
     mut deliver: impl FnMut(BuiltPart) -> bool,
 ) {
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(largest);
+    let mut size = if taken.is_some() { threads } else { largest };
     // The next user to start is the last, so parts start from the end.
-    for users in users.rchunks(part.max(1)) {
-        let built = build_users(users, build, cancel);
+    let mut rest = users;
+    while !rest.is_empty() {
+        let (left, part) = rest.split_at(rest.len() - size.min(rest.len()));
+        let built = build_users(part, build, cancel);
         let more = matches!(built, Ok(Some(_)));
         if !deliver(built) || !more {
             return;
+        }
+        rest = left;
+        if let (Some(taken), false) = (&taken, rest.is_empty()) {
+            size = match taken.recv() {
+                Ok(true) => size.saturating_mul(2).min(largest),
+                Ok(false) => threads,
+                // The batch was dropped.
+                Err(_) => return,
+            };
         }
     }
 }
@@ -1083,6 +1111,9 @@ struct UserBatch {
     cancel: Arc<std::sync::atomic::AtomicBool>,
     /// Each part as it is built, in the order the users start.
     parts: tokio::sync::mpsc::UnboundedReceiver<BuiltPart>,
+    /// While its step runs, where the batch says it took a part, and whether
+    /// it waited for it, so the next part is built: see [`build_parts`].
+    taken: Option<std::sync::mpsc::Sender<bool>>,
     /// The part users start from now, the next last.
     next: Vec<GooseUser>,
     /// Whether the next user was due before its part was built, so its start
@@ -1120,6 +1151,7 @@ impl UserBatch {
         step: usize,
         size: usize,
         parts: tokio::sync::mpsc::UnboundedReceiver<BuiltPart>,
+        taken: Option<std::sync::mpsc::Sender<bool>>,
         cancel: Arc<std::sync::atomic::AtomicBool>,
         build: &UserBuild,
     ) -> Self {
@@ -1131,6 +1163,7 @@ impl UserBatch {
             user_test: build.user_test.clone(),
             cancel,
             parts,
+            taken,
             next: Vec::new(),
             stalled: false,
             failed: false,
@@ -1139,15 +1172,28 @@ impl UserBatch {
 
     /// Build `users` for `step`, at `rate` users a second, in one blocking
     /// task, so building never blocks the main loop: each part goes on the
-    /// channel as soon as it is built.
-    fn build(step: usize, rate: f64, users: Vec<WeightedUser>, build: UserBuild) -> Self {
+    /// channel as soon as it is built. `running` when the step runs now, so
+    /// building keeps pace with the users it starts.
+    fn build(
+        step: usize,
+        rate: f64,
+        users: Vec<WeightedUser>,
+        build: UserBuild,
+        running: bool,
+    ) -> Self {
         let size = users.len();
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
-        let batch = UserBatch::new(step, size, parts, cancel.clone(), &build);
+        let (taken_tx, taken) = if running {
+            let (tx, rx) = std::sync::mpsc::channel();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+        let batch = UserBatch::new(step, size, parts, taken_tx, cancel.clone(), &build);
         tokio::task::spawn_blocking(move || {
             // Nobody takes the parts of a batch that was dropped.
-            build_parts(&users, &build, part_size(rate), &cancel, |built| {
+            build_parts(&users, &build, part_size(rate), &cancel, taken, |built| {
                 send_part(&parts_tx, built, &build)
             });
         });
@@ -1158,11 +1204,25 @@ impl UserBatch {
     async fn next_user(&mut self, wait: Duration) -> NextUser {
         if self.next.is_empty() {
             // A part already on the channel is taken without waiting.
-            let Ok(part) = tokio::time::timeout(wait, self.parts.recv()).await else {
-                return NextUser::Building;
+            let (part, waited) = match self.parts.try_recv() {
+                Ok(part) => (Some(part), false),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => (None, false),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    match tokio::time::timeout(wait, self.parts.recv()).await {
+                        Ok(part) => (part, true),
+                        Err(_) => return NextUser::Building,
+                    }
+                }
             };
             match part {
-                Some(Ok(Some(users))) => self.next = users,
+                Some(Ok(Some(users))) => {
+                    self.next = users;
+                    // The next part is built from now: a builder that stopped
+                    // takes no more.
+                    if let Some(taken) = &self.taken {
+                        let _ = taken.send(waited);
+                    }
+                }
                 Some(Ok(None)) => unreachable!("a batch still held was canceled"),
                 Some(Err(e)) => return NextUser::Failed(e.to_string()),
                 None => return NextUser::Failed("its build stopped".to_string()),
@@ -2226,6 +2286,7 @@ impl GooseAttack {
                 &build,
                 part_size(self.step_rate(step)),
                 &not_canceled,
+                None,
                 |built| match built {
                     // The receiver is held below, so the send succeeds.
                     Ok(built) => send_part(&parts_tx, Ok(built), &build),
@@ -2242,6 +2303,7 @@ impl GooseAttack {
                 step,
                 users.len(),
                 parts,
+                None,
                 Arc::default(),
                 &build,
             ));
@@ -2281,7 +2343,13 @@ impl GooseAttack {
         debug!("[users]: building the {users} users test plan step {step} starts");
         let users = self.take_weighted_users(users);
         let rate = self.step_rate(step);
-        self.user_batch = Some(UserBatch::build(step, rate, users, self.user_build()));
+        self.user_batch = Some(UserBatch::build(
+            step,
+            rate,
+            users,
+            self.user_build(),
+            false,
+        ));
     }
 
     /// The next user the current step starts, once its part is built: asks
@@ -2304,7 +2372,7 @@ impl GooseAttack {
                 .min(self.weighted_users.len());
             let users = self.take_weighted_users(needed);
             let rate = self.step_rate(step);
-            let mut batch = UserBatch::build(step, rate, users, self.user_build());
+            let mut batch = UserBatch::build(step, rate, users, self.user_build(), true);
             if needed == 0 {
                 error!("[users]: no users are left for test plan step {step} to start, as building earlier users failed");
                 batch.failed = true;
