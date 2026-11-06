@@ -141,7 +141,11 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_memcache_node_page(user: &mut GooseUser) -> TransactionResult {
     let nid = rand::rng().random_range(1..10_000);
-    let _ = user.get(format!("/node/{}", nid).as_str()).await?.discard_body().await;
+    let _ = user
+        .get(format!("/node/{}", nid).as_str())
+        .await?
+        .discard_body()
+        .await;
 
     Ok(())
 }
@@ -149,7 +153,11 @@ async fn drupal_memcache_node_page(user: &mut GooseUser) -> TransactionResult {
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_memcache_profile_page(user: &mut GooseUser) -> TransactionResult {
     let uid = rand::rng().random_range(2..5_001);
-    let _ = user.get(format!("/user/{}", uid).as_str()).await?.discard_body().await;
+    let _ = user
+        .get(format!("/user/{}", uid).as_str())
+        .await?
+        .discard_body()
+        .await;
 
     Ok(())
 }

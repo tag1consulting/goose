@@ -45,7 +45,11 @@ async fn main() -> Result<(), GooseError> {
 /// per user, when the user thread first starts.
 async fn website_login(user: &mut GooseUser) -> TransactionResult {
     let params = [("username", "test_user"), ("password", "")];
-    let _ = user.post_form("/login", &params).await?.discard_body().await;
+    let _ = user
+        .post_form("/login", &params)
+        .await?
+        .discard_body()
+        .await;
 
     Ok(())
 }

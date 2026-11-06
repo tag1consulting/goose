@@ -62,7 +62,11 @@ async fn simple_query(user: &mut GooseUser) -> TransactionResult {
         "query": "{ __typename }"
     });
 
-    let _ = user.post_graphql("/graphql", &query).await?.discard_body().await;
+    let _ = user
+        .post_graphql("/graphql", &query)
+        .await?
+        .discard_body()
+        .await;
     Ok(())
 }
 
