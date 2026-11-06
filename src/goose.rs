@@ -254,7 +254,8 @@
 //! The returned response is a [`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
 //! dereferences to a [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html):
 //! use it as you would any Reqwest Response. A body the transaction drops unread, Goose
-//! reads to the end before the user's next request, so the connection is reused.
+//! reads to the end before the user's next request and when the transaction ends, so the
+//! connection is reused.
 //!
 //!
 //! ### POST
@@ -1036,6 +1037,8 @@ impl GooseHttpResponse {
     /// Returns the [`reqwest::Response`], the per response opt out: a body taken this
     /// way is the caller's, and Goose never reads it, so a caller that drops it unread
     /// costs the user its connection.
+    /// Use it for a response that never ends, such as a stream of server sent events,
+    /// which Goose would otherwise read until the client's timeout.
     pub fn into_inner(self) -> Response {
         self.take()
     }
@@ -1079,9 +1082,7 @@ impl GooseHttpResponse {
     /// Unlike it, an error response's body is still read by Goose, as the response is
     /// dropped.
     pub fn error_for_status(self) -> reqwest::Result<Self> {
-        if let Err(error) = self.error_for_status_ref() {
-            return Err(error);
-        }
+        self.error_for_status_ref()?;
         Ok(self)
     }
 }
@@ -1126,7 +1127,8 @@ impl Drop for GooseHttpResponse {
             return;
         }
         if let (Some(response), Some(slot)) = (self.response.take(), self.unread.take()) {
-            // A body known to be empty, as a HEAD's or a 204's, has nothing to read.
+            // A body known to be empty, as a HEAD's or a 204's, has nothing to read. A gzip
+            // body's length reads None, so it goes to the user to read as any other.
             if response.content_length() == Some(0) {
                 return;
             }
@@ -2439,6 +2441,10 @@ impl GooseUser {
     /// A read that fails is logged to the debug log with its request's name and
     /// counted; it never fails the transaction.
     pub(crate) async fn read_unread_bodies(&mut self) {
+        // With --drop-unread-bodies no body is handed over: skip the lock.
+        if self.config.drop_unread_bodies {
+            return;
+        }
         loop {
             // Take the whole list, and let go of the lock before reading.
             {

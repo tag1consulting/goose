@@ -167,7 +167,7 @@ Run it against a host you were given, for one minute with 10 users:
 cargo run --release -- --host https://staging.example.org/ --users 10 --run-time 1m
 ```
 
-Goose reads to the end any response body a transaction drops unread, before the user's next request, so the user keeps its connection; `discard_body()` reads one at a point of your choosing and returns its size, `into_inner()` takes the `reqwest::Response` and its body out of Goose's hands, and `--drop-unread-bodies` turns the reading off. When a request fails, with a 500 for example, Goose records the failure and the transaction carries on; to fail the transaction, see Validating Requests.
+On `main` (Goose 0.20), Goose reads to the end any response body a transaction drops unread, before the user's next request and when the transaction ends, so the user keeps its connection; on 0.19, read every body yourself; `discard_body()` reads one at a point of your choosing and returns its size, `into_inner()` takes the `reqwest::Response` and its body out of Goose's hands, and `--drop-unread-bodies` turns the reading off. When a request fails, with a 500 for example, Goose records the failure and the transaction carries on; to fail the transaction, see Validating Requests.
 
 Where the rest is documented:
 
