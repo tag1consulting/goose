@@ -733,9 +733,12 @@ struct GooseAttackRunState {
     metrics_header_displayed: bool,
     /// When entering the idle phase use this flag to only display a message one time.
     idle_status_displayed: bool,
-    /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
-    /// can be stopped later.
+    /// The task of every [`GooseUser`](./goose/struct.GooseUser.html) not yet seen to
+    /// finish, joined when the load test stops. Finished tasks are released as
+    /// users start and while the load test holds.
     users: Vec<tokio::task::JoinHandle<()>>,
+    /// How many tasks `users` held after finished tasks were last released.
+    users_pruned_at: usize,
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
@@ -773,6 +776,35 @@ struct GooseAttackRunState {
 }
 
 impl GooseAttackRunState {
+    /// Release the handles of user tasks that have finished, so a stopped
+    /// user's task is not held until the load test ends. A `Vec` and not a
+    /// `JoinSet`: this run state is dropped on an error return while users
+    /// still run, and dropping a `JoinSet` would abort them where a `Vec`
+    /// leaves them be.
+    fn prune_finished_users(&mut self) {
+        let held = self.users.len();
+        self.users.retain(|user| !user.is_finished());
+        self.users_pruned_at = self.users.len();
+        if self.users.len() < held {
+            debug!(
+                "[users]: released {} finished user tasks, {} held for {} running users",
+                held - self.users.len(),
+                self.users.len(),
+                self.active_users
+            );
+        }
+    }
+
+    /// As [`prune_finished_users`](Self::prune_finished_users), as a user
+    /// starts: only once the tasks held have doubled since they were last
+    /// released, so each start does constant work on average, however long
+    /// stopped users take to end.
+    fn prune_finished_users_when_due(&mut self) {
+        if self.users.len() >= 2 * self.users_pruned_at.max(1) {
+            self.prune_finished_users();
+        }
+    }
+
     /// Schedule the next user increase or decrease one `interval` after the
     /// last was due, or after now for the step's first, so a step adjusts its
     /// users at a steady rate from a fixed origin: a late wake up is caught up,
@@ -3221,6 +3253,7 @@ impl GooseAttack {
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
+            users_pruned_at: 0,
             user_channels: Vec::new(),
             running_users: Vec::new(),
             running_metrics_timer: std_now,
@@ -3451,6 +3484,7 @@ impl GooseAttack {
                 self.gaggle_watch_user(&user);
 
                 goose_attack_run_state.users.push(user);
+                goose_attack_run_state.prune_finished_users_when_due();
                 self.count_started_user(goose_attack_run_state);
                 #[cfg(test)]
                 self.user_test.record(UserEvent::Started(ordinal));
@@ -3497,6 +3531,8 @@ impl GooseAttack {
         {
             self.advance_test_plan(goose_attack_run_state);
         } else {
+            // Release the tasks of users that have stopped since.
+            goose_attack_run_state.prune_finished_users();
             // Subtract the time spent doing other things, running the main parent loop twice
             // per second.
             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
@@ -4398,6 +4434,7 @@ impl GooseAttack {
         goose_attack_run_state.metrics_header_displayed = false;
         goose_attack_run_state.idle_status_displayed = false;
         goose_attack_run_state.users = Vec::new();
+        goose_attack_run_state.users_pruned_at = 0;
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_users = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
