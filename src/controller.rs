@@ -80,7 +80,12 @@ const HELP: &str = concat!(
     "config             display load test configuration\n",
     "config-json        display load test configuration in json format\n",
     "metrics            display metrics for current load test\n",
-    "metrics-json       display metrics for current load test in json format",
+    "metrics-json       display metrics for current load test in json format\n\n",
+    "runs [BEFORE]      list the newest 20 saved runs, or the 20 after run BEFORE\n",
+    "runs-json [BEFORE] list saved runs in json format\n",
+    "report [RUN]       display the Markdown report of a saved run (default the newest)\n",
+    "report-json [RUN]  display the json report of a saved run, without its graph data\n",
+    "compare [RUN] BASE compare a saved run (default the newest) with saved run BASE",
 );
 
 /// All commands Goose can be controlled with, each carrying its parsed and
@@ -290,12 +295,165 @@ pub enum ControllerCommand {
     ///
     /// This command can be run at any time.
     MetricsJson,
+    /// List the saved runs in the run folder, newest first: the newest 20,
+    /// or with the folder name of a run, the 20 after it.
+    ///
+    /// # Example
+    /// Lists the 20 saved runs after the run in folder `20261106-101500`.
+    /// ```notest
+    /// runs 20261106-101500
+    /// ```
+    ///
+    /// This command can be run at any time. The Controller answers it
+    /// itself, off the load test's main loop.
+    Runs(Option<String>),
+    /// [`Runs`](#variant.Runs) in json format: the folder listed, each run
+    /// with the fields the dashboard's runs panel lists, and whether more
+    /// follow.
+    ///
+    /// # Example
+    /// ```notest
+    /// runs-json
+    /// ```
+    ///
+    /// This command can be run at any time.
+    RunsJson(Option<String>),
+    /// Display the Markdown report of a saved run, by its folder name, or of
+    /// the newest saved run.
+    ///
+    /// # Example
+    /// ```notest
+    /// report 20261106-101500
+    /// ```
+    ///
+    /// This command can be run at any time.
+    Report(Option<String>),
+    /// Display the JSON report of a saved run, by its folder name, or of the
+    /// newest saved run, without its per second graph data and heatmap; one
+    /// over 4 MiB without them is refused.
+    ///
+    /// # Example
+    /// ```notest
+    /// report-json
+    /// ```
+    ///
+    /// This command can be run at any time.
+    ReportJson(Option<String>),
+    /// Compare a saved run, or the newest saved run, with a baseline saved
+    /// run, as Markdown.
+    ///
+    /// # Example
+    /// Compares the newest saved run with the run in folder
+    /// `20261106-101500`.
+    /// ```notest
+    /// compare 20261106-101500
+    /// ```
+    ///
+    /// This command can be run at any time.
+    Compare {
+        /// The run compared; the newest saved run when `None`.
+        run: Option<String>,
+        /// The run it is compared with.
+        baseline: String,
+    },
 }
 
 impl ControllerCommand {
     /// `users`, refused unless 1 to [`MAX_CONTROL_USERS`].
     pub(crate) fn users(users: u64) -> Result<Self, &'static str> {
         bounded_users(users).map(Self::Users)
+    }
+
+    /// Whether the command reads the saved runs: the Controller answers it
+    /// itself, off the runtime, and never sends it to the main loop.
+    pub(crate) fn reads_saved_runs(&self) -> bool {
+        matches!(
+            self,
+            Self::Runs(_)
+                | Self::RunsJson(_)
+                | Self::Report(_)
+                | Self::ReportJson(_)
+                | Self::Compare { .. }
+        )
+    }
+}
+
+/// Refusal for `compare` without one or two run names.
+pub(crate) const INVALID_COMPARE_MSG: &str =
+    "compare takes the saved run to compare with, or a saved run and the run to compare it with: compare [RUN] BASE";
+
+/// A saved run's name from a command's value: `None` when there is none.
+/// The name is checked when the command is answered, so a refusal reads the
+/// same whichever front end sent it.
+fn run_name(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// `compare`'s value: a baseline run, or a run and a baseline run.
+fn compare(value: &str) -> Result<ControllerCommand, &'static str> {
+    let names: Vec<&str> = value.split_whitespace().collect();
+    match names[..] {
+        [baseline] => Ok(ControllerCommand::Compare {
+            run: None,
+            baseline: baseline.to_string(),
+        }),
+        [run, baseline] => Ok(ControllerCommand::Compare {
+            run: Some(run.to_string()),
+            baseline: baseline.to_string(),
+        }),
+        _ => Err(INVALID_COMPARE_MSG),
+    }
+}
+
+/// Reply when reading the saved runs took longer than [`CONTROL_TIMEOUT`].
+pub(crate) const SAVED_RUNS_TIMED_OUT: &str = "reading the saved runs timed out";
+
+/// Answer a command that [`reads_saved_runs`](ControllerCommand::reads_saved_runs)
+/// from `saved_runs`, on a blocking thread, waiting up to `timeout`; any
+/// other command is unrecognized. Every Controller answers these here, never
+/// on the main loop, so a large report can not delay the load test.
+pub(crate) async fn answer_saved_runs(
+    saved_runs: &crate::runs::SavedRuns,
+    command: ControllerCommand,
+    timeout: Duration,
+) -> Result<crate::runs::answers::Answer, String> {
+    use crate::runs::answers;
+    let saved_runs = saved_runs.clone();
+    // The read waits for a permit, which it holds until it ends, even once
+    // the client has timed out.
+    let read = async move {
+        let permit = Arc::clone(&saved_runs.readers).acquire_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            match command {
+                ControllerCommand::Runs(before) => {
+                    answers::list(&saved_runs, before.as_deref(), false)
+                }
+                ControllerCommand::RunsJson(before) => {
+                    answers::list(&saved_runs, before.as_deref(), true)
+                }
+                ControllerCommand::Report(run) => {
+                    answers::report(&saved_runs, run.as_deref(), false)
+                }
+                ControllerCommand::ReportJson(run) => {
+                    answers::report(&saved_runs, run.as_deref(), true)
+                }
+                ControllerCommand::Compare { run, baseline } => {
+                    answers::compare(&saved_runs, run.as_deref(), &baseline)
+                }
+                _ => Err(UNRECOGNIZED.to_string()),
+            }
+        })
+        .await
+    };
+    match tokio::time::timeout(timeout, read).await {
+        Ok(Ok(answer)) => answer,
+        Ok(Err(e)) => {
+            warn!("[controller]: reading the saved runs failed: {e}");
+            Err("can't read the saved runs".to_string())
+        }
+        Err(_) => Err(SAVED_RUNS_TIMED_OUT.to_string()),
     }
 }
 
@@ -634,6 +792,11 @@ impl ControllerCommand {
             "configjson" | "config-json" => alone(Self::ConfigJson),
             "metrics" | "stats" => alone(Self::Metrics),
             "metricsjson" | "metrics-json" | "statsjson" | "stats-json" => alone(Self::MetricsJson),
+            "runs" => Ok(Self::Runs(run_name(value))),
+            "runsjson" | "runs-json" => Ok(Self::RunsJson(run_name(value))),
+            "report" => Ok(Self::Report(run_name(value))),
+            "reportjson" | "report-json" => Ok(Self::ReportJson(run_name(value))),
+            "compare" => compare(value),
             "host" | "hostname" | "host_name" | "host-name" => host(value).map(Self::Host),
             "users" | "user" => grammar(&USERS, value, INVALID_USERS_MSG)?
                 .parse()
@@ -720,14 +883,16 @@ impl ControlCommand {
     #[cfg(feature = "gaggle")]
     fn fans_out(&self) -> bool {
         match self {
-            Self::Command(command) => !matches!(
-                command,
-                ControllerCommand::Start
-                    | ControllerCommand::Config
-                    | ControllerCommand::ConfigJson
-                    | ControllerCommand::Metrics
-                    | ControllerCommand::MetricsJson
-            ),
+            Self::Command(command) => {
+                !matches!(
+                    command,
+                    ControllerCommand::Start
+                        | ControllerCommand::Config
+                        | ControllerCommand::ConfigJson
+                        | ControllerCommand::Metrics
+                        | ControllerCommand::MetricsJson
+                ) && !command.reads_saved_runs()
+            }
             #[cfg(feature = "dashboard")]
             Self::Settings { start, .. } => !start,
             #[cfg(feature = "dashboard")]
@@ -955,6 +1120,15 @@ impl GooseAttack {
                     metrics_waiters.push(respond);
                     return Ok(());
                 }
+                // Every Controller answers these itself, so none reaches the
+                // main loop.
+                command if command.reads_saved_runs() => Ok(self.control_outcome(
+                    goose_attack_run_state,
+                    false,
+                    Some("invalid_command"),
+                    "the saved runs are read by the Controller, not the load test",
+                    None,
+                )),
                 ControllerCommand::Start => self
                     .control_start_begin(goose_attack_run_state)
                     .map(started),
@@ -1570,7 +1744,7 @@ pub(crate) fn format_bind_address(host: &str, port: u16) -> String {
 
 /// The warning a Controller listening on `bound` prints at startup when that
 /// is not a loopback address: it has no authentication, so anyone who can
-/// reach it controls the load test. The MCP Controller only listens off
+/// reach it controls the load test and reads every saved run. The MCP Controller only listens off
 /// loopback with a token, so its warning is that the token is all that guards
 /// it. `None` on loopback, the default.
 pub(crate) fn unauthenticated_warning(
@@ -1599,7 +1773,8 @@ pub(crate) fn unauthenticated_warning(
     }
     Some(format!(
         "WARNING: the {protocol:?} Controller on {bound} has no authentication.\n\
-         Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+         Anyone who can reach this port can start, stop and reconfigure the load test,\n\
+         and read every saved run in the run folder.\n\
          Safer: leave {option} unset to listen on 127.0.0.1 only, and use an\n\
          ssh forward (ssh -L {port}:127.0.0.1:{port} host)."
     ))
@@ -1615,6 +1790,8 @@ pub(crate) async fn controller_main(
     listener: TcpListener,
     // For sending requests to the parent process.
     channel_tx: flume::Sender<ControlRequest>,
+    // The saved runs `runs`, `report` and `compare` read.
+    saved_runs: crate::runs::SavedRuns,
     // Which type of controller to launch.
     protocol: ControllerProtocol,
 ) {
@@ -1639,6 +1816,7 @@ pub(crate) async fn controller_main(
             stream,
             protocol,
             channel_tx.clone(),
+            saved_runs.clone(),
             client,
             CONTROL_TIMEOUT,
         ));
@@ -1778,6 +1956,7 @@ async fn serve_client(
     socket: TcpStream,
     protocol: ControllerProtocol,
     channel_tx: flume::Sender<ControlRequest>,
+    saved_runs: crate::runs::SavedRuns,
     client: String,
     timeout: Duration,
 ) {
@@ -1839,6 +2018,16 @@ async fn serve_client(
                 continue;
             }
         };
+        // The saved runs are read here, off the runtime: the text forms are
+        // text on WebSocket too, and the json forms json.
+        if command.reads_saved_runs() {
+            let (success, response) = match answer_saved_runs(&saved_runs, command, timeout).await {
+                Ok(answer) => (true, answer.text),
+                Err(refused) => (false, refused),
+            };
+            transport.write(success, &response).await;
+            continue;
+        }
         let shutdown = matches!(command, ControllerCommand::Shutdown);
         // The WebSocket Controller always returns json.
         let json = websocket
@@ -1969,6 +2158,7 @@ pub(crate) mod tests {
             socket,
             ControllerProtocol::Telnet,
             channel_tx,
+            runs::SavedRuns::new(&GooseConfiguration::default()),
             "telnet client".to_string(),
             CONTROL_TIMEOUT,
         ));
@@ -2005,6 +2195,130 @@ pub(crate) mod tests {
             "{line:?}"
         );
         from_line
+    }
+
+    /// The saved run commands and their aliases parse with and without
+    /// names, case aside in the verb only; a name is kept as sent, for the
+    /// answer to check, and compare takes one or two.
+    #[test]
+    fn parse_saved_run_commands() {
+        let compare = INVALID_COMPARE_MSG.to_string();
+        let table: &[(&str, Result<&str, &String>)] = &[
+            ("runs", Ok("Runs(None)")),
+            ("RUNS", Ok("Runs(None)")),
+            (
+                "runs 20261106-101500",
+                Ok(r#"Runs(Some("20261106-101500"))"#),
+            ),
+            ("runs  Run-1 ", Ok(r#"Runs(Some("Run-1"))"#)),
+            ("runs-json", Ok("RunsJson(None)")),
+            ("runsjson x", Ok(r#"RunsJson(Some("x"))"#)),
+            ("report", Ok("Report(None)")),
+            ("Report x", Ok(r#"Report(Some("x"))"#)),
+            ("report a b", Ok(r#"Report(Some("a b"))"#)),
+            ("report ..", Ok(r#"Report(Some(".."))"#)),
+            ("report /", Ok(r#"Report(Some("/"))"#)),
+            ("report .goose-run", Ok(r#"Report(Some(".goose-run"))"#)),
+            ("report-json", Ok("ReportJson(None)")),
+            ("reportjson x", Ok(r#"ReportJson(Some("x"))"#)),
+            ("compare b", Ok(r#"Compare { run: None, baseline: "b" }"#)),
+            (
+                "compare a  b",
+                Ok(r#"Compare { run: Some("a"), baseline: "b" }"#),
+            ),
+            ("compare", Err(&compare)),
+            ("compare a b c", Err(&compare)),
+        ];
+        for (line, expected) in table {
+            let expected = expected.map(str::to_string).map_err(String::clone);
+            assert_eq!(parse(line), expected, "{line:?}");
+            if let Ok(command) = line.parse::<ControllerCommand>() {
+                assert!(command.reads_saved_runs(), "{:?}", line);
+            }
+        }
+        // No other command reads the saved runs.
+        for line in [
+            "start",
+            "stop",
+            "config",
+            "metrics-json",
+            "users 3",
+            "host http://x/",
+        ] {
+            let command = line.parse::<ControllerCommand>().unwrap();
+            assert!(!command.reads_saved_runs(), "{}", line);
+        }
+    }
+
+    /// A saved run read waits for a permit, and a client that times out
+    /// first is told so, reading nothing; with a permit free it is answered.
+    #[test]
+    fn saved_run_reads_wait_for_a_permit() {
+        finishes(|| async {
+            let saved_runs = runs::SavedRuns::new(&GooseConfiguration::default());
+            let held = Arc::clone(&saved_runs.readers)
+                .acquire_many_owned(runs::SAVED_RUN_READERS as u32)
+                .await
+                .unwrap();
+            let answer = answer_saved_runs(
+                &saved_runs,
+                ControllerCommand::Report(Some("..".to_string())),
+                Duration::from_millis(100),
+            )
+            .await;
+            assert_eq!(answer.unwrap_err(), SAVED_RUNS_TIMED_OUT);
+            drop(held);
+            let answer = answer_saved_runs(
+                &saved_runs,
+                ControllerCommand::Report(Some("..".to_string())),
+                CONTROL_TIMEOUT,
+            )
+            .await;
+            assert_eq!(answer.unwrap_err(), "no saved run named \"..\"");
+            assert_eq!(
+                saved_runs.readers.available_permits(),
+                runs::SAVED_RUN_READERS
+            );
+        });
+    }
+
+    /// The saved run commands' lines in the help, each in the usage column
+    /// the MCP tool descriptions read.
+    #[test]
+    fn help_names_the_saved_run_commands() {
+        for line in [
+            "runs [BEFORE]      list the newest 20 saved runs, or the 20 after run BEFORE",
+            "runs-json [BEFORE] list saved runs in json format",
+            "report [RUN]       display the Markdown report of a saved run (default the newest)",
+            "report-json [RUN]  display the json report of a saved run, without its graph data",
+            "compare [RUN] BASE compare a saved run (default the newest) with saved run BASE",
+        ] {
+            assert!(HELP.lines().any(|help| help == line), "{}", line);
+        }
+    }
+
+    /// A saved run command that reached the main loop, which no Controller
+    /// sends it, is refused there and changes nothing.
+    #[test]
+    fn saved_run_commands_are_refused_on_the_main_loop() {
+        finishes(|| async {
+            let (mut goose_attack, mut state) = idle_attack(&[]).await;
+            for command in [
+                ControllerCommand::Runs(None),
+                ControllerCommand::RunsJson(None),
+                ControllerCommand::Report(None),
+                ControllerCommand::ReportJson(None),
+                ControllerCommand::Compare {
+                    run: None,
+                    baseline: "x".to_string(),
+                },
+            ] {
+                let outcome = command_outcome(&mut goose_attack, &mut state, command).await;
+                assert!(!outcome.ok);
+                assert_eq!(outcome.error, Some("invalid_command"));
+                assert_eq!(outcome.phase, "idle");
+            }
+        });
     }
 
     /// Every command and alias parses to its typed value, and every bad
@@ -4560,6 +4874,7 @@ pub(crate) mod tests {
             socket,
             ControllerProtocol::Telnet,
             channel_tx,
+            runs::SavedRuns::new(&GooseConfiguration::default()),
             "telnet client".to_string(),
             CONTROL_TIMEOUT,
         ));
@@ -4605,6 +4920,7 @@ pub(crate) mod tests {
             socket,
             ControllerProtocol::Telnet,
             channel_tx,
+            runs::SavedRuns::new(&GooseConfiguration::default()),
             "telnet client".to_string(),
             Duration::from_millis(100),
         ));
@@ -4628,6 +4944,7 @@ pub(crate) mod tests {
                 socket,
                 ControllerProtocol::WebSocket,
                 channel_tx,
+                runs::SavedRuns::new(&GooseConfiguration::default()),
                 "WebSocket client".to_string(),
                 CONTROL_TIMEOUT,
             )
@@ -4671,7 +4988,8 @@ pub(crate) mod tests {
             .as_deref(),
             Some(
                 "WARNING: the Telnet Controller on 0.0.0.0:5116 has no authentication.\n\
-                 Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+                 Anyone who can reach this port can start, stop and reconfigure the load test,\n\
+                 and read every saved run in the run folder.\n\
                  Safer: leave --telnet-host unset to listen on 127.0.0.1 only, and use an\n\
                  ssh forward (ssh -L 5116:127.0.0.1:5116 host)."
             )
@@ -4684,7 +5002,8 @@ pub(crate) mod tests {
             .as_deref(),
             Some(
                 "WARNING: the WebSocket Controller on [::]:5117 has no authentication.\n\
-                 Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+                 Anyone who can reach this port can start, stop and reconfigure the load test,\n\
+                 and read every saved run in the run folder.\n\
                  Safer: leave --websocket-host unset to listen on 127.0.0.1 only, and use an\n\
                  ssh forward (ssh -L 5117:127.0.0.1:5117 host)."
             )

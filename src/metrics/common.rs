@@ -781,7 +781,6 @@ impl LoadedReport {
 /// Compare two runs: the run's JSON report with the baseline run's
 /// deltas applied, rendered by the Markdown report writer. An error is one
 /// line of plain text for the person who asked.
-#[cfg(feature = "dashboard")]
 pub(crate) fn compare_reports(
     run: &Path,
     run_id: &str,
@@ -789,7 +788,10 @@ pub(crate) fn compare_reports(
     baseline_id: &str,
 ) -> Result<Vec<u8>, String> {
     let load = |path: &Path, id: &str| -> Result<ReportData<'static>, String> {
-        let reader = open_report(path).map_err(|e| format!("Can't read run {id}: {e}"))?;
+        // Opened as a stored report is, never through a symlink swapped in.
+        let reader = crate::runs::read_stored(path)
+            .map(std::io::Cursor::new)
+            .map_err(|e| format!("Can't read run {id}: {e}"))?;
         let data = read_report(reader)
             .map_err(|e| e.describe(|e| format!("Can't read the report of run {id}: {e}")))?;
         let requests = data

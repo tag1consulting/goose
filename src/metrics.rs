@@ -26,11 +26,10 @@ mod golden_tests;
 mod microsecond_tests;
 
 pub use buckets::TimeBuckets;
-#[cfg(feature = "dashboard")]
 pub(crate) use common::compare_reports;
 #[cfg(test)]
 pub(crate) use common::json_report_path;
-#[cfg(any(test, feature = "dashboard"))]
+#[cfg(test)]
 pub(crate) use common::read_report_text;
 pub(crate) use common::{load_baseline_file, LoadedReport, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
@@ -5277,6 +5276,10 @@ pub(crate) struct ReportSource<'a> {
     /// The JSON report includes the graph data.
     pub graph_data_in_json: bool,
 }
+
+/// The key the JSON report holds the per second graph data and the heatmap
+/// under, `JsonReport::graphs`: what `report-json` leaves out.
+pub(crate) const REPORT_GRAPHS: &str = "graphs";
 
 /// The JSON report: the record of the run, its metrics, and, when asked for,
 /// the per second data the HTML report graphs.

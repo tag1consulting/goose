@@ -9,7 +9,6 @@ pub(crate) mod chrome;
 #[cfg(feature = "pdf-reports")]
 pub mod pdf;
 
-#[cfg(any(test, feature = "dashboard"))]
 pub(crate) use markdown::write_markdown_report;
 pub(crate) use markdown::write_markdown_report_with;
 

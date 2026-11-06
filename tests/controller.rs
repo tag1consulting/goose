@@ -13,6 +13,7 @@ use goose::prelude::*;
 mod common;
 #[cfg(feature = "mcp")]
 mod mcp_client;
+mod saved_runs;
 
 // Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
@@ -414,18 +415,30 @@ impl Client {
     // Connect to the `protocol` Controller, the MCP Controller on `mcp_port`.
     async fn connect(protocol: Protocol, mcp_port: u16) -> Self {
         let _ = mcp_port;
+        let port = match protocol {
+            Protocol::Telnet => 5116,
+            Protocol::WebSocket => 5117,
+            #[cfg(feature = "mcp")]
+            Protocol::Mcp => mcp_port,
+        };
+        Client::connect_on(protocol, port).await
+    }
+
+    // Connect to the `protocol` Controller on `port`.
+    async fn connect_on(protocol: Protocol, port: u16) -> Self {
         match protocol {
             Protocol::Telnet => {
                 let mut client =
-                    Client::Telnet(TcpStream::connect("127.0.0.1:5116").await.unwrap());
+                    Client::Telnet(TcpStream::connect(("127.0.0.1", port)).await.unwrap());
                 // The prompt the telnet Controller greets a client with.
                 client.read_telnet().await;
                 client
             }
             Protocol::WebSocket => {
-                let (mut stream, _item) = tokio_tungstenite::connect_async("ws://127.0.0.1:5117")
-                    .await
-                    .unwrap();
+                let (mut stream, _item) =
+                    tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+                        .await
+                        .unwrap();
                 // Send an empty message so the client performs a handshake.
                 stream.send(Message::Text("".into())).await.unwrap();
                 // Ignore the error that comes back.
@@ -433,7 +446,7 @@ impl Client {
                 Client::WebSocket(Box::new(stream))
             }
             #[cfg(feature = "mcp")]
-            Protocol::Mcp => Client::Mcp(mcp_client::Mcp::new(mcp_port)),
+            Protocol::Mcp => Client::Mcp(mcp_client::Mcp::new(port)),
         }
     }
 
@@ -724,6 +737,435 @@ async fn test_mcp_controller() {
         time::Duration::from_secs(120),
         run_standalone_test(Protocol::Mcp),
     )
+    .await
+    .expect("test timed out");
+}
+
+// The saved run commands, `runs`, `report` and `compare`, take their own
+// ports, so they run beside the tests above.
+const RUNS_TELNET_PORT: u16 = 5136;
+const RUNS_WEBSOCKET_PORT: u16 = 5137;
+const BLOCKING_TELNET_PORT: u16 = 5146;
+
+// The values of graph data in the large report the main loop test reads.
+const HUGE_GRAPHS: usize = 4_000_000;
+
+// A reply's text without the telnet prompt.
+fn text(reply: &Reply) -> String {
+    reply
+        .text
+        .strip_suffix("\ngoose> ")
+        .unwrap_or(&reply.text)
+        .to_string()
+}
+
+// A load test idle until told to start, with telnet on `telnet_port` and,
+// when given, WebSocket on `websocket_port`, its run folder `live` in
+// `parent`, so the saved runs it reads are those in `parent`; it saves its
+// report there when a run ends.
+fn idle_load_test(
+    server: &MockServer,
+    parent: &std::path::Path,
+    telnet_port: u16,
+    websocket_port: Option<u16>,
+    users: &[&str],
+) -> tokio::task::JoinHandle<Result<GooseMetrics, GooseError>> {
+    let host = server.base_url();
+    let live = parent.join("live").to_string_lossy().into_owned();
+    let telnet_port = telnet_port.to_string();
+    let websocket_port = websocket_port.map(|port| port.to_string());
+    let mut args = vec![
+        "--quiet",
+        "--no-autostart",
+        "--co-mitigation",
+        "disabled",
+        "--host",
+        &host,
+        "--telnet-port",
+        &telnet_port,
+        "--output-dir",
+        &live,
+        "--report-file",
+    ];
+    if let Some(port) = &websocket_port {
+        args.extend(["--websocket", "--websocket-port", port]);
+    }
+    args.extend_from_slice(users);
+    let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    tokio::spawn(async move { goose_attack.execute().await })
+}
+
+// Connect to the `protocol` Controller on `port`, waiting for it to listen
+// while `load` runs.
+async fn connect_when_listening(
+    protocol: Protocol,
+    port: u16,
+    load: &mut tokio::task::JoinHandle<Result<GooseMetrics, GooseError>>,
+) -> Client {
+    for _ in 0..200 {
+        if load.is_finished() {
+            panic!("the load test ended: {:?}", load.await);
+        }
+        if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+            return Client::connect_on(protocol, port).await;
+        }
+        tokio::time::sleep(time::Duration::from_millis(100)).await;
+    }
+    panic!("nothing listened on {}", port);
+}
+
+// The names a `runs` listing's lines start with, and its last line.
+fn listed(listing: &str) -> (Vec<String>, String) {
+    let lines: Vec<&str> = listing.lines().collect();
+    assert!(lines[0].starts_with("saved runs in "), "{}", listing);
+    let names = lines[1..lines.len() - 1]
+        .iter()
+        .map(|line| {
+            assert!(line.contains("  started "), "{}", line);
+            line.split("  ").next().unwrap().to_string()
+        })
+        .collect();
+    (names, lines.last().unwrap().to_string())
+}
+
+// The names in a `runs-json` listing, and whether more follow.
+fn listed_json(listing: &str) -> (Vec<String>, bool) {
+    let value: serde_json::Value = serde_json::from_str(listing).unwrap();
+    let names = value["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["name"].as_str().unwrap().to_string())
+        .collect();
+    (names, value["more"].as_bool().unwrap())
+}
+
+// Send `line` and read its reply, then a fresh telnet prompt.
+async fn say(client: &mut Client, line: String) -> Reply {
+    let reply = client.send(&line).await;
+    client.new_prompt().await;
+    reply
+}
+
+// Every saved run command over `client`, with and without names, against
+// the saved runs `runs`.
+async fn check_saved_runs(client: &mut Client, protocol: Protocol, runs: &saved_runs::SavedRuns) {
+    let ok = |reply: &Reply, line: &str| {
+        if protocol != Protocol::Telnet {
+            assert_eq!(reply.success, Some(true), "{}: {}", line, reply.text);
+        }
+        text(reply)
+    };
+    let refused = |reply: &Reply| {
+        if protocol != Protocol::Telnet {
+            assert_eq!(reply.success, Some(false), "{}", reply.text);
+        }
+        text(reply)
+    };
+
+    // The newest 20, then the 2 after them.
+    let first = say(client, "runs".to_string()).await;
+    let (names, last) = listed(&ok(&first, "runs"));
+    assert_eq!(names, runs.names[..saved_runs::PAGE]);
+    let twentieth = &runs.names[saved_runs::PAGE - 1];
+    assert_eq!(last, format!("more saved runs: runs {twentieth}"));
+    let second = say(client, format!("runs {twentieth}")).await;
+    let (names, last) = listed(&ok(&second, "runs"));
+    assert_eq!(names, runs.names[saved_runs::PAGE..]);
+    assert_eq!(last, "no more saved runs");
+    for alias in ["runs-json", "runsjson", "RUNS-JSON"] {
+        let reply = say(client, alias.to_string()).await;
+        let (names, more) = listed_json(&ok(&reply, alias));
+        assert_eq!(names, runs.names[..saved_runs::PAGE], "{}", alias);
+        assert!(more);
+    }
+    let reply = say(client, format!("runs-json {twentieth}")).await;
+    assert_eq!(
+        listed_json(&ok(&reply, "runs-json")),
+        (runs.names[saved_runs::PAGE..].to_vec(), false)
+    );
+
+    // Reports: the newest by default; a stored report.md as it is stored;
+    // the JSON report, plain or gzipped, without its graph data.
+    let newest = ok(&say(client, "report".to_string()).await, "report");
+    assert_eq!(
+        newest,
+        ok(
+            &say(client, format!("report {}", runs.newest())).await,
+            "report"
+        )
+    );
+    assert!(newest.contains("Request Metrics"), "{}", newest);
+    let stored = std::fs::read_to_string(runs.parent.join("stored").join("report.md")).unwrap();
+    assert_eq!(
+        ok(&say(client, "report stored".to_string()).await, "report"),
+        stored
+    );
+    let zipped = ok(&say(client, "report zipped".to_string()).await, "report");
+    assert!(zipped.contains("Request Metrics"), "{}", zipped);
+    for name in ["plain", "zipped", "stored"] {
+        for alias in ["report-json", "reportjson"] {
+            let line = format!("{alias} {name}");
+            let json: serde_json::Value =
+                serde_json::from_str(&ok(&say(client, line.clone()).await, &line)).unwrap();
+            assert_eq!(json, runs.report_json_without_graphs(name), "{}", line);
+            assert!(json.get(saved_runs::GRAPHS).is_none());
+        }
+    }
+    let json: serde_json::Value = serde_json::from_str(&ok(
+        &say(client, "report-json".to_string()).await,
+        "report-json",
+    ))
+    .unwrap();
+    assert_eq!(json, runs.report_json_without_graphs(runs.newest()));
+
+    // A comparison: the newest run, or one named, with a baseline.
+    let oldest = runs.oldest();
+    let compared = ok(&say(client, format!("compare {oldest}")).await, "compare");
+    assert!(
+        compared.starts_with(&format!("Run {} (started ", runs.newest())),
+        "{}",
+        compared
+    );
+    assert!(
+        compared.contains(&format!(") compared to baseline {oldest} (started ")),
+        "{}",
+        compared
+    );
+    assert_eq!(
+        compared,
+        ok(
+            &say(client, format!("compare {} {oldest}", runs.newest())).await,
+            "compare"
+        )
+    );
+    let compared = ok(
+        &say(client, format!("compare zipped {oldest}")).await,
+        "compare",
+    );
+    assert!(compared.starts_with("Run zipped (started "), "{}", compared);
+
+    // Anything that is not a saved run is refused alike, naming no path.
+    let parent = runs.parent.to_string_lossy().into_owned();
+    for name in [
+        "..", "/", ".hidden", "linked", "missing", "../plain", "plain/..",
+    ] {
+        let expected = format!("no saved run named {name:?}");
+        for line in [
+            format!("report {name}"),
+            format!("report-json {name}"),
+            format!("runs {name}"),
+            format!("compare {name}"),
+            format!("compare {name} plain"),
+        ] {
+            let reply = refused(&say(client, line.clone()).await);
+            assert_eq!(reply, expected, "{}", line);
+            assert!(!reply.contains(&parent));
+        }
+    }
+    assert_eq!(
+        refused(&say(client, "report a b".to_string()).await),
+        "no saved run named \"a b\""
+    );
+    let compare = "compare takes the saved run to compare with, or a saved run and the run to compare it with: compare [RUN] BASE";
+    for line in ["compare", "compare a b c"] {
+        let reply = refused(&say(client, line.to_string()).await);
+        assert_eq!(reply, compare, "{}", line);
+    }
+}
+
+// Every saved run command over telnet and WebSocket, idle and while a run
+// is in progress, against a run folder of 22 runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn test_saved_runs_over_telnet_and_websocket() {
+    tokio::time::timeout(time::Duration::from_secs(240), async {
+        let runs = saved_runs::build("controller").await;
+        let server = MockServer::start();
+        let _mocks = setup_mock_server_endpoints(&server);
+        let mut load = idle_load_test(
+            &server,
+            &runs.parent,
+            RUNS_TELNET_PORT,
+            Some(RUNS_WEBSOCKET_PORT),
+            &["--users", "2", "--increase-rate", "20"],
+        );
+        let mut telnet =
+            connect_when_listening(Protocol::Telnet, RUNS_TELNET_PORT, &mut load).await;
+        let mut websocket =
+            connect_when_listening(Protocol::WebSocket, RUNS_WEBSOCKET_PORT, &mut load).await;
+        // Idle.
+        check_saved_runs(&mut telnet, Protocol::Telnet, &runs).await;
+        check_saved_runs(&mut websocket, Protocol::WebSocket, &runs).await;
+
+        // A run in progress whose report was saved while it runs is listed
+        // first, as running, and once it ends with the report written then.
+        let reply = telnet.send("start").await;
+        assert!(
+            reply.text.starts_with("load test started"),
+            "{}",
+            reply.text
+        );
+        telnet.new_prompt().await;
+        let live = runs.parent.join("live");
+        for _ in 0..100 {
+            if live.is_dir() {
+                break;
+            }
+            tokio::time::sleep(time::Duration::from_millis(100)).await;
+        }
+        assert!(live.is_dir(), "the run in progress has its folder");
+        let mut in_progress = runs.report_json("plain");
+        in_progress["in_progress"] = serde_json::json!(true);
+        in_progress["ended"] = serde_json::Value::Null;
+        in_progress["ended_by"] = serde_json::Value::Null;
+        in_progress["started"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+        runs.save("live", &in_progress);
+        for client in [&mut telnet, &mut websocket] {
+            let listing = text(&client.send("runs").await);
+            client.new_prompt().await;
+            let first = listing.lines().nth(1).unwrap();
+            assert!(first.starts_with("live  started "), "{}", listing);
+            assert!(first.ends_with("  running"), "{}", listing);
+            let listing = text(&client.send("runs-json").await);
+            client.new_prompt().await;
+            let value: serde_json::Value = serde_json::from_str(&listing).unwrap();
+            assert_eq!(value["runs"][0]["name"], "live");
+            assert_eq!(value["runs"][0]["running"], true);
+            assert_eq!(value["runs"][1]["running"], false);
+        }
+        let reply = telnet.send("stop").await;
+        assert!(
+            reply.text.starts_with("load test stopped"),
+            "{}",
+            reply.text
+        );
+        telnet.new_prompt().await;
+        let mut ended = false;
+        for _ in 0..100 {
+            let listing = text(&telnet.send("runs").await);
+            telnet.new_prompt().await;
+            let first = listing.lines().nth(1).unwrap().to_string();
+            if first.starts_with("live  ") && first.ends_with("  stopped") {
+                ended = true;
+                break;
+            }
+            tokio::time::sleep(time::Duration::from_millis(100)).await;
+        }
+        assert!(ended, "the stopped run is no longer listed as running");
+        let _ = telnet.send("shutdown").await;
+        load.await.unwrap().unwrap();
+        std::fs::remove_dir_all(&runs.parent).ok();
+    })
+    .await
+    .expect("test timed out");
+}
+
+// A slow `report-json`, a large JSON report read and parsed beside a running
+// load test, never pauses its main loop: `config`, which the main loop
+// answers, is answered all the while in less time than any one read takes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn test_saved_runs_do_not_block_the_main_loop() {
+    tokio::time::timeout(time::Duration::from_secs(240), async {
+        let parent = saved_runs::folder("main-loop");
+        // A real JSON report with millions of graph values, slow to read.
+        let mut huge: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/report-0.20.json")).unwrap();
+        huge[saved_runs::GRAPHS] = serde_json::json!({
+            "users_per_second": (0..HUGE_GRAPHS as u32).map(|n| n % 1000).collect::<Vec<_>>(),
+        });
+        saved_runs::save(&parent, "huge", &huge);
+        let server = MockServer::start();
+        let _mocks = setup_mock_server_endpoints(&server);
+        // A slow ramp, so the main loop wakes for each user, every 50 ms,
+        // throttled so the users do not load the machine.
+        let mut load = idle_load_test(
+            &server,
+            &parent,
+            BLOCKING_TELNET_PORT,
+            None,
+            &[
+                "--users",
+                "1000",
+                "--increase-rate",
+                "20",
+                "--throttle-requests",
+                "100",
+            ],
+        );
+        let mut control =
+            connect_when_listening(Protocol::Telnet, BLOCKING_TELNET_PORT, &mut load).await;
+        let reply = control.send("start").await;
+        assert!(
+            reply.text.starts_with("load test started"),
+            "{}",
+            reply.text
+        );
+        control.new_prompt().await;
+        tokio::time::sleep(time::Duration::from_millis(500)).await;
+
+        // Two clients read the large report over and over.
+        let reading = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut readers = Vec::new();
+        for _ in 0..2 {
+            let reading = reading.clone();
+            readers.push(tokio::spawn(async move {
+                let mut client = Client::connect_on(Protocol::Telnet, BLOCKING_TELNET_PORT).await;
+                let mut took = Vec::new();
+                while reading.load(std::sync::atomic::Ordering::Relaxed) {
+                    let started = std::time::Instant::now();
+                    let reply = client.send("report-json huge").await;
+                    took.push(started.elapsed());
+                    assert!(
+                        reply.text.starts_with("{"),
+                        "{}",
+                        &reply.text[..80.min(reply.text.len())]
+                    );
+                    client.new_prompt().await;
+                }
+                took
+            }));
+        }
+        // Meanwhile the main loop answers `config` as fast as ever.
+        tokio::time::sleep(time::Duration::from_millis(200)).await;
+        let mut slowest = time::Duration::ZERO;
+        let until = std::time::Instant::now() + time::Duration::from_secs(8);
+        while std::time::Instant::now() < until {
+            let started = std::time::Instant::now();
+            let reply = control.send("config").await;
+            slowest = slowest.max(started.elapsed());
+            assert!(reply.text.contains("GooseConfiguration"), "{}", reply.text);
+            control.new_prompt().await;
+            tokio::time::sleep(time::Duration::from_millis(50)).await;
+        }
+        reading.store(false, std::sync::atomic::Ordering::Relaxed);
+        let mut took = Vec::new();
+        for reader in readers {
+            took.extend(reader.await.unwrap());
+        }
+        let quickest = took.iter().min().copied().unwrap();
+        eprintln!(
+            "report-json took {:?} to {:?} ({} reads); config at most {:?}",
+            quickest,
+            took.iter().max().unwrap(),
+            took.len(),
+            slowest
+        );
+        // Answering a read on the main loop would hold every command queued
+        // behind it for as long as the read takes: no command waited even a
+        // third of that, so none waited on a read. (Measured: config at most
+        // about 50 ms beside reads of about 350 ms; with reads on the main
+        // loop, config waited about 700 ms.)
+        assert!(
+            slowest * 3 < quickest,
+            "config took {:?}, a read {:?}",
+            slowest,
+            quickest
+        );
+        let _ = control.send("shutdown").await;
+        load.await.unwrap().unwrap();
+        std::fs::remove_dir_all(&parent).ok();
+    })
     .await
     .expect("test timed out");
 }

@@ -194,6 +194,43 @@ pub fn tool_for_line(line: &str) -> Option<(&'static str, Value)> {
             .unwrap_or_else(|_| Value::String(value.to_string()))
     };
     let text = || Value::String(value.to_string());
+    // The saved run commands: a run's name, or for compare a run and a
+    // baseline, each left out when not given.
+    let named = |pairs: &[(&str, Option<&str>)]| {
+        let mut arguments = serde_json::Map::new();
+        for (name, value) in pairs {
+            if let Some(value) = value.filter(|value| !value.is_empty()) {
+                arguments.insert(name.to_string(), Value::String(value.to_string()));
+            }
+        }
+        Value::Object(arguments)
+    };
+    let run = (!value.trim().is_empty()).then(|| value.trim());
+    match verb.to_ascii_lowercase().as_str() {
+        "runs" | "runsjson" | "runs-json" => {
+            return Some(("list_runs", named(&[("before", run)])));
+        }
+        "report" => return Some(("get_run_report", named(&[("run", run)]))),
+        "reportjson" | "report-json" => {
+            return Some((
+                "get_run_report",
+                named(&[("run", run), ("format", Some("json"))]),
+            ));
+        }
+        "compare" => {
+            let names: Vec<&str> = value.split_whitespace().collect();
+            let (run, baseline) = match names[..] {
+                [baseline] => (None, Some(baseline)),
+                [run, baseline] => (Some(run), Some(baseline)),
+                _ => (None, None),
+            };
+            return Some((
+                "compare_runs",
+                named(&[("baseline", baseline), ("run", run)]),
+            ));
+        }
+        _ => {}
+    }
     let (tool, argument) = match verb.to_ascii_lowercase().as_str() {
         "start" => ("start", None),
         "stop" => ("stop", None),

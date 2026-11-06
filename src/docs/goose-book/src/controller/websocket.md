@@ -1,6 +1,6 @@
 # WebSocket Controller
 
-The WebSocket Controller is off unless Goose is started with `--websocket`, or a load test sets [`GooseDefault::WebSocket`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.WebSocket). It takes no authentication and accepts a connection from any web page, so a page open in any browser that can reach its port can start, stop and reconfigure the load test.
+The WebSocket Controller is off unless Goose is started with `--websocket`, or a load test sets [`GooseDefault::WebSocket`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.WebSocket). It takes no authentication and accepts a connection from any web page, so a page open in any browser that can reach its port can start, stop and reconfigure the load test, and read every saved run in the run folder.
 
 When on, it listens on `127.0.0.1:5117` by default, so only this machine can reach it. To reach it from another machine, either forward the port over ssh to the default bind (`ssh -L 5117:127.0.0.1:5117 loadtest`, then connect to `ws://127.0.0.1:5117`), or start Goose with an explicit host such as `--websocket-host 0.0.0.0`, which prints a warning at startup that the Controller has no authentication.
 
@@ -48,6 +48,19 @@ foo
 ```
 
 This session is Goose started with `--websocket --no-autostart -u 10`. `config` sends the configuration as JSON, with an option that is not set shown as `null`, as the telnet Controller's `config-json` does. A dashboard auth token, when one is set, is shown as `"(set)"`, never the token itself. `metrics` sends the metrics as the telnet Controller's `metrics-json` does, with each request's response times in microsecond buckets, `times_us`; see [Controller Commands](telnet.md#controller-commands).
+
+The saved run commands, `runs`, `report` and `compare` (see [Saved runs](overview.md#saved-runs)), answer in `response` as text, and `runs-json` and `report-json` as JSON in that string, as `metrics` does:
+
+```bash
+{"request":"runs-json"}
+{"response":"{\"dir\":\"goose-runs\",\"runs\":[{\"name\":\"20261106-191049\",\"goose_version\":\"0.20.0-dev\",\"test\":\"simple\",\"started\":\"2026-11-06T18:10:49Z\",\"ended\":\"2026-11-06T18:11:11Z\",\"ended_by\":\"completed\",\"in_progress\":false,\"running\":false,\"duration_secs\":20,\"max_users\":30,\"requests\":53,\"failed_requests\":0},...],\"more\":false}","success":true}
+{"request":"report-json 20261106-191049"}
+{"response":"{\"co_request_metrics\":null,\"co_response_metrics\":null,\"coordinated_omission_metrics\":null,\"ended\":\"2026-11-06T18:11:11Z\",\"ended_by\":\"completed\",...}","success":true}
+{"request":"report nope"}
+{"response":"no saved run named \"nope\"","success":false}
+```
+
+Started with `--no-autostart` in a folder holding `goose-runs`, the WebSocket Controller browses old runs without running a load test. Anyone who can reach it, a web page included, can read every saved run.
 
 After `exit` (or `quit` or `q`) the Controller answers `goodbye!`, and after `shutdown` it answers `load test shut down`; either way it then sends a close frame, code 1000, and ends the connection. A request that gets no answer from Goose within 15 seconds is answered `{"response":"control timed out, it may still apply: check before retrying","success":false}`.
 
