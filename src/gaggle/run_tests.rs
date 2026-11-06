@@ -3804,13 +3804,18 @@ async fn dashboard_shows_the_workers() {
             workers.push(tokio::spawn(attack.execute()));
         }
 
-        // Three workers running, each in the grid.
+        // Three workers running, each in the grid, and the manager's ramp
+        // done. The manager counts the 6 users on its own clock as its plan
+        // starts them, and a users change names that count as where it went
+        // from, so a change sent while the workers run but the manager is
+        // still in "increase" reads "users 5 to 9". "maintain" comes only
+        // once all 6 are counted.
         let (running, _) = dashboard_until(
             DASHBOARD,
             TOKEN,
             Duration::from_secs(20),
-            "3 running",
-            |s| s["gaggle"]["summary"]["running"] == 3,
+            "3 running, ramp done",
+            |s| s["gaggle"]["summary"]["running"] == 3 && s["phase"] == "maintain",
         )
         .await;
         let gaggle = &running["gaggle"];
