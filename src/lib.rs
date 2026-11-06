@@ -930,6 +930,9 @@ fn build_users(
         .map(|n| n.get())
         .unwrap_or(1);
     let chunk_size = users.len().div_ceil(num_cpus).max(1);
+    // Clients built by every thread, for the log of a canceled build.
+    let clients = std::sync::atomic::AtomicUsize::new(0);
+    let clients = &clients;
 
     // Building a client is the expensive part. Chunks are collected back in
     // order to keep the order users were weighted in.
@@ -954,6 +957,7 @@ fn build_users(
                     };
                     #[cfg(test)]
                     build.user_test.client_built()?;
+                    clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     built.push(GooseUser::new(
                         user.scenarios_index,
                         user.machine_name.clone(),
@@ -982,7 +986,14 @@ fn build_users(
     for result in results {
         match result? {
             Some(chunk) => built.extend(chunk),
-            None => return Ok(None),
+            None => {
+                debug!(
+                    "[users]: build of {} users canceled after building {} clients",
+                    users.len(),
+                    clients.load(std::sync::atomic::Ordering::Relaxed)
+                );
+                return Ok(None);
+            }
         }
     }
     debug!("[scheduler]: built {} users", built.len());
@@ -1067,6 +1078,12 @@ impl Drop for UserBatch {
             },
             BatchUsers::Failed => Vec::new(),
         };
+        debug!(
+            "[users]: dropping the batch of {} users for step {}: {} built and not started",
+            self.size,
+            self.step,
+            users.len()
+        );
         if users.is_empty() {
             return;
         }
