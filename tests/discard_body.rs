@@ -117,7 +117,9 @@ async fn dropped_bodies_open_new_connections() {
     assert_eq!(counted, REQUESTS);
     assert!(
         connections > 1,
-        "{REQUESTS} requests with dropped bodies opened {connections} connection(s)"
+        "{} requests with dropped bodies opened {} connection(s)",
+        REQUESTS,
+        connections
     );
 }
 
