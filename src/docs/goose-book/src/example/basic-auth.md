@@ -132,7 +132,7 @@ async fn test_manual_basic_auth(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(reqwest_request_builder)
         .build();
 
-    let _goose_metrics = user.request(goose_request).await?;
+    let _ = user.request(goose_request).await?.discard_body().await;
 
     Ok(())
 }

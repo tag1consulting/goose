@@ -90,8 +90,8 @@ async fn authenticated_index(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(reqwest_request_builder)
         .build();
 
-    // Make the actual request.
-    user.request(goose_request).await?;
+    // Make the actual request, and read the body to the end so the connection is reused.
+    let _ = user.request(goose_request).await?.discard_body().await;
 
     Ok(())
 }
