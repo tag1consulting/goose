@@ -845,8 +845,8 @@ impl GooseAttackRunState {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UserEvent {
-    /// A batch of this many users was built: also the one user a new test
-    /// plan builds to check its client can be built.
+    /// A part of a batch of this many users was built: also the one user a
+    /// new test plan builds to check its client can be built.
     Built(usize),
     /// The user with this ordinal started.
     Started(usize),
@@ -869,7 +869,7 @@ struct UserTestHooks {
     build_delay: Duration,
     /// Set to make building every user's client from now on fail.
     fail_builds: Arc<std::sync::atomic::AtomicBool>,
-    /// Each batch built and each user started, with when.
+    /// Each part built and each user started, with when.
     events: Arc<Mutex<Vec<(UserEvent, std::time::Instant)>>>,
 }
 
@@ -1195,12 +1195,14 @@ impl UserBatch {
     async fn next_user(&mut self, wait: Duration) -> Result<Option<GooseUser>, String> {
         if self.next.is_empty() {
             // A part already on the channel is taken without waiting.
-            let (part, waited) = match self.parts.try_recv() {
-                Ok(part) => (Some(part), false),
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => (None, false),
+            let part = match self.parts.try_recv() {
+                Ok(part) => Some(part),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => None,
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    // The next user was due before its part was built.
+                    self.stalled = true;
                     match tokio::time::timeout(wait, self.parts.recv()).await {
-                        Ok(part) => (part, true),
+                        Ok(part) => part,
                         Err(_) => return Ok(None),
                     }
                 }
@@ -1211,7 +1213,7 @@ impl UserBatch {
                     // The next part is built from now: a builder that stopped
                     // takes no more.
                     if let Some(taken) = &self.taken {
-                        let _ = taken.send(waited);
+                        let _ = taken.send(self.stalled);
                     }
                 }
                 Some(Ok(None)) => unreachable!("a batch still held was canceled"),
@@ -1236,6 +1238,8 @@ impl Drop for UserBatch {
         // part users start from, and every part built and not yet taken. A
         // part still building drops what it built on its own thread.
         let mut users = std::mem::take(&mut self.next);
+        // Closed first, so no part is sent after the drain and dropped here.
+        self.parts.close();
         while let Ok(part) = self.parts.try_recv() {
             if let Ok(Some(part)) = part {
                 users.extend(part);
@@ -2376,11 +2380,7 @@ impl GooseAttack {
             return None;
         }
         match batch.next_user(Duration::from_millis(100)).await {
-            Ok(Some(user)) => Some(user),
-            Ok(None) => {
-                batch.stalled = true;
-                None
-            }
+            Ok(user) => user,
             Err(e) => {
                 let (first, left) = (self.metrics.total_users + 1, batch.left);
                 error!(
@@ -2437,7 +2437,8 @@ impl GooseAttack {
         let second = elapsed.as_secs();
         while starts.second < second || (last && starts.second == second) {
             if rate.is_finite() {
-                let due_by = |second: u64| ((rate * second as f64).floor() as usize).min(users);
+                // The first user is due at the boundary.
+                let due_by = |second: u64| ((rate * second as f64).ceil() as usize).min(users);
                 let due = due_by(starts.second + 1) - due_by(starts.second);
                 if starts.in_second < due {
                     info!(
@@ -4715,14 +4716,12 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         // Checked after each exit, as several in one tick can step the count
         // past the plan's total.
+        let mut ended = false;
         while let Ok(user) = goose_attack_run_state.shutdown_rx.try_recv() {
             goose_attack_run_state.users_shutdown.insert(user);
-            if self.users_exited(goose_attack_run_state, true) {
-                self.set_ended_by(runs::EndedBy::UsersExited, None);
-                self.cancel_attack(goose_attack_run_state).await?;
-            }
+            ended |= self.users_exited(goose_attack_run_state, true);
         }
-        if self.users_exited(goose_attack_run_state, false) {
+        if ended || self.users_exited(goose_attack_run_state, false) {
             self.set_ended_by(runs::EndedBy::UsersExited, None);
             self.cancel_attack(goose_attack_run_state).await?;
         }

@@ -278,6 +278,8 @@ impl GooseAttack {
         // Record the instant this new step starts, for use with timers.
         let now = time::Instant::now();
         self.step_started = Some(now);
+        // A new step logs how its own users start.
+        self.step_starts = None;
 
         // Each step schedules its user changes from its own start, so a ramp
         // left mid way, as by a Controller, never leaves a stale due time.
