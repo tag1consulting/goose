@@ -715,13 +715,14 @@ struct GooseAttackRunState {
     /// Dashboard tabs connected to the event stream.
     #[cfg(feature = "dashboard")]
     dashboard_active_sse: Option<Arc<std::sync::atomic::AtomicUsize>>,
-    /// The folder of the run in progress, as the dashboard's report routes see it.
-    #[cfg(feature = "dashboard")]
-    dashboard_running_folder: Option<dashboard::RunningFolder>,
+    /// The saved runs the dashboard's report routes and the Controllers read,
+    /// with the folder of the run in progress, which the main loop keeps
+    /// current.
+    saved_runs: runs::SavedRuns,
     /// The folder a bare `--goose-log` is open in, as the dashboard's report
     /// routes see it.
     #[cfg(feature = "dashboard")]
-    dashboard_log_folder: Option<dashboard::RunningFolder>,
+    dashboard_log_folder: Option<runs::RunningFolder>,
     /// The address the dashboard listens on, as logged at startup.
     #[cfg(feature = "dashboard")]
     dashboard_url: Option<String>,
@@ -2279,6 +2280,7 @@ impl GooseAttack {
     async fn setup_controllers(
         &self,
         control_tx: &flume::Sender<ControlRequest>,
+        saved_runs: &runs::SavedRuns,
     ) -> controller::ListeningControllers {
         let mut listening = controller::ListeningControllers::default();
         // Configured telnet Controller if not disabled.
@@ -2291,6 +2293,7 @@ impl GooseAttack {
                 tokio::spawn(controller::controller_main(
                     listener,
                     control_tx.clone(),
+                    saved_runs.clone(),
                     ControllerProtocol::Telnet,
                 ));
                 listening.telnet = true;
@@ -2311,6 +2314,7 @@ impl GooseAttack {
                         tokio::spawn(controller::mcp::serve(
                             listener,
                             control_tx.clone(),
+                            saved_runs.clone(),
                             options,
                         ));
                         listening.mcp = true;
@@ -2333,6 +2337,7 @@ impl GooseAttack {
                 tokio::spawn(controller::controller_main(
                     listener,
                     control_tx.clone(),
+                    saved_runs.clone(),
                     ControllerProtocol::WebSocket,
                 ));
                 listening.websocket = true;
@@ -2805,9 +2810,12 @@ impl GooseAttack {
         #[cfg(not(feature = "dashboard"))]
         let dashboard_control_rx = None;
 
+        // The saved runs the Controllers and the dashboard read.
+        let saved_runs = runs::SavedRuns::new(&self.configuration);
+
         // Optionally spawn a telnet and/or Websocket Controller thread.
         let listening_controllers = match &control_tx {
-            Some(control_tx) => self.setup_controllers(control_tx).await,
+            Some(control_tx) => self.setup_controllers(control_tx, &saved_runs).await,
             None => controller::ListeningControllers::default(),
         };
 
@@ -2818,7 +2826,6 @@ impl GooseAttack {
             dashboard_channel_rx,
             dashboard_close_tx,
             dashboard_active_sse,
-            dashboard_running_folder,
             dashboard_log_folder,
             dashboard_url,
             dashboard_server,
@@ -2826,6 +2833,7 @@ impl GooseAttack {
             &self.configuration,
             dashboard_control_tx,
             listening_controllers,
+            saved_runs.clone(),
         )
         .await?
         {
@@ -2833,12 +2841,11 @@ impl GooseAttack {
                 Some(setup.request_rx),
                 Some(setup.close_tx),
                 Some(setup.active_sse),
-                Some(setup.running_folder),
                 Some(setup.log_folder),
                 Some(setup.url),
                 Some(setup.server),
             ),
-            None => (None, None, None, None, None, None, None),
+            None => (None, None, None, None, None, None),
         };
 
         // Grab now() once from the standard library, used by multiple timers in
@@ -2905,8 +2912,7 @@ impl GooseAttack {
             gaggle_shadow_second: None,
             #[cfg(feature = "dashboard")]
             dashboard_active_sse,
-            #[cfg(feature = "dashboard")]
-            dashboard_running_folder,
+            saved_runs,
             #[cfg(feature = "dashboard")]
             dashboard_log_folder,
             #[cfg(feature = "dashboard")]
@@ -3360,10 +3366,7 @@ impl GooseAttack {
             // End the Goose log's gzip member, so the finished run's log is
             // whole while Idle; lines until the next run are whole members.
             logger::finish_goose_log();
-            #[cfg(feature = "dashboard")]
-            if let Some(running) = &goose_attack_run_state.dashboard_running_folder {
-                running.set(None);
-            }
+            goose_attack_run_state.saved_runs.running.set(None);
             if let Err(e) = reports {
                 // A Gaggle manager failing here tells its workers, whatever
                 // it would have done with them.
@@ -4063,15 +4066,12 @@ impl GooseAttack {
         // in it, and start the Goose log's gzip member for the run.
         self.start_run_folder()?;
         logger::start_goose_log();
-        #[cfg(feature = "dashboard")]
-        if let Some(running) = &goose_attack_run_state.dashboard_running_folder {
-            running.set(
-                self.output
-                    .folder
-                    .as_ref()
-                    .map(|folder| folder.path.as_path()),
-            );
-        }
+        goose_attack_run_state.saved_runs.running.set(
+            self.output
+                .folder
+                .as_ref()
+                .map(|folder| folder.path.as_path()),
+        );
         // A bare --goose-log moved into this run's folder, and stays open there
         // after the run ends.
         #[cfg(feature = "dashboard")]
@@ -4821,7 +4821,12 @@ mod tests {
             goose_attack.configuration.configure(&defaults).unwrap();
             goose_attack.configuration.validate().unwrap();
             let (control_tx, _control_rx) = flume::unbounded();
-            let listening = goose_attack.setup_controllers(&control_tx).await;
+            let listening = goose_attack
+                .setup_controllers(
+                    &control_tx,
+                    &runs::SavedRuns::new(&goose_attack.configuration),
+                )
+                .await;
             assert!(listening.telnet);
             assert_eq!(listening.websocket, websocket);
             // The MCP Controller is off unless --mcp is given.

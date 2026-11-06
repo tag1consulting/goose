@@ -9,6 +9,8 @@
 //! takes the folder. It is removed at the end of the run if the run wrote
 //! nothing.
 
+pub(crate) mod answers;
+
 use crate::config::{GooseConfiguration, RUN_FOLDER};
 use crate::graph::GraphData;
 use crate::logger::{move_goose_log, GooseLogFormat};
@@ -22,7 +24,6 @@ use crate::{ControlOutcome, GooseAttackRunState};
 use crate::{GooseAttack, GooseError};
 use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "dashboard")]
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -37,7 +38,6 @@ pub(crate) const REPORT_HTML: &str = "report.html";
 /// The JSON report in a run's folder, also read by `--baseline-file <folder>`.
 pub(crate) const REPORT_JSON: &str = "report.json";
 /// The Markdown report, which the dashboard renders from the JSON report.
-#[cfg(feature = "dashboard")]
 pub(crate) const REPORT_MD: &str = "report.md";
 
 /// The file that reserves a run's folder for its run, so no other process
@@ -663,7 +663,6 @@ pub(crate) fn log_file_name(name: &str, format: Option<&GooseLogFormat>) -> Stri
 
 /// The folder run folders go in: the one `--output-dir` sits in, or
 /// `goose-runs`.
-#[cfg(any(test, feature = "dashboard"))]
 pub(crate) fn parent_folder(configuration: &GooseConfiguration) -> PathBuf {
     match configuration.output_dir() {
         Some(dir) => match Path::new(dir).parent() {
@@ -1212,7 +1211,6 @@ impl GooseAttack {
 
 /// One report the runs panel lists: a folder's name and what its
 /// `report.json` says about its run.
-#[cfg(feature = "dashboard")]
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ListedReport {
     /// The folder's name, which the report routes take.
@@ -1233,12 +1231,10 @@ pub(crate) struct ListedReport {
 
 /// What a listing remembers of each `report.json`, by path, so a file is
 /// parsed again only when its size or modification time changes.
-#[cfg(feature = "dashboard")]
 pub(crate) type ListingCache = HashMap<PathBuf, (u64, std::time::SystemTime, ListedReport)>;
 
 /// True for a folder name the report routes take: a letter or digit, then
 /// letters, digits, `.`, `_` and `-`. Never `..`, never a path.
-#[cfg(feature = "dashboard")]
 pub(crate) fn is_report_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
@@ -1247,7 +1243,6 @@ pub(crate) fn is_report_name(name: &str) -> bool {
 
 /// The real folder `name` in `parent` and the regular `report.json`, else
 /// `report.json.gz`, in it, never following a symlink.
-#[cfg(feature = "dashboard")]
 pub(crate) fn report_folder(parent: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
     if !is_report_name(name) {
         return None;
@@ -1262,7 +1257,6 @@ pub(crate) fn report_folder(parent: &Path, name: &str) -> Option<(PathBuf, PathB
 
 /// The regular file `name`, else `name.gz`, in `folder`, never following a
 /// symlink.
-#[cfg(feature = "dashboard")]
 pub(crate) fn regular_file(folder: &Path, name: &str) -> Option<PathBuf> {
     [name.to_string(), format!("{name}.gz")]
         .iter()
@@ -1273,7 +1267,6 @@ pub(crate) fn regular_file(folder: &Path, name: &str) -> Option<PathBuf> {
 /// The reports in the folders of `parent`, one level down, newest first.
 /// `running` is the folder of the run in progress, if any. A folder that
 /// does not exist lists nothing; a report that can't be read is left out.
-#[cfg(feature = "dashboard")]
 pub(crate) fn list_reports(
     parent: &Path,
     running: Option<&Path>,
@@ -1328,7 +1321,6 @@ pub(crate) fn list_reports(
 }
 
 /// The record of the run in the JSON report at `json`, plain or gzipped.
-#[cfg(feature = "dashboard")]
 pub(crate) fn read_record(json: &Path) -> Option<RunRecord> {
     let text = crate::metrics::read_report_text(json).ok()?;
     serde_json::from_str(&text).ok()
@@ -1342,7 +1334,6 @@ pub(crate) fn is_listed(json: &Path) -> bool {
 }
 
 /// What the runs panel shows of the report at `json`, in the folder `name`.
-#[cfg(feature = "dashboard")]
 fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Option<ListedReport> {
     #[derive(Deserialize)]
     struct Listed {
@@ -1392,6 +1383,151 @@ fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Opti
             .map(|r| r.fail_count)
             .fold(0, u64::saturating_add),
         sort_key,
+    })
+}
+
+/// The name of a folder Goose is writing to, shared by the main loop, the
+/// dashboard's report routes and the Controllers.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RunningFolder(Arc<Mutex<Option<String>>>);
+
+impl RunningFolder {
+    /// Set the folder, or `None` once Goose no longer writes to it.
+    pub(crate) fn set(&self, folder: Option<&Path>) {
+        let name = folder
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned());
+        *lock(&self.0) = name;
+    }
+
+    /// The folder's name, if Goose is writing to one.
+    pub(crate) fn get(&self) -> Option<String> {
+        lock(&self.0).clone()
+    }
+
+    /// Whether this is the folder `name`, at `folder` in `parent`: by name, or
+    /// by identity, so a name in another case on a filesystem that ignores
+    /// case is still this folder.
+    #[cfg(feature = "dashboard")]
+    pub(crate) fn is(&self, parent: &Path, name: &str, folder: &Path) -> bool {
+        self.get().is_some_and(|own| {
+            own == name
+                || std::fs::symlink_metadata(parent.join(&own))
+                    .is_ok_and(|metadata| crate::dashboard::same_file(folder, &metadata))
+        })
+    }
+}
+
+/// The saved runs every front end reads: the folder run folders go in, the
+/// folder of the run in progress, and the listing cache, all shared, so the
+/// dashboard and the Controllers list the same runs alike.
+#[derive(Clone, Debug)]
+pub(crate) struct SavedRuns {
+    /// [`parent_folder`], as given, never made absolute.
+    pub parent: PathBuf,
+    /// The folder of the run in progress, set by the main loop.
+    pub running: RunningFolder,
+    /// What the last listing parsed, by path.
+    pub cache: Arc<Mutex<ListingCache>>,
+}
+
+impl SavedRuns {
+    /// The saved runs in `configuration`'s [`parent_folder`].
+    pub(crate) fn new(configuration: &GooseConfiguration) -> Self {
+        SavedRuns {
+            parent: parent_folder(configuration),
+            running: RunningFolder::default(),
+            cache: Arc::new(Mutex::new(ListingCache::new())),
+        }
+    }
+
+    /// The reports in [`Self::parent`], newest first, as [`list_reports`]
+    /// lists them, the run in progress marked as running.
+    pub(crate) fn list(&self) -> io::Result<Vec<ListedReport>> {
+        let running = self.running.get().map(|name| self.parent.join(name));
+        list_reports(&self.parent, running.as_deref(), &mut lock(&self.cache))
+    }
+}
+
+/// The HTML report (`ext` "html") or the Markdown report (any other `ext`)
+/// rendered from the JSON report at `json`, as the dashboard serves it for a
+/// folder that lacks it. An error is one line for the person who asked.
+pub(crate) fn render_report(json: &Path, ext: &str) -> Result<Vec<u8>, String> {
+    let loaded = LoadedReport::read(json)?;
+    let configuration = GooseConfiguration::default();
+    let empty = GraphData::new();
+    let source = loaded.source(&configuration, &empty);
+    let mut out = Vec::new();
+    let written = match ext {
+        "html" => source.html(None).map(|html| out = html.into_bytes()),
+        _ => source.write_markdown(&mut out, None),
+    };
+    written.map_err(|e| format!("Can't render the report: {e}"))?;
+    Ok(out)
+}
+
+/// The Markdown report of the run in `folder`, whose JSON report is `json`:
+/// its `report.md`, plain or gzipped, else rendered from the JSON report.
+/// The same text `GET /api/v1/reports/{name}/report.md` serves.
+pub(crate) fn report_markdown(folder: &Path, json: &Path) -> Result<Vec<u8>, String> {
+    match regular_file(folder, REPORT_MD) {
+        Some(stored) => {
+            let mut out = Vec::new();
+            crate::metrics::open_report(&stored)
+                .and_then(|mut reader| io::Read::read_to_end(&mut reader, &mut out))
+                .map_err(|e| format!("Can't read the Markdown report: {e}"))?;
+            Ok(out)
+        }
+        None => render_report(json, "md"),
+    }
+}
+
+/// Run `run_name`, whose JSON report is `newer_json`, compared to the
+/// baseline run `baseline_name`, as Markdown: [`compared_runs_line`], a blank
+/// line, then the report with the baseline's deltas. The same text
+/// `GET /api/v1/reports/{run}/compare.md?baseline={baseline}` serves.
+pub(crate) fn compare_markdown(
+    newer_json: &Path,
+    run_name: &str,
+    baseline_json: &Path,
+    baseline_name: &str,
+) -> Result<Vec<u8>, String> {
+    let report =
+        crate::metrics::compare_reports(newer_json, run_name, baseline_json, baseline_name)?;
+    let mut out =
+        compared_runs_line(newer_json, run_name, baseline_json, baseline_name).into_bytes();
+    out.extend_from_slice(b"\n\n");
+    out.extend(report);
+    Ok(out)
+}
+
+/// The first line of a comparison: which run is compared to which baseline,
+/// with when each started, from their JSON reports.
+pub(crate) fn compared_runs_line(
+    newer_json: &Path,
+    run_name: &str,
+    baseline_json: &Path,
+    baseline_name: &str,
+) -> String {
+    let started = |json: &Path| {
+        read_record(json)
+            .and_then(|record| record.started)
+            .and_then(|started| utc_text(&started))
+            .unwrap_or_else(|| "at an unknown time".to_string())
+    };
+    format!(
+        "Run {run_name} (started {}) compared to baseline {baseline_name} (started {}).",
+        started(newer_json),
+        started(baseline_json)
+    )
+}
+
+/// An RFC 3339 time as `YYYY-MM-DD HH:MM:SS UTC`, or `None` if it is not one.
+pub(crate) fn utc_text(time: &str) -> Option<String> {
+    DateTime::parse_from_rfc3339(time).ok().map(|time| {
+        time.with_timezone(&Utc)
+            .format("%Y-%m-%d %H:%M:%S UTC")
+            .to_string()
     })
 }
 

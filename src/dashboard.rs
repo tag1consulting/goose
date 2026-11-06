@@ -27,7 +27,7 @@ use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSettings,
 };
 use crate::metrics::DashboardSnapshot;
-use crate::runs;
+use crate::runs::{self, RunningFolder};
 use crate::serve::{self, bearer_token_from_headers, constant_time_eq};
 use crate::{ControlOutcome, GooseConfiguration, GooseError};
 
@@ -127,9 +127,6 @@ pub(crate) struct DashboardSetup {
     /// Concurrent SSE clients, which the main loop reads to decide whether
     /// to wait for a dashboard tab after an autostarted run.
     pub active_sse: Arc<AtomicUsize>,
-    /// The name of the folder of the run in progress, which Delete refuses
-    /// and the runs panel shows as running. The main loop keeps it current.
-    pub running_folder: RunningFolder,
     /// The name of the folder a bare `--goose-log` is open in, which Delete
     /// refuses. It stays set after the run ends, as the log stays open there
     /// until the next run starts.
@@ -894,12 +891,10 @@ struct DashboardState {
     /// each was built.
     series_cache: Arc<Mutex<SeriesCache>>,
     /// The folder run folders go in, which the report routes read, and only
-    /// them.
-    reports_dir: std::path::PathBuf,
-    /// Each `report.json` the listing has read, by path, size and time.
-    listing_cache: Arc<Mutex<runs::ListingCache>>,
-    /// The folder of the run in progress.
-    running_folder: RunningFolder,
+    /// them; the folder of the run in progress, which Delete refuses and the
+    /// runs panel shows as running; and the listing cache. Shared with the
+    /// Controllers.
+    saved_runs: runs::SavedRuns,
     /// The folder the Goose log is open in.
     log_folder: RunningFolder,
     /// The controller addresses `GET /api/v1/health` reports.
@@ -1007,6 +1002,7 @@ pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
     control_tx: Option<flume::Sender<ControlRequest>>,
     listening: ListeningControllers,
+    saved_runs: runs::SavedRuns,
 ) -> Result<Option<DashboardSetup>, GooseError> {
     if !configuration.dashboard {
         return Ok(None);
@@ -1034,7 +1030,6 @@ pub(crate) async fn setup_dashboard(
     let build_count = Arc::new(AtomicU64::new(0));
     let (close_tx, _) = watch::channel(false);
     let active_sse = Arc::new(AtomicUsize::new(0));
-    let running_folder = RunningFolder::default();
     let log_folder = RunningFolder::default();
     let max_sse_clients = configuration.dashboard_max_clients();
     // Clone sender for the hub and the series handler (same channel).
@@ -1069,9 +1064,7 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
-        reports_dir: runs::parent_folder(configuration),
-        listing_cache: Arc::new(Mutex::new(runs::ListingCache::new())),
-        running_folder: running_folder.clone(),
+        saved_runs,
         log_folder: log_folder.clone(),
         controllers: HealthControllers {
             telnet: listening.telnet.then(|| {
@@ -1127,7 +1120,6 @@ pub(crate) async fn setup_dashboard(
         bound_port: bound.port(),
         build_count,
         active_sse,
-        running_folder,
         log_folder,
         url: format!("http://{bound}"),
         close_tx,
@@ -1768,42 +1760,6 @@ fn snapshot_event(bytes: &Bytes) -> Event {
     Event::default().event("snapshot").data(data)
 }
 
-/// The name of a folder Goose is writing to, shared by the main loop and the
-/// report routes.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct RunningFolder(Arc<Mutex<Option<String>>>);
-
-impl RunningFolder {
-    /// Set the folder, or `None` once Goose no longer writes to it.
-    pub(crate) fn set(&self, folder: Option<&std::path::Path>) {
-        let name = folder
-            .and_then(std::path::Path::file_name)
-            .map(|name| name.to_string_lossy().into_owned());
-        match self.0.lock() {
-            Ok(mut running) => *running = name,
-            Err(poisoned) => *poisoned.into_inner() = name,
-        }
-    }
-
-    fn get(&self) -> Option<String> {
-        match self.0.lock() {
-            Ok(running) => running.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
-    }
-
-    /// Whether this is the folder `name`, at `folder` in `parent`: by name, or
-    /// by identity, so a name in another case on a filesystem that ignores
-    /// case is still this folder.
-    fn is(&self, parent: &Path, name: &str, folder: &Path) -> bool {
-        self.get().is_some_and(|own| {
-            own == name
-                || std::fs::symlink_metadata(parent.join(&own))
-                    .is_ok_and(|metadata| same_file(folder, &metadata))
-        })
-    }
-}
-
 /// Query of the report routes: the token, and for a comparison the baseline.
 #[derive(Debug, Deserialize)]
 struct ReportQuery {
@@ -1835,20 +1791,9 @@ async fn reports_handler(
     if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let listing_state = Arc::clone(&state);
-    let listed = tokio::task::spawn_blocking(move || {
-        let running = listing_state
-            .running_folder
-            .get()
-            .map(|name| listing_state.reports_dir.join(name));
-        let mut cache = match listing_state.listing_cache.lock() {
-            Ok(cache) => cache,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        runs::list_reports(&listing_state.reports_dir, running.as_deref(), &mut cache)
-    })
-    .await;
-    let dir = state.reports_dir.to_string_lossy().into_owned();
+    let saved_runs = state.saved_runs.clone();
+    let listed = tokio::task::spawn_blocking(move || saved_runs.list()).await;
+    let dir = state.saved_runs.parent.to_string_lossy().into_owned();
     match listed {
         Ok(Ok(reports)) => Json(ReportsListing { dir, reports }).into_response(),
         Ok(Err(e)) => {
@@ -1877,7 +1822,7 @@ async fn report_file_handler(
         return StatusCode::NOT_FOUND.into_response();
     };
     if file == COMPARE_MD {
-        return compare_response(&state.reports_dir, name, query.baseline).await;
+        return compare_response(&state.saved_runs.parent, name, query.baseline).await;
     }
     let (content_type, ext) = match file.as_str() {
         runs::REPORT_HTML => ("text/html; charset=utf-8", "html"),
@@ -1885,7 +1830,7 @@ async fn report_file_handler(
         runs::REPORT_MD => ("text/markdown; charset=utf-8", "md"),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
-    let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
+    let Some((folder, json)) = runs::report_folder(&state.saved_runs.parent, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     // The report is read and parsed off the runtime the load test runs on.
@@ -1930,7 +1875,7 @@ async fn report_file_handler(
         };
     }
     // A format the folder lacks is rendered from its JSON report.
-    let rendered = tokio::task::spawn_blocking(move || render_report_file(&json, ext)).await;
+    let rendered = tokio::task::spawn_blocking(move || runs::render_report(&json, ext)).await;
     match rendered {
         Ok(Ok(body)) => {
             let length = body.len() as u64;
@@ -1944,22 +1889,6 @@ async fn report_file_handler(
             .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
-}
-
-/// The HTML or Markdown report rendered from the JSON report at `json`. An
-/// error is one line for the person who asked.
-fn render_report_file(json: &Path, ext: &str) -> Result<Vec<u8>, String> {
-    let loaded = crate::metrics::LoadedReport::read(json)?;
-    let configuration = GooseConfiguration::default();
-    let empty = crate::graph::GraphData::new();
-    let source = loaded.source(&configuration, &empty);
-    let mut out = Vec::new();
-    let written = match ext {
-        "html" => source.html(None).map(|html| out = html.into_bytes()),
-        _ => source.write_markdown(&mut out, None),
-    };
-    written.map_err(|e| format!("Can't render the report: {e}"))?;
-    Ok(out)
 }
 
 /// `test` from the record in a `report.json`, reduced to `[A-Za-z0-9_-]` for
@@ -2070,7 +1999,7 @@ async fn stored_file_response(
 
 /// True when the open file's metadata is that of the file at `path` now, by
 /// device and inode where the platform has them.
-fn same_file(path: &Path, opened: &std::fs::Metadata) -> bool {
+pub(crate) fn same_file(path: &Path, opened: &std::fs::Metadata) -> bool {
     let Ok(at_path) = std::fs::symlink_metadata(path) else {
         return false;
     };
@@ -2124,16 +2053,7 @@ async fn compare_response(
     };
     let (run_name, baseline_name) = (name.clone(), baseline.clone());
     let compared = tokio::task::spawn_blocking(move || {
-        let report = crate::metrics::compare_reports(
-            &newer_json,
-            &run_name,
-            &baseline_json,
-            &baseline_name,
-        )?;
-        let mut out =
-            compared_runs_line(&newer_json, &run_name, &baseline_json, &baseline_name).into_bytes();
-        out.extend_from_slice(b"\n\n");
-        out.extend(report);
+        let out = runs::compare_markdown(&newer_json, &run_name, &baseline_json, &baseline_name)?;
         Ok::<_, String>((download_test_name(&newer_json), out))
     })
     .await;
@@ -2155,32 +2075,6 @@ async fn compare_response(
             .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
-}
-
-/// The first line of a comparison: which run is compared to which baseline,
-/// with when each started, from their JSON reports.
-fn compared_runs_line(
-    newer_json: &Path,
-    run_name: &str,
-    baseline_json: &Path,
-    baseline_name: &str,
-) -> String {
-    let started = |json: &Path| {
-        runs::read_record(json)
-            .and_then(|record| record.started)
-            .and_then(|started| chrono::DateTime::parse_from_rfc3339(&started).ok())
-            .map(|time| {
-                time.with_timezone(&chrono::Utc)
-                    .format("%Y-%m-%d %H:%M:%S UTC")
-                    .to_string()
-            })
-            .unwrap_or_else(|| "at an unknown time".to_string())
-    };
-    format!(
-        "Run {run_name} (started {}) compared to baseline {baseline_name} (started {}).",
-        started(newer_json),
-        started(baseline_json)
-    )
 }
 
 /// Authorize a metric API request.
@@ -2711,12 +2605,19 @@ async fn delete_report_handler(
     let Ok(axum::extract::Path(name)) = path else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
+    let Some((folder, json)) = runs::report_folder(&state.saved_runs.parent, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let refused = if state.running_folder.is(&state.reports_dir, &name, &folder) {
+    let refused = if state
+        .saved_runs
+        .running
+        .is(&state.saved_runs.parent, &name, &folder)
+    {
         Some("The run in progress writes to this folder.")
-    } else if state.log_folder.is(&state.reports_dir, &name, &folder) {
+    } else if state
+        .log_folder
+        .is(&state.saved_runs.parent, &name, &folder)
+    {
         Some("Goose is writing its log to this folder.")
     } else if runs::is_reserved(&folder) {
         Some(RESERVED_BY_ANOTHER)
@@ -2728,7 +2629,7 @@ async fn delete_report_handler(
     }
     // `remove_file` removes a symlink, never what it points to.
     let name_for_check = name.clone();
-    let reports_dir = state.reports_dir.clone();
+    let reports_dir = state.saved_runs.parent.clone();
     let removed = tokio::task::spawn_blocking(move || {
         // Checked again just before the deletes: still a real folder, and
         // still a report the panel lists.
@@ -3094,6 +2995,7 @@ mod tests {
             &config,
             bind.control,
             ListeningControllers::configured(&config),
+            runs::SavedRuns::new(&config),
         )
         .await
         .expect("bind")
@@ -3575,10 +3477,15 @@ mod tests {
             dashboard_auth_token: None,
             ..Default::default()
         };
-        let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
-            .await
-            .expect("localhost bind should succeed")
-            .expect("dashboard enabled");
+        let setup = setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            runs::SavedRuns::new(&config),
+        )
+        .await
+        .expect("localhost bind should succeed")
+        .expect("dashboard enabled");
         assert!(setup.bound_port > 0, "ephemeral port must be recorded");
         // Dropping the setup drops the server handle, which stops the server.
         drop(setup);
@@ -3593,7 +3500,14 @@ mod tests {
         };
         // ::1 may be unavailable in some CI network namespaces; treat bind errors
         // as soft-skip only when the OS reports address-family issues.
-        match setup_dashboard(&config, None, ListeningControllers::configured(&config)).await {
+        match setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            runs::SavedRuns::new(&config),
+        )
+        .await
+        {
             Ok(Some(setup)) => {
                 assert!(setup.bound_port > 0);
             }
@@ -3621,9 +3535,14 @@ mod tests {
             dashboard_auth_token: None,
             ..Default::default()
         };
-        let err = setup_dashboard(&config, None, ListeningControllers::configured(&config))
-            .await
-            .expect_err("second bind on same port must fail hard");
+        let err = setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            runs::SavedRuns::new(&config),
+        )
+        .await
+        .expect_err("second bind on same port must fail hard");
         match err {
             GooseError::Io(_) => {}
             other => panic!("expected GooseError::Io, got {:?}", other),
@@ -4037,7 +3956,7 @@ mod tests {
             };
             let mut listening = ListeningControllers::configured(&config);
             listening.telnet &= telnet_bound;
-            let setup = setup_dashboard(&config, None, listening)
+            let setup = setup_dashboard(&config, None, listening, runs::SavedRuns::new(&config))
                 .await
                 .expect("bind")
                 .expect("enabled");
@@ -4083,10 +4002,15 @@ mod tests {
             mcp_port: Some(6119),
             ..Default::default()
         };
-        let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
-            .await
-            .expect("bind")
-            .expect("enabled");
+        let setup = setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            runs::SavedRuns::new(&config),
+        )
+        .await
+        .expect("bind")
+        .expect("enabled");
         let health: serde_json::Value = client
             .get(format!(
                 "http://127.0.0.1:{}/api/v1/health",
@@ -4107,10 +4031,15 @@ mod tests {
             mcp_read_only: true,
             ..config
         };
-        let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
-            .await
-            .expect("bind")
-            .expect("enabled");
+        let setup = setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            runs::SavedRuns::new(&config),
+        )
+        .await
+        .expect("bind")
+        .expect("enabled");
         let health: serde_json::Value = client
             .get(format!(
                 "http://127.0.0.1:{}/api/v1/health",
@@ -5734,10 +5663,15 @@ mod tests {
                 dashboard_auth_token: Some("secret".to_string()),
                 ..Default::default()
             };
-            let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
-                .await
-                .expect("bind")
-                .expect("enabled");
+            let setup = setup_dashboard(
+                &config,
+                None,
+                ListeningControllers::configured(&config),
+                runs::SavedRuns::new(&config),
+            )
+            .await
+            .expect("bind")
+            .expect("enabled");
             let reply = raw_exchange(
                 setup.bound_port,
                 &get_request("/api/v1/health", "loadgen.example:5118"),
