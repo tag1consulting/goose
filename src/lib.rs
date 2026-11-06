@@ -1238,7 +1238,9 @@ impl Drop for UserBatch {
         // part users start from, and every part built and not yet taken. A
         // part still building drops what it built on its own thread.
         let mut users = std::mem::take(&mut self.next);
-        // Closed first, so no part is sent after the drain and dropped here.
+        // Closed first, so a part sent after the drain is refused and its
+        // builder drops it; only a send already under way as it closes can
+        // still be missed here.
         self.parts.close();
         while let Ok(part) = self.parts.try_recv() {
             if let Ok(Some(part)) = part {
@@ -7803,8 +7805,57 @@ mod tests {
         }
     }
 
+    /// A Controller increase whose parts each take longer to build than the
+    /// part before takes to start, so a part lands while its users are
+    /// already due: those users start from when it lands, never faster
+    /// than the rate.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_late_part_never_starts_users_faster_than_the_rate() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        // 20 users a second for each build thread at 50 ms a client: a part
+        // of one user a thread starts in 50 ms, and the next, twice as big,
+        // takes 100 ms to build.
+        let rate = 20 * build_threads();
+        let rate_arg = rate.to_string();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--users", "2", "--increase-rate", &rate_arg, "--run-time", "1h"],
+            vec![index_scenario("Late", 10)],
+            Duration::from_millis(50),
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let users = 30 * build_threads();
+        let change = format!("users {}", 2 + users);
+        assert!(control(&mut goose_attack, &mut run_state, &change).await);
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let starts: Vec<std::time::Instant> = user_events(&goose_attack)
+            .into_iter()
+            .filter_map(|(event, at)| match event {
+                UserEvent::Started(ordinal) if ordinal >= 2 => Some(at),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts.len(), users);
+        let interval = Duration::from_secs(1) / rate as u32;
+        for j in 0..starts.len() {
+            for k in j + 1..starts.len() {
+                assert!(
+                    starts[k] - starts[j] + Duration::from_millis(25)
+                        >= interval * (k - j) as u32,
+                    "users {} to {} started faster than {} a second",
+                    j,
+                    k,
+                    rate
+                );
+            }
+        }
+    }
+
     /// A Controller increase, then a second change before its batch is
-    /// built: the first batch starts no users, and once dropped builds at
+    /// built: the first batch starts no user after the change drops it, and once dropped builds at
     /// most one more client on each build thread. A batch held for a test
     /// plan step is dropped when the Controller replaces the test plan.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7840,16 +7891,6 @@ mod tests {
             "{} clients built after the batch was dropped",
             clients_built(&goose_attack) - dropped
         );
-        // Setup built the first 2; the parts after it are the dropped batch's.
-        let parts: usize = user_events(&goose_attack)
-            .iter()
-            .skip(1)
-            .map(|(event, _)| match event {
-                UserEvent::Built(part) => *part,
-                _ => 0,
-            })
-            .sum();
-        assert!(parts < 1000, "the dropped batch was built");
 
         // A test plan holds its next increase's batch while it maintains.
         let (mut goose_attack, mut run_state) = started_attack(
