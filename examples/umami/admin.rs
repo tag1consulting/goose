@@ -70,6 +70,10 @@ pub async fn log_in(user: &mut GooseUser) -> TransactionResult {
 
                     // A successful log in is redirected.
                     if !logged_in_user.request.redirected {
+                        // Read the body to the end so the connection is reused.
+                        if let Ok(response) = logged_in_user.response {
+                            let _ = response.bytes().await;
+                        }
                         return user.set_failure(
                             &format!(
                                 "{}: login failed (check ADMIN_USERNAME and ADMIN_PASSWORD)",
@@ -174,6 +178,10 @@ pub async fn edit_article(user: &mut GooseUser) -> TransactionResult {
 
                     // A successful node save is redirected.
                     if !saved_article.request.redirected {
+                        // Read the body to the end so the connection is reused.
+                        if let Ok(response) = saved_article.response {
+                            let _ = response.bytes().await;
+                        }
                         return user.set_failure(
                             &format!("{}: saving article failed", saved_article.request.final_url),
                             &mut saved_article.request,

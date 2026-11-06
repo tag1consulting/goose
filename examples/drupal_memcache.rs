@@ -106,7 +106,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
                         // Read each body to the end so the connection is reused.
                         if let Ok(goose) = user.get_named(asset, "static asset").await {
                             if let Err(e) = goose.discard_body().await {
-                                log::debug!("{asset}: reading the body failed: {e}");
+                                log::debug!("{asset}: body not read: {e}");
                             }
                         }
                     }
