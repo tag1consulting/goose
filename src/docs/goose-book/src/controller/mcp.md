@@ -91,7 +91,7 @@ What a tool returns:
 - A command returns its message as text, `users configured` for example, and the whole outcome as structured content: `ok`, `message`, and when they apply `error`, `phase`, `active_users`, `target_users` and `field`.
 - A refused command, such as `set_users` with 0 or `stop` while idle, is a tool result with `isError: true` and the message telnet would print, never a protocol error, so the model reads why.
 - `get_config` and `get_metrics` return the JSON `config-json` and `metrics-json` return, to the byte, as text and as structured content. Tokens read `(set)`.
-- Every tool answers at once, as telnet does: `start` answers once the test is starting, not once its users are running. An agent reads `get_metrics` to see what a change did. A tool waits at most 15 seconds for Goose to answer; on a timeout the change may still apply, so check before retrying.
+- Every tool answers at once, as telnet does: `start` answers once the test is starting, not once its users are running. `set_users` answers once the change is accepted, before the users it adds are built and started; the users count once each starts. An agent reads `get_metrics` to see what a change did: the last `history` row reads `Maintaining` with the new count once it is reached. A tool waits at most 15 seconds for Goose to answer; on a timeout the change may still apply, so check before retrying.
 - An unknown tool is a JSON-RPC error, `-32602`.
 
 The MCP Controller offers no resources and no prompts.
