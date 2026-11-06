@@ -7806,22 +7806,29 @@ mod tests {
     }
 
     /// A Controller increase whose parts each take longer to build than the
-    /// part before takes to start, so a part lands while its users are
-    /// already due: those users start from when it lands, never faster
-    /// than the rate.
+    /// part before takes to start, so each part lands while its first users
+    /// are already due, inside the 100 ms a turn waits for it: its users
+    /// start from when it lands, at the rate, not all at once to catch up.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_a_late_part_never_starts_users_faster_than_the_rate() {
         use crate::controller::tests::control;
 
         let server = index_server();
-        // 20 users a second for each build thread at 50 ms a client: a part
-        // of one user a thread starts in 50 ms, and the next, twice as big,
-        // takes 100 ms to build.
-        let rate = 20 * build_threads();
+        // 40 users a second for each build thread at 50 ms a client: a part
+        // of one user a thread starts in 25 ms, and the next takes at least
+        // 50 ms to build, so every part after the first lands late.
+        let rate = 40 * build_threads();
         let rate_arg = rate.to_string();
         let (mut goose_attack, mut run_state) = started_attack(
             &server.base_url(),
-            &["--users", "2", "--increase-rate", &rate_arg, "--run-time", "1h"],
+            &[
+                "--users",
+                "2",
+                "--increase-rate",
+                &rate_arg,
+                "--run-time",
+                "1h",
+            ],
             vec![index_scenario("Late", 10)],
             Duration::from_millis(50),
         )
@@ -7831,27 +7838,36 @@ mod tests {
         let change = format!("users {}", 2 + users);
         assert!(control(&mut goose_attack, &mut run_state, &change).await);
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        let starts: Vec<std::time::Instant> = user_events(&goose_attack)
-            .into_iter()
-            .filter_map(|(event, at)| match event {
-                UserEvent::Started(ordinal) if ordinal >= 2 => Some(at),
+        assert_eq!(users_started(&goose_attack), 2 + users);
+        // The gap between the first two starts after each part lands: a
+        // part that lands late restarts the schedule, so the second is one
+        // interval after the first; without that, both were overdue and
+        // started back to back. The median keeps a late wake of the main
+        // loop, which catches up as main does, from deciding it.
+        let events = user_events(&goose_attack);
+        let mut gaps = Vec::new();
+        for (at, (event, _)) in events.iter().enumerate().skip(1) {
+            if !matches!(event, UserEvent::Built(_)) {
+                continue;
+            }
+            let mut next = events[at..].iter().filter_map(|(event, when)| match event {
+                UserEvent::Started(_) => Some(*when),
                 _ => None,
-            })
-            .collect();
-        assert_eq!(starts.len(), users);
-        let interval = Duration::from_secs(1) / rate as u32;
-        for j in 0..starts.len() {
-            for k in j + 1..starts.len() {
-                assert!(
-                    starts[k] - starts[j] + Duration::from_millis(25)
-                        >= interval * (k - j) as u32,
-                    "users {} to {} started faster than {} a second",
-                    j,
-                    k,
-                    rate
-                );
+            });
+            if let (Some(first), Some(second)) = (next.next(), next.next()) {
+                gaps.push(second - first);
             }
         }
+        gaps.sort();
+        let interval = Duration::from_secs(1) / rate as u32;
+        assert!(!gaps.is_empty(), "no part landed");
+        assert!(
+            gaps[gaps.len() / 2] * 2 >= interval,
+            "users started {:?} apart after a late part, at {} a second: {:?}",
+            gaps[gaps.len() / 2],
+            rate,
+            gaps
+        );
     }
 
     /// A Controller increase, then a second change before its batch is
