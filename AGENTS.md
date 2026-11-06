@@ -213,7 +213,7 @@ claude mcp add --transport http goose http://127.0.0.1:5119/mcp
 claude mcp add --transport http goose http://127.0.0.1:5119/mcp --header "Authorization: Bearer $GOOSE_MCP_TOKEN"
 ```
 
-Each run also opens the telnet Controller on 5116 unless `--no-telnet`, so a second run on the same machine needs `--no-telnet` or another `--telnet-port`, and another `--mcp-port`.
+A Controller whose port is taken logs an error and the run carries on without it. So a second run on the same machine with the same `--mcp-port` has no MCP Controller, and an agent pointed at `127.0.0.1:5119` drives the first run, not the second: give the second run another `--mcp-port` (and `--no-telnet` or another `--telnet-port`).
 
 The tools, as `src/controller/mcp.rs` names them:
 

@@ -96,7 +96,7 @@ When implementing new features:
 ## Configuration Management
 
 ### GooseConfiguration Pattern
-**CLI and configuration file support**:
+**Command-line configuration**:
 - Use `clap` for CLI parsing
 - Command-line options, with defaults set in code through `GooseDefault`
 - Validate options early with clear error messages
