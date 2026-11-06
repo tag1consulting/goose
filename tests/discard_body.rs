@@ -6,7 +6,7 @@
 //! with the same body, large enough that it cannot arrive whole with the headers.
 
 use serial_test::serial;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -70,10 +70,14 @@ async fn drop_body(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
+/// Body bytes `discard_body` read, summed over every request, checked by the test
+/// itself: a panic or assert inside a user's transaction would not fail the test.
+static DISCARDED_BYTES: AtomicU64 = AtomicU64::new(0);
+
 /// Reads the response body to the end with `discard_body`.
 async fn discard_body(user: &mut GooseUser) -> TransactionResult {
-    let read = user.get("/body").await?.discard_body().await.unwrap();
-    assert_eq!(read, BODY_BYTES as u64);
+    let read = user.get("/body").await?.discard_body().await?;
+    DISCARDED_BYTES.fetch_add(read, Ordering::SeqCst);
     Ok(())
 }
 
@@ -134,8 +138,14 @@ async fn dropped_bodies_open_new_connections() {
 #[serial]
 /// Bodies read to the end with `discard_body` keep reusing the user's connections.
 async fn discarded_bodies_reuse_connections() {
+    DISCARDED_BYTES.store(0, Ordering::SeqCst);
     let (connections, counted) = run(transaction!(discard_body)).await;
     assert_eq!(counted, REQUESTS);
+    assert_eq!(
+        DISCARDED_BYTES.load(Ordering::SeqCst),
+        (REQUESTS * BODY_BYTES) as u64,
+        "discard_body did not read every body to the end"
+    );
     assert!(
         connections <= MOST_REUSED_CONNECTIONS,
         "{} requests with discarded bodies opened {} connections",
