@@ -53,9 +53,9 @@ The saved run commands, `runs`, `report` and `compare` (see [Saved runs](overvie
 
 ```bash
 {"request":"runs-json"}
-{"response":"{\"dir\":\"goose-runs\",\"runs\":[{\"name\":\"20261106-101722\",\"goose_version\":\"0.20.0-dev\",\"test\":\"simple\",\"started\":\"2026-11-06T09:17:22.120Z\",...,\"running\":false,\"duration_secs\":10,\"max_users\":10,\"requests\":17394,\"failed_requests\":0}],\"more\":false}","success":true}
-{"request":"report-json 20261106-101722"}
-{"response":"{\"co_request_metrics\":null,...,\"test\":\"simple\"}","success":true}
+{"response":"{\"dir\":\"goose-runs\",\"runs\":[{\"name\":\"20261106-191049\",\"goose_version\":\"0.20.0-dev\",\"test\":\"simple\",\"started\":\"2026-11-06T18:10:49Z\",\"ended\":\"2026-11-06T18:11:11Z\",\"ended_by\":\"completed\",\"in_progress\":false,\"running\":false,\"duration_secs\":20,\"max_users\":30,\"requests\":53,\"failed_requests\":0},...],\"more\":false}","success":true}
+{"request":"report-json 20261106-191049"}
+{"response":"{\"co_request_metrics\":null,\"co_response_metrics\":null,\"coordinated_omission_metrics\":null,\"ended\":\"2026-11-06T18:11:11Z\",\"ended_by\":\"completed\",...}","success":true}
 {"request":"report nope"}
 {"response":"no saved run named \"nope\"","success":false}
 ```

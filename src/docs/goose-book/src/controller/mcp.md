@@ -107,9 +107,11 @@ Started with `--no-autostart` from the folder that holds `goose-runs`, Goose run
 
 ```bash
 npx @modelcontextprotocol/inspector --cli http://127.0.0.1:5119/mcp --method tools/call --tool-name list_runs
-npx @modelcontextprotocol/inspector --cli http://127.0.0.1:5119/mcp --method tools/call --tool-name get_run_report --tool-arg run=20261106-101722
-npx @modelcontextprotocol/inspector --cli http://127.0.0.1:5119/mcp --method tools/call --tool-name compare_runs --tool-arg baseline=20261106-101621
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:5119/mcp --method tools/call --tool-name get_run_report --tool-arg run=20261106-191049
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:5119/mcp --method tools/call --tool-name compare_runs --tool-arg baseline=20261106-191005
 ```
+
+`compare_runs` answers with the same text telnet's `compare 20261106-191005` prints, starting `Run 20261106-191049 (started 2026-11-06 18:10:49 UTC) compared to baseline 20261106-191005 (started 2026-11-06 18:10:05 UTC).`, as text and as `markdown` in its structured content. A `run` is one folder name: `"a b"` is refused as telnet's `report a b` is.
 
 ## Read only mode
 

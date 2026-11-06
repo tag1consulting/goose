@@ -303,6 +303,9 @@ async fn controllers_say(front: &mut FrontEnds, line: &str) -> String {
 /// comparison. `newer` are the runs saved in this session, newest first,
 /// before the saved runs of `runs`; a run in progress is listed as running.
 async fn saved_runs_agree(front: &mut FrontEnds, runs: &saved_runs::SavedRuns, newer: &[&str]) {
+    // A client that takes no gzip, so the dashboard gunzips a gzipped
+    // report itself, as it does for any such client.
+    let plain = reqwest::Client::builder().no_gzip().build().unwrap();
     let all: Vec<String> = newer
         .iter()
         .map(|name| name.to_string())
@@ -350,10 +353,12 @@ async fn saved_runs_agree(front: &mut FrontEnds, runs: &saved_runs::SavedRuns, n
     reported.push((String::new(), all[0].clone()));
     for (named, name) in &reported {
         let markdown = controllers_say(front, &format!("report{named}")).await;
-        let (status, served) =
-            dashboard_get(&front.client, &format!("/api/v1/reports/{name}/report.md")).await;
-        assert_eq!(status, 200, "{}", served);
-        assert_eq!(markdown, served, "report {}", name);
+        for client in [&front.client, &plain] {
+            let (status, served) =
+                dashboard_get(client, &format!("/api/v1/reports/{name}/report.md")).await;
+            assert_eq!(status, 200, "{}", served);
+            assert_eq!(markdown, served, "report {}", name);
+        }
         let json = controllers_say(front, &format!("report-json{named}")).await;
         let (status, served) = dashboard_get(
             &front.client,

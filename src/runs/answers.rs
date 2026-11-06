@@ -644,11 +644,19 @@ mod tests {
         std::os::unix::fs::symlink(&secret, &markdown).unwrap();
         assert!(crate::runs::open_regular(&markdown).is_err());
         assert!(crate::runs::read_stored(&markdown).is_err());
+        // A symlink to a valid report is refused too, by rendering, the
+        // listing and a comparison, so it is the check that refuses it.
         let json = folder.join(REPORT_JSON);
-        std::fs::rename(&json, folder.join("real.json")).unwrap();
-        std::os::unix::fs::symlink(&secret, &json).unwrap();
+        let real = folder.join("real.json");
+        std::fs::rename(&json, &real).unwrap();
+        assert!(crate::runs::render_report(&real, "md").is_ok());
+        assert!(crate::runs::read_record(&real).is_some());
+        std::os::unix::fs::symlink(&real, &json).unwrap();
         assert!(crate::runs::read_stored_text(&json).is_err());
         assert!(crate::runs::render_report(&json, "md").is_err());
+        assert!(crate::runs::read_record(&json).is_none());
+        assert!(crate::metrics::compare_reports(&json, "a", &real, "b").is_err());
+        assert!(crate::metrics::compare_reports(&real, "a", &json, "b").is_err());
         std::fs::remove_dir_all(&parent).ok();
     }
 

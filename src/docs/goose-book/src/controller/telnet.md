@@ -94,21 +94,27 @@ A test plan sets users, so a rate or a time is refused in Idle with `set users f
 % telnet localhost 5116
 goose> runs
 saved runs in goose-runs, newest first:
-20261106-101722  started 2026-11-06 09:17:22 UTC  10s  10 max users  17394 requests  0 failed  completed
-20261106-101651  started 2026-11-06 09:16:51 UTC  10s  10 max users  17401 requests  0 failed  completed
-20261106-101621  started 2026-11-06 09:16:21 UTC  10s  5 max users  8705 requests  0 failed  stopped
+20261106-191049  started 2026-11-06 18:10:49 UTC  20s  30 max users  53 requests  0 failed  completed
+20261106-191027  started 2026-11-06 18:10:27 UTC  20s  20 max users  35 requests  0 failed  completed
+20261106-191005  started 2026-11-06 18:10:05 UTC  20s  10 max users  14 requests  0 failed  completed
 no more saved runs
 goose> report
-# Goose Attack Report
-...
-goose> compare 20261106-101621
-Run 20261106-101722 (started 2026-11-06 09:17:22 UTC) compared to baseline 20261106-101621 (started 2026-11-06 09:16:21 UTC).
 
 # Goose Attack Report
+...
+goose> compare 20261106-191005
+Run 20261106-191049 (started 2026-11-06 18:10:49 UTC) compared to baseline 20261106-191005 (started 2026-11-06 18:10:05 UTC).
+
+
+# Goose Attack Report
+...
+| GET | / | 21 (+17) | 0 (+0) | 0.49 (+0.01) | 0.32 (+0.05) | 0.81 (+0.07) | 1.05 (+0.85) | 0.00 (+0.00) |
 ...
 goose> report ../etc
 no saved run named "../etc"
 ```
+
+These are three 20 second runs of the `simple` example against a local server, at 10, 20 and 30 users; a comparison shows each figure with its change from the baseline in brackets.
 
 With more than 20 runs, the listing ends `more saved runs: runs NAME`, and `runs NAME` lists the 20 after it. `report` and `compare` with no run named take the newest. `report-json` prints the run's `report.json` on one line without its per second graph data, as `metrics-json` prints the metrics; a report still over 4 MiB without it is refused, and `report` gives its Markdown. The run in progress is listed as `running` once Save report now has saved it. Anyone who can reach this Controller can read every saved run.
 
