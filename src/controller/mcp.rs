@@ -338,7 +338,7 @@ impl Tool {
         description
     }
 
-    /// The tool's annotations: the two that read are read only; `stop` and
+    /// The tool's annotations: the tools that read are read only; `stop` and
     /// `shutdown` are destructive, ending a run; every tool that can start or
     /// change traffic reaches the world outside, the host under load; and
     /// those that change nothing more when called again are idempotent.
@@ -401,8 +401,8 @@ impl Tool {
         object(schema)
     }
 
-    /// The tool's output schema: the configuration or metrics JSON for the
-    /// two that read, otherwise the outcome every front end answers with.
+    /// The tool's output schema: the configuration, metrics or saved runs for
+    /// the tools that read, otherwise the outcome every front end answers with.
     fn output_schema(self) -> JsonObject {
         let schema = match self {
             Tool::GetConfig => json!({
@@ -469,14 +469,15 @@ impl Tool {
     /// or the refusal a telnet user would read. A number is read as its
     /// text, and a missing argument as no value at all.
     fn command(self, arguments: &JsonObject) -> Result<ControllerCommand, &'static str> {
-        // A saved run's name, as text; none when missing or empty, as on a
-        // telnet line.
+        // A saved run's name, as text, trimmed as on a telnet line; none
+        // when missing, null or blank.
         let text = |name: &str| {
             arguments
                 .get(name)
-                .map(|value| match value {
-                    Value::String(text) => text.clone(),
-                    other => other.to_string(),
+                .and_then(|value| match value {
+                    Value::Null => None,
+                    Value::String(text) => Some(text.trim().to_string()),
+                    other => Some(other.to_string()),
                 })
                 .filter(|text| !text.is_empty())
         };
@@ -899,6 +900,37 @@ mod tests {
         }
     }
 
+    /// A saved run tool reads a null or blank name as none, and trims one, as
+    /// telnet reads a line.
+    #[test]
+    fn saved_run_names_read_as_telnet_reads_them() {
+        let command =
+            |tool: Tool, arguments: Value| format!("{:?}", tool.command(&object(arguments)));
+        assert_eq!(
+            command(Tool::GetRunReport, json!({ "run": null, "format": null })),
+            format!("{:?}", Ok::<_, &str>(ControllerCommand::Report(None)))
+        );
+        assert_eq!(
+            command(Tool::GetRunReport, json!({ "run": "  " })),
+            format!("{:?}", Ok::<_, &str>(ControllerCommand::Report(None)))
+        );
+        assert_eq!(
+            command(Tool::ListRuns, json!({ "before": " run-1 " })),
+            format!(
+                "{:?}",
+                Ok::<_, &str>(ControllerCommand::RunsJson(Some("run-1".to_string())))
+            )
+        );
+        assert_eq!(
+            command(Tool::CompareRuns, json!({ "baseline": null })),
+            format!("{:?}", Err::<ControllerCommand, _>(INVALID_COMPARE_MSG))
+        );
+        assert_eq!(
+            command(Tool::GetRunReport, json!({ "format": "pdf" })),
+            format!("{:?}", Err::<ControllerCommand, _>(INVALID_FORMAT_MSG))
+        );
+    }
+
     /// Every command but `Quit` has a tool, each tool belongs to one command,
     /// and every name is distinct.
     #[test]
@@ -944,7 +976,7 @@ mod tests {
         assert_eq!(names.len(), Tool::ALL.len());
     }
 
-    /// Every description starts with its command's HELP line, the two that
+    /// Every description starts with its command's HELP line, the tools that
     /// read say their output is data, and the annotations follow the rules.
     #[test]
     fn descriptions_and_annotations() {

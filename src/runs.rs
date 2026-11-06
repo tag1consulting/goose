@@ -1322,7 +1322,7 @@ pub(crate) fn list_reports(
 
 /// The record of the run in the JSON report at `json`, plain or gzipped.
 pub(crate) fn read_record(json: &Path) -> Option<RunRecord> {
-    let text = crate::metrics::read_report_text(json).ok()?;
+    let text = read_stored_text(json).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -1355,7 +1355,7 @@ fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Opti
         #[serde(default)]
         fail_count: u64,
     }
-    let text = crate::metrics::read_report_text(json).ok()?;
+    let text = read_stored_text(json).ok()?;
     let record: RunRecord = serde_json::from_str(&text).ok()?;
     let metrics = serde_json::from_str::<Listed>(&text).ok()?.raw_metrics;
     let written = DateTime::<Utc>::from(modified).timestamp();
@@ -1413,10 +1413,67 @@ impl RunningFolder {
         self.get().is_some_and(|own| {
             own == name
                 || std::fs::symlink_metadata(parent.join(&own))
-                    .is_ok_and(|metadata| crate::dashboard::same_file(folder, &metadata))
+                    .is_ok_and(|metadata| same_file(folder, &metadata))
         })
     }
 }
+
+/// True when the open file's metadata is that of the file at `path` now, by
+/// device and inode where the platform has them.
+pub(crate) fn same_file(path: &Path, opened: &std::fs::Metadata) -> bool {
+    let Ok(at_path) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        at_path.dev() == opened.dev() && at_path.ino() == opened.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        at_path.file_type().is_file() && at_path.len() == opened.len()
+    }
+}
+
+/// The file at `path`, opened and checked to be the regular file at the path
+/// now, so a symlink swapped in after [`regular_file`] checked the path is
+/// never read.
+pub(crate) fn open_regular(path: &Path) -> io::Result<std::fs::File> {
+    let file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || !same_file(path, &metadata) {
+        return Err(io::Error::other("the report changed"));
+    }
+    Ok(file)
+}
+
+/// A report stored in a run's folder, read whole through [`open_regular`],
+/// gunzipped when its name ends in `.gz`.
+pub(crate) fn read_stored(path: &Path) -> io::Result<Vec<u8>> {
+    let file = open_regular(path)?;
+    let mut out = Vec::new();
+    if without_gz(&path.to_string_lossy()).1 {
+        io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(file), &mut out)?;
+    } else {
+        io::Read::read_to_end(&mut io::BufReader::new(file), &mut out)?;
+    }
+    Ok(out)
+}
+
+/// [`read_stored`] as text.
+pub(crate) fn read_stored_text(path: &Path) -> io::Result<String> {
+    String::from_utf8(read_stored(path)?).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        )
+    })
+}
+
+/// How many saved run reads the Controllers run at once. A read holds its
+/// permit until it ends, after a timeout too, so reads a client gave up on
+/// can not pile up.
+pub(crate) const SAVED_RUN_READERS: usize = 2;
 
 /// The saved runs every front end reads: the folder run folders go in, the
 /// folder of the run in progress, and the listing cache, all shared, so the
@@ -1429,6 +1486,8 @@ pub(crate) struct SavedRuns {
     pub running: RunningFolder,
     /// What the last listing parsed, by path.
     pub cache: Arc<Mutex<ListingCache>>,
+    /// The Controllers' reads, at most [`SAVED_RUN_READERS`] at once.
+    pub readers: Arc<tokio::sync::Semaphore>,
 }
 
 impl SavedRuns {
@@ -1438,6 +1497,7 @@ impl SavedRuns {
             parent: parent_folder(configuration),
             running: RunningFolder::default(),
             cache: Arc::new(Mutex::new(ListingCache::new())),
+            readers: Arc::new(tokio::sync::Semaphore::new(SAVED_RUN_READERS)),
         }
     }
 
@@ -1453,7 +1513,10 @@ impl SavedRuns {
 /// rendered from the JSON report at `json`, as the dashboard serves it for a
 /// folder that lacks it. An error is one line for the person who asked.
 pub(crate) fn render_report(json: &Path, ext: &str) -> Result<Vec<u8>, String> {
-    let loaded = LoadedReport::read(json)?;
+    let text = read_stored_text(json).map_err(|e| format!("Can't read {}: {e}", json.display()))?;
+    let loaded = LoadedReport::parse(&text).map_err(|e| {
+        e.describe(|e| format!("{} is not a Goose JSON report: {e}", json.display()))
+    })?;
     let configuration = GooseConfiguration::default();
     let empty = GraphData::new();
     let source = loaded.source(&configuration, &empty);
@@ -1472,11 +1535,7 @@ pub(crate) fn render_report(json: &Path, ext: &str) -> Result<Vec<u8>, String> {
 pub(crate) fn report_markdown(folder: &Path, json: &Path) -> Result<Vec<u8>, String> {
     match regular_file(folder, REPORT_MD) {
         Some(stored) => {
-            let mut out = Vec::new();
-            crate::metrics::open_report(&stored)
-                .and_then(|mut reader| io::Read::read_to_end(&mut reader, &mut out))
-                .map_err(|e| format!("Can't read the Markdown report: {e}"))?;
-            Ok(out)
+            read_stored(&stored).map_err(|e| format!("Can't read the Markdown report: {e}"))
         }
         None => render_report(json, "md"),
     }

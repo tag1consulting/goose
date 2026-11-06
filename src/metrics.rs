@@ -29,8 +29,9 @@ pub use buckets::TimeBuckets;
 pub(crate) use common::compare_reports;
 #[cfg(test)]
 pub(crate) use common::json_report_path;
+#[cfg(test)]
+pub(crate) use common::read_report_text;
 pub(crate) use common::{load_baseline_file, LoadedReport, ReportData};
-pub(crate) use common::{open_report, read_report_text};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 pub(crate) use dashboard_snapshot::DashboardSnapshot;
 pub(crate) use delta::{ApplyBaseline, DeltaTo, Value};

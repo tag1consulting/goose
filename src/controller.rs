@@ -420,17 +420,34 @@ pub(crate) async fn answer_saved_runs(
 ) -> Result<crate::runs::answers::Answer, String> {
     use crate::runs::answers;
     let saved_runs = saved_runs.clone();
-    let task = tokio::task::spawn_blocking(move || match command {
-        ControllerCommand::Runs(before) => answers::list(&saved_runs, before.as_deref(), false),
-        ControllerCommand::RunsJson(before) => answers::list(&saved_runs, before.as_deref(), true),
-        ControllerCommand::Report(run) => answers::report(&saved_runs, run.as_deref(), false),
-        ControllerCommand::ReportJson(run) => answers::report(&saved_runs, run.as_deref(), true),
-        ControllerCommand::Compare { run, baseline } => {
-            answers::compare(&saved_runs, run.as_deref(), &baseline)
-        }
-        _ => Err(UNRECOGNIZED.to_string()),
-    });
-    match tokio::time::timeout(timeout, task).await {
+    // The read waits for a permit, which it holds until it ends, even once
+    // the client has timed out.
+    let read = async move {
+        let permit = Arc::clone(&saved_runs.readers).acquire_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            match command {
+                ControllerCommand::Runs(before) => {
+                    answers::list(&saved_runs, before.as_deref(), false)
+                }
+                ControllerCommand::RunsJson(before) => {
+                    answers::list(&saved_runs, before.as_deref(), true)
+                }
+                ControllerCommand::Report(run) => {
+                    answers::report(&saved_runs, run.as_deref(), false)
+                }
+                ControllerCommand::ReportJson(run) => {
+                    answers::report(&saved_runs, run.as_deref(), true)
+                }
+                ControllerCommand::Compare { run, baseline } => {
+                    answers::compare(&saved_runs, run.as_deref(), &baseline)
+                }
+                _ => Err(UNRECOGNIZED.to_string()),
+            }
+        })
+        .await
+    };
+    match tokio::time::timeout(timeout, read).await {
         Ok(Ok(answer)) => answer,
         Ok(Err(e)) => {
             warn!("[controller]: reading the saved runs failed: {e}");
@@ -2231,6 +2248,38 @@ pub(crate) mod tests {
             let command = line.parse::<ControllerCommand>().unwrap();
             assert!(!command.reads_saved_runs(), "{}", line);
         }
+    }
+
+    /// A saved run read waits for a permit, and a client that times out
+    /// first is told so, reading nothing; with a permit free it is answered.
+    #[test]
+    fn saved_run_reads_wait_for_a_permit() {
+        finishes(|| async {
+            let saved_runs = runs::SavedRuns::new(&GooseConfiguration::default());
+            let held = Arc::clone(&saved_runs.readers)
+                .acquire_many_owned(runs::SAVED_RUN_READERS as u32)
+                .await
+                .unwrap();
+            let answer = answer_saved_runs(
+                &saved_runs,
+                ControllerCommand::Report(Some("..".to_string())),
+                Duration::from_millis(100),
+            )
+            .await;
+            assert_eq!(answer.unwrap_err(), SAVED_RUNS_TIMED_OUT);
+            drop(held);
+            let answer = answer_saved_runs(
+                &saved_runs,
+                ControllerCommand::Report(Some("..".to_string())),
+                CONTROL_TIMEOUT,
+            )
+            .await;
+            assert_eq!(answer.unwrap_err(), "no saved run named \"..\"");
+            assert_eq!(
+                saved_runs.readers.available_permits(),
+                runs::SAVED_RUN_READERS
+            );
+        });
     }
 
     /// The saved run commands' lines in the help, each in the usage column

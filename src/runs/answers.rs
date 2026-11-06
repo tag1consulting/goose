@@ -232,7 +232,7 @@ pub(crate) fn report_capped(
 /// heatmap it holds under [`crate::metrics::REPORT_GRAPHS`], refused when
 /// what is left is over `cap` bytes.
 fn report_json(path: &std::path::Path, name: &str, cap: usize) -> Result<Answer, String> {
-    let text = crate::metrics::read_report_text(path)
+    let text = super::read_stored_text(path)
         .map_err(|e| format!("Can't read the report of run {name}: {e}"))?;
     let mut value: Value = serde_json::from_str(&text)
         .map_err(|e| format!("The report of run {name} is not JSON: {e}"))?;
@@ -322,6 +322,7 @@ mod tests {
             parent: parent.to_path_buf(),
             running: RunningFolder::default(),
             cache: Arc::new(Mutex::new(Default::default())),
+            readers: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
@@ -622,6 +623,32 @@ mod tests {
         assert_eq!(size_text(MAX_REPORT_JSON), "4.0 MiB");
         assert_eq!(size_text(5 * 1024 * 1024 + 200 * 1024), "5.2 MiB");
         assert_eq!(size_text(100), "100 bytes");
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    /// A stored report is read only through a handle that is the regular
+    /// file at its path: a symlink swapped in after the path was checked is
+    /// refused, never followed.
+    #[cfg(unix)]
+    #[test]
+    fn a_stored_report_is_never_read_through_a_symlink() {
+        let parent = parent("swap");
+        let secret = parent.join("secret.txt");
+        std::fs::write(&secret, "not a report").unwrap();
+        let folder = save(&parent, "run", &fixture(1, "completed", false));
+        let markdown = folder.join(REPORT_MD);
+        std::fs::write(&markdown, "# report\n").unwrap();
+        assert_eq!(crate::runs::read_stored(&markdown).unwrap(), b"# report\n");
+        // The path checked, then a symlink swapped in before it is read.
+        std::fs::remove_file(&markdown).unwrap();
+        std::os::unix::fs::symlink(&secret, &markdown).unwrap();
+        assert!(crate::runs::open_regular(&markdown).is_err());
+        assert!(crate::runs::read_stored(&markdown).is_err());
+        let json = folder.join(REPORT_JSON);
+        std::fs::rename(&json, folder.join("real.json")).unwrap();
+        std::os::unix::fs::symlink(&secret, &json).unwrap();
+        assert!(crate::runs::read_stored_text(&json).is_err());
+        assert!(crate::runs::render_report(&json, "md").is_err());
         std::fs::remove_dir_all(&parent).ok();
     }
 

@@ -27,7 +27,7 @@ use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSettings,
 };
 use crate::metrics::DashboardSnapshot;
-use crate::runs::{self, RunningFolder};
+use crate::runs::{self, same_file, RunningFolder};
 use crate::serve::{self, bearer_token_from_headers, constant_time_eq};
 use crate::{ControlOutcome, GooseConfiguration, GooseError};
 
@@ -1850,17 +1850,7 @@ async fn report_file_handler(
         }
         // The file opened is checked to be the one at the path, as when it is
         // streamed.
-        let gunzipped = tokio::task::spawn_blocking(move || {
-            let file = std::fs::File::open(&stored)?;
-            let metadata = file.metadata()?;
-            if !metadata.is_file() || !same_file(&stored, &metadata) {
-                return Err(std::io::Error::other("the report changed"));
-            }
-            let mut body = Vec::new();
-            std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(file), &mut body)?;
-            Ok(body)
-        })
-        .await;
+        let gunzipped = tokio::task::spawn_blocking(move || runs::read_stored(&stored)).await;
         return match gunzipped {
             Ok(Ok(body)) => {
                 let length = body.len() as u64;
@@ -1995,23 +1985,6 @@ async fn stored_file_response(
             .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
     }
     response
-}
-
-/// True when the open file's metadata is that of the file at `path` now, by
-/// device and inode where the platform has them.
-pub(crate) fn same_file(path: &Path, opened: &std::fs::Metadata) -> bool {
-    let Ok(at_path) = std::fs::symlink_metadata(path) else {
-        return false;
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        at_path.dev() == opened.dev() && at_path.ino() == opened.ino()
-    }
-    #[cfg(not(unix))]
-    {
-        at_path.file_type().is_file() && at_path.len() == opened.len()
-    }
 }
 
 /// Chunks of an open file, read as the response is sent, so a report is never

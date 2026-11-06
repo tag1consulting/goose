@@ -4,7 +4,8 @@
 //!
 //! Three short load tests write real runs: `plain` (report.json with graph
 //! data and report.html, no report.md, so Markdown is rendered), `zipped`
-//! (gzipped reports) and `stored` (a report.md of its own). Copies of
+//! (gzipped reports, report.md.gz among them) and `stored` (a report.md of
+//! its own). Copies of
 //! `plain`'s JSON report, each moved to an earlier start, bring the folder to
 //! 22 runs, so a listing takes two pages. A symlink to `plain` and a hidden
 //! copy sit beside them and must never be listed.
@@ -150,7 +151,15 @@ pub async fn build_in(parent: PathBuf) -> SavedRuns {
         when.method(GET).path("/");
         then.status(200).body("saved runs");
     });
-    run(&server, &parent, "zipped", &["--compress"]).await;
+    let zipped_markdown = parent.join("zipped").join("report.md.gz");
+    let zipped_markdown = zipped_markdown.to_string_lossy().into_owned();
+    run(
+        &server,
+        &parent,
+        "zipped",
+        &["--compress", "--report-file", &zipped_markdown],
+    )
+    .await;
     let markdown = parent.join("stored").join("report.md");
     let markdown = markdown.to_string_lossy().into_owned();
     run(&server, &parent, "stored", &["--report-file", &markdown]).await;
@@ -159,6 +168,7 @@ pub async fn build_in(parent: PathBuf) -> SavedRuns {
     assert!(plain.get(GRAPHS).is_some(), "plain holds graph data");
     assert!(parent.join("stored").join("report.md").is_file());
     assert!(parent.join("zipped").join("report.json.gz").is_file());
+    assert!(parent.join("zipped").join("report.md.gz").is_file());
     assert!(!parent.join("plain").join("report.md").exists());
 
     // Copies of plain, each started an hour before the last.
