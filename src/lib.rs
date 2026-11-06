@@ -1104,13 +1104,13 @@ impl GooseAttack {
     /// }
     ///
     /// async fn a_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/foo").await?;
+    ///     let _ = user.get("/foo").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn b_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/bar").await?;
+    ///     let _ = user.get("/bar").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1141,13 +1141,13 @@ impl GooseAttack {
     /// }
     ///
     /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/foo").await?;
+    ///     let _ = user.get("/foo").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn other_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/bar").await?;
+    ///     let _ = user.get("/bar").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1290,7 +1290,11 @@ impl GooseAttack {
     ///     // the worker's first user's ordinal: each user takes its own account.
     ///     let index = user.weighted_users_index.saturating_sub(first);
     ///     if let Some(account) = accounts.get(index) {
-    ///         let _goose = user.post("/login", account.to_string()).await?;
+    ///         let _ = user
+    ///             .post("/login", account.to_string())
+    ///             .await?
+    ///             .discard_body()
+    ///             .await;
     ///     }
     ///
     ///     Ok(())
@@ -1877,13 +1881,13 @@ impl GooseAttack {
     /// }
     ///
     /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/foo").await?;
+    ///     let _ = user.get("/foo").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn another_example_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/bar").await?;
+    ///     let _ = user.get("/bar").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }

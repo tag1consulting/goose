@@ -23,10 +23,10 @@ There is no configured GraphQL endpoint: the path is the first argument of each 
 
 ```rust,ignore
 // Using the conventional /graphql endpoint
-let _goose = user.post_graphql("/graphql", &query).await?;
+let _ = user.post_graphql("/graphql", &query).await?.discard_body().await;
 
 // Using a custom endpoint
-let _goose = user.post_graphql("/api/graphql", &query).await?;
+let _ = user.post_graphql("/api/graphql", &query).await?.discard_body().await;
 ```
 
 ## Example: GraphQL Load Test
@@ -107,7 +107,7 @@ async fn authenticated_graphql_transaction(user: &mut GooseUser) -> TransactionR
         .name("authenticated query")
         .build();
 
-    let _goose = user.request(goose_request).await?;
+    let _ = user.request(goose_request).await?.discard_body().await;
     Ok(())
 }
 ```

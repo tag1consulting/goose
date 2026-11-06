@@ -17,7 +17,7 @@ Goose records the time of every request it makes. That alone does not prevent co
 async fn user_function(user: &mut GooseUser) -> TransactionResult {
     // Even if this takes 30 seconds, Goose records the 30 seconds,
     // and this user sends nothing else while it waits.
-    let _goose = user.get("/slow-endpoint").await?;
+    let _ = user.get("/slow-endpoint").await?.discard_body().await;
     Ok(())
 }
 ```
@@ -138,7 +138,7 @@ async fn slow_endpoint(user: &mut GooseUser) -> TransactionResult {
         .path("/endpoint")
         .set_request_builder(request_builder)
         .build();
-    let _goose = user.request(goose_request).await?;
+    let _ = user.request(goose_request).await?.discard_body().await;
 
     Ok(())
 }
@@ -244,6 +244,7 @@ async fn monitored_request(user: &mut GooseUser) -> TransactionResult {
             None,
         )?;
     }
+    let _ = goose.discard_body().await;
 
     Ok(())
 }

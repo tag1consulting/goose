@@ -152,6 +152,7 @@
 //!         None,
 //!         None,
 //!     )?;
+//!     let _ = goose.discard_body().await;
 //!
 //!     Ok(())
 //! }

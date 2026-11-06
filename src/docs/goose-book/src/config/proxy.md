@@ -121,7 +121,7 @@ async fn main() -> Result<(), GooseError> {
 }
 
 async fn homepage(user: &mut GooseUser) -> TransactionResult {
-    let _goose_metrics = user.get("/").await?;
+    let _ = user.get("/").await?.discard_body().await;
     Ok(())
 }
 ```
@@ -167,7 +167,7 @@ async fn main() -> Result<(), GooseError> {
 }
 
 async fn homepage(user: &mut GooseUser) -> TransactionResult {
-    let _goose_metrics = user.get("/").await?;
+    let _ = user.get("/").await?.discard_body().await;
     Ok(())
 }
 ```

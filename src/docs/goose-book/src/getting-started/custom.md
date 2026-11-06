@@ -12,7 +12,7 @@ Alternatively, you can use this method to set configurable custom defaults. The 
 use goose::prelude::*;
 
 async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
-    let _goose_metrics = user.get("").await?;
+    let _ = user.get("").await?.discard_body().await;
 
     Ok(())
 }
@@ -97,7 +97,7 @@ struct Options {
 }
 
 async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
-    let _goose_metrics = user.get("").await?;
+    let _ = user.get("").await?.discard_body().await;
 
     Ok(())
 }
@@ -137,7 +137,7 @@ use goose::config::GooseConfiguration;
 use goose::prelude::*;
 
 async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
-    let _goose_metrics = user.get("").await?;
+    let _ = user.get("").await?.discard_body().await;
 
     Ok(())
 }
