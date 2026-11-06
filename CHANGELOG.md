@@ -2,6 +2,8 @@
 
 ## 0.19.2-dev
 
+ - examples read every response body to the end, so a user reuses its HTTP/1.1 connection: `examples/umami` and `examples/drupal_memcache` dropped every static asset's response with its body unread, which closed its connection (against Varnish, the Umami example opened a new connection for two thirds of its requests and cut large assets off mid transfer), and the crate docs, other examples and the Book taught the same idiom with `let _goose = user.get(...)`; adds `GooseResponse::discard_body`, which reads a body to the end a chunk at a time, throws it away and returns the number of bytes read, used wherever a body was dropped, and a Book tip, Read every response body; recorded times are unchanged
+
 ## 0.19.1 November 3, 2026
 
  - [#803](https://github.com/tag1consulting/goose/pull/803) the Goose Book loads Rybbit page view analytics when served from `book.goose.rs`, through `theme/head.hbs`, and nowhere else
