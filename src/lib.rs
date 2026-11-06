@@ -1133,16 +1133,6 @@ struct StepStarts {
     in_second: usize,
 }
 
-/// What a [`UserBatch`] has for the next user to start.
-enum NextUser {
-    /// The next user, built.
-    Built(GooseUser),
-    /// Its part is still building.
-    Building,
-    /// Building it failed.
-    Failed(String),
-}
-
 impl UserBatch {
     /// A batch of `size` users built from `build`, whose parts come on
     /// `parts`.
@@ -1200,8 +1190,9 @@ impl UserBatch {
         batch
     }
 
-    /// The next user to start, waiting up to `wait` for its part.
-    async fn next_user(&mut self, wait: Duration) -> NextUser {
+    /// The next user to start, waiting up to `wait` for its part: `None`
+    /// while its part builds, an error when building it failed.
+    async fn next_user(&mut self, wait: Duration) -> Result<Option<GooseUser>, String> {
         if self.next.is_empty() {
             // A part already on the channel is taken without waiting.
             let (part, waited) = match self.parts.try_recv() {
@@ -1210,7 +1201,7 @@ impl UserBatch {
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                     match tokio::time::timeout(wait, self.parts.recv()).await {
                         Ok(part) => (part, true),
-                        Err(_) => return NextUser::Building,
+                        Err(_) => return Ok(None),
                     }
                 }
             };
@@ -1224,17 +1215,15 @@ impl UserBatch {
                     }
                 }
                 Some(Ok(None)) => unreachable!("a batch still held was canceled"),
-                Some(Err(e)) => return NextUser::Failed(e.to_string()),
-                None => return NextUser::Failed("its build stopped".to_string()),
+                Some(Err(e)) => return Err(e.to_string()),
+                None => return Err("its build stopped".to_string()),
             }
         }
-        match self.next.pop() {
-            Some(user) => {
-                self.left -= 1;
-                NextUser::Built(user)
-            }
-            None => NextUser::Building,
+        let user = self.next.pop();
+        if user.is_some() {
+            self.left -= 1;
         }
+        Ok(user)
     }
 }
 
@@ -2387,12 +2376,12 @@ impl GooseAttack {
             return None;
         }
         match batch.next_user(Duration::from_millis(100)).await {
-            NextUser::Built(user) => Some(user),
-            NextUser::Building => {
+            Ok(Some(user)) => Some(user),
+            Ok(None) => {
                 batch.stalled = true;
                 None
             }
-            NextUser::Failed(e) => {
+            Err(e) => {
                 let (first, left) = (self.metrics.total_users + 1, batch.left);
                 error!(
                     "[users]: failed to build users {first} to {}, starting none of them: {e}",
@@ -2418,7 +2407,11 @@ impl GooseAttack {
             return;
         };
         let elapsed = boundary.elapsed();
-        if self.step_starts.as_ref().is_none_or(|starts| starts.step != step) {
+        if self
+            .step_starts
+            .as_ref()
+            .is_none_or(|starts| starts.step != step)
+        {
             if last {
                 return;
             }
