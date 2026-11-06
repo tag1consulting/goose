@@ -1152,10 +1152,12 @@ async fn test_saved_runs_do_not_block_the_main_loop() {
             slowest
         );
         // Answering a read on the main loop would hold every command queued
-        // behind it for as long as the read takes: no command waited that
-        // long, so none waited on a read.
+        // behind it for as long as the read takes: no command waited even a
+        // third of that, so none waited on a read. (Measured: config at most
+        // about 50 ms beside reads of about 350 ms; with reads on the main
+        // loop, config waited about 700 ms.)
         assert!(
-            slowest < quickest,
+            slowest * 3 < quickest,
             "config took {:?}, a read {:?}",
             slowest,
             quickest
