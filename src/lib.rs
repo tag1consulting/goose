@@ -7407,15 +7407,18 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // Step 2 is the increase after the maintain step.
+        // Step 2 is the increase after the maintain step: every part of its
+        // 10 users, after setup's 5, was built before it began.
         let increase_began = step_began[&2];
-        let ahead = built
+        let ahead: usize = built
             .iter()
-            .find(|(users, _)| *users == 10)
-            .expect("no batch of the increase's 10 users");
-        assert!(
-            ahead.1 < increase_began,
-            "the increase's batch was not built before its step began"
+            .skip(1)
+            .filter(|(_, at)| *at < increase_began)
+            .map(|(users, _)| users)
+            .sum();
+        assert_eq!(
+            ahead, 10,
+            "the increase's users were not all built before its step began"
         );
         // Its 10 users start from the step's start at 5 a second: the last
         // no sooner than 1.6 s after the first.
@@ -7435,6 +7438,81 @@ mod tests {
             "10 users started over {:?} at 5 a second",
             spread
         );
+    }
+
+    /// A step whose users take longer to build than it lasts starts them as
+    /// each part is built, from its boundary: before its last part is built,
+    /// never before a user's own part, and never faster than its rate.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_step_starts_users_as_its_parts_are_built() {
+        let server = index_server();
+        // 4 users a second for each build thread, so each part is 4 users a
+        // thread, 200 ms at 50 ms a client: 5 parts, about 1 s to build.
+        let rate = 4 * build_threads();
+        let users = 5 * rate;
+        let plan = format!("2,0s;{0},5s;{0},1h", 2 + users);
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", &plan],
+            vec![index_scenario("Parts", 10)],
+            Duration::from_millis(50),
+        )
+        .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !(goose_attack.attack_phase == AttackPhase::Maintain
+            && goose_attack.test_plan.current >= 2)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the step's users did not all start"
+            );
+            match goose_attack.attack_phase {
+                AttackPhase::Increase => {
+                    goose_attack.increase_attack(&mut run_state).await.unwrap()
+                }
+                AttackPhase::Maintain => {
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap()
+                }
+                phase => panic!("unexpected phase {:?}", phase),
+            }
+        }
+        assert_eq!(run_state.active_users, 2 + users);
+        // Setup built the first 2; the rest are the step's.
+        let events: Vec<(UserEvent, std::time::Instant)> =
+            user_events(&goose_attack).into_iter().skip(1).collect();
+        let (mut built, mut started, mut starts, mut last_built) = (0, 0, Vec::new(), None);
+        for (at, &(event, when)) in events.iter().enumerate() {
+            match event {
+                UserEvent::Built(part) => {
+                    built += part;
+                    last_built = Some(at);
+                }
+                UserEvent::Started(ordinal) if ordinal >= 2 => {
+                    started += 1;
+                    starts.push((at, when));
+                    assert!(
+                        started <= built,
+                        "user {} started before its part was built",
+                        ordinal
+                    );
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(built, users);
+        assert!(
+            starts[0].0 < last_built.unwrap(),
+            "no user started before the step's last part was built"
+        );
+        let interval = Duration::from_secs(1) / rate as u32;
+        for (k, &(_, when)) in starts.iter().enumerate() {
+            assert!(
+                when - starts[0].1 + Duration::from_millis(50) >= interval * k as u32,
+                "user {} of the step started faster than {} a second",
+                k,
+                rate
+            );
+        }
     }
 
     /// A Controller increase, then a second change before its batch is
