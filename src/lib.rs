@@ -7809,15 +7809,17 @@ mod tests {
     /// part before takes to start, so each part lands while its first users
     /// are already due, inside the 100 ms a turn waits for it: its users
     /// start from when it lands, at the rate, not all at once to catch up.
+    /// It tells the two apart below 7 build threads, where a part of one
+    /// user a thread starts in less than it takes to build.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_a_late_part_never_starts_users_faster_than_the_rate() {
         use crate::controller::tests::control;
 
         let server = index_server();
-        // 40 users a second for each build thread at 50 ms a client: a part
-        // of one user a thread starts in 25 ms, and the next takes at least
-        // 50 ms to build, so every part after the first lands late.
-        let rate = 40 * build_threads();
+        // 100 users a second at 90 ms a client: on 4 build threads a part of
+        // one user a thread starts in 40 ms and the next takes 90 ms to
+        // build, so each part lands 50 ms late, inside the 100 ms wait.
+        let rate = 100;
         let rate_arg = rate.to_string();
         let (mut goose_attack, mut run_state) = started_attack(
             &server.base_url(),
@@ -7830,11 +7832,11 @@ mod tests {
                 "1h",
             ],
             vec![index_scenario("Late", 10)],
-            Duration::from_millis(50),
+            Duration::from_millis(90),
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        let users = 30 * build_threads();
+        let users = 10 * build_threads();
         let change = format!("users {}", 2 + users);
         assert!(control(&mut goose_attack, &mut run_state, &change).await);
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
