@@ -878,7 +878,7 @@ impl GooseResponse {
     /// without holding the whole body in memory.
     ///
     /// Call this when a test does not need a response's body. An HTTP/1.1 connection
-    /// goes back to the user's connection pool once its response body has been
+    /// goes back to the client's connection pool once its response body has been
     /// read to the end. A response dropped with its body unread can close its connection
     /// instead, so the user's next request opens a new one, and the server may log
     /// the cut off transfer as an error. Reading the body keeps the connection for the
@@ -903,8 +903,7 @@ impl GooseResponse {
     ///
     /// /// Load an image, keeping the connection for the next request.
     /// async fn get_logo(user: &mut GooseUser) -> TransactionResult {
-    ///     let goose = user.get("/images/logo.png").await?;
-    ///     let _ = goose.discard_body().await;
+    ///     let _ = user.get("/images/logo.png").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }

@@ -1,6 +1,6 @@
 //! A response dropped with its body unread closes its connection, so the user's next
 //! request opens a new one; `GooseResponse::discard_body` reads the body to the end and
-//! the connection is reused.
+//! the user keeps reusing its connections.
 //!
 //! A local HTTP/1.1 server counts the connections it accepts and answers every request
 //! with the same body, large enough that it cannot arrive whole with the headers.
@@ -109,6 +109,13 @@ async fn run(transaction: Transaction) -> (usize, usize) {
     (connections.load(Ordering::SeqCst), counted)
 }
 
+/// The most connections one user may open while reusing them. hyper returns a
+/// connection whose body was read to the end to the pool from a task of its own, so
+/// the user's next request can find the pool empty and open a second connection;
+/// after that the two are reused. A body dropped unread costs a connection on every
+/// request instead.
+const MOST_REUSED_CONNECTIONS: usize = 2;
+
 #[tokio::test]
 #[serial]
 /// A response dropped with its body unread costs its connection.
@@ -116,7 +123,7 @@ async fn dropped_bodies_open_new_connections() {
     let (connections, counted) = run(transaction!(drop_body)).await;
     assert_eq!(counted, REQUESTS);
     assert!(
-        connections > 1,
+        connections > MOST_REUSED_CONNECTIONS,
         "{} requests with dropped bodies opened {} connection(s)",
         REQUESTS,
         connections
@@ -125,12 +132,14 @@ async fn dropped_bodies_open_new_connections() {
 
 #[tokio::test]
 #[serial]
-/// Bodies read to the end with `discard_body` keep one connection for every request.
-async fn discarded_bodies_reuse_one_connection() {
+/// Bodies read to the end with `discard_body` keep reusing the user's connections.
+async fn discarded_bodies_reuse_connections() {
     let (connections, counted) = run(transaction!(discard_body)).await;
     assert_eq!(counted, REQUESTS);
-    assert_eq!(
-        connections, 1,
-        "{REQUESTS} requests with discarded bodies opened {connections} connections"
+    assert!(
+        connections <= MOST_REUSED_CONNECTIONS,
+        "{} requests with discarded bodies opened {} connections",
+        REQUESTS,
+        connections
     );
 }
