@@ -4430,6 +4430,28 @@ impl GooseAttack {
                 && goose_attack_run_state.users_shutdown.len() == self.metrics.total_users)
     }
 
+    /// Record each user that finished its `--iterations` and exited, and end
+    /// the run once they all have.
+    async fn handle_user_exits(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        let mut message = goose_attack_run_state.shutdown_rx.try_recv();
+        let mut exited = false;
+        while message.is_ok() {
+            goose_attack_run_state
+                .users_shutdown
+                .insert(message.expect("failed to wrap OK message"));
+            exited = true;
+            message = goose_attack_run_state.shutdown_rx.try_recv();
+        }
+        if self.users_exited(goose_attack_run_state, exited) {
+            self.set_ended_by(runs::EndedBy::UsersExited, None);
+            self.cancel_attack(goose_attack_run_state).await?;
+        }
+        Ok(())
+    }
+
     /// Count one more user running: in the users started over the run, and
     /// in the most running at once.
     pub(crate) fn count_started_user(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
@@ -4835,19 +4857,8 @@ impl GooseAttack {
             self.handle_dashboard_requests(goose_attack_run_state)
                 .await?;
 
-            let mut message = goose_attack_run_state.shutdown_rx.try_recv();
-            let mut exited = false;
-            while message.is_ok() {
-                goose_attack_run_state
-                    .users_shutdown
-                    .insert(message.expect("failed to wrap OK message"));
-                exited = true;
-                message = goose_attack_run_state.shutdown_rx.try_recv();
-            }
-            if self.users_exited(goose_attack_run_state, exited) {
-                self.set_ended_by(runs::EndedBy::UsersExited, None);
-                self.cancel_attack(goose_attack_run_state).await?;
-            }
+            // Users that finished their iterations, and the run's end.
+            self.handle_user_exits(goose_attack_run_state).await?;
 
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
@@ -7626,5 +7637,44 @@ mod tests {
         // While one still runs, the run goes on.
         run_state.users_shutdown.remove(&2);
         assert!(!goose_attack.users_exited(&run_state, false));
+    }
+
+    /// When several users exit in one tick, an `--iterations` run ends at
+    /// the exit that brings the users exited to the plan's total, as main
+    /// ends it, though later exits in the same tick step the count past it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_iterations_end_when_several_users_exit_in_one_tick() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &[
+                "--users",
+                "2",
+                "--iterations",
+                "1",
+                "--increase-rate",
+                "1000",
+            ],
+            vec![index_scenario("Iterations", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        // The plan counts 2 users; 3 started over the run, as after a
+        // Controller decrease and increase, and all 3 exit in one tick.
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+        run_state.active_users = 2;
+        goose_attack.metrics.total_users = 3;
+        for user in 1..=3 {
+            run_state.all_threads_shutdown_tx.send(user).unwrap();
+        }
+        goose_attack.handle_user_exits(&mut run_state).await.unwrap();
+        assert_eq!(run_state.users_shutdown.len(), 3);
+        assert!(
+            matches!(
+                goose_attack.metrics.history.last().map(|row| &row.action),
+                Some(TestPlanStepAction::Canceling)
+            ),
+            "the run did not end in the tick its users exited"
+        );
     }
 }
