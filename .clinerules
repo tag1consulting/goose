@@ -27,7 +27,7 @@ Goose is a powerful, fast, and scalable load testing framework built with Rust. 
 - **Primary docs**: `./src/docs/goose-book/src/` (mdBook documentation)
 - **Project overview**: `README.md` (project introduction and quick start)
 - **Change tracking**: `CHANGELOG.md` (user-facing changes and releases)
-- **Development context**: `/memory-bank/` (AI development context and decisions)
+- **Agent notes**: `AGENTS.md` (layout, build and test commands, conventions)
 - **Inline documentation**: All `*.rs` files (function docs, module docs, examples)
 - **Code examples**: `/examples/` directory (working code samples)
 - **Test documentation**: `tests/*.rs` (test descriptions and patterns)
@@ -40,12 +40,9 @@ Goose is a powerful, fast, and scalable load testing framework built with Rust. 
 - Update inline documentation for any modified public APIs
 - Ensure consistency across all documentation sources
 
-### Memory Bank Maintenance
-**Keep memory bank current**:
-- Update `memory-bank/progress.md` when features are completed
-- Refine `memory-bank/systemPatterns.md` with architectural changes
-- Update `memory-bank/activeContext.md` with current development focus
-- Document technical decisions in appropriate memory bank files
+### Agent Notes Maintenance
+**Keep AGENTS.md current**:
+- Update `AGENTS.md` when the layout, features, CI commands or conventions change
 
 ## Feature Development Guidelines
 
@@ -94,7 +91,6 @@ When implementing new features:
 - Previous implementation disabled in v0.17.0
 - Considering multiple approaches (Hydro, Zenoh, gRPC/Tonic)
 - Will support distributed load generation
-- Architecture decisions tracked in memory bank
 
 ## Configuration Management
 
