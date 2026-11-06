@@ -1041,6 +1041,32 @@ fn build_parts(
     }
 }
 
+/// Put a built part on its channel, and say whether a batch still takes
+/// it. Under test, its `Built` event is recorded with the send, under the
+/// events' lock: a drop that saw the event finds the part on the channel,
+/// and none of its users' starts is recorded before it.
+fn send_part(
+    parts_tx: &tokio::sync::mpsc::UnboundedSender<BuiltPart>,
+    built: BuiltPart,
+    build: &UserBuild,
+) -> bool {
+    #[cfg(test)]
+    {
+        let count = built.as_ref().ok().and_then(|b| b.as_ref().map(Vec::len));
+        let mut events = build.user_test.events.lock().unwrap();
+        let taken = parts_tx.send(built).is_ok();
+        if let (true, Some(count)) = (taken, count) {
+            events.push((UserEvent::Built(count), std::time::Instant::now()));
+        }
+        taken
+    }
+    #[cfg(not(test))]
+    {
+        let _ = build;
+        parts_tx.send(built).is_ok()
+    }
+}
+
 /// The users built, or being built, for the users a test plan step starts,
 /// in parts. Dropping it stops a build still running, and drops what it
 /// built.
@@ -1120,17 +1146,9 @@ impl UserBatch {
         let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
         let batch = UserBatch::new(step, size, parts, cancel.clone(), &build);
         tokio::task::spawn_blocking(move || {
+            // Nobody takes the parts of a batch that was dropped.
             build_parts(&users, &build, part_size(rate), &cancel, |built| {
-                #[cfg(test)]
-                let count = built.as_ref().ok().and_then(|b| b.as_ref().map(Vec::len));
-                // Nobody takes the parts of a batch that was dropped.
-                let taken = parts_tx.send(built).is_ok();
-                // Recorded once the part is on its channel, where a drop finds it.
-                #[cfg(test)]
-                if let (true, Some(count)) = (taken, count) {
-                    build.user_test.record(UserEvent::Built(count));
-                }
-                taken
+                send_part(&parts_tx, built, &build)
             });
         });
         batch
@@ -2209,15 +2227,8 @@ impl GooseAttack {
                 part_size(self.step_rate(step)),
                 &not_canceled,
                 |built| match built {
-                    Ok(built) => {
-                        #[cfg(test)]
-                        let count = built.as_ref().map_or(0, Vec::len);
-                        // The receiver is held below, so the send succeeds.
-                        let _ = parts_tx.send(Ok(built));
-                        #[cfg(test)]
-                        self.user_test.record(UserEvent::Built(count));
-                        true
-                    }
+                    // The receiver is held below, so the send succeeds.
+                    Ok(built) => send_part(&parts_tx, Ok(built), &build),
                     Err(e) => {
                         failed = Some(e);
                         false
