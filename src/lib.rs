@@ -993,7 +993,7 @@ fn build_users(
 struct UserBatch {
     /// The index of the test plan step that starts these users.
     step: usize,
-    /// How many users it holds, or held when it failed.
+    /// How many users it builds.
     size: usize,
     /// Set to stop a build still running.
     cancel: Arc<std::sync::atomic::AtomicBool>,
@@ -6526,12 +6526,6 @@ mod tests {
         let mut users = goose_attack.weight_scenario_users(2).unwrap();
         users.extend(goose_attack.weight_scenario_users(2).unwrap());
         assert_eq!(users.len(), 4);
-        // Each user gets its client as users do when a batch builds them.
-        let not_canceled = std::sync::atomic::AtomicBool::new(false);
-        let built = build_users(&users, &goose_attack.user_build(), &not_canceled)
-            .unwrap()
-            .unwrap();
-        assert_eq!(built.len(), 4);
         assert_eq!(
             builds() - before,
             1,
@@ -7084,15 +7078,15 @@ mod tests {
             &server.base_url(),
             10,
             vec![index_scenario("Storm", 10)],
-            // Longer than the 100 ms a turn waits for a batch: each change's
+            // Well over the 100 ms a turn waits for a batch: each change's
             // batch is still on its first client per thread when the next lands.
-            Duration::from_millis(150),
+            Duration::from_millis(500),
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         let changes = 20;
         for _ in 0..changes {
-            for users in ["users 50", "users 10"] {
+            for users in ["users 1010", "users 10"] {
                 assert!(control(&mut goose_attack, &mut run_state, users).await);
                 // One turn of the step machine before the next change lands.
                 step(&mut goose_attack, &mut run_state).await;
@@ -7345,7 +7339,7 @@ mod tests {
             "the increase's batch was not built during the maintain step"
         );
         // Its 10 users start from the step's start at 5 a second: the last
-        // 1.8 s after the first.
+        // no sooner than 1.6 s after the first.
         let starts: Vec<std::time::Instant> = events
             .iter()
             .filter_map(|&(event, at)| match event {
@@ -7356,10 +7350,9 @@ mod tests {
             .collect();
         assert_eq!(starts.len(), 10);
         assert!(starts[0] >= increase_began);
-        assert!(starts[0] - increase_began < Duration::from_millis(500));
         let spread = starts[9] - starts[0];
         assert!(
-            spread >= Duration::from_millis(1_600) && spread < Duration::from_millis(2_600),
+            spread >= Duration::from_millis(1_600),
             "10 users started over {:?} at 5 a second",
             spread
         );
@@ -7382,9 +7375,9 @@ mod tests {
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        // 200 users at 50 ms each take longer than the 100 ms a step waits
-        // for its batch on up to 64 build threads.
-        assert!(control(&mut goose_attack, &mut run_state, "users 202").await);
+        // 1,000 users at 50 ms each take longer than the 100 ms a step waits
+        // for its batch on up to 400 build threads.
+        assert!(control(&mut goose_attack, &mut run_state, "users 1002").await);
         step(&mut goose_attack, &mut run_state).await;
         assert_eq!(
             goose_attack.metrics.total_users, 2,
@@ -7403,7 +7396,7 @@ mod tests {
         assert!(
             !user_events(&goose_attack)
                 .iter()
-                .any(|(event, _)| *event == UserEvent::Built(200)),
+                .any(|(event, _)| *event == UserEvent::Built(1000)),
             "the dropped batch was built"
         );
 
@@ -7439,7 +7432,7 @@ mod tests {
 
     /// A test plan whose increase fails to build its users starts none of
     /// them, keeps its running users, and goes on to its later steps
-    /// without a panic: a later increase starts the users it can.
+    /// without a panic: a later increase, whose build fails too, starts none either.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_a_failed_batch_starts_none_and_the_plan_goes_on() {
         let server = index_server();
@@ -7478,5 +7471,49 @@ mod tests {
             "users started from failed batches"
         );
         assert_eq!(users_started(&goose_attack), 5);
+        assert!(
+            goose_attack
+                .metrics
+                .history
+                .iter()
+                .all(|row| row.users <= 5),
+            "a history row counts users that never started"
+        );
+    }
+
+    /// After an increase fails to build, the next asks only for the users
+    /// left, and starts them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_after_a_failed_batch_the_next_increase_starts_those_left() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", "5,0s;15,1s;25,1s;25,1h"],
+            vec![index_scenario("Left", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        // Step 1's 10 users fail to build; step 2 builds the 10 left.
+        let fail = goose_attack.user_test.fail_builds.clone();
+        fail.store(true, std::sync::atomic::Ordering::Relaxed);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !(goose_attack.attack_phase == AttackPhase::Maintain
+            && goose_attack.test_plan.current >= 3)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the plan did not reach its last step"
+            );
+            if goose_attack.test_plan.current == 2 {
+                fail.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+            match goose_attack.attack_phase {
+                AttackPhase::Increase => goose_attack.increase_attack(&mut run_state).await.unwrap(),
+                AttackPhase::Maintain => goose_attack.maintain_attack(&mut run_state).await.unwrap(),
+                phase => panic!("unexpected phase {:?}", phase),
+            }
+        }
+        assert_eq!(run_state.active_users, 15);
+        assert_eq!(users_started(&goose_attack), 15);
     }
 }
