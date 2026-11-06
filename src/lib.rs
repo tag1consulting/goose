@@ -986,8 +986,6 @@ fn build_users(
         }
     }
     debug!("[scheduler]: built {} users", built.len());
-    #[cfg(test)]
-    build.user_test.record(UserEvent::Built(built.len()));
     Ok(Some(built))
 }
 
@@ -1026,8 +1024,16 @@ impl UserBatch {
         #[cfg(test)]
         let user_test = build.user_test.clone();
         tokio::task::spawn_blocking(move || {
+            let built = build_users(&users, &build, &canceled);
+            #[cfg(test)]
+            let count = built.as_ref().ok().and_then(|b| b.as_ref().map(Vec::len));
             // Nobody waits for a batch that was dropped.
-            let _ = built_tx.send(build_users(&users, &build, &canceled));
+            let _ = built_tx.send(built);
+            // Recorded once the batch is on its channel, where a drop finds it.
+            #[cfg(test)]
+            if let Some(count) = count {
+                build.user_test.record(UserEvent::Built(count));
+            }
         });
         UserBatch {
             step,
@@ -2066,6 +2072,8 @@ impl GooseAttack {
             let not_canceled = std::sync::atomic::AtomicBool::new(false);
             let built = build_users(&users, &self.user_build(), &not_canceled)?
                 .expect("a build that is never canceled was canceled");
+            #[cfg(test)]
+            self.user_test.record(UserEvent::Built(built.len()));
             self.user_batch = Some(UserBatch {
                 step,
                 size: built.len(),
@@ -2088,6 +2096,8 @@ impl GooseAttack {
                 &self.user_build(),
                 &not_canceled,
             )?;
+            #[cfg(test)]
+            self.user_test.record(UserEvent::Built(1));
         }
         Ok(())
     }
