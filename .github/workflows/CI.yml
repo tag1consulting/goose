@@ -112,6 +112,7 @@ jobs:
           - ""  # No features (minimal build)
           - "cookies"
           - "dashboard"  # Live dashboard HTTP server (opt-in; not in default)
+          - "mcp"  # MCP Controller (opt-in; not in default)
           - "gaggle"  # Gaggle groundwork without the dashboard (opt-in; not in default)
           - "rustls-tls"
           - "all-features"  # Keep existing all-features test

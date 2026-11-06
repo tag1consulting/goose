@@ -56,8 +56,8 @@ const DEFAULT_DASHBOARD_PORT: u16 = 5118;
 /// `--dashboard-max-clients` nor [`GooseDefault::DashboardMaxClients`] sets it.
 const DEFAULT_DASHBOARD_MAX_CLIENTS: u32 = 32;
 
-/// The address a Controller listens on when neither its `--telnet-host` or
-/// `--websocket-host` option nor its [`GooseDefault`] sets one.
+/// The address a Controller listens on when neither its `--telnet-host`,
+/// `--websocket-host` or `--mcp-host` option nor its [`GooseDefault`] sets one.
 const DEFAULT_CONTROLLER_HOST: &str = "127.0.0.1";
 
 /// The port the telnet Controller listens on when neither `--telnet-port` nor
@@ -67,6 +67,14 @@ const DEFAULT_TELNET_PORT: u16 = 5116;
 /// The port the WebSocket Controller listens on when neither `--websocket-port` nor
 /// [`GooseDefault::WebSocketPort`] sets one.
 const DEFAULT_WEBSOCKET_PORT: u16 = 5117;
+
+/// The port the MCP Controller listens on when neither `--mcp-port` nor
+/// [`GooseDefault::McpPort`] sets one.
+const DEFAULT_MCP_PORT: u16 = 5119;
+
+/// The environment variable the MCP Controller's token is read from when
+/// `--mcp-token` is not given.
+const MCP_TOKEN_ENV: &str = "GOOSE_MCP_TOKEN";
 
 /// The request timeout, in milliseconds, when neither `--timeout` nor
 /// [`GooseDefault::Timeout`] sets one.
@@ -855,6 +863,59 @@ pub struct GooseConfiguration {
     /// Example: --websocket-port 6117. Set in code with GooseDefault::WebSocketPort.
     #[arg(help_heading = "Controllers", long, value_name = "PORT")]
     pub websocket_port: Option<u16>,
+    /// Enable the MCP Controller
+    ///
+    /// Serves the Controller commands as Model Context Protocol tools, for AI agents, over
+    /// Streamable HTTP at /mcp on --mcp-host and --mcp-port. Off by default, and only in
+    /// a Goose built with the mcp feature.
+    ///
+    /// Set in code with GooseDefault::Mcp.
+    #[arg(help_heading = "Controllers", long)]
+    pub mcp: bool,
+    /// MCP host [default: 127.0.0.1]
+    ///
+    /// The address the MCP Controller listens on, with --mcp. An address that is not
+    /// loopback needs --mcp-token.
+    ///
+    /// Example: --mcp-host 10.0.0.5. Set in code with GooseDefault::McpHost.
+    #[arg(help_heading = "Controllers", long, value_name = "HOST")]
+    pub mcp_host: Option<String>,
+    /// MCP port [default: 5119]
+    ///
+    /// The TCP port the MCP Controller listens on, with --mcp.
+    ///
+    /// Example: --mcp-port 6119. Set in code with GooseDefault::McpPort.
+    #[arg(help_heading = "Controllers", long, value_name = "PORT")]
+    pub mcp_port: Option<u16>,
+    /// MCP auth token
+    ///
+    /// The token every MCP request must send, as an Authorization: Bearer header. Needed
+    /// when --mcp-host is not a loopback address. Better read from the GOOSE_MCP_TOKEN
+    /// environment variable: Goose never shows it, but on a command line it shows in ps
+    /// and shell history.
+    ///
+    /// Set in code with GooseDefault::McpToken.
+    #[arg(help_heading = "Controllers", long, value_name = "TOKEN")]
+    #[serde(serialize_with = "serialize_token")]
+    pub mcp_token: Option<String>,
+    /// Only the MCP tools that read
+    ///
+    /// The MCP Controller lists and answers only get_config and get_metrics, so an agent
+    /// can watch the load test but not start, stop or change it.
+    ///
+    /// Set in code with GooseDefault::McpReadOnly.
+    #[arg(help_heading = "Controllers", long)]
+    pub mcp_read_only: bool,
+    /// Offer the MCP set_host tool
+    ///
+    /// The MCP Controller lists and answers set_host, which points the load test at another
+    /// host. Off by default: text from the target reaches the agent through get_metrics, and
+    /// could lead it to aim the load at a host that text names. Ignored with
+    /// --mcp-read-only.
+    ///
+    /// Set in code with GooseDefault::McpSetHost.
+    #[arg(help_heading = "Controllers", long)]
+    pub mcp_set_host: bool,
 
     /// Request timeout in seconds [default: 60]
     ///
@@ -1023,19 +1084,20 @@ pub struct GooseConfiguration {
     pub(crate) gaggle_log_gzip: Option<[bool; crate::runs::LOG_NAMES.len()]>,
 }
 
-/// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an
-/// empty one, which sets no token, reads as it is.
+/// How output shows an auth token (the dashboard's, the MCP Controller's or the
+/// Gaggle's): a set token reads [`TOKEN_SHOWN`], and an empty one, which sets no token,
+/// reads as it is.
 const TOKEN_SHOWN: &str = "(set)";
 
-/// The dashboard auth token as output shows it: never the token itself.
+/// An auth token as output shows it: never the token itself.
 fn shown_token(token: &Option<String>) -> Option<&str> {
     token
         .as_deref()
         .map(|token| if token.is_empty() { token } else { TOKEN_SHOWN })
 }
 
-/// Serializes the dashboard auth token as [`shown_token`] shows it, so no JSON Goose
-/// writes, such as a Controller's `config-json`, holds the token.
+/// Serializes an auth token as [`shown_token`] shows it, so no JSON Goose writes, such
+/// as a Controller's `config-json`, holds the token.
 fn serialize_token<S: serde::Serializer>(
     token: &Option<String>,
     serializer: S,
@@ -1043,7 +1105,7 @@ fn serialize_token<S: serde::Serializer>(
     shown_token(token).serialize(serializer)
 }
 
-/// The derived `Debug`, except that a set dashboard auth token reads `(set)`, never
+/// The derived `Debug`, except that a set auth token reads `(set)`, never
 /// the token: a Controller's `config` is this `Debug`, and a
 /// [`GooseUser`](crate::goose::GooseUser)'s configuration is public. Listing every
 /// field by name makes a new field a compile error here until it is added.
@@ -1122,6 +1184,12 @@ impl std::fmt::Debug for GooseConfiguration {
             no_websocket,
             websocket_host,
             websocket_port,
+            mcp,
+            mcp_host,
+            mcp_port,
+            mcp_token,
+            mcp_read_only,
+            mcp_set_host,
             timeout,
             no_gzip,
             sticky_follow,
@@ -1232,6 +1300,12 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("no_websocket", no_websocket)
             .field("websocket_host", websocket_host)
             .field("websocket_port", websocket_port)
+            .field("mcp", mcp)
+            .field("mcp_host", mcp_host)
+            .field("mcp_port", mcp_port)
+            .field("mcp_token", &shown_token(mcp_token))
+            .field("mcp_read_only", mcp_read_only)
+            .field("mcp_set_host", mcp_set_host)
             .field("timeout", timeout)
             .field("no_gzip", no_gzip)
             .field("sticky_follow", sticky_follow)
@@ -1742,6 +1816,18 @@ pub(crate) struct GooseDefaults {
     pub websocket_host: Option<String>,
     /// An optional default for port WebSocket Controller listens on.
     pub websocket_port: Option<u16>,
+    /// An optional default for enabling the MCP Controller.
+    pub mcp: Option<bool>,
+    /// An optional default for host MCP Controller listens on.
+    pub mcp_host: Option<String>,
+    /// An optional default for port MCP Controller listens on.
+    pub mcp_port: Option<u16>,
+    /// An optional default for the MCP Controller's Bearer token.
+    pub mcp_token: Option<String>,
+    /// An optional default for listing only the MCP tools that read.
+    pub mcp_read_only: Option<bool>,
+    /// An optional default for listing the MCP set_host tool.
+    pub mcp_set_host: Option<bool>,
     /// An optional default for enabling the live web dashboard.
     pub dashboard: Option<bool>,
     /// An optional default for enabling dashboard control endpoints.
@@ -1937,6 +2023,20 @@ pub enum GooseDefault {
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
+    /// An optional default for enabling the MCP Controller, which is off by default and
+    /// needs the `mcp` feature.
+    Mcp,
+    /// An optional default for host MCP Controller listens on, 127.0.0.1 if unset; any
+    /// address that is not loopback needs [`GooseDefault::McpToken`].
+    McpHost,
+    /// An optional default for port MCP Controller listens on.
+    McpPort,
+    /// An optional default for the Bearer token every MCP request must send.
+    McpToken,
+    /// An optional default for listing only the MCP tools that read.
+    McpReadOnly,
+    /// An optional default for listing the MCP `set_host` tool, which is off by default.
+    McpSetHost,
     /// An optional default for enabling the live web dashboard.
     Dashboard,
     /// An optional default for enabling dashboard control endpoints.
@@ -2015,6 +2115,8 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::WebSocketHost`]
 ///  - [`GooseDefault::DashboardHost`]
 ///  - [`GooseDefault::DashboardAuthToken`]
+///  - [`GooseDefault::McpHost`]
+///  - [`GooseDefault::McpToken`]
 ///
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
@@ -2032,6 +2134,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::ThrottleRequests`]
 ///  - [`GooseDefault::TelnetPort`]
 ///  - [`GooseDefault::WebSocketPort`]
+///  - [`GooseDefault::McpPort`]
 ///  - [`GooseDefault::DashboardPort`]
 ///  - [`GooseDefault::DashboardMaxClients`]
 ///  - `GooseDefault::PdfTimeout` (with the `pdf-reports` feature)
@@ -2054,6 +2157,9 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoTelnet`]
 ///  - [`GooseDefault::WebSocket`]
 ///  - [`GooseDefault::NoWebSocket`]
+///  - [`GooseDefault::Mcp`]
+///  - [`GooseDefault::McpReadOnly`]
+///  - [`GooseDefault::McpSetHost`]
 ///  - [`GooseDefault::NoAutoStart`]
 ///  - [`GooseDefault::NoGzip`]
 ///  - [`GooseDefault::NoStatusCodes`]
@@ -2134,6 +2240,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             }
             GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
+            GooseDefault::McpHost => self.defaults.mcp_host = Some(value.to_string()),
+            GooseDefault::McpToken => self.defaults.mcp_token = Some(value.to_string()),
             GooseDefault::DashboardHost => self.defaults.dashboard_host = Some(value.to_string()),
             GooseDefault::DashboardAuthToken => {
                 self.defaults.dashboard_auth_token = Some(value.to_string())
@@ -2151,6 +2259,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
+            | GooseDefault::McpPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
             | GooseDefault::RunningMetrics
@@ -2175,6 +2284,9 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
+            | GooseDefault::Mcp
+            | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2260,6 +2372,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
+            GooseDefault::McpPort => self.defaults.mcp_port = Some(value as u16),
             GooseDefault::DashboardPort => self.defaults.dashboard_port = Some(value as u16),
             GooseDefault::DashboardMaxClients => {
                 self.defaults.dashboard_max_clients = Some(value as u32)
@@ -2288,6 +2401,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::McpHost
+            | GooseDefault::McpToken
             | GooseDefault::DashboardHost
             | GooseDefault::DashboardAuthToken
             => {
@@ -2311,6 +2426,9 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
+            | GooseDefault::Mcp
+            | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2384,6 +2502,9 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
             GooseDefault::WebSocket => self.defaults.websocket = Some(value),
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
+            GooseDefault::Mcp => self.defaults.mcp = Some(value),
+            GooseDefault::McpReadOnly => self.defaults.mcp_read_only = Some(value),
+            GooseDefault::McpSetHost => self.defaults.mcp_set_host = Some(value),
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
             GooseDefault::AcceptInvalidCerts => self.defaults.accept_invalid_certs = Some(value),
@@ -2417,6 +2538,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::McpHost
+            | GooseDefault::McpToken
             | GooseDefault::DashboardHost
             | GooseDefault::DashboardAuthToken
             => {
@@ -2441,6 +2564,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
+            | GooseDefault::McpPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
             | GooseDefault::Compress => {
@@ -2520,6 +2644,9 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
+            | GooseDefault::Mcp
+            | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2560,6 +2687,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::McpHost
+            | GooseDefault::McpToken
             | GooseDefault::DashboardHost
             | GooseDefault::DashboardAuthToken
             => {
@@ -2584,6 +2713,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
+            | GooseDefault::McpPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
             | GooseDefault::Compress => {
@@ -2658,6 +2788,9 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
+            | GooseDefault::Mcp
+            | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -2698,6 +2831,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::McpHost
+            | GooseDefault::McpToken
             | GooseDefault::DashboardHost
             | GooseDefault::DashboardAuthToken
             => {
@@ -2722,6 +2857,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
+            | GooseDefault::McpPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
             | GooseDefault::Compress => {
@@ -2792,6 +2928,8 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::McpHost
+            | GooseDefault::McpToken
             | GooseDefault::DashboardHost
             | GooseDefault::DashboardAuthToken => {
                 return Err(GooseError::InvalidOption {
@@ -2815,6 +2953,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
+            | GooseDefault::McpPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
             | GooseDefault::PdfTimeout
@@ -2839,6 +2978,9 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
+            | GooseDefault::Mcp
+            | GooseDefault::McpReadOnly
+            | GooseDefault::McpSetHost
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
@@ -3017,6 +3159,18 @@ pub(crate) fn is_loopback_bind(host: &str) -> bool {
     }
 }
 
+/// The MCP Controller's token: `--mcp-token` (`flag`), then the
+/// [`MCP_TOKEN_ENV`] environment variable (`env`), then
+/// [`GooseDefault::McpToken`] (`default`). An empty `--mcp-token` sets no
+/// token, as it always has; an empty variable is as if it were unset.
+fn chosen_mcp_token(
+    flag: Option<String>,
+    env: Option<String>,
+    default: Option<String>,
+) -> Option<String> {
+    flag.or(env.filter(|token| !token.is_empty())).or(default)
+}
+
 /// Used internally to configure [`GooseConfiguration`] values based on precedence rules.
 #[derive(Debug, Clone)]
 pub(crate) struct GooseValue<'a, T> {
@@ -3130,6 +3284,17 @@ impl GooseConfiguration {
     ///
     /// Fails when a time span is too long.
     pub(crate) fn configure(&mut self, defaults: &GooseDefaults) -> Result<(), GooseError> {
+        self.configure_with_env(defaults, |name| std::env::var(name).ok())
+    }
+
+    /// [`GooseConfiguration::configure`], reading the MCP token's environment
+    /// variable through `env`, so a test can give it a value without setting
+    /// one in its process.
+    pub(crate) fn configure_with_env(
+        &mut self,
+        defaults: &GooseDefaults,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> Result<(), GooseError> {
         #[cfg(feature = "gaggle")]
         self.configure_gaggle();
 
@@ -3842,6 +4007,104 @@ impl GooseConfiguration {
             },
         ]);
 
+        // Configure `mcp`, `mcp_read_only`, `mcp_set_host`, `mcp_host`, `mcp_port` and
+        // `mcp_token`, with the built in host and port when the MCP Controller is enabled.
+        self.mcp = self
+            .get_value(vec![
+                // Use --mcp if set.
+                GooseValue {
+                    value: Some(self.mcp),
+                    filter: !self.mcp,
+                    message: "mcp",
+                },
+                // Use default if --mcp hasn't been set.
+                GooseValue {
+                    value: defaults.mcp,
+                    filter: defaults.mcp.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+        self.mcp_read_only = self
+            .get_value(vec![
+                // Use --mcp-read-only if set.
+                GooseValue {
+                    value: Some(self.mcp_read_only),
+                    filter: !self.mcp_read_only,
+                    message: "mcp_read_only",
+                },
+                // Use default if --mcp-read-only hasn't been set.
+                GooseValue {
+                    value: defaults.mcp_read_only,
+                    filter: defaults.mcp_read_only.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+        self.mcp_set_host = self
+            .get_value(vec![
+                // Use --mcp-set-host if set.
+                GooseValue {
+                    value: Some(self.mcp_set_host),
+                    filter: !self.mcp_set_host,
+                    message: "mcp_set_host",
+                },
+                // Use default if --mcp-set-host hasn't been set.
+                GooseValue {
+                    value: defaults.mcp_set_host,
+                    filter: defaults.mcp_set_host.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+        self.mcp_host = self.get_value(vec![
+            // Use --mcp-host if set.
+            GooseValue {
+                value: self.mcp_host.clone(),
+                filter: self.mcp_host.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.mcp_host.clone(),
+                filter: defaults.mcp_host.is_none(),
+                message: "",
+            },
+            // Otherwise use the built in default.
+            GooseValue {
+                value: Some(DEFAULT_CONTROLLER_HOST.to_string()),
+                filter: !self.mcp,
+                message: "",
+            },
+        ]);
+        self.mcp_port = self.get_value(vec![
+            // Use --mcp-port if set.
+            GooseValue {
+                value: self.mcp_port,
+                filter: self.mcp_port.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.mcp_port,
+                filter: defaults.mcp_port.is_none(),
+                message: "",
+            },
+            // Otherwise use the built in default.
+            GooseValue {
+                value: Some(DEFAULT_MCP_PORT),
+                filter: !self.mcp,
+                message: "",
+            },
+        ]);
+        // The environment is read only for an MCP Controller that is on.
+        let mcp_token_env = if self.mcp { env(MCP_TOKEN_ENV) } else { None };
+        self.mcp_token = chosen_mcp_token(
+            self.mcp_token.take(),
+            mcp_token_env,
+            defaults.mcp_token.clone(),
+        );
+
         // Configure `dashboard`.
         self.dashboard = self
             .get_value(vec![
@@ -4533,6 +4796,21 @@ impl GooseConfiguration {
         self.websocket_port.unwrap_or(DEFAULT_WEBSOCKET_PORT)
     }
 
+    /// The address the MCP Controller listens on.
+    pub(crate) fn mcp_host(&self) -> &str {
+        non_empty(&self.mcp_host).unwrap_or(DEFAULT_CONTROLLER_HOST)
+    }
+
+    /// The port the MCP Controller listens on.
+    pub(crate) fn mcp_port(&self) -> u16 {
+        self.mcp_port.unwrap_or(DEFAULT_MCP_PORT)
+    }
+
+    /// The MCP Controller's Bearer token, `None` when unset or empty.
+    pub(crate) fn mcp_token(&self) -> Option<&str> {
+        non_empty(&self.mcp_token)
+    }
+
     /// How long a request may take: `--timeout`, or 60 seconds when it is not set.
     pub(crate) fn request_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_millis(
@@ -5074,11 +5352,16 @@ impl GooseConfiguration {
         }
 
         // Can't disable autostart unless a Controller or dashboard control can start the test.
-        if self.no_autostart && self.no_telnet && !self.websocket && !self.dashboard_control {
+        if self.no_autostart
+            && self.no_telnet
+            && !self.websocket
+            && !self.mcp_controls()
+            && !self.dashboard_control
+        {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_autostart`".to_string(),
                 value: true.to_string(),
-                detail: "`configuration.no_autostart` (--no-autostart) requires a Controller or dashboard control to start the test: leave the telnet Controller on, or add `configuration.websocket` (--websocket) or `configuration.dashboard_control` (--dashboard-control)"
+                detail: "`configuration.no_autostart` (--no-autostart) requires a Controller or dashboard control to start the test: leave the telnet Controller on, or add `configuration.websocket` (--websocket), `configuration.mcp` (--mcp) without `configuration.mcp_read_only` (--mcp-read-only), or `configuration.dashboard_control` (--dashboard-control)"
                     .to_string(),
             });
         }
@@ -5119,6 +5402,7 @@ impl GooseConfiguration {
         for (enabled, port, option) in [
             (!self.no_telnet, self.telnet_port(), "telnet_port"),
             (self.websocket, self.websocket_port(), "websocket_port"),
+            (self.mcp, self.mcp_port(), "mcp_port"),
         ] {
             if enabled && port == 0 {
                 return Err(GooseError::InvalidOption {
@@ -5139,6 +5423,7 @@ impl GooseConfiguration {
 
         // Dashboard bind host / auth token validation.
         self.validate_dashboard_config()?;
+        self.validate_mcp_config()?;
         #[cfg(feature = "gaggle")]
         self.validate_gaggle()?;
 
@@ -5235,6 +5520,37 @@ impl GooseConfiguration {
             });
         }
 
+        Ok(())
+    }
+
+    /// Whether the MCP Controller can change the load test: on, and not read only.
+    pub(crate) fn mcp_controls(&self) -> bool {
+        self.mcp && !self.mcp_read_only
+    }
+
+    /// Validate the MCP Controller's configuration: `--mcp` needs a build with the
+    /// `mcp` feature, as `--dashboard` needs the `dashboard` feature, and a host that
+    /// is not loopback needs `--mcp-token`.
+    pub(crate) fn validate_mcp_config(&self) -> Result<(), GooseError> {
+        if !self.mcp {
+            return Ok(());
+        }
+        if !cfg!(feature = "mcp") {
+            return Err(GooseError::FeatureNotEnabled {
+                feature: "mcp".to_string(),
+                detail: "rebuild with `--features mcp`".to_string(),
+            });
+        }
+        let host = self.mcp_host();
+        if !is_loopback_bind(host) && self.mcp_token().is_none() {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.mcp_host`".to_string(),
+                value: host.to_string(),
+                detail: format!(
+                    "`configuration.mcp` is enabled with non-loopback host `{host}`; set `configuration.mcp_token` (--mcp-token, or the {MCP_TOKEN_ENV} environment variable) when `configuration.mcp_host` (--mcp-host) is not a loopback address"
+                ),
+            });
+        }
         Ok(())
     }
 
@@ -5417,6 +5733,163 @@ mod test {
         assert!(format!("{:?}", unset).contains("dashboard_auth_token: None"));
     }
 
+    /// The MCP Controller's token is hidden as the dashboard's is: no output holds
+    /// it, from the command line or a default set in code.
+    #[test]
+    fn output_never_holds_the_mcp_token() {
+        let token = "mcp-s3cret-token";
+        let from_line =
+            GooseConfiguration::parse_args_default(&["--mcp", "--mcp-token", token]).unwrap();
+        let from_default = {
+            let goose_attack = crate::GooseAttack::initialize_with_config(
+                GooseConfiguration::parse_args_default(&["--mcp"]).unwrap(),
+            )
+            .unwrap()
+            .set_default(GooseDefault::McpToken, token)
+            .unwrap();
+            assert_eq!(goose_attack.defaults.mcp_token.as_deref(), Some(token));
+            let mut configuration = goose_attack.configuration.clone();
+            configuration
+                .configure_with_env(&goose_attack.defaults, no_env)
+                .unwrap();
+            configuration
+        };
+        // From GOOSE_MCP_TOKEN, given to configure without setting the
+        // variable in this process.
+        let from_env = {
+            let mut configuration = GooseConfiguration::parse_args_default(&["--mcp"]).unwrap();
+            configuration
+                .configure_with_env(&GooseDefaults::default(), |name| {
+                    (name == MCP_TOKEN_ENV).then(|| token.to_string())
+                })
+                .unwrap();
+            configuration
+        };
+        for configuration in [from_line, from_default, from_env] {
+            for (path, text) in [
+                ("json", serde_json::to_string(&configuration).unwrap()),
+                ("debug", format!("{:?}", configuration)),
+                ("pretty debug", format!("{:#?}", configuration)),
+                (
+                    "shown json",
+                    serde_json::to_string(&configuration.shown()).unwrap(),
+                ),
+                ("shown debug", format!("{:#?}", configuration.shown())),
+            ] {
+                assert!(!text.contains(token), "{}: {}", path, text);
+                assert!(text.contains("(set)"), "{}: {}", path, text);
+            }
+            // The token Goose checks is still the real one.
+            assert_eq!(configuration.mcp_token(), Some(token));
+        }
+    }
+
+    /// An environment with no variables, for tests whose result a
+    /// `GOOSE_MCP_TOKEN` exported where they run must not change.
+    fn no_env(_name: &str) -> Option<String> {
+        None
+    }
+
+    /// The token comes from `--mcp-token`, then `GOOSE_MCP_TOKEN`, then
+    /// `GooseDefault::McpToken`; an empty variable counts as unset, and an
+    /// empty flag still sets no token.
+    #[test]
+    fn mcp_token_precedence() {
+        let some = |token: &str| Some(token.to_string());
+        let cases = [
+            ((None, None, None), None),
+            ((some("flag"), None, None), some("flag")),
+            ((None, some("env"), None), some("env")),
+            ((None, None, some("default")), some("default")),
+            ((some("flag"), some("env"), some("default")), some("flag")),
+            ((None, some("env"), some("default")), some("env")),
+            ((some("flag"), None, some("default")), some("flag")),
+            ((some("flag"), some("env"), None), some("flag")),
+            // An empty variable is as if it were unset.
+            ((None, some(""), None), None),
+            ((None, some(""), some("default")), some("default")),
+            // An empty flag wins and sets no token, as before.
+            ((some(""), some("env"), some("default")), some("")),
+        ];
+        for ((flag, env, default), expected) in cases {
+            let case = format!("{:?} {:?} {:?}", flag, env, default);
+            assert_eq!(chosen_mcp_token(flag, env, default), expected, "{}", case);
+        }
+        let mut empty_flag = GooseConfiguration::parse_args_default(&["--mcp"]).unwrap();
+        empty_flag.mcp_token = chosen_mcp_token(some(""), some("env"), None);
+        assert_eq!(empty_flag.mcp_token(), None);
+    }
+
+    /// `--mcp` without the feature fails as `--dashboard` does without its
+    /// feature; with it, an address that is not loopback needs a token.
+    #[test]
+    fn mcp_validation() {
+        let validate = |args: &[&str]| {
+            let mut configuration = GooseConfiguration::parse_args_default(args).unwrap();
+            configuration.configure_with_env(&GooseDefaults::default(), no_env)?;
+            configuration.validate()
+        };
+        // Off by default, and the defaults it takes when on.
+        let off = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        assert!(!off.mcp && !off.mcp_read_only && !off.mcp_set_host && off.mcp_token().is_none());
+        assert_eq!((off.mcp_host(), off.mcp_port()), ("127.0.0.1", 5119));
+        assert!(validate(&[]).is_ok());
+        let on = validate(&["--mcp"]);
+        if cfg!(feature = "mcp") {
+            assert!(on.is_ok(), "{:?}", on);
+            let detail = |error: GooseError| match error {
+                GooseError::InvalidOption { option, detail, .. } => format!("{option}: {detail}"),
+                other => panic!("expected an invalid option: {:?}", other),
+            };
+            let refused = detail(validate(&["--mcp", "--mcp-host", "0.0.0.0"]).unwrap_err());
+            assert!(
+                refused.starts_with("`configuration.mcp_host`"),
+                "{}",
+                refused
+            );
+            assert!(
+                refused.contains("--mcp-token") && refused.contains("--mcp-host"),
+                "{}",
+                refused
+            );
+            assert!(refused.contains("GOOSE_MCP_TOKEN"), "{}", refused);
+            assert!(validate(&["--mcp", "--mcp-host", "0.0.0.0", "--mcp-token", "t"]).is_ok());
+            // A token from the environment is accepted as one from the flag.
+            let mut from_env =
+                GooseConfiguration::parse_args_default(&["--mcp", "--mcp-host", "0.0.0.0"])
+                    .unwrap();
+            from_env
+                .configure_with_env(&GooseDefaults::default(), |_| Some("t".to_string()))
+                .unwrap();
+            assert_eq!(from_env.mcp_token(), Some("t"));
+            assert!(from_env.validate().is_ok());
+            // The variable is read only with --mcp.
+            let mut off = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+            off.configure_with_env(&GooseDefaults::default(), |_| Some("t".to_string()))
+                .unwrap();
+            assert_eq!(off.mcp_token, None);
+            assert!(validate(&["--mcp", "--mcp-host", "::1"]).is_ok());
+            // Port 0 is refused, as for telnet and WebSocket.
+            let zero = detail(validate(&["--mcp", "--mcp-port", "0"]).unwrap_err());
+            assert!(zero.starts_with("`configuration.mcp_port`"), "{}", zero);
+            // A read only MCP Controller can not start the test.
+            assert!(validate(&["--no-autostart", "--no-telnet", "--mcp"]).is_ok());
+            assert!(matches!(
+                validate(&["--no-autostart", "--no-telnet", "--mcp", "--mcp-read-only"]),
+                Err(GooseError::InvalidOption { ref option, .. })
+                    if option == "`configuration.no_autostart`"
+            ));
+        } else {
+            match on {
+                Err(GooseError::FeatureNotEnabled { feature, detail }) => {
+                    assert_eq!(feature, "mcp");
+                    assert_eq!(detail, "rebuild with `--features mcp`");
+                }
+                other => panic!("--mcp without the feature: {:?}", other),
+            }
+        }
+    }
+
     #[test]
     fn set_defaults() {
         let host = "http://example.com/".to_string();
@@ -5527,6 +6000,16 @@ mod test {
             .set_default(GooseDefault::DashboardAuthToken, "secret")
             .unwrap()
             .set_default(GooseDefault::DashboardMaxClients, 64)
+            .unwrap()
+            .set_default(GooseDefault::Mcp, true)
+            .unwrap()
+            .set_default(GooseDefault::McpHost, "127.0.0.2")
+            .unwrap()
+            .set_default(GooseDefault::McpPort, 6119)
+            .unwrap()
+            .set_default(GooseDefault::McpReadOnly, true)
+            .unwrap()
+            .set_default(GooseDefault::McpSetHost, true)
             .unwrap();
 
         assert!(goose_attack.defaults.host == Some(host));
@@ -5570,6 +6053,11 @@ mod test {
         assert!(goose_attack.defaults.dashboard_host == Some("127.0.0.1".to_string()));
         assert!(goose_attack.defaults.dashboard_port == Some(5118));
         assert!(goose_attack.defaults.dashboard_auth_token == Some("secret".to_string()));
+        assert!(goose_attack.defaults.mcp == Some(true));
+        assert!(goose_attack.defaults.mcp_host == Some("127.0.0.2".to_string()));
+        assert!(goose_attack.defaults.mcp_port == Some(6119));
+        assert!(goose_attack.defaults.mcp_read_only == Some(true));
+        assert!(goose_attack.defaults.mcp_set_host == Some(true));
         assert!(goose_attack.defaults.dashboard_max_clients == Some(64));
     }
 

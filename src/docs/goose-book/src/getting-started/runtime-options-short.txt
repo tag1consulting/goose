@@ -88,6 +88,12 @@ Controllers:
       --websocket              Enable the WebSocket Controller
       --websocket-host <HOST>  WebSocket host [default: 127.0.0.1]
       --websocket-port <PORT>  WebSocket port [default: 5117]
+      --mcp                    Enable the MCP Controller
+      --mcp-host <HOST>        MCP host [default: 127.0.0.1]
+      --mcp-port <PORT>        MCP port [default: 5119]
+      --mcp-token <TOKEN>      MCP auth token
+      --mcp-read-only          Only the MCP tools that read
+      --mcp-set-host           Offer the MCP set_host tool
 
 HTTP client:
       --timeout <SECS>        Request timeout in seconds [default: 60]

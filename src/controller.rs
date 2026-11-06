@@ -1,9 +1,14 @@
-//! Optional telnet and WebSocket Controller threads.
+//! Optional telnet, WebSocket and MCP Controller threads.
 //!
 //! By default, Goose launches a telnet Controller on 127.0.0.1:5116, allowing real-time
 //! control of the running load test; `--websocket` adds a WebSocket Controller on
 //! 127.0.0.1:5117. Neither has authentication, so one bound off loopback, with
-//! `--telnet-host` or `--websocket-host`, prints a warning at startup.
+//! `--telnet-host` or `--websocket-host`, prints a warning at startup. A Goose built
+//! with the `mcp` feature adds, with `--mcp`, an MCP Controller on 127.0.0.1:5119,
+//! which serves every command as a Model Context Protocol tool.
+
+#[cfg(feature = "mcp")]
+pub(crate) mod mcp;
 
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
@@ -51,7 +56,8 @@ pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
 /// Reply to a line that is not a command.
 const UNRECOGNIZED: &str = "unrecognized command";
 
-/// The help a telnet or WebSocket client gets for `help` or `?`.
+/// The help a telnet or WebSocket client gets for `help` or `?`. The MCP
+/// Controller describes each tool with its command's line.
 const HELP: &str = concat!(
     env!("CARGO_PKG_NAME"),
     " ",
@@ -91,12 +97,15 @@ const HELP: &str = concat!(
 /// GOOSE DEVELOPER NOTE: The following steps are required to add a new command:
 ///  1. Define the new command here, carrying its value already parsed and
 ///     bounded.
-///  2. Parse it in `ControllerCommand::from_str`, with a value parser that
+///  2. Parse it in `ControllerCommand::parse`, with a value parser that
 ///     returns the error a client is sent, and add a line to `HELP`.
 ///  3. Apply it in `GooseAttack::control` (also in this file), which answers
 ///     with a `ControlOutcome` whose message every front end shows.
 ///  4. Add it to the parse table test in this file, and a test for the new
 ///     command in tests/controller.rs.
+///  5. Give it an MCP tool in src/controller/mcp.rs: a `Tool` variant, named
+///     in `Tool::for_command`, which does not compile until every command is
+///     named there.
 #[derive(Clone, Debug)]
 pub enum ControllerCommand {
     /// Start an idle test.
@@ -593,14 +602,25 @@ pub(crate) const INVALID_RUN_TIME_MSG: &str =
     "run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
 
 /// Parse a line from a telnet or WebSocket client into a command, or the
-/// error the client is sent back.
+/// error the client is sent back: a verb, then one space and its value if it
+/// takes one, read by `ControllerCommand::parse`.
 impl FromStr for ControllerCommand {
     type Err = &'static str;
 
     fn from_str(line: &str) -> Result<Self, Self::Err> {
-        // A verb, then one space and its value if it takes one.
         let line = line.trim();
         let (verb, value) = line.split_once(' ').unwrap_or((line, ""));
+        Self::parse(verb, value)
+    }
+}
+
+impl ControllerCommand {
+    /// The command `verb` names, with `value` parsed and bounded, or the error
+    /// a client is sent back. Every front end that takes text parses with
+    /// this: a telnet or WebSocket line and an MCP tool's argument alike, so
+    /// their aliases, bounds and refusals can not differ. Verbs are not case
+    /// sensitive.
+    pub(crate) fn parse(verb: &str, value: &str) -> Result<Self, &'static str> {
         // A command that takes no value.
         let alone = |command| match value {
             "" => Ok(command),
@@ -646,6 +666,13 @@ impl FromStr for ControllerCommand {
         }
     }
 }
+
+/// Reply when the parent did not answer within [`CONTROL_TIMEOUT`].
+pub(crate) const CONTROL_TIMED_OUT: &str =
+    "control timed out, it may still apply: check before retrying";
+
+/// Reply when the parent has gone.
+pub(crate) const CHANNEL_CLOSED: &str = "parent process has closed the controller channel";
 
 /// The parent's answer to a [`ControllerCommand`].
 pub(crate) enum ControlReply {
@@ -1452,21 +1479,29 @@ impl GooseAttack {
     }
 }
 
-/// Which telnet and WebSocket Controllers are listening, after
+/// Which telnet, WebSocket and MCP Controllers are listening, after
 /// [`bind_controller`] for each one the configuration turns on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ListeningControllers {
     pub(crate) telnet: bool,
     pub(crate) websocket: bool,
+    pub(crate) mcp: bool,
 }
 
 impl ListeningControllers {
+    /// Whether a listening Controller can start the load test: a read only MCP
+    /// Controller can not.
+    pub(crate) fn can_start(&self, configuration: &GooseConfiguration) -> bool {
+        self.telnet || self.websocket || (self.mcp && configuration.mcp_controls())
+    }
+
     /// Every Controller `configuration` turns on, as if each one bound.
     #[cfg(all(test, feature = "dashboard"))]
     pub(crate) fn configured(configuration: &GooseConfiguration) -> Self {
         ListeningControllers {
             telnet: !configuration.no_telnet,
             websocket: configuration.websocket,
+            mcp: configuration.mcp,
         }
     }
 }
@@ -1491,6 +1526,10 @@ pub(crate) async fn bind_controller(
             configuration.websocket_host(),
             configuration.websocket_port()
         ),
+        #[cfg(feature = "mcp")]
+        ControllerProtocol::Mcp => {
+            format_bind_address(configuration.mcp_host(), configuration.mcp_port())
+        }
     };
 
     // All controllers use a TcpListener port.
@@ -1516,9 +1555,24 @@ pub(crate) async fn bind_controller(
     }
 }
 
+/// Format `host:port` for [`TcpListener::bind`], bracketing bare IPv6 literals.
+///
+/// Mirrors how operators type `--dashboard-host` or `--mcp-host` (`localhost`,
+/// `127.0.0.1`, `::1`, `[::1]`) while remaining valid for `ToSocketAddrs`.
+#[cfg(any(feature = "dashboard", feature = "mcp"))]
+pub(crate) fn format_bind_address(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 /// The warning a Controller listening on `bound` prints at startup when that
 /// is not a loopback address: it has no authentication, so anyone who can
-/// reach it controls the load test. `None` on loopback, the default.
+/// reach it controls the load test. The MCP Controller only listens off
+/// loopback with a token, so its warning is that the token is all that guards
+/// it. `None` on loopback, the default.
 pub(crate) fn unauthenticated_warning(
     protocol: ControllerProtocol,
     bound: std::net::SocketAddr,
@@ -1529,8 +1583,20 @@ pub(crate) fn unauthenticated_warning(
     let option = match protocol {
         ControllerProtocol::Telnet => "--telnet-host",
         ControllerProtocol::WebSocket => "--websocket-host",
+        #[cfg(feature = "mcp")]
+        ControllerProtocol::Mcp => "--mcp-host",
     };
     let port = bound.port();
+    #[cfg(feature = "mcp")]
+    if let ControllerProtocol::Mcp = protocol {
+        return Some(format!(
+            "WARNING: the {protocol:?} Controller on {bound} is guarded only by --mcp-token.\n\
+             Anyone who has the token and can reach this port can start, stop and\n\
+             reconfigure the load test, and the token crosses the network in clear text.\n\
+             Safer: leave {option} unset to listen on 127.0.0.1 only, and use an\n\
+             ssh forward (ssh -L {port}:127.0.0.1:{port} host)."
+        ));
+    }
     Some(format!(
         "WARNING: the {protocol:?} Controller on {bound} has no authentication.\n\
          Anyone who can reach this port can start, stop and reconfigure the load test.\n\
@@ -1579,13 +1645,18 @@ pub(crate) async fn controller_main(
     }
 }
 
-/// Goose supports two different Controller protocols: telnet and WebSocket.
+/// The Controller protocols Goose supports: telnet, WebSocket, and MCP with
+/// the `mcp` feature.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ControllerProtocol {
     /// Allows control of Goose via telnet.
     Telnet,
     /// Allows control of Goose via a WebSocket.
     WebSocket,
+    /// Allows control of Goose via Model Context Protocol tools, for AI
+    /// agents, with the `mcp` feature.
+    #[cfg(feature = "mcp")]
+    Mcp,
 }
 
 /// A connected Controller client: what differs between telnet and
@@ -1729,6 +1800,12 @@ async fn serve_client(
                 return;
             }
         },
+        // Served over HTTP by its own module, never as a stream.
+        #[cfg(feature = "mcp")]
+        ControllerProtocol::Mcp => {
+            error!("{client}: the MCP Controller does not serve a stream");
+            return;
+        }
     };
     let websocket = matches!(transport, Transport::WebSocket(_));
     // Display initial goose> prompt.
@@ -1775,15 +1852,10 @@ async fn serve_client(
             Ok(ControlReply::Config(config)) => (true, format!("{config:#?}")),
             Ok(ControlReply::Metrics(metrics)) if json => (true, to_json(metrics.as_ref())),
             Ok(ControlReply::Metrics(metrics)) => (true, metrics.to_string()),
-            Err(SendError::Timeout) => (
-                false,
-                "control timed out, it may still apply: check before retrying".to_string(),
-            ),
+            Err(SendError::Timeout) => (false, CONTROL_TIMED_OUT.to_string()),
             // The parent has gone: disconnect.
             Err(SendError::Unavailable) => {
-                transport
-                    .write(false, "parent process has closed the controller channel")
-                    .await;
+                transport.write(false, CHANNEL_CLOSED).await;
                 break;
             }
         };
@@ -1912,14 +1984,27 @@ pub(crate) mod tests {
     }
 
     /// What a client line becomes: the typed command written out, or the
-    /// error the client is sent back.
+    /// error the client is sent back. The line is read through `from_str`,
+    /// and its verb and value through the shared [`ControllerCommand::parse`]
+    /// every front end calls, which must agree.
     fn parse(line: &str) -> Result<String, String> {
         if let Some((_, exit)) = local_reply(line) {
             return Ok(if exit { "Exit" } else { "Help" }.to_string());
         }
-        line.parse::<ControllerCommand>()
-            .map(|command| format!("{command:?}"))
-            .map_err(str::to_string)
+        let written = |parsed: Result<ControllerCommand, &str>| {
+            parsed
+                .map(|command| format!("{command:?}"))
+                .map_err(str::to_string)
+        };
+        let from_line = written(line.parse::<ControllerCommand>());
+        let trimmed = line.trim();
+        let (verb, value) = trimmed.split_once(' ').unwrap_or((trimmed, ""));
+        assert_eq!(
+            written(ControllerCommand::parse(verb, value)),
+            from_line,
+            "{line:?}"
+        );
+        from_line
     }
 
     /// Every command and alias parses to its typed value, and every bad
@@ -4573,6 +4658,8 @@ pub(crate) mod tests {
             let (host, port) = match protocol {
                 ControllerProtocol::Telnet => (c.telnet_host(), c.telnet_port()),
                 ControllerProtocol::WebSocket => (c.websocket_host(), c.websocket_port()),
+                #[cfg(feature = "mcp")]
+                ControllerProtocol::Mcp => (c.mcp_host(), c.mcp_port()),
             };
             std::net::SocketAddr::new(host.parse().unwrap(), port)
         };
@@ -4602,8 +4689,30 @@ pub(crate) mod tests {
                  ssh forward (ssh -L 5117:127.0.0.1:5117 host)."
             )
         );
-        // The default warns about neither.
-        for protocol in [ControllerProtocol::Telnet, ControllerProtocol::WebSocket] {
+        // The MCP Controller only listens off loopback with a token: its
+        // warning says the token is all that guards it.
+        #[cfg(feature = "mcp")]
+        assert_eq!(
+            unauthenticated_warning(
+                ControllerProtocol::Mcp,
+                bound(&["--mcp-host", "10.1.2.3"], ControllerProtocol::Mcp)
+            )
+            .as_deref(),
+            Some(
+                "WARNING: the Mcp Controller on 10.1.2.3:5119 is guarded only by --mcp-token.\n\
+                 Anyone who has the token and can reach this port can start, stop and\n\
+                 reconfigure the load test, and the token crosses the network in clear text.\n\
+                 Safer: leave --mcp-host unset to listen on 127.0.0.1 only, and use an\n\
+                 ssh forward (ssh -L 5119:127.0.0.1:5119 host)."
+            )
+        );
+        // The default warns about none.
+        for protocol in [
+            ControllerProtocol::Telnet,
+            ControllerProtocol::WebSocket,
+            #[cfg(feature = "mcp")]
+            ControllerProtocol::Mcp,
+        ] {
             assert_eq!(
                 unauthenticated_warning(protocol, bound(&[], protocol)),
                 None
@@ -4619,6 +4728,26 @@ pub(crate) mod tests {
                 unauthenticated_warning(ControllerProtocol::Telnet, address.parse().unwrap());
             assert_eq!(warning.is_some(), warns, "{}", address);
         }
+    }
+
+    /// With `--no-autostart`, a listening read only MCP Controller can not
+    /// start the test; any other listening Controller can.
+    #[test]
+    fn listening_controllers_that_can_start() {
+        let configuration = |args: &[&str]| GooseConfiguration::parse_args_default(args).unwrap();
+        let mcp_only = ListeningControllers {
+            mcp: true,
+            ..Default::default()
+        };
+        assert!(mcp_only.can_start(&configuration(&["--mcp"])));
+        assert!(!mcp_only.can_start(&configuration(&["--mcp", "--mcp-read-only"])));
+        assert!(!ListeningControllers::default().can_start(&configuration(&["--mcp"])));
+        let telnet = ListeningControllers {
+            telnet: true,
+            mcp: true,
+            ..Default::default()
+        };
+        assert!(telnet.can_start(&configuration(&["--mcp", "--mcp-read-only"])));
     }
 
     /// A client that closes the connection gets the close echoed, so the

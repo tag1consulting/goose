@@ -1,7 +1,6 @@
-use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use httpmock::{Method::GET, Mock, MockServer};
-use std::{str, time};
+use std::time;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -12,6 +11,8 @@ use goose::controller::{ControllerWebSocketRequest, ControllerWebSocketResponse}
 use goose::prelude::*;
 
 mod common;
+#[cfg(feature = "mcp")]
+mod mcp_client;
 
 // Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
@@ -31,17 +32,29 @@ const INCREASE_RATE: usize = 25;
 const RUN_TIME: usize = 55;
 const INCREASE_TIME: usize = 1;
 
-// There are multiple test variations in this file.
-#[derive(Clone, PartialEq)]
-enum TestType {
-    // Enable --websocket and --no-telnet.
-    WebSocket,
-    // Enable --no-websocket.
+// The Controller each test variation drives, every one through the same
+// table of commands below.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Protocol {
+    // Enable --no-websocket: the telnet Controller on its fixed port 5116.
     Telnet,
+    // Enable --websocket and --no-telnet: the WebSocket Controller on 5117.
+    WebSocket,
+    // Enable --mcp and --no-telnet: the MCP Controller on an ephemeral port.
+    #[cfg(feature = "mcp")]
+    Mcp,
+}
+
+impl Protocol {
+    // Whether replies to config and metrics are json: WebSocket's always are,
+    // and so are the MCP tools'.
+    fn json(self) -> bool {
+        self != Protocol::Telnet
+    }
 }
 
 // The Controller commands tested, each in one or more steps.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Command {
     Exit,
     Help,
@@ -63,26 +76,433 @@ enum Command {
     Shutdown,
 }
 
-// State machine for tracking Controller state during tests.
-struct TestState {
-    // A buffer for the telnet Controller.
-    buf: [u8; 2048],
-    // Track iterations through the commands tested.
-    position: usize,
-    // Track the steps within a given iteration.
-    step: usize,
-    // The Controller command currently being tested.
-    command: Command,
-    // A TCP socket if testing the telnet Controller.
-    telnet_stream: Option<TcpStream>,
-    // The receiver side of a split TCP socket if testing the WebSocket Controller.
-    websocket_receiver: Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
-    // The sender side of a split TCP socket if testing the WebSocket Controller.
-    websocket_sender: Option<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
-    // A flag indicating whether or not to wait for a reply.
-    websocket_expect_reply: bool,
-    // A flag indicating whether or not the WebSocket controller is being tested.
-    websocket_controller: bool,
+impl Command {
+    // Whether `protocol` has this command. The MCP Controller has no session
+    // to exit and no help or unrecognized line: its tools/list is its help,
+    // and tests/mcp_controller.rs tests an unknown tool.
+    fn runs_on(self, protocol: Protocol) -> bool {
+        #[cfg(feature = "mcp")]
+        if protocol == Protocol::Mcp {
+            return !matches!(self, Command::Exit | Command::Help);
+        }
+        let _ = protocol;
+        true
+    }
+}
+
+// A Controller's reply: the WebSocket and MCP success flag (telnet has none)
+// and the text.
+struct Reply {
+    success: Option<bool>,
+    text: String,
+}
+
+// What a step checks of its reply, with the protocol that sent it.
+type Check = Box<dyn Fn(Protocol, &Reply) + Send>;
+
+// One line sent to the Controller, the check of its reply, and how long to
+// wait after it for Goose to catch up.
+struct Step {
+    line: String,
+    check: Check,
+    pause: time::Duration,
+}
+
+// A step whose reply must start with `prefix`.
+fn starts(line: &str, prefix: &'static str) -> Step {
+    Step {
+        line: line.to_string(),
+        check: Box::new(move |_, reply: &Reply| assert!(reply.text.starts_with(prefix))),
+        pause: time::Duration::ZERO,
+    }
+}
+
+// A step with a check of its own.
+fn step(line: &str, check: impl Fn(Protocol, &Reply) + Send + 'static) -> Step {
+    Step {
+        line: line.to_string(),
+        check: Box::new(check),
+        pause: time::Duration::ZERO,
+    }
+}
+
+impl Step {
+    // This step, waiting `pause` after its reply.
+    fn then_wait(mut self, pause: time::Duration) -> Self {
+        self.pause = pause;
+        self
+    }
+}
+
+// Every command tested, in order, with its steps: the same lines and the same
+// expected replies for every protocol.
+fn commands(server_url: &str) -> Vec<(Command, Vec<Step>)> {
+    vec![
+        // Exit the Controller, then connect again.
+        (Command::Exit, vec![starts("exit", "goodbye!")]),
+        (
+            Command::Help,
+            vec![
+                // Request the help text.
+                step("help", |_, reply| {
+                    assert!(reply.text.contains("controller commands:"))
+                }),
+                // Request the help text, using the short form.
+                step("?", |_, reply| {
+                    assert!(reply.success.unwrap_or(true), "help must succeed");
+                    assert!(reply.text.contains("controller commands:"));
+                }),
+                // Send a line that is not a command.
+                step("foo", |protocol, reply| {
+                    let websocket = protocol == Protocol::WebSocket;
+                    assert_eq!(reply.success, websocket.then_some(false));
+                    // The WebSocket reply also points to the book.
+                    if websocket {
+                        assert!(reply
+                            .text
+                            .starts_with("unrecognized command, see Goose book"));
+                    } else {
+                        assert!(reply.text.starts_with("unrecognized command\ngoose> "));
+                    }
+                }),
+            ],
+        ),
+        (
+            Command::Host,
+            vec![
+                // Set the host to be load tested.
+                starts(&["host ", server_url].concat(), "host configured"),
+                // An invalid host is refused.
+                starts("host foobar", "host must be a valid url"),
+                // A host that is not a valid url is refused.
+                starts("host http://$[foo", "host must be a valid url"),
+            ],
+        ),
+        (
+            Command::TestPlan,
+            vec![
+                // An invalid testplan is refused.
+                starts("testplan 10", "test-plan must be"),
+                // A valid test plan is configured.
+                starts("test_plan 10,2s;10,30m5s;0,1h2s", "test-plan configured"),
+            ],
+        ),
+        (
+            Command::Users,
+            vec![
+                // Reconfigure the number of users simulated by the load test.
+                starts(
+                    &["users ", &START_USERS.to_string()].concat(),
+                    "users configured",
+                ),
+                // Zero users is refused.
+                starts("users 0", "users must be an integer between 1 and 100000"),
+                // More than the maximum is refused.
+                starts(
+                    "users 100001",
+                    "users must be an integer between 1 and 100000",
+                ),
+                // Users can't be configured with a float. The number of users
+                // started is verified when the load test finishes.
+                starts("users 1.1", "users must be an integer between 1 and 100000"),
+            ],
+        ),
+        (
+            Command::IncreaseRate,
+            vec![
+                // A decimal increase_rate.
+                starts("increaserate .1", "increase_rate configured"),
+                // With leading and trailing zeros.
+                starts("increaserate 0.90", "increase_rate configured"),
+                // An invalid decimal is refused.
+                starts(
+                    "increaserate 1.2.3",
+                    "increase_rate must be a number from 0.01 to 100000",
+                ),
+                // A single integer: the increase_rate is verified when the
+                // load test finishes.
+                starts(
+                    &["increaserate ", &INCREASE_RATE.to_string()].concat(),
+                    "increase_rate configured",
+                ),
+            ],
+        ),
+        (
+            Command::IncreaseTime,
+            vec![
+                // A decimal IncreaseTime is refused.
+                starts("increase-time .1", "increase_time must be a time span"),
+                // An IncreaseTime with hms notation.
+                starts("increase-time 1h2m3s", "increase_time configured"),
+                // A proper IncreaseTime.
+                starts(
+                    &["increase_time ", &INCREASE_TIME.to_string()].concat(),
+                    "increase_time configured",
+                ),
+                // Restore the IncreaseRate.
+                starts(
+                    &["increaserate ", &INCREASE_RATE.to_string()].concat(),
+                    "increase_rate configured",
+                ),
+            ],
+        ),
+        (
+            Command::DecreaseRate,
+            vec![
+                // A decimal decrease_rate.
+                starts("decreaserate .5", "decrease_rate configured"),
+                // An invalid decimal is refused.
+                starts(
+                    "decreaserate 1.2.3",
+                    "decrease_rate must be a number from 0.01 to 100000",
+                ),
+                // A single integer.
+                starts("decreaserate 2", "decrease_rate configured"),
+            ],
+        ),
+        (
+            Command::DecreaseTime,
+            vec![
+                // A decimal DecreaseTime is refused.
+                starts("decrease-time .1", "decrease_time must be a time span"),
+                // A DecreaseTime with hms notation.
+                starts("decrease-time 1h2m3s", "decrease_time configured"),
+                // A proper DecreaseTime.
+                starts("decrease_time 30", "decrease_time configured"),
+                // Restore increase_rate for subsequent tests.
+                starts(
+                    &["increaserate ", &INCREASE_RATE.to_string()].concat(),
+                    "increase_rate configured",
+                ),
+            ],
+        ),
+        (
+            Command::RunTime,
+            vec![
+                // Hours and minutes and seconds.
+                starts("runtime 1h2m3s", "run_time configured"),
+                // Hours and seconds.
+                starts("run_time 1h2s", "run_time configured"),
+                // Hours alone.
+                starts("run-time 1h", "run_time configured"),
+                // Seconds alone.
+                starts("runtime 10s", "run_time configured"),
+                // An unsupported value is refused.
+                starts("runtime 10d", "run_time must be a time span"),
+                // Seconds alone, and no "s". The run_time is verified when the
+                // load test finishes; if this fails the load test could run
+                // forever.
+                starts(
+                    &["runtime ", &RUN_TIME.to_string()].concat(),
+                    "run_time configured",
+                ),
+            ],
+        ),
+        (
+            Command::Throttle,
+            vec![
+                // A throttle past the bound is refused.
+                starts("throttle 1000001", "throttle must be an integer"),
+                // Set a throttle while idle, for the next Start.
+                starts("throttle 100000", "throttle configured"),
+                // 0 clears it while idle.
+                starts("throttle-requests 0", "throttle cleared"),
+                // Leave a throttle no request reaches, so the run's counts
+                // are unchanged.
+                starts("throttle_requests 100000", "throttle configured"),
+            ],
+        ),
+        (
+            Command::Start,
+            vec![
+                // An idle load test can not be stopped.
+                starts("stop", "load test not running"),
+                // An idle load test can be started.
+                starts("start", "load test started"),
+                // A running load test can not be started.
+                starts("start", "unable to start load test, it is not idle"),
+            ],
+        ),
+        (
+            Command::Config,
+            vec![step("config", |protocol, reply| {
+                assert!(reply.success.unwrap_or(true), "config must succeed");
+                // The configuration is returned in json format.
+                if protocol.json() {
+                    assert!(reply.text.starts_with(r#"{"host":"#));
+                // The configuration object is returned.
+                } else {
+                    assert!(reply.text.starts_with(r"GooseConfiguration "));
+                }
+            })],
+        ),
+        (
+            Command::ConfigJson,
+            vec![starts("config-json", r#"{"host":"#)],
+        ),
+        (
+            Command::Metrics,
+            vec![step("metrics", |protocol, reply| {
+                // The metrics are returned in json format.
+                if protocol.json() {
+                    assert!(reply.text.starts_with(r#"{"hash":0,"#));
+                }
+                // The metrics are returned and pretty-printed.
+                else {
+                    assert!(reply.text.contains("=== PER TRANSACTION METRICS ==="));
+                }
+            })],
+        ),
+        (
+            // The reply is longer than a telnet read: the telnet client reads
+            // the rest of it, to the prompt that ends it.
+            Command::MetricsJson,
+            vec![starts("metrics-json", r#"{"hash":0,"#)],
+        ),
+        (
+            Command::Stop,
+            vec![
+                // Setting host on a running load test fails.
+                starts(
+                    "host http://localhost/",
+                    "failed to reconfigure host, load test is not idle",
+                ),
+                // A user count too large for a usize is refused and the load
+                // test keeps running.
+                starts(
+                    "users 99999999999999999999",
+                    "users must be an integer between 1 and 100000",
+                ),
+                // Reconfigure the number of users, increasing; give Goose a
+                // second to increase users.
+                starts(
+                    &["users ", &MAX_USERS.to_string()].concat(),
+                    "users configured",
+                )
+                .then_wait(time::Duration::from_secs(1)),
+                // Reconfigure the number of users, decreasing; give Goose a
+                // second to decrease users.
+                starts(
+                    &["users ", &FINAL_USERS.to_string()].concat(),
+                    "users configured",
+                )
+                .then_wait(time::Duration::from_secs(1)),
+                // A running load test can be stopped; give Goose a half
+                // second to stop before moving on.
+                starts("stop", "load test stopped").then_wait(time::Duration::from_millis(500)),
+            ],
+        ),
+        (
+            Command::Shutdown,
+            vec![starts("shutdown", "load test shut down")],
+        ),
+    ]
+}
+
+type WebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+// A connected Controller client: what differs between the protocols is only
+// how a line is sent and its reply read.
+enum Client {
+    Telnet(TcpStream),
+    WebSocket(Box<WebSocket>),
+    #[cfg(feature = "mcp")]
+    Mcp(mcp_client::Mcp),
+}
+
+impl Client {
+    // Connect to the `protocol` Controller, the MCP Controller on `mcp_port`.
+    async fn connect(protocol: Protocol, mcp_port: u16) -> Self {
+        let _ = mcp_port;
+        match protocol {
+            Protocol::Telnet => {
+                let mut client =
+                    Client::Telnet(TcpStream::connect("127.0.0.1:5116").await.unwrap());
+                // The prompt the telnet Controller greets a client with.
+                client.read_telnet().await;
+                client
+            }
+            Protocol::WebSocket => {
+                let (mut stream, _item) = tokio_tungstenite::connect_async("ws://127.0.0.1:5117")
+                    .await
+                    .unwrap();
+                // Send an empty message so the client performs a handshake.
+                stream.send(Message::Text("".into())).await.unwrap();
+                // Ignore the error that comes back.
+                let _ = stream.next().await.unwrap();
+                Client::WebSocket(Box::new(stream))
+            }
+            #[cfg(feature = "mcp")]
+            Protocol::Mcp => Client::Mcp(mcp_client::Mcp::new(mcp_port)),
+        }
+    }
+
+    // A telnet reply, to the prompt that ends it, prompt included.
+    async fn read_telnet(&mut self) -> String {
+        let Client::Telnet(stream) = self else {
+            unreachable!("only telnet has a prompt");
+        };
+        let mut buf = [0u8; 2048];
+        let mut reply = Vec::new();
+        while !reply.ends_with(b"goose> ") {
+            let read = stream.read(&mut buf).await.unwrap();
+            assert!(read > 0, "the controller closed mid reply");
+            reply.extend_from_slice(&buf[..read]);
+        }
+        String::from_utf8(reply).unwrap()
+    }
+
+    // Send `line` and read its reply.
+    async fn send(&mut self, line: &str) -> Reply {
+        match self {
+            Client::Telnet(stream) => {
+                if let Err(e) = stream.write_all(format!("{line}\r\n").as_bytes()).await {
+                    panic!("failed to send {} command: {}", line, e);
+                }
+                Reply {
+                    success: None,
+                    text: self.read_telnet().await,
+                }
+            }
+            Client::WebSocket(stream) => {
+                let request = serde_json::to_string(&ControllerWebSocketRequest {
+                    request: format!("{line}\r\n"),
+                })
+                .unwrap();
+                stream.send(Message::Text(request.into())).await.unwrap();
+                let message = stream.next().await.expect("error reading from server");
+                let text = message
+                    .expect("error unwrapping message from server")
+                    .into_text()
+                    .expect("invalid message type");
+                let reply: ControllerWebSocketResponse = match serde_json::from_str(&text) {
+                    Ok(reply) => reply,
+                    Err(e) => panic!("invalid response from server: {}", e),
+                };
+                Reply {
+                    success: Some(reply.success),
+                    text: reply.response,
+                }
+            }
+            #[cfg(feature = "mcp")]
+            Client::Mcp(mcp) => {
+                let (ok, text) = mcp.send_line(line).await;
+                Reply {
+                    success: Some(ok),
+                    text,
+                }
+            }
+        }
+    }
+
+    // Before the next command, a telnet client sends an empty line for a
+    // fresh prompt, and reads the reply to it.
+    async fn new_prompt(&mut self) {
+        if let Client::Telnet(stream) = self {
+            stream.write_all("\r\n".as_bytes()).await.unwrap();
+            self.read_telnet().await;
+        }
+    }
 }
 
 // Test transaction.
@@ -135,11 +555,8 @@ fn validate_one_scenario(
     goose_metrics: &GooseMetrics,
     mock_endpoints: &[Mock],
     configuration: &GooseConfiguration,
-    test_type: TestType,
+    protocol: Protocol,
 ) {
-    //println!("goose_metrics: {:#?}", goose_metrics);
-    //println!("configuration: {:#?}", configuration);
-
     // Confirm that we loaded the mock endpoints.
     assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
@@ -174,7 +591,7 @@ fn validate_one_scenario(
     assert!(goose_metrics.history.len() == 9);
 
     // The Telnet test should create a report-file.
-    if test_type == TestType::Telnet {
+    if protocol == Protocol::Telnet {
         // The report file must exist.
         assert!(std::path::Path::new(REPORT_FILE).exists());
         // The report file must not be empty.
@@ -191,8 +608,36 @@ fn get_transactions() -> Scenario {
         .register_transaction(transaction!(get_about).set_weight(1).unwrap())
 }
 
+// Drive the `protocol` Controller through every command it has, checking
+// every reply.
+async fn drive(protocol: Protocol, server_url: String, mcp_port: u16) {
+    // Sleep a half a second allowing the GooseAttack to start.
+    tokio::time::sleep(time::Duration::from_millis(500)).await;
+
+    let mut client = Client::connect(protocol, mcp_port).await;
+    for (command, steps) in commands(&server_url) {
+        if !command.runs_on(protocol) {
+            continue;
+        }
+        for step in steps {
+            let reply = client.send(&step.line).await;
+            (step.check)(protocol, &reply);
+            tokio::time::sleep(step.pause).await;
+            // Give the parent process time to catch up.
+            tokio::time::sleep(time::Duration::from_millis(100)).await;
+        }
+        if command == Command::Exit {
+            // Re-connect to the Controller.
+            client = Client::connect(protocol, mcp_port).await;
+        }
+        if command != Command::Shutdown {
+            client.new_prompt().await;
+        }
+    }
+}
+
 // Helper to run all standalone tests.
-async fn run_standalone_test(test_type: TestType) {
+async fn run_standalone_test(protocol: Protocol) {
     // Start the mock server.
     let server = MockServer::start();
     let server_url = server.base_url();
@@ -200,663 +645,31 @@ async fn run_standalone_test(test_type: TestType) {
     // Setup the endpoints needed for this test on the mock server.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    let mut configuration_flags = match &test_type {
-        TestType::WebSocket => vec!["--websocket", "--no-telnet"],
+    #[cfg(feature = "mcp")]
+    let mcp_port = mcp_client::free_port();
+    #[cfg(not(feature = "mcp"))]
+    let mcp_port = 0;
+    #[cfg(feature = "mcp")]
+    let mcp_port_text = mcp_port.to_string();
+    let mut configuration_flags = match protocol {
+        Protocol::WebSocket => vec!["--websocket", "--no-telnet"],
         // Also test writing a report-file when stopping load test through controller.
-        TestType::Telnet => vec!["--no-websocket", "--report-file", REPORT_FILE],
+        Protocol::Telnet => vec!["--no-websocket", "--report-file", REPORT_FILE],
+        #[cfg(feature = "mcp")]
+        Protocol::Mcp => vec![
+            "--mcp",
+            "--mcp-set-host",
+            "--mcp-port",
+            &mcp_port_text,
+            "--no-telnet",
+        ],
     };
-
-    // Keep a copy for validation.
-    let validate_test_type = test_type.clone();
 
     // Build common configuration elements.
     let configuration = common_build_configuration(&server, &mut configuration_flags);
 
-    // Create a new thread from which to test the Controller.
-    let _controller_handle = tokio::spawn(async move {
-        // Sleep a half a second allowing the GooseAttack to start.
-        tokio::time::sleep(time::Duration::from_millis(500)).await;
-
-        // Initiailize the state engine.
-        let mut test_state = update_state(None, &test_type).await;
-        loop {
-            // Process data received from the client in a loop.
-            let response;
-            let websocket_response: ControllerWebSocketResponse;
-            // The WebSocket success flag; telnet has none.
-            let mut success = None;
-            if let Some(stream) = test_state.telnet_stream.as_mut() {
-                let _ = match stream.read(&mut test_state.buf).await {
-                    Ok(data) => data,
-                    Err(_) => {
-                        panic!("ERROR: server disconnected!");
-                    }
-                };
-                response = str::from_utf8(&test_state.buf).unwrap();
-            // Process data received from the client in a loop.
-            } else if let Some(ws_receiver) = test_state.websocket_receiver.as_mut() {
-                if !test_state.websocket_expect_reply {
-                    response = "";
-                    test_state.websocket_expect_reply = true;
-                } else {
-                    let message = ws_receiver.next().await.expect("error reading from server");
-                    let r = message
-                        .expect("error unwrapping message from server")
-                        .into_text()
-                        .expect("invalid message type");
-                    // Keep response around for the entire loop.
-                    websocket_response = match serde_json::from_str(&r) {
-                        Ok(c) => c,
-                        Err(e) => panic!("invalid response from server: {}", e),
-                    };
-                    response = &websocket_response.response;
-                    success = Some(websocket_response.success);
-                }
-            } else {
-                unreachable!();
-            }
-
-            //println!("{:?}: {}", test_state.command, response);
-            match test_state.command {
-                Command::Exit => {
-                    match test_state.step {
-                        // Exit the Controller.
-                        0 => {
-                            make_request(&mut test_state, "exit\r\n").await;
-                        }
-                        // Confirm that the Controller exited.
-                        _ => {
-                            assert!(response.starts_with("goodbye!"));
-
-                            // Re-connect to the Controller.
-                            test_state = update_state(None, &test_type).await;
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Help => {
-                    match test_state.step {
-                        0 => {
-                            // Request the help text.
-                            make_request(&mut test_state, "help\r\n").await;
-                        }
-                        1 => {
-                            // Be sure we actually received the help text.
-                            assert!(response.contains("controller commands:"));
-
-                            // Request the help text, using the short form.
-                            make_request(&mut test_state, "?\r\n").await;
-                        }
-                        2 => {
-                            assert!(success.unwrap_or(true), "help must succeed");
-                            // Be sure we actually received the help text.
-                            assert!(response.contains("controller commands:"));
-
-                            // Send a line that is not a command.
-                            make_request(&mut test_state, "foo\r\n").await;
-                        }
-                        _ => {
-                            assert_eq!(success, test_state.websocket_controller.then_some(false));
-                            // The WebSocket reply also points to the book.
-                            if test_state.websocket_controller {
-                                assert!(
-                                    response.starts_with("unrecognized command, see Goose book")
-                                );
-                            } else {
-                                // The buffer is reused, so only the start is this reply.
-                                assert!(response.starts_with("unrecognized command\ngoose> "));
-                            }
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Host => {
-                    match test_state.step {
-                        // Set the host to be load tested.
-                        0 => {
-                            make_request(&mut test_state, &["host ", &server_url, "\r\n"].concat())
-                                .await;
-                        }
-                        // Confirm the host was configured.
-                        1 => {
-                            assert!(response.starts_with("host configured"));
-
-                            // Then try and set an invalid host.
-                            make_request(&mut test_state, "host foobar\r\n").await;
-                        }
-                        // Confirm that an invalid host is refused.
-                        2 => {
-                            assert!(response.starts_with("host must be a valid url"));
-
-                            // Try again to set an invalid host.
-                            make_request(&mut test_state, "host http://$[foo\r\n").await;
-                        }
-                        // Confirm that a host that is not a valid url is refused.
-                        _ => {
-                            assert!(response.starts_with("host must be a valid url"));
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::TestPlan => {
-                    match test_state.step {
-                        // Try and set an invalid testplan.
-                        0 => {
-                            make_request(&mut test_state, "testplan 10\r\n").await;
-                        }
-                        1 => {
-                            // Confirm that an invalid testplan fails.
-                            assert!(response.starts_with("test-plan must be"));
-
-                            // Set a valid test plan.
-                            make_request(&mut test_state, "test_plan 10,2s;10,30m5s;0,1h2s\r\n")
-                                .await;
-                        }
-                        _ => {
-                            // Confirm that an invalid testplan fails.
-                            assert!(response.starts_with("test-plan configured"));
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Users => {
-                    match test_state.step {
-                        // Reconfigure the number of users simulated by the load test.
-                        0 => {
-                            make_request(
-                                &mut test_state,
-                                &["users ", &START_USERS.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Confirm that the users are reconfigured.
-                        1 => {
-                            assert!(response.starts_with("users configured"));
-
-                            // Attempt to configure zero users.
-                            make_request(&mut test_state, "users 0\r\n").await;
-                        }
-                        // Confirm zero users is refused.
-                        2 => {
-                            assert!(response
-                                .starts_with("users must be an integer between 1 and 100000"));
-
-                            // Attempt to configure more than the maximum users.
-                            make_request(&mut test_state, "users 100001\r\n").await;
-                        }
-                        // Confirm more than the maximum is refused.
-                        3 => {
-                            assert!(response
-                                .starts_with("users must be an integer between 1 and 100000"));
-
-                            // Attempt to reconfigure users with bad data.
-                            make_request(&mut test_state, "users 1.1\r\n").await;
-                        }
-                        // Confirm we can't configure users with a float.
-                        _ => {
-                            // The number of users started is verified when the load test finishes,
-                            // so no further validation required here.
-                            assert!(response
-                                .starts_with("users must be an integer between 1 and 100000"));
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::IncreaseRate => {
-                    match test_state.step {
-                        // Configure a decimal increase_rate.
-                        0 => {
-                            make_request(&mut test_state, "increaserate .1\r\n").await;
-                        }
-                        // Confirm increase_rate is configured.
-                        1 => {
-                            assert!(response.starts_with("increase_rate configured"));
-
-                            // Configure with leading and trailing zeros.
-                            make_request(&mut test_state, "increaserate 0.90\r\n").await;
-                        }
-                        // Confirm increase_rate is configured.
-                        2 => {
-                            assert!(response.starts_with("increase_rate configured"));
-
-                            // Try to configure with an invalid decimal.
-                            make_request(&mut test_state, "increaserate 1.2.3\r\n").await;
-                        }
-                        // Confirm increase_rate is not configured.
-                        3 => {
-                            assert!(response
-                                .starts_with("increase_rate must be a number from 0.01 to 100000"));
-
-                            // Configure increase_rate with a single integer.
-                            make_request(
-                                &mut test_state,
-                                &["increaserate ", &INCREASE_RATE.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Confirm the final increase_rate is configured.
-                        _ => {
-                            assert!(response.starts_with("increase_rate configured"));
-
-                            // The increase_rate is verified when the load test finishes, so no
-                            // further validation required here.
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::IncreaseTime => {
-                    match test_state.step {
-                        // Try to configure a decimal IncreaseTime.
-                        0 => {
-                            make_request(&mut test_state, "increase-time .1\r\n").await;
-                        }
-                        // Configure an IncreaseTime with hms notation.
-                        1 => {
-                            assert!(response.starts_with("increase_time must be a time span"));
-
-                            make_request(&mut test_state, "increase-time 1h2m3s\r\n").await;
-                        }
-                        // Configure a proper IncreaseTime.
-                        2 => {
-                            assert!(response.starts_with("increase_time configured"));
-
-                            make_request(
-                                &mut test_state,
-                                &["increase_time ", &INCREASE_TIME.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Restore the IncreaseRate.
-                        3 => {
-                            assert!(response.starts_with("increase_time configured"));
-
-                            // Configure increase_rate with a single integer.
-                            make_request(
-                                &mut test_state,
-                                &["increaserate ", &INCREASE_RATE.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Confirm increase_rate is configured.
-                        _ => {
-                            assert!(response.starts_with("increase_rate configured"));
-
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::DecreaseRate => {
-                    match test_state.step {
-                        // Configure a decimal decrease_rate.
-                        0 => {
-                            make_request(&mut test_state, "decreaserate .5\r\n").await;
-                        }
-                        // Confirm decrease_rate is configured.
-                        1 => {
-                            assert!(response.starts_with("decrease_rate configured"));
-
-                            // Try to configure with an invalid decimal.
-                            make_request(&mut test_state, "decreaserate 1.2.3\r\n").await;
-                        }
-                        // Confirm decrease_rate is not configured.
-                        2 => {
-                            assert!(response
-                                .starts_with("decrease_rate must be a number from 0.01 to 100000"));
-
-                            // Configure decrease_rate with a single integer.
-                            make_request(&mut test_state, "decreaserate 2\r\n").await;
-                        }
-                        // Confirm the final decrease_rate is configured.
-                        _ => {
-                            assert!(response.starts_with("decrease_rate configured"));
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::DecreaseTime => {
-                    match test_state.step {
-                        // Try to configure a decimal DecreaseTime.
-                        0 => {
-                            make_request(&mut test_state, "decrease-time .1\r\n").await;
-                        }
-                        // Configure a DecreaseTime with hms notation.
-                        1 => {
-                            assert!(response.starts_with("decrease_time must be a time span"));
-
-                            make_request(&mut test_state, "decrease-time 1h2m3s\r\n").await;
-                        }
-                        // Configure a proper DecreaseTime.
-                        2 => {
-                            assert!(response.starts_with("decrease_time configured"));
-
-                            make_request(
-                                &mut test_state,
-                                &["decrease_time ", "30", "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Confirm decrease_time is configured, then restore increase_rate.
-                        3 => {
-                            assert!(response.starts_with("decrease_time configured"));
-
-                            // Restore increase_rate for subsequent tests.
-                            make_request(
-                                &mut test_state,
-                                &["increaserate ", &INCREASE_RATE.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Confirm increase_rate is configured.
-                        _ => {
-                            assert!(response.starts_with("increase_rate configured"));
-
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Throttle => {
-                    match test_state.step {
-                        // A throttle past the bound is refused.
-                        0 => {
-                            make_request(&mut test_state, "throttle 1000001\r\n").await;
-                        }
-                        1 => {
-                            assert!(response.starts_with("throttle must be an integer"));
-
-                            // Set a throttle while idle, for the next Start.
-                            make_request(&mut test_state, "throttle 100000\r\n").await;
-                        }
-                        2 => {
-                            assert!(response.starts_with("throttle configured"));
-
-                            // 0 clears it while idle.
-                            make_request(&mut test_state, "throttle-requests 0\r\n").await;
-                        }
-                        3 => {
-                            assert!(response.starts_with("throttle cleared"));
-
-                            // Leave a throttle no request reaches, so the
-                            // run's counts are unchanged.
-                            make_request(&mut test_state, "throttle_requests 100000\r\n").await;
-                        }
-                        _ => {
-                            assert!(response.starts_with("throttle configured"));
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::RunTime => {
-                    match test_state.step {
-                        // Configure run_time using h:m:s format.
-                        0 => {
-                            // Set run_time with hours and minutes and seconds.
-                            make_request(&mut test_state, "runtime 1h2m3s\r\n").await;
-                        }
-                        // Confirm the run_time is configured.
-                        1 => {
-                            assert!(response.starts_with("run_time configured"));
-
-                            // Set run_time with hours and seconds.
-                            make_request(&mut test_state, "run_time 1h2s\r\n").await;
-                        }
-                        // Confirm the run_time is configured.
-                        2 => {
-                            assert!(response.starts_with("run_time configured"));
-
-                            // Set run_time with hours alone.
-                            make_request(&mut test_state, "run-time 1h\r\n").await;
-                        }
-                        // Confirm the run_time is configured.
-                        3 => {
-                            assert!(response.starts_with("run_time configured"));
-
-                            // Set run_time with seconds alone.
-                            make_request(&mut test_state, "runtime 10s\r\n").await;
-                        }
-                        // Confirm the run_time is configured.
-                        4 => {
-                            assert!(response.starts_with("run_time configured"));
-
-                            // Try to set run_time with unsupported value.
-                            make_request(&mut test_state, "runtime 10d\r\n").await;
-                        }
-                        // Confirm the run_time is not configured.
-                        5 => {
-                            assert!(response.starts_with("run_time must be a time span"));
-
-                            // Set run_time with seconds alone, and no "s".
-                            make_request(
-                                &mut test_state,
-                                &["runtime ", &RUN_TIME.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Confirm the run_time is configured.
-                        _ => {
-                            assert!(response.starts_with("run_time configured"));
-
-                            // The run_time is verified when the load test finishes, so no
-                            // further validation required here. Unfortunately, if this fails
-                            // the load test could run forever.
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Config => {
-                    match test_state.step {
-                        // Request the configuration.
-                        0 => {
-                            make_request(&mut test_state, "config\r\n").await;
-                        }
-                        _ => {
-                            assert!(success.unwrap_or(true), "config must succeed");
-                            // Confirm the configuration is returned in jsonformat.
-                            if test_state.websocket_controller {
-                                assert!(response.starts_with(r#"{"host":"#));
-                            // Confirm the configuration object is returned.
-                            } else {
-                                assert!(response.starts_with(r"GooseConfiguration "));
-                            }
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::ConfigJson => {
-                    match test_state.step {
-                        // Request the configuration in json format.
-                        0 => {
-                            make_request(&mut test_state, "config-json\r\n").await;
-                        }
-                        // Confirm the configuration is returned in jsonformat.
-                        _ => {
-                            assert!(response.starts_with(r#"{"host":"#));
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Metrics => {
-                    match test_state.step {
-                        // Request the running metrics.
-                        0 => {
-                            make_request(&mut test_state, "metrics\r\n").await;
-                        }
-                        _ => {
-                            // Confirm the metrics are returned in json format.
-                            if test_state.websocket_controller {
-                                assert!(response.starts_with(r#"{"hash":0,"#));
-                            }
-                            // Confirm the metrics are returned and pretty-printed.
-                            else {
-                                assert!(response.contains("=== PER TRANSACTION METRICS ==="));
-                            }
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::MetricsJson => {
-                    match test_state.step {
-                        // Request the running metrics in json format.
-                        0 => {
-                            make_request(&mut test_state, "metrics-json\r\n").await;
-                        }
-                        // Confirm the metrics are returned in json format.
-                        _ => {
-                            assert!(response.starts_with(r#"{"hash":0,"#));
-
-                            // The reply is longer than the buffer: read the
-                            // rest of it, to the prompt that ends it.
-                            let mut reply = response.trim_end_matches('\0').as_bytes().to_vec();
-                            if let Some(stream) = test_state.telnet_stream.as_mut() {
-                                while !reply.ends_with(b"goose> ") {
-                                    let read = stream.read(&mut test_state.buf).await.unwrap();
-                                    assert!(read > 0, "the controller closed mid reply");
-                                    reply.extend_from_slice(&test_state.buf[..read]);
-                                }
-                            }
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Start => {
-                    match test_state.step {
-                        // Try to stop an idle load test.
-                        0 => {
-                            make_request(&mut test_state, "stop\r\n").await;
-                        }
-                        // Confirm an idle load test can not be stopped.
-                        1 => {
-                            assert!(response.starts_with("load test not running"));
-
-                            // Send the start request.
-                            make_request(&mut test_state, "start\r\n").await;
-                        }
-                        // Confirm an idle load test can be started.
-                        2 => {
-                            assert!(response.starts_with("load test started"));
-
-                            // Send the start request again.
-                            make_request(&mut test_state, "start\r\n").await;
-                        }
-                        // Confirm a running load test can not be started.
-                        _ => {
-                            assert!(
-                                response.starts_with("unable to start load test, it is not idle")
-                            );
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Stop => {
-                    match test_state.step {
-                        // Try to configure host on a running load test.
-                        0 => {
-                            make_request(&mut test_state, "host http://localhost/\r\n").await;
-                        }
-                        // Setting host fails, then try a user count too large for a usize.
-                        1 => {
-                            assert!(response
-                                .starts_with("failed to reconfigure host, load test is not idle"));
-
-                            make_request(&mut test_state, "users 99999999999999999999\r\n").await;
-                        }
-                        // The overflow is refused and the load test keeps running, then
-                        // reconfigure the number of users, increasing.
-                        2 => {
-                            assert!(response
-                                .starts_with("users must be an integer between 1 and 100000"));
-
-                            make_request(
-                                &mut test_state,
-                                &["users ", &MAX_USERS.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Setting users succeeds, reconfigure the number of users, decreasing.
-                        3 => {
-                            assert!(response.starts_with("users configured"));
-
-                            // Give Goose a second to increase users.
-                            tokio::time::sleep(time::Duration::from_secs(1)).await;
-
-                            make_request(
-                                &mut test_state,
-                                &["users ", &FINAL_USERS.to_string(), "\r\n"].concat(),
-                            )
-                            .await;
-                        }
-                        // Confirm host can not be configured on a running load test.
-                        4 => {
-                            assert!(response.starts_with("users configured"));
-
-                            // Give Goose a second to decrease users.
-                            tokio::time::sleep(time::Duration::from_secs(1)).await;
-
-                            // Try to stop a running load test.
-                            make_request(&mut test_state, "stop\r\n").await;
-                        }
-                        // Confirm a running load test can be stopped.
-                        _ => {
-                            assert!(response.starts_with("load test stopped"));
-
-                            // Give Goose a half second to stop before moving on.
-                            tokio::time::sleep(time::Duration::from_millis(500)).await;
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-                Command::Shutdown => {
-                    match test_state.step {
-                        // Shut down the load test.
-                        0 => {
-                            make_request(&mut test_state, "shutdown\r\n").await;
-                        }
-                        // Confirm that the load test shut down.
-                        _ => {
-                            assert!(response.starts_with("load test shut down"));
-
-                            // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type).await;
-                        }
-                    }
-                }
-            }
-            // Flush the buffer.
-            test_state.buf = [0; 2048];
-
-            // Give the parent process time to catch up.
-            tokio::time::sleep(time::Duration::from_millis(100)).await;
-        }
-    });
+    // Drive the Controller from another task, as Goose runs here.
+    let controller = tokio::spawn(drive(protocol, server_url, mcp_port));
 
     // Run the Goose Attack. Add timeout to be sure Goose exits even if the controller tests fail.
     let goose_metrics = tokio::time::timeout(
@@ -868,131 +681,49 @@ async fn run_standalone_test(test_type: TestType) {
             None,
         )),
     )
-    .await
-    .expect("load test timed out");
+    .await;
+    // A failed check in the client is the failure to report, before a load
+    // test that timed out because of it.
+    if goose_metrics.is_ok() || controller.is_finished() {
+        controller.await.expect("the controller client failed");
+    }
+    let goose_metrics = goose_metrics.expect("load test timed out");
 
     // Confirm that the load test ran correctly.
-    validate_one_scenario(
-        &goose_metrics,
-        &mock_endpoints,
-        &configuration,
-        validate_test_type,
-    );
-}
-
-// Update (or create) the current testing state. A simple state maching for
-// navigating through all supported Controller commands and test states.
-async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestState {
-    // The commands being tested, and the order they are tested.
-    let commands_to_test = [
-        Command::Exit,
-        Command::Help,
-        Command::Host,
-        Command::TestPlan,
-        Command::Users,
-        Command::IncreaseRate,
-        Command::IncreaseTime,
-        Command::DecreaseRate,
-        Command::DecreaseTime,
-        Command::RunTime,
-        Command::Throttle,
-        Command::Start,
-        Command::Config,
-        Command::ConfigJson,
-        Command::Metrics,
-        Command::MetricsJson,
-        Command::Stop,
-        Command::Shutdown,
-    ];
-
-    if let Some(mut state) = test_state {
-        state.position += 1;
-        state.step = 0;
-        if let Some(command) = commands_to_test.get(state.position) {
-            state.command = command.clone();
-        }
-        // Generate a new prompt.
-        if let Some(stream) = state.telnet_stream.as_mut() {
-            stream.write_all("\r\n".as_bytes()).await.unwrap();
-        } else {
-            state.websocket_expect_reply = false;
-        }
-        state
-    } else {
-        // Connect to telnet controller.
-        let telnet_stream = match test_type {
-            TestType::Telnet => Some(TcpStream::connect("127.0.0.1:5116").await.unwrap()),
-            _ => None,
-        };
-
-        // Connect to WebSocket controller.
-        let websocket_controller: bool;
-        let (websocket_sender, websocket_receiver) = match test_type {
-            TestType::WebSocket => {
-                let (stream, _item) = tokio_tungstenite::connect_async("ws://127.0.0.1:5117")
-                    .await
-                    .unwrap();
-                let (mut ws_sender, mut ws_receiver) = stream.split();
-
-                // Send an empty message so the client performs a handshake.
-                ws_sender.send(Message::Text("".into())).await.unwrap();
-
-                // Ignore the error that comes back.
-                let _ = ws_receiver.next().await.unwrap();
-
-                websocket_controller = true;
-                (Some(ws_sender), Some(ws_receiver))
-            }
-            TestType::Telnet => {
-                websocket_controller = false;
-                (None, None)
-            }
-        };
-
-        TestState {
-            buf: [0; 2048],
-            position: 0,
-            step: 0,
-            command: commands_to_test.first().unwrap().clone(),
-            telnet_stream,
-            websocket_sender,
-            websocket_receiver,
-            websocket_expect_reply: false,
-            websocket_controller,
-        }
-    }
-}
-
-async fn make_request(test_state: &mut TestState, command: &str) {
-    //println!("making request: {}", command);
-    if let Some(stream) = test_state.telnet_stream.as_mut() {
-        match stream.write_all(command.as_bytes()).await {
-            Ok(_) => (),
-            Err(e) => panic!("failed to send {} command: {}", command, e),
-        };
-    } else if let Some(ws_sender) = test_state.websocket_sender.as_mut() {
-        ws_sender
-            .send(Message::Text(
-                serde_json::to_string(&ControllerWebSocketRequest {
-                    request: command.to_string(),
-                })
-                .unwrap()
-                .into(),
-            ))
-            .await
-            .unwrap()
-    }
-    test_state.step += 1;
+    validate_one_scenario(&goose_metrics, &mock_endpoints, &configuration, protocol);
 }
 
 // Test controlling a load test with Telnet.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_telnet_controller() {
-    run_standalone_test(TestType::Telnet).await;
+    tokio::time::timeout(
+        time::Duration::from_secs(120),
+        run_standalone_test(Protocol::Telnet),
+    )
+    .await
+    .expect("test timed out");
 }
 
 // Test controlling a load test with WebSocket controller.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_websocket_controller() {
-    run_standalone_test(TestType::WebSocket).await;
+    tokio::time::timeout(
+        time::Duration::from_secs(120),
+        run_standalone_test(Protocol::WebSocket),
+    )
+    .await
+    .expect("test timed out");
+}
+
+// Test controlling a load test with the MCP Controller, through the same
+// table of commands.
+#[cfg(feature = "mcp")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn test_mcp_controller() {
+    tokio::time::timeout(
+        time::Duration::from_secs(120),
+        run_standalone_test(Protocol::Mcp),
+    )
+    .await
+    .expect("test timed out");
 }

@@ -56,6 +56,8 @@ pub mod prelude;
 mod report;
 mod run_shape;
 mod runs;
+#[cfg(any(feature = "dashboard", feature = "mcp"))]
+mod serve;
 pub mod test_plan;
 pub mod threshold;
 mod throttle;
@@ -565,14 +567,15 @@ const NO_USERS_OPTION: &str = "`configuration.users`";
 /// remain `Result::Err`.
 ///
 /// Telnet and WebSocket show `ok` and `message`; the dashboard returns every
-/// field.
-#[derive(Debug, Clone)]
+/// field, and the MCP Controller every field as a tool's structured content.
+#[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ControlOutcome {
     pub ok: bool,
     /// Stable code when !ok, for soft failures only: `invalid_phase`,
     /// `prepare_failed` or `conflicting_settings`, for example, and
     /// `invalid_report`, `report_busy` or `report_failed` from the report
     /// control routes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<&'static str>,
     /// Human message, the reply every front end shows.
     pub message: String,
@@ -581,25 +584,29 @@ pub(crate) struct ControlOutcome {
     /// From `GooseAttackRunState.active_users` at reply time.
     pub active_users: usize,
     /// Command-specific target user count when applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_users: Option<usize>,
     /// The setting at fault in a refusal, when one is: `host`, `users`,
     /// `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`,
     /// `run_time`, `test_plan` or `throttle`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub field: Option<&'static str>,
     /// The run settings after a dashboard settings command, applied or
     /// not, so the page that sent it has them before the next snapshot.
     #[cfg(feature = "dashboard")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub settings: Option<Box<metrics::dashboard_snapshot::SnapshotSettings>>,
     /// How many Gaggle workers acknowledged the change, of how many, and
     /// how long that took: filled on a manager only.
     #[cfg(feature = "gaggle")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub acks: Option<ControlAcks>,
 }
 
 /// How many of a Gaggle's workers said they received a change, of how
 /// many it was sent to, and how long after it was sent the last did.
 #[cfg(feature = "gaggle")]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct ControlAcks {
     pub acknowledged: usize,
     pub workers: usize,
@@ -2286,6 +2293,31 @@ impl GooseAttack {
             }
         }
 
+        // Configured MCP Controller if enabled with --mcp, which validation
+        // refuses without the `mcp` feature.
+        #[cfg(feature = "mcp")]
+        if self.configuration.mcp {
+            if let Some(listener) =
+                controller::bind_controller(&self.configuration, ControllerProtocol::Mcp).await
+            {
+                match listener.local_addr() {
+                    Ok(bound) => {
+                        let options = controller::mcp::McpOptions::new(&self.configuration, bound);
+                        // Runs until Goose exits, as the other Controllers do.
+                        tokio::spawn(controller::mcp::serve(
+                            listener,
+                            control_tx.clone(),
+                            options,
+                        ));
+                        listening.mcp = true;
+                    }
+                    Err(e) => error!(
+                        "[controller]: the Mcp Controller's bound address is unknown: {e}; the load test runs without it"
+                    ),
+                }
+            }
+        }
+
         // Configured WebSocket Controller if enabled with --websocket.
         if self.configuration.websocket {
             if let Some(listener) =
@@ -2752,10 +2784,12 @@ impl GooseAttack {
         let (all_threads_shutdown_tx, shutdown_rx): (flume::Sender<usize>, flume::Receiver<usize>) =
             flume::unbounded();
 
-        // Telnet and WebSocket send commands to the parent on one channel, and
-        // dashboard control on another, which the parent answers first.
+        // Telnet, WebSocket and MCP send commands to the parent on one
+        // channel, and dashboard control on another, which the parent answers
+        // first.
         let (control_tx, controller_channel_rx) = (!self.configuration.no_telnet
-            || self.configuration.websocket)
+            || self.configuration.websocket
+            || self.configuration.mcp)
             .then(flume::unbounded)
             .unzip();
         #[cfg(feature = "dashboard")]
@@ -4174,8 +4208,9 @@ impl GooseAttack {
 
         // Without autostart, something has to be able to start the load test.
         if self.configuration.no_autostart
-            && !goose_attack_run_state.listening_controllers.telnet
-            && !goose_attack_run_state.listening_controllers.websocket
+            && !goose_attack_run_state
+                .listening_controllers
+                .can_start(&self.configuration)
             && !self.configuration.dashboard_control
         {
             return Err(GooseError::InvalidOption {
@@ -4785,6 +4820,8 @@ mod tests {
             let listening = goose_attack.setup_controllers(&control_tx).await;
             assert!(listening.telnet);
             assert_eq!(listening.websocket, websocket);
+            // The MCP Controller is off unless --mcp is given.
+            assert!(!listening.mcp);
             let connects = |host: std::net::IpAddr, port: &str| {
                 let address = std::net::SocketAddr::new(host, port.parse().unwrap());
                 async move { tokio::net::TcpStream::connect(address).await.is_ok() }

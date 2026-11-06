@@ -39,6 +39,18 @@ test("the read only footer names the controllers health reports", async () => {
       { telnet: null, websocket: null },
       "No telnet or WebSocket controller is running. This dashboard is read-only.",
     ],
+    [
+      { telnet: "127.0.0.1:5116", websocket: null, mcp: "127.0.0.1:5119" },
+      "Control this test via the telnet controller listening on 127.0.0.1:5116 or the MCP controller listening on 127.0.0.1:5119. This dashboard is read-only.",
+    ],
+    [
+      { telnet: null, websocket: null, mcp: "127.0.0.1:5119" },
+      "Control this test via the MCP controller listening on 127.0.0.1:5119. This dashboard is read-only.",
+    ],
+    [
+      { telnet: null, websocket: null, mcp: null },
+      "No telnet or WebSocket controller is running. This dashboard is read-only.",
+    ],
   ];
   for (const [controllers, text] of cases) {
     assert.equal(await footer({ controllers }), text);
@@ -58,6 +70,10 @@ test("the control footer names the controllers health reports", async () => {
     [
       { telnet: null, websocket: null },
       "No telnet or WebSocket controller is running.",
+    ],
+    [
+      { telnet: "0.0.0.0:5116", websocket: "0.0.0.0:5117", mcp: "[::1]:5119" },
+      "Advanced control remains on the telnet controller listening on 0.0.0.0:5116 or the WebSocket controller listening on 0.0.0.0:5117 or the MCP controller listening on [::1]:5119.",
     ],
   ];
   for (const [controllers, text] of cases) {

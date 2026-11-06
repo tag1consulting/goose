@@ -39,6 +39,8 @@ interface ControlResultBody {
 interface HealthControllers {
   telnet: string | null;
   websocket: string | null;
+  /** Absent from a Goose older than the MCP Controller. */
+  mcp?: string | null;
 }
 
 interface HealthBody {
@@ -814,6 +816,9 @@ function controllersText(lead: string): string {
   if (controllers.websocket) {
     parts.push("the WebSocket controller listening on " + controllers.websocket);
   }
+  if (controllers.mcp) {
+    parts.push("the MCP controller listening on " + controllers.mcp);
+  }
   if (parts.length === 0) return "No telnet or WebSocket controller is running.";
   return lead + parts.join(" or ") + ".";
 }
@@ -920,7 +925,7 @@ function showReadOnly(): void {
     paragraph("Read-only: this dashboard can't start, stop or change the test."),
     howTo,
   ];
-  if (controllers && (controllers.telnet || controllers.websocket)) {
+  if (controllers && (controllers.telnet || controllers.websocket || controllers.mcp)) {
     paragraphs.push(paragraph(controllersText("Control this test via ")));
   }
   showNotice("Read-only dashboard", paragraphs);
