@@ -2269,6 +2269,13 @@ impl GooseUser {
     /// Accumulate any pending request metric into the batch (or send directly
     /// if batching is not active).
     pub(crate) fn flush_pending_request(&mut self) -> TransactionResult {
+        self.flush_pending_request_at(std::time::Instant::now())
+    }
+
+    /// [`Self::flush_pending_request`] at `now`: a new batch starts at `now`,
+    /// and its age is judged at `now`, so one reading of the clock decides
+    /// both and a test can give simulated times.
+    fn flush_pending_request_at(&mut self, now: std::time::Instant) -> TransactionResult {
         if let Some(request) = self.pending_request.take() {
             // Save the atomic counter's key and the outcome before moving request.
             self.write_counter_key(request.raw.method_label(), &request.name);
@@ -2288,9 +2295,9 @@ impl GooseUser {
                     self.accumulate_request(&request);
                 }
                 if self.batch_start.is_none() {
-                    self.batch_start = Some(std::time::Instant::now());
+                    self.batch_start = Some(now);
                 }
-                self.maybe_flush_batch()?;
+                self.maybe_flush_batch_at(now)?;
             } else {
                 // Non-batch path: send directly (e.g., during test_start/test_stop).
                 self.send_request_metric_now(request)?;
@@ -2769,11 +2776,16 @@ impl GooseUser {
     /// - The number of accumulated requests reaches [`METRICS_BATCH_SIZE`]
     /// - The batch has been accumulating for longer than [`METRICS_BATCH_MAX_AGE`]
     pub(crate) fn maybe_flush_batch(&mut self) -> TransactionResult {
+        self.maybe_flush_batch_at(std::time::Instant::now())
+    }
+
+    /// [`Self::maybe_flush_batch`] with the batch's age taken at `now`.
+    fn maybe_flush_batch_at(&mut self, now: std::time::Instant) -> TransactionResult {
         if self.batch_item_count >= METRICS_BATCH_SIZE {
             return self.flush_batch();
         }
         if let Some(start) = self.batch_start {
-            if start.elapsed() >= METRICS_BATCH_MAX_AGE {
+            if now.saturating_duration_since(start) >= METRICS_BATCH_MAX_AGE {
                 return self.flush_batch();
             }
         }
@@ -5406,46 +5418,39 @@ mod tests {
         (users, rx)
     }
 
-    /// A user's batch clock in a test: when its batch started, in
-    /// milliseconds of a simulated run, so batches flush by count and age as
-    /// they would at those times.
-    #[derive(Default)]
+    /// A user's batch clock in a test: milliseconds of a simulated run, each
+    /// given to the user as the time it adds a request or checks its batch,
+    /// so batches flush by count and age as they would at those times. The
+    /// real clock is never read past the origin, so a slow machine flushes
+    /// the same batches as a fast one.
     struct BatchClock {
-        /// When the batch started, and the `batch_start` last given the user.
-        started: Option<(u64, std::time::Instant)>,
+        /// The instant at 0 ms.
+        origin: std::time::Instant,
+    }
+
+    impl Default for BatchClock {
+        fn default() -> Self {
+            BatchClock {
+                origin: std::time::Instant::now(),
+            }
+        }
     }
 
     impl BatchClock {
-        /// Runs `step` with `user`'s batch start set so that its age reads as
-        /// at `now` ms, then notes what it became: kept, cleared by a flush,
-        /// or started at `now` by a new batch.
-        fn at(&mut self, user: &mut GooseUser, now: u64, step: impl FnOnce(&mut GooseUser)) {
-            if let Some((started, _)) = self.started {
-                let instant = std::time::Instant::now()
-                    .checked_sub(std::time::Duration::from_millis(now - started))
-                    .expect("monotonic clock far enough from its origin");
-                user.batch_start = Some(instant);
-                self.started = Some((started, instant));
-            }
-            step(user);
-            self.started = match (user.batch_start, self.started) {
-                (None, _) => None,
-                (Some(start), Some((started, given))) if start == given => Some((started, given)),
-                (Some(start), _) => Some((now, start)),
-            };
+        /// The instant at `now` ms.
+        fn at(&self, now: u64) -> std::time::Instant {
+            self.origin + std::time::Duration::from_millis(now)
         }
 
         /// Adds `metric` to `user`'s batch when its response arrives, at `now` ms.
         fn add(&mut self, user: &mut GooseUser, now: u64, metric: GooseRequestMetric) {
-            self.at(user, now, |user| {
-                user.pending_request = Some(metric);
-                user.flush_pending_request().unwrap();
-            });
+            user.pending_request = Some(metric);
+            user.flush_pending_request_at(self.at(now)).unwrap();
         }
 
         /// The check a user thread makes while it has nothing to send, at `now` ms.
         fn check(&mut self, user: &mut GooseUser, now: u64) {
-            self.at(user, now, |user| user.maybe_flush_batch().unwrap());
+            user.maybe_flush_batch_at(self.at(now)).unwrap();
         }
     }
 
