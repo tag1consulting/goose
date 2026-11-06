@@ -986,13 +986,13 @@ impl GooseAttack {
     /// }
     ///
     /// async fn a_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/foo").await?;
+    ///     let _ = user.get("/foo").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn b_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/bar").await?;
+    ///     let _ = user.get("/bar").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1023,13 +1023,13 @@ impl GooseAttack {
     /// }
     ///
     /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/foo").await?;
+    ///     let _ = user.get("/foo").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn other_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/bar").await?;
+    ///     let _ = user.get("/bar").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1570,13 +1570,13 @@ impl GooseAttack {
     /// }
     ///
     /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/foo").await?;
+    ///     let _ = user.get("/foo").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn another_example_transaction(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("/bar").await?;
+    ///     let _ = user.get("/bar").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }

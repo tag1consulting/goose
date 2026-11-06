@@ -27,12 +27,12 @@ async fn main() -> Result<(), GooseError> {
 async fn login(user: &mut GooseUser) -> TransactionResult {
     let params = [("username", "test_user"), ("password", "")];
     // A session cookie the server sets here is sent with this user's later requests.
-    let _goose = user.post_form("/login", &params).await?;
+    let _ = user.post_form("/login", &params).await?.discard_body().await;
     Ok(())
 }
 
 async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
-    let _goose = user.get("/").await?;
+    let _ = user.get("/").await?.discard_body().await;
     Ok(())
 }
 ```
@@ -71,7 +71,7 @@ async fn setup_client(user: &mut GooseUser) -> TransactionResult {
 }
 
 async fn api_call(user: &mut GooseUser) -> TransactionResult {
-    let _goose = user.get("/api/status").await?;
+    let _ = user.get("/api/status").await?.discard_body().await;
     Ok(())
 }
 ```
@@ -117,7 +117,7 @@ async fn main() -> Result<(), GooseError> {
 }
 
 async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
-    let _goose = user.get("/").await?;
+    let _ = user.get("/").await?.discard_body().await;
     Ok(())
 }
 ```

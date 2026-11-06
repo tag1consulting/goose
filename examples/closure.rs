@@ -33,7 +33,7 @@ async fn main() -> Result<(), GooseError> {
 
         let closure: TransactionFunction = Arc::new(move |user| {
             Box::pin(async move {
-                let _goose = user.get(path).await?;
+                let _ = user.get(path).await?.discard_body().await;
 
                 Ok(())
             })

@@ -2,6 +2,7 @@
 
 The tips follow a load test's life: writing it, checking it, the first runs, scaling up, reading the results and debugging. If you are back with a problem, start here:
 
+- Each request opens a new connection: [Read every response body](#read-every-response-body).
 - A request that should fail passes: [Check the page, not only the status code](#check-the-page-not-only-the-status-code).
 - The machine running Goose is the limit: [Check that Goose is not the bottleneck](#check-that-goose-is-not-the-bottleneck).
 - Requests fail to connect once you add users: [Raise the open file limit](#raise-the-open-file-limit).
@@ -28,13 +29,25 @@ async fn website_index(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
+### Read every response body
+
+A user keeps its HTTP/1.1 connection and sends its next request on it, as a browser does, once the last response's body has been read to the end. A response dropped with its body unread can close its connection, and the next request then opens a new one. Reading the body with `text()`, `bytes()` or `json()` keeps the connection. When a transaction does not need the body, `discard_body()` reads it to the end a chunk at a time, without holding the whole body in memory, and throws it away:
+
+```rust,ignore
+let _ = user.get("/images/logo.png").await?.discard_body().await;
+```
+
+Only an empty body is reliably safe to drop. Measured with 50 users against nginx, a dropped uncompressed body of 512 bytes cost a new connection on 11% of requests, 4 KiB on 23%, 16 KiB on 92%, and 64 KiB or more on every request, and from 256 KiB nearly every response was cut off before the server finished sending it; a dropped gzip compressed body kept its connection up to 512 bytes and lost it from 16 KiB. Bodies read to the end kept their connections at every size, about two per user: a request can start before the last connection is back in the pool and open a second one. Against Varnish, Goose's Umami example, which dropped every image, stylesheet and script, opened a new connection for two thirds of its requests.
+
+Reading a body does not change the time Goose records for a request, which is the [time to first byte](metrics.md#response-times), but the download counts toward the time of the transaction that reads it, and of its scenario. It also downloads every byte, and decompresses a gzip body, so the load generator does more work for each request.
+
 ### Name requests that carry an ID
 
 Goose groups requests by name, and a request's name is its path unless you give one. A test that requests `/node/1`, `/node/2` and so on gets a row for every node; one name for them all gives one row whose numbers cover every node.
 
 ```rust,ignore
 let path = format!("/node/{nid}");
-let _goose = user.get_named(&path, "/node/%nid").await?;
+let _ = user.get_named(&path, "/node/%nid").await?.discard_body().await;
 ```
 
 ### Give users a wait time

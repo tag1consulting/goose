@@ -80,7 +80,7 @@
 //!
 //! /// A very simple transaction that loads the front page.
 //! async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("").await?;
+//!     let _ = user.get("").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -98,7 +98,7 @@
 //!
 //! /// A very simple transaction that loads the front page.
 //! async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("").await?;
+//!     let _ = user.get("").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -123,14 +123,14 @@
 //!
 //! /// A very simple transaction that loads the "a" page.
 //! async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("a/").await?;
+//!     let _ = user.get("a/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
 //!
 //! /// Another very simple transaction that loads the "b" page.
 //! async fn b_transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("b/").await?;
+//!     let _ = user.get("b/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -155,21 +155,21 @@
 //!
 //! /// A very simple transaction that loads the "a" page.
 //! async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("a/").await?;
+//!     let _ = user.get("a/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
 //!
 //! /// Another very simple transaction that loads the "b" page.
 //! async fn b_transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("b/").await?;
+//!     let _ = user.get("b/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
 //!
 //! /// Another very simple transaction that loads the "c" page.
 //! async fn c_transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("c/").await?;
+//!     let _ = user.get("c/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -190,7 +190,7 @@
 //!
 //! /// A very simple transaction that loads the "a" page.
 //! async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("a/").await?;
+//!     let _ = user.get("a/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -211,7 +211,7 @@
 //!
 //! /// Another very simple transaction that loads the "b" page.
 //! async fn b_transaction_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("b/").await?;
+//!     let _ = user.get("b/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -245,7 +245,7 @@
 //!
 //! /// A very simple transaction that makes a GET request.
 //! async fn get_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.get("path/to/foo/").await?;
+//!     let _ = user.get("path/to/foo/").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -268,7 +268,7 @@
 //!
 //! /// A very simple transaction that makes a POST request.
 //! async fn post_function(user: &mut GooseUser) -> TransactionResult {
-//!     let _goose = user.post("path/to/foo/", "string value to post").await?;
+//!     let _ = user.post("path/to/foo/", "string value to post").await?.discard_body().await;
 //!
 //!     Ok(())
 //! }
@@ -700,7 +700,7 @@ impl Scenario {
     ///
     /// /// A very simple transaction that loads the "a" page.
     /// async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("a/").await?;
+    ///     let _ = user.get("a/").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -872,6 +872,49 @@ pub struct GooseResponse {
 impl GooseResponse {
     pub fn new(request: GooseRequestMetric, response: Result<Response, reqwest::Error>) -> Self {
         GooseResponse { request, response }
+    }
+
+    /// Reads the response body to the end and throws it away, one chunk at a time,
+    /// without holding the whole body in memory.
+    ///
+    /// Call this when a test does not need a response's body. An HTTP/1.1 connection
+    /// goes back to the client's connection pool once its response body has been
+    /// read to the end. A response dropped with its body unread can close its connection
+    /// instead, so the user's next request opens a new one, and the server may log
+    /// the cut off transfer as an error. Reading the body keeps the connection for the
+    /// next request, as a browser does.
+    ///
+    /// Goose recorded the request's time when the response headers arrived, before
+    /// this method is called, so reading the body does not change the request's
+    /// recorded time. The time spent reading it counts toward the times of the
+    /// transaction and scenario that read it, which cover the whole transaction
+    /// function. When the client decompresses gzip, as Goose's default client does, a
+    /// gzip compressed body is decompressed as it is read.
+    ///
+    /// Returns the number of body bytes read (after decompression), or the error that
+    /// ended the read. If Goose got no response, as when the connection failed or timed
+    /// out, there is no body to read and that error is returned.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut transaction = transaction!(get_logo);
+    ///
+    /// /// Load an image, keeping the connection for the next request.
+    /// async fn get_logo(user: &mut GooseUser) -> TransactionResult {
+    ///     let _ = user.get("/images/logo.png").await?.discard_body().await;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn discard_body(self) -> Result<u64, reqwest::Error> {
+        let mut response = self.response?;
+        let mut read = 0;
+        while let Some(chunk) = response.chunk().await? {
+            read += chunk.len() as u64;
+        }
+        Ok(read)
     }
 }
 
@@ -1417,7 +1460,7 @@ impl GooseUser {
     ///
     /// /// A very simple transaction that makes a GET request.
     /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("path/to/foo/").await?;
+    ///     let _ = user.get("path/to/foo/").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1453,7 +1496,7 @@ impl GooseUser {
     ///
     /// /// A very simple transaction that makes a GET request, naming it for metrics.
     /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get_named("path/to/foo/", "foo").await?;
+    ///     let _ = user.get_named("path/to/foo/", "foo").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1494,7 +1537,7 @@ impl GooseUser {
     ///
     /// /// A very simple transaction that makes a POST request.
     /// async fn post_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.post("path/to/foo/", "BODY BEING POSTED").await?;
+    ///     let _ = user.post("path/to/foo/", "BODY BEING POSTED").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1540,7 +1583,7 @@ impl GooseUser {
     /// /// A very simple transaction that POSTs form parameters.
     /// async fn post_function(user: &mut GooseUser) -> TransactionResult {
     ///     let params = [("foo", "bar"), ("foo2", "bar2")];
-    ///     let _goose = user.post_form("path/to/foo/", &params).await?;
+    ///     let _ = user.post_form("path/to/foo/", &params).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1589,7 +1632,7 @@ impl GooseUser {
     ///         "foo": "bar",
     ///         "foo2": "bar2"
     ///     });
-    ///     let _goose = user.post_json("path/to/foo/", &json).await?;
+    ///     let _ = user.post_json("path/to/foo/", &json).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1634,7 +1677,7 @@ impl GooseUser {
     ///     let query = json!({
     ///         "query": "{ user(id: 1) { id name email } }"
     ///     });
-    ///     let _goose = user.post_graphql("/graphql", &query).await?;
+    ///     let _ = user.post_graphql("/graphql", &query).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1679,7 +1722,7 @@ impl GooseUser {
     ///     let query = json!({
     ///         "query": "{ user(id: 1) { id name email } }"
     ///     });
-    ///     let _goose = user.post_graphql_named("/graphql", &query, "get user").await?;
+    ///     let _ = user.post_graphql_named("/graphql", &query, "get user").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1762,7 +1805,7 @@ impl GooseUser {
     ///
     /// /// A very simple transaction that makes a DELETE request.
     /// async fn delete_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.delete("path/to/foo/").await?;
+    ///     let _ = user.delete("path/to/foo/").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1814,7 +1857,7 @@ impl GooseUser {
     ///         .build();
     ///
     ///     // Finally make the actual request with our custom GooseRequest object.
-    ///     let _goose = user.request(goose_request).await?;
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -1842,9 +1885,12 @@ impl GooseUser {
     /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
     ///     let response = user.post("/login", "").await?;
     ///     let response_data = response.response?;
+    ///     let status = response_data.status();
+    ///     // Read the body to the end so the connection is reused.
+    ///     let _ = response_data.bytes().await;
     ///
-    ///     if !response_data.status().is_success() {
-    ///         return Err(format!("Login failed with status: {}", response_data.status()).into());
+    ///     if !status.is_success() {
+    ///         return Err(format!("Login failed with status: {}", status).into());
     ///     }
     ///
     ///     Ok(())
@@ -1905,7 +1951,9 @@ impl GooseUser {
     ///       .build();
     ///     let goose = user.request(goose_request).await?;
     ///
-    ///     // Do stuff with goose.request and/or goose.response here.
+    ///     // Do stuff with goose.request and/or goose.response here, then read the
+    ///     // body to the end so the connection is reused.
+    ///     let _ = goose.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -2890,9 +2938,12 @@ impl GooseUser {
     /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
     ///     let mut goose = user.get("404").await?;
     ///
-    ///     if let Ok(response) = &goose.response {
+    ///     if let Ok(response) = goose.response {
+    ///         let status = response.status();
+    ///         // Read the body to the end so the connection is reused.
+    ///         let _ = response.bytes().await;
     ///         // We expect a 404 here.
-    ///         if response.status() == 404 {
+    ///         if status == 404 {
     ///             return user.set_success(&mut goose.request);
     ///         }
     ///     }
@@ -2968,6 +3019,9 @@ impl GooseUser {
     ///                     return user.set_failure("empty page", &mut goose.request, None, None);
     ///                 }
     ///             }
+    ///         } else {
+    ///             // Read the body to the end so the connection is reused.
+    ///             let _ = response.bytes().await;
     ///         }
     ///     };
     ///
@@ -3250,6 +3304,9 @@ impl GooseUser {
     ///                         );
     ///                     }
     ///                 }
+    ///             } else {
+    ///                 // Read the body to the end so the connection is reused.
+    ///                 let _ = response.bytes().await;
     ///             }
     ///         },
     ///         // No response from server.
@@ -3522,7 +3579,7 @@ impl GooseUser {
     /// }
     ///
     /// async fn transaction_foo(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("").await?;
+    ///     let _ = user.get("").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -3532,7 +3589,7 @@ impl GooseUser {
     ///     // http://foo.example.com, after this transaction runs all subsequent
     ///     // requests are made against http://bar.example.com/.
     ///     user.set_base_url("http://bar.example.com/");
-    ///     let _goose = user.get("").await?;
+    ///     let _ = user.get("").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -3618,7 +3675,7 @@ impl<'a> GooseRequest<'a> {
 ///         .build();
 ///
 ///     // Make the configured request.
-///     let _goose = user.request(goose_request).await?;
+///     let _ = user.request(goose_request).await?.discard_body().await;
 ///
 ///     Ok(())
 /// }
@@ -3667,7 +3724,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .build();
     ///
     ///     // Make the configured request.
-    ///     let _goose = user.request(goose_request).await?;
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -3701,7 +3758,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .build();
     ///
     ///     // Make the configured DELETE request.
-    ///     let _goose = user.request(goose_request).await?;
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -3735,7 +3792,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .build();
     ///
     ///     // Make the configured request.
-    ///     let _goose = user.request(goose_request).await?;
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -3768,7 +3825,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .build();
     ///
     ///     // Make the configured request.
-    ///     let _goose = user.request(goose_request).await?;
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -3805,7 +3862,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .build();
     ///
     ///     // Make the configured request.
-    ///     let _goose = user.request(goose_request).await?;
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -3840,7 +3897,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .build();
     ///
     ///     // Finally make the actual request with our custom GooseRequest object.
-    ///     let _goose = user.request(goose_request).await?;
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -4178,7 +4235,7 @@ impl Transaction {
     /// transaction!(my_on_start_function).set_on_start();
     ///
     /// async fn my_on_start_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("").await?;
+    ///     let _ = user.get("").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -4210,7 +4267,7 @@ impl Transaction {
     /// transaction!(my_on_stop_function).set_on_stop();
     ///
     /// async fn my_on_stop_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("").await?;
+    ///     let _ = user.get("").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -4241,7 +4298,7 @@ impl Transaction {
     /// }
     ///
     /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("").await?;
+    ///     let _ = user.get("").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -4282,19 +4339,19 @@ impl Transaction {
     /// let runs_last = transaction!(third_transaction_function);
     ///
     /// async fn first_transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("1").await?;
+    ///     let _ = user.get("1").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn second_transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("2").await?;
+    ///     let _ = user.get("2").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn third_transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("3").await?;
+    ///     let _ = user.get("3").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
@@ -4317,19 +4374,19 @@ impl Transaction {
     /// }
     ///
     /// async fn first_transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("1").await?;
+    ///     let _ = user.get("1").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn second_transaction_function_a(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("2a").await?;
+    ///     let _ = user.get("2a").await?.discard_body().await;
     ///
     ///     Ok(())
     /// }
     ///
     ///     async fn second_transaction_function_b(user: &mut GooseUser) -> TransactionResult {
-    ///       let _goose = user.get("2b").await?;
+    ///       let _ = user.get("2b").await?.discard_body().await;
     ///
     ///       Ok(())
     ///     }

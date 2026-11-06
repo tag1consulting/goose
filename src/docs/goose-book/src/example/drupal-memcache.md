@@ -23,12 +23,12 @@ Users of the `AuthBrowsingUser` scenario log in once, when each starts:
 
 Each `AuthBrowsingUser` logs in as a random user from `user3` to `user5001`, accounts that exist only on a site prepared for this test:
 ```rust,ignore
-{{#include ../../../../../examples/drupal_memcache.rs:178:188}}
+{{#include ../../../../../examples/drupal_memcache.rs:191:201}}
 ```
 
 The test also includes an example of how to post a comment during a load test, after reading the form's `form_build_id`, `form_token` and `form_id` from the node page:
 ```rust,ignore
-{{#include ../../../../../examples/drupal_memcache.rs:291:303}}
+{{#include ../../../../../examples/drupal_memcache.rs:304:316}}
 ```
 
 The [Goose Eggs library](https://docs.rs/goose-eggs) has [Drupal helpers](https://docs.rs/goose-eggs/*/goose_eggs/drupal/index.html) that shorten much of this.
