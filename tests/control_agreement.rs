@@ -1,11 +1,14 @@
 //! Telnet, WebSocket, the dashboard control endpoints and, with the `mcp`
 //! feature, the MCP Controller agree: the same command in the same state gets
-//! the same accept or refuse decision and the same message from each of them.
+//! the same accept or refuse decision and the same message from each of them,
+//! and the same run folder gives the same saved runs, reports and comparisons
+//! through each of them as through the dashboard's runs panel.
 
 #![cfg(feature = "dashboard")]
 
 #[cfg(feature = "mcp")]
 mod mcp_client;
+mod saved_runs;
 
 use futures::{SinkExt, StreamExt};
 use httpmock::{Method::GET, MockServer};
@@ -267,6 +270,129 @@ impl FrontEnds {
     }
 }
 
+/// GET `path` from the dashboard, with the token; its status and body.
+async fn dashboard_get(client: &reqwest::Client, path: &str) -> (u16, String) {
+    let reply = client
+        .get(format!("http://127.0.0.1:{DASHBOARD_PORT}{path}"))
+        .header("Authorization", format!("Bearer {TOKEN}"))
+        .send()
+        .await
+        .expect("dashboard GET");
+    let status = reply.status().as_u16();
+    (status, reply.text().await.expect("dashboard body"))
+}
+
+/// The same line through telnet, WebSocket and, with the `mcp` feature, the
+/// MCP Controller: one text from all of them, which this returns.
+async fn controllers_say(front: &mut FrontEnds, line: &str) -> String {
+    let telnet = front.telnet.send(line).await;
+    let (ok, websocket) = websocket_send(&mut front.websocket, line).await;
+    assert!(ok, "{}: {}", line, websocket);
+    assert_eq!(telnet, websocket, "{line}: telnet and websocket differ");
+    #[cfg(feature = "mcp")]
+    {
+        let (ok, mcp) = front.mcp.send_line(line).await;
+        assert!(ok, "{}: {}", line, mcp);
+        assert_eq!(mcp, websocket, "{line}: mcp and websocket differ");
+    }
+    websocket
+}
+
+/// Telnet, WebSocket, MCP and the dashboard give the same saved runs: the
+/// listing, page by page; each run's Markdown report and JSON report; and a
+/// comparison. `newer` are the runs saved in this session, newest first,
+/// before the saved runs of `runs`; a run in progress is listed as running.
+async fn saved_runs_agree(front: &mut FrontEnds, runs: &saved_runs::SavedRuns, newer: &[&str]) {
+    let all: Vec<String> = newer
+        .iter()
+        .map(|name| name.to_string())
+        .chain(runs.names.iter().cloned())
+        .collect();
+    let (status, listing) = dashboard_get(&front.client, "/api/v1/reports").await;
+    assert_eq!(status, 200, "{}", listing);
+    let listing: serde_json::Value = serde_json::from_str(&listing).unwrap();
+    let reports = listing["reports"].as_array().unwrap();
+    let names: Vec<&str> = reports
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, all);
+    for (i, report) in reports.iter().enumerate() {
+        assert_eq!(report["running"], json(i < newer.len()), "{}", names[i]);
+    }
+    // Two pages: the newest 20, then the rest.
+    let pages = [
+        ("runs-json".to_string(), 0),
+        (
+            format!("runs-json {}", all[saved_runs::PAGE - 1]),
+            saved_runs::PAGE,
+        ),
+    ];
+    for (line, from) in pages {
+        let page: serde_json::Value =
+            serde_json::from_str(&controllers_say(front, &line).await).unwrap();
+        let to = all.len().min(from + saved_runs::PAGE);
+        assert_eq!(page["dir"], listing["dir"], "{}", line);
+        assert_eq!(
+            page["runs"],
+            serde_json::Value::Array(reports[from..to].to_vec()),
+            "{}",
+            line
+        );
+        assert_eq!(page["more"], json(to < all.len()), "{}", line);
+    }
+    // Each kind of report: rendered from report.json, gzipped, stored, and
+    // the newest, named and not.
+    let mut reported: Vec<(String, String)> = ["plain", "zipped", "stored"]
+        .iter()
+        .map(|name| (format!(" {name}"), name.to_string()))
+        .collect();
+    reported.push((String::new(), all[0].clone()));
+    for (named, name) in &reported {
+        let markdown = controllers_say(front, &format!("report{named}")).await;
+        let (status, served) =
+            dashboard_get(&front.client, &format!("/api/v1/reports/{name}/report.md")).await;
+        assert_eq!(status, 200, "{}", served);
+        assert_eq!(markdown, served, "report {}", name);
+        let json = controllers_say(front, &format!("report-json{named}")).await;
+        let (status, served) = dashboard_get(
+            &front.client,
+            &format!("/api/v1/reports/{name}/report.json"),
+        )
+        .await;
+        assert_eq!(status, 200, "{}", served);
+        let mut served: serde_json::Value = serde_json::from_str(&served).unwrap();
+        served.as_object_mut().unwrap().remove(saved_runs::GRAPHS);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            served,
+            "report-json {}",
+            name
+        );
+    }
+    // A comparison of the newest run with the oldest, named and not.
+    let oldest = runs.oldest();
+    let (status, served) = dashboard_get(
+        &front.client,
+        &format!("/api/v1/reports/{}/compare.md?baseline={oldest}", all[0]),
+    )
+    .await;
+    assert_eq!(status, 200, "{}", served);
+    assert_eq!(
+        controllers_say(front, &format!("compare {oldest}")).await,
+        served
+    );
+    assert_eq!(
+        controllers_say(front, &format!("compare {} {oldest}", all[0])).await,
+        served
+    );
+}
+
+/// `value` as JSON.
+fn json(value: bool) -> serde_json::Value {
+    serde_json::Value::Bool(value)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_control_agreement() {
     let server = MockServer::start();
@@ -280,11 +406,12 @@ async fn test_control_agreement() {
     let dashboard_port = DASHBOARD_PORT.to_string();
     #[cfg(feature = "mcp")]
     let mcp_port = mcp_client::free_port().to_string();
-    let output_dir = std::env::temp_dir()
-        .join(format!("goose-control-agreement-{}", std::process::id()))
-        .join("run")
-        .to_string_lossy()
-        .into_owned();
+    // The saved runs the front ends read are in the folder the run folder
+    // goes in.
+    let parent =
+        std::env::temp_dir().join(format!("goose-control-agreement-{}", std::process::id()));
+    let runs = saved_runs::build_in(parent.clone()).await;
+    let output_dir = parent.join("run").to_string_lossy().into_owned();
     #[allow(unused_mut)]
     let mut args = vec![
         "--users",
@@ -334,6 +461,28 @@ async fn test_control_agreement() {
         #[cfg(feature = "mcp")]
         mcp: mcp_client::Mcp::new(mcp_port.parse().unwrap()),
     };
+    wait_for_phase(&front.client, &["idle"]).await;
+
+    // The saved runs, idle, then with a run in progress.
+    saved_runs_agree(&mut front, &runs, &[]).await;
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    let (ok, message) = dashboard_post(&front.client, "report/now", "{}").await;
+    assert!(ok, "{}", message);
+    let in_progress = parent.join("run").join("report.json");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !in_progress.is_file() {
+        assert!(Instant::now() < deadline, "Save report now wrote no report");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    saved_runs_agree(&mut front, &runs, &["run"]).await;
+    assert_eq!(
+        dashboard_post(&front.client, "stop", "{}").await,
+        (true, "load test stopped".to_string())
+    );
     wait_for_phase(&front.client, &["idle"]).await;
 
     // Users out of range, then in range, while idle.
