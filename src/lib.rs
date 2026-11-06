@@ -884,7 +884,9 @@ impl UserTestHooks {
         self.clients_built
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.fail_builds.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(GooseError::Io(io::Error::other("the test failed this build")));
+            return Err(GooseError::Io(io::Error::other(
+                "the test failed this build",
+            )));
         }
         Ok(())
     }
@@ -991,6 +993,8 @@ fn build_users(
 struct UserBatch {
     /// The index of the test plan step that starts these users.
     step: usize,
+    /// How many users it holds, or held when it failed.
+    size: usize,
     /// Set to stop a build still running.
     cancel: Arc<std::sync::atomic::AtomicBool>,
     users: BatchUsers,
@@ -1010,6 +1014,7 @@ impl UserBatch {
     /// Build `users` for `step` in one blocking task, so the main loop
     /// never waits on it.
     fn build(step: usize, users: Vec<WeightedUser>, build: UserBuild) -> Self {
+        let size = users.len();
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (built_tx, built_rx) = tokio::sync::oneshot::channel();
         let canceled = cancel.clone();
@@ -1019,6 +1024,7 @@ impl UserBatch {
         });
         UserBatch {
             step,
+            size,
             cancel,
             users: BatchUsers::Building(built_rx),
         }
@@ -1056,8 +1062,8 @@ pub struct GooseAttack {
     scenarios: Vec<Scenario>,
     /// A set of all registered scenario names.
     scenario_machine_names: HashSet<String>,
-    /// The users still to start, the next last, as weighted: which scenario
-    /// each runs, and its base URL.
+    /// The users still to be built, the next to start last, as weighted:
+    /// which scenario each runs, and its base URL.
     weighted_users: Vec<WeightedUser>,
     /// The users built, or being built, for the next users a step starts: at
     /// most one batch, and ahead of its step only for a test plan's next
@@ -2037,6 +2043,7 @@ impl GooseAttack {
                 .expect("a build that is never canceled was canceled");
             self.user_batch = Some(UserBatch {
                 step,
+                size: built.len(),
                 cancel: Arc::default(),
                 users: BatchUsers::Built(built),
             });
@@ -2086,7 +2093,20 @@ impl GooseAttack {
                 && !matches!(&batch.users, BatchUsers::Built(users) if users.is_empty())
         });
         if !usable {
-            let needed = self.test_plan.steps[step].0 - goose_attack_run_state.active_users;
+            // After a batch that failed, fewer users may be left than the step
+            // still starts: it starts those left.
+            let needed = (self.test_plan.steps[step].0 - goose_attack_run_state.active_users)
+                .min(self.weighted_users.len());
+            if needed == 0 {
+                error!("[users]: no users are left for test plan step {step} to start, as building earlier users failed");
+                self.user_batch = Some(UserBatch {
+                    step,
+                    size: 0,
+                    cancel: Arc::default(),
+                    users: BatchUsers::Failed,
+                });
+                return false;
+            }
             let users = self.take_weighted_users(needed);
             self.user_batch = Some(UserBatch::build(step, users, self.user_build()));
         }
@@ -2100,33 +2120,36 @@ impl GooseAttack {
         let Ok(built) = tokio::time::timeout(Duration::from_millis(100), built_rx).await else {
             return false;
         };
-        let waited = self
-            .step_started
-            .map_or(0, |started| started.elapsed().as_millis());
-        let first = self.metrics.total_users + 1;
-        let users = self.test_plan.steps[step].0 - goose_attack_run_state.active_users;
-        let failed = |e: &dyn fmt::Display| {
-            error!(
-                "[users]: failed to build users {first} to {}, starting none of them: {e}",
-                first + users - 1
-            );
-        };
-        batch.users = match built {
-            Ok(Ok(Some(built))) => {
-                info!("[users]: test plan step {step} waited {waited} ms for its {users} users to be built");
-                BatchUsers::Built(built)
-            }
+        let size = batch.size;
+        let built = match built {
+            Ok(Ok(Some(built))) => Ok(built),
             Ok(Ok(None)) => unreachable!("a batch still held was canceled"),
-            Ok(Err(e)) => {
-                failed(&e);
-                BatchUsers::Failed
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        match built {
+            Ok(built) => {
+                let waited = self
+                    .step_started
+                    .map_or(0, |started| started.elapsed().as_millis());
+                info!("[users]: test plan step {step} waited {waited} ms for its {size} users to be built");
+                batch.users = BatchUsers::Built(built);
+                true
             }
             Err(e) => {
-                failed(&e);
-                BatchUsers::Failed
+                let first = self.metrics.total_users + 1;
+                error!(
+                    "[users]: failed to build users {first} to {}, starting none of them: {e}",
+                    first + size - 1
+                );
+                batch.users = BatchUsers::Failed;
+                // A Gaggle worker's users that never start leave their ordinals.
+                #[cfg(feature = "gaggle")]
+                self.user_ordinals
+                    .drain(..size.min(self.user_ordinals.len()));
+                false
             }
-        };
-        matches!(batch.users, BatchUsers::Built(_))
+        }
     }
 
     // Change from one attack_phase to another.
@@ -3353,6 +3376,15 @@ impl GooseAttack {
                 // Moving to the next phase, reset adjust_user_in_ms.
                 goose_attack_run_state.adjust_user_in_ms = 0;
 
+                // A batch that failed ends with its step.
+                if self
+                    .user_batch
+                    .as_ref()
+                    .is_some_and(|batch| batch.step == self.test_plan.current)
+                {
+                    self.user_batch = None;
+                }
+
                 // Advance to the next TestPlan step.
                 self.advance_test_plan(goose_attack_run_state);
             }
@@ -3398,7 +3430,9 @@ impl GooseAttack {
                 else {
                     unreachable!("the batch is built");
                 };
-                let mut thread_user = built.pop().expect("insufficent weighted_users");
+                let mut thread_user = built
+                    .pop()
+                    .expect("a built batch has a user for each still to start");
                 // The next GooseUser is due one interval, 1 second divided by the
                 // increase_rate, after this one was.
                 goose_attack_run_state
@@ -4183,10 +4217,6 @@ impl GooseAttack {
                 self.users_ramp_ms(goose_attack_run_state.active_users, new_users)
             });
 
-            // Users not yet started are replaced by this change's: a batch
-            // still building stops, and one built is dropped.
-            self.user_batch = None;
-
             // Weight more users if increasing users (hard Err on failure),
             // before anything changes: a Gaggle manager's run on its workers.
             // They are built, off the main loop, as the increase starts.
@@ -4200,6 +4230,10 @@ impl GooseAttack {
                     }
                 }
             }
+
+            // Users not yet started are replaced by this change's: a batch
+            // still building stops, and one built is dropped.
+            self.user_batch = None;
 
             // The rest of the run, generated again from its shape: a ramp to
             // the new count, then the hold and ramp down still ahead.
@@ -7425,14 +7459,24 @@ mod tests {
         while !(goose_attack.attack_phase == AttackPhase::Maintain
             && goose_attack.test_plan.current >= 5)
         {
-            assert!(std::time::Instant::now() < deadline, "the plan did not reach its last step");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the plan did not reach its last step"
+            );
             match goose_attack.attack_phase {
-                AttackPhase::Increase => goose_attack.increase_attack(&mut run_state).await.unwrap(),
-                AttackPhase::Maintain => goose_attack.maintain_attack(&mut run_state).await.unwrap(),
+                AttackPhase::Increase => {
+                    goose_attack.increase_attack(&mut run_state).await.unwrap()
+                }
+                AttackPhase::Maintain => {
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap()
+                }
                 phase => panic!("unexpected phase {:?}", phase),
             }
         }
-        assert_eq!(run_state.active_users, 5, "users started from failed batches");
+        assert_eq!(
+            run_state.active_users, 5,
+            "users started from failed batches"
+        );
         assert_eq!(users_started(&goose_attack), 5);
     }
 }
