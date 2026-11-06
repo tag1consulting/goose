@@ -1,6 +1,6 @@
 # Telnet Controller
 
-The telnet Controller listens on `127.0.0.1:5116` by default, so only this machine can reach it. It has no authentication: anyone who can reach its port can start, stop and reconfigure the load test. To reach it from another machine, either forward the port over ssh to the default bind (`ssh -L 5116:127.0.0.1:5116 loadtest`, then `telnet localhost 5116`), or start Goose with an explicit host such as `--telnet-host 0.0.0.0`, which prints a warning at startup that the Controller has no authentication.
+The telnet Controller listens on `127.0.0.1:5116` by default, so only this machine can reach it. It has no authentication: anyone who can reach its port can start, stop and reconfigure the load test, and read every saved run in the run folder. To reach it from another machine, either forward the port over ssh to the default bind (`ssh -L 5116:127.0.0.1:5116 loadtest`, then `telnet localhost 5116`), or start Goose with an explicit host such as `--telnet-host 0.0.0.0`, which prints a warning at startup that the Controller has no authentication.
 
 The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with [`GooseDefault::TelnetHost`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetHost), [`GooseDefault::TelnetPort`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetPort), and [`GooseDefault::NoTelnet`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoTelnet).
 
@@ -35,6 +35,12 @@ config             display load test configuration
 config-json        display load test configuration in json format
 metrics            display metrics for current load test
 metrics-json       display metrics for current load test in json format
+
+runs [BEFORE]      list the newest 20 saved runs, or the 20 after run BEFORE
+runs-json [BEFORE] list saved runs in json format
+report [RUN]       display the Markdown report of a saved run (default the newest)
+report-json [RUN]  display the json report of a saved run, without its graph data
+compare [RUN] BASE compare a saved run (default the newest) with saved run BASE
 goose> q
 goodbye!
 goose> Connection closed by foreign host.
@@ -79,6 +85,32 @@ failed to clear throttle, a running load test keeps the throttle it started with
 The rates are accepted in Idle and on a running users ramp, and are refused during its ramp down, while stopping and while a test plan runs. On a running test, a rate is refused while its own time is set, since a time changes only in Idle; in Idle a rate clears its own time and a time clears its own rate. A decrease rate on a running users ramp regenerates the ramp down still ahead, or adds one where all users would stop at once when the hold ends; an increase rate is for the next `users` increase.
 
 A test plan sets users, so a rate or a time is refused in Idle with `set users first to switch to a users ramp`, and, while the plan runs, with `a test plan is running`. While one is configured, `users` switches to a users ramp and clears the plan, and `test-plan` switches back and clears users, the rates and the times. The command line's rules also apply: `runtime`, `decreaserate`, `decrease-time` and `test-plan` are refused under `--iterations`, `test-plan` under `--no-reset-metrics`, and in Idle `increase-time` or `decrease-time` with fewer than 2 users, or `users 1` while either is set. `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is answered `control timed out, it may still apply: check before retrying`: check the configuration or metrics before sending it again.
+
+## Saved runs
+
+`runs`, `report` and `compare` read the runs Goose saved in the run folder, `goose-runs` or the folder `--output-dir` sits in, as the dashboard's runs panel does; see [Saved runs](overview.md#saved-runs). `runsjson` and `reportjson` are aliases of `runs-json` and `report-json`. Goose started with `--no-autostart` in a folder holding `goose-runs` browses them without running a load test:
+
+```bash
+% telnet localhost 5116
+goose> runs
+saved runs in goose-runs, newest first:
+20261106-101722  started 2026-11-06 09:17:22 UTC  10s  10 max users  17394 requests  0 failed  completed
+20261106-101651  started 2026-11-06 09:16:51 UTC  10s  10 max users  17401 requests  0 failed  completed
+20261106-101621  started 2026-11-06 09:16:21 UTC  10s  5 max users  8705 requests  0 failed  stopped
+no more saved runs
+goose> report
+# Goose Attack Report
+...
+goose> compare 20261106-101621
+Run 20261106-101722 (started 2026-11-06 09:17:22 UTC) compared to baseline 20261106-101621 (started 2026-11-06 09:16:21 UTC).
+
+# Goose Attack Report
+...
+goose> report ../etc
+no saved run named "../etc"
+```
+
+With more than 20 runs, the listing ends `more saved runs: runs NAME`, and `runs NAME` lists the 20 after it. `report` and `compare` with no run named take the newest. `report-json` prints the run's `report.json` on one line without its per second graph data, as `metrics-json` prints the metrics; a report still over 4 MiB without it is refused, and `report` gives its Markdown. The run in progress is listed as `running` once Save report now has saved it. Anyone who can reach this Controller can read every saved run.
 
 ## Example
 
