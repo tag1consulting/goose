@@ -4436,16 +4436,16 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        let mut message = goose_attack_run_state.shutdown_rx.try_recv();
-        let mut exited = false;
-        while message.is_ok() {
-            goose_attack_run_state
-                .users_shutdown
-                .insert(message.expect("failed to wrap OK message"));
-            exited = true;
-            message = goose_attack_run_state.shutdown_rx.try_recv();
+        // Checked after each exit, as several in one tick can step the count
+        // past the plan's total.
+        while let Ok(user) = goose_attack_run_state.shutdown_rx.try_recv() {
+            goose_attack_run_state.users_shutdown.insert(user);
+            if self.users_exited(goose_attack_run_state, true) {
+                self.set_ended_by(runs::EndedBy::UsersExited, None);
+                self.cancel_attack(goose_attack_run_state).await?;
+            }
         }
-        if self.users_exited(goose_attack_run_state, exited) {
+        if self.users_exited(goose_attack_run_state, false) {
             self.set_ended_by(runs::EndedBy::UsersExited, None);
             self.cancel_attack(goose_attack_run_state).await?;
         }
