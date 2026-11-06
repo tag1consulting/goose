@@ -1830,7 +1830,8 @@ impl GooseAttack {
             weighted_users.len()
         );
         #[cfg(test)]
-        self.user_test.record(UserEvent::Built(weighted_users.len()));
+        self.user_test
+            .record(UserEvent::Built(weighted_users.len()));
         Ok(weighted_users)
     }
 
@@ -6685,7 +6686,11 @@ mod tests {
         );
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         assert_eq!(goose_attack.metrics.total_users, 5);
-        assert_eq!(clients_built(&goose_attack), 5, "5 users built other than 5");
+        assert_eq!(
+            clients_built(&goose_attack),
+            5,
+            "5 users built other than 5"
+        );
     }
 
     /// A storm of `users` changes, each landing before the last finished, as
@@ -6834,10 +6839,14 @@ mod tests {
         // The metrics reset and Maintain both come with every user running.
         assert!(run_state.all_users_spawned, "the metrics were not reset");
         assert_eq!(goose_attack.attack_phase, AttackPhase::Maintain);
-        assert_eq!(users_started(&goose_attack), 50, "users running at Maintain");
+        assert_eq!(
+            users_started(&goose_attack),
+            50,
+            "users running at Maintain"
+        );
         assert_eq!(run_state.active_users, 50);
         let maintain = goose_attack.metrics.history.last().unwrap();
-        assert_eq!(maintain.action, TestPlanStepAction::Maintaining);
+        assert!(matches!(maintain.action, TestPlanStepAction::Maintaining));
         assert_eq!(maintain.users, 50);
     }
 
@@ -6867,7 +6876,9 @@ mod tests {
                     started += 1;
                     assert!(
                         started <= built,
-                        "user {ordinal} started with {built} users built"
+                        "user {} started with {} users built",
+                        ordinal,
+                        built
                     );
                 }
             }
@@ -6893,15 +6904,21 @@ mod tests {
         let mut step_began = std::collections::BTreeMap::new();
         loop {
             let current = goose_attack.test_plan.current;
-            step_began
-                .entry(current)
-                .or_insert_with(|| goose_attack.step_started.unwrap_or_else(std::time::Instant::now));
+            step_began.entry(current).or_insert_with(|| {
+                goose_attack
+                    .step_started
+                    .unwrap_or_else(std::time::Instant::now)
+            });
             if goose_attack.attack_phase == AttackPhase::Maintain && current >= 3 {
                 break;
             }
             match goose_attack.attack_phase {
-                AttackPhase::Increase => goose_attack.increase_attack(&mut run_state).await.unwrap(),
-                AttackPhase::Maintain => goose_attack.maintain_attack(&mut run_state).await.unwrap(),
+                AttackPhase::Increase => {
+                    goose_attack.increase_attack(&mut run_state).await.unwrap()
+                }
+                AttackPhase::Maintain => {
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap()
+                }
                 phase => panic!("unexpected phase {:?}", phase),
             }
         }
@@ -6941,7 +6958,8 @@ mod tests {
         let spread = starts[9] - starts[0];
         assert!(
             spread >= Duration::from_millis(1_600) && spread < Duration::from_millis(2_600),
-            "10 users started over {spread:?} at 5 a second"
+            "10 users started over {:?} at 5 a second",
+            spread
         );
     }
 
