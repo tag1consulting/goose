@@ -850,6 +850,9 @@ enum UserEvent {
     Built(usize),
     /// The user with this ordinal started.
     Started(usize),
+    /// A dropped batch handed this many built users to a blocking thread to
+    /// drop, off the main loop.
+    DroppedOffLoop(usize),
 }
 
 /// What the tests count and slow down as users are built and started, one
@@ -995,6 +998,8 @@ struct UserBatch {
     step: usize,
     /// How many users it builds.
     size: usize,
+    #[cfg(test)]
+    user_test: UserTestHooks,
     /// Set to stop a build still running.
     cancel: Arc<std::sync::atomic::AtomicBool>,
     users: BatchUsers,
@@ -1011,13 +1016,15 @@ enum BatchUsers {
 }
 
 impl UserBatch {
-    /// Build `users` for `step` in one blocking task, so the main loop
-    /// never waits on it.
+    /// Build `users` for `step` in one blocking task, so building never
+    /// blocks the main loop.
     fn build(step: usize, users: Vec<WeightedUser>, build: UserBuild) -> Self {
         let size = users.len();
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (built_tx, built_rx) = tokio::sync::oneshot::channel();
         let canceled = cancel.clone();
+        #[cfg(test)]
+        let user_test = build.user_test.clone();
         tokio::task::spawn_blocking(move || {
             // Nobody waits for a batch that was dropped.
             let _ = built_tx.send(build_users(&users, &build, &canceled));
@@ -1025,6 +1032,8 @@ impl UserBatch {
         UserBatch {
             step,
             size,
+            #[cfg(test)]
+            user_test,
             cancel,
             users: BatchUsers::Building(built_rx),
         }
@@ -2044,6 +2053,8 @@ impl GooseAttack {
             self.user_batch = Some(UserBatch {
                 step,
                 size: built.len(),
+                #[cfg(test)]
+                user_test: self.user_test.clone(),
                 cancel: Arc::default(),
                 users: BatchUsers::Built(built),
             });
@@ -2102,6 +2113,8 @@ impl GooseAttack {
                 self.user_batch = Some(UserBatch {
                     step,
                     size: 0,
+                    #[cfg(test)]
+                    user_test: self.user_test.clone(),
                     cancel: Arc::default(),
                     users: BatchUsers::Failed,
                 });
@@ -3888,8 +3901,9 @@ impl GooseAttack {
     //
     // Soft vs hard errors:
     // - Soft: expected rejections → ControlOutcome { ok: false, error: Some(...) }
-    // - Hard: Result::Err(GooseError) (weight_scenario_users on a users or test
-    //   plan increase; reset_run_state in start finish; cancel_attack).
+    // - Hard: Result::Err(GooseError) (weight_scenario_users on a users
+    //   increase or a test plan change; check_user_client on a test plan
+    //   change; reset_run_state in start finish; cancel_attack).
     // `GooseAttack::control` replies with the outcome, or `internal` on a hard
     // error before returning it, so every caller still waiting gets an answer.
     // ========================================================================
@@ -4387,6 +4401,14 @@ impl GooseAttack {
         !self.is_gaggle_worker() && !self.configuration.no_autostart
     }
 
+    /// Whether the users of a run that ends on `--iterations` have all
+    /// exited, so the run ends: when one has just exited (`exited`) and
+    /// every user the plan starts has.
+    fn users_exited(&self, goose_attack_run_state: &GooseAttackRunState, exited: bool) -> bool {
+        // In Stand-alone mode, all users are started.
+        exited && goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users()
+    }
+
     /// Count one more user running: in the users started over the run, and
     /// in the most running at once.
     pub(crate) fn count_started_user(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
@@ -4793,18 +4815,17 @@ impl GooseAttack {
                 .await?;
 
             let mut message = goose_attack_run_state.shutdown_rx.try_recv();
+            let mut exited = false;
             while message.is_ok() {
                 goose_attack_run_state
                     .users_shutdown
                     .insert(message.expect("failed to wrap OK message"));
-
-                // In Stand-alone mode, all users are started.
-                if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
-                    self.set_ended_by(runs::EndedBy::UsersExited, None);
-                    self.cancel_attack(goose_attack_run_state).await?;
-                }
-
+                exited = true;
                 message = goose_attack_run_state.shutdown_rx.try_recv();
+            }
+            if self.users_exited(goose_attack_run_state, exited) {
+                self.set_ended_by(runs::EndedBy::UsersExited, None);
+                self.cancel_attack(goose_attack_run_state).await?;
             }
 
             // Gracefully exit loop if ctrl-c is caught.
@@ -7065,10 +7086,10 @@ mod tests {
     }
 
     /// A storm of `users` changes, each landing before the last finished, as
-    /// the Controller sends them: no change a later one replaced finishes
-    /// building, so at most one client more than the users started is built
-    /// on each build thread of each, and only the running users' tasks are
-    /// held (releasing stopped users' tasks is the cycles test's).
+    /// the Controller sends them: no replaced change's batch finishes, so
+    /// each builds at most one client on each build thread beyond the users
+    /// started, and only the running users' tasks are held (releasing
+    /// stopped users' tasks is the cycles test's).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_users_storm_builds_and_holds_only_started_users() {
         use crate::controller::tests::control;
@@ -7283,8 +7304,8 @@ mod tests {
     }
 
     /// A test plan's increase after a maintain step has its batch built
-    /// during the maintain step, before the step begins, and its users start
-    /// at the step's rate from its start.
+    /// ahead, before the step begins, and its users start at the step's rate
+    /// from its start.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_test_plan_builds_the_next_increase_ahead() {
         let server = index_server();
@@ -7327,16 +7348,15 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // Step 1 is the maintain step, 2 the increase after it.
-        let maintain_began = step_began[&1];
+        // Step 2 is the increase after the maintain step.
         let increase_began = step_began[&2];
         let ahead = built
             .iter()
             .find(|(users, _)| *users == 10)
             .expect("no batch of the increase's 10 users");
         assert!(
-            ahead.1 > maintain_began && ahead.1 < increase_began,
-            "the increase's batch was not built during the maintain step"
+            ahead.1 < increase_began,
+            "the increase's batch was not built before its step began"
         );
         // Its 10 users start from the step's start at 5 a second: the last
         // no sooner than 1.6 s after the first.
@@ -7422,8 +7442,8 @@ mod tests {
             "the dropped batch was built"
         );
         assert!(
-            // One user started: the client the new plan built to check it can
-            // was built before the change answered.
+            // One user started. The new plan's check of its client ran
+            // before `dropped` was read, so it is not counted here.
             clients_built(&goose_attack) - dropped <= 1 + build_threads(),
             "{} clients built after the held batch was dropped, for 1 user started",
             clients_built(&goose_attack) - dropped
@@ -7519,5 +7539,61 @@ mod tests {
         }
         assert_eq!(run_state.active_users, 15);
         assert_eq!(users_started(&goose_attack), 15);
+    }
+
+    /// A finished batch built ahead, never asked for and then dropped, has
+    /// its users dropped off the main loop, as a built batch does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_dropped_ahead_batch_drops_its_users_off_the_main_loop() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", "2,0s;2,1h;52,1s;52,1h"],
+            vec![index_scenario("Ahead", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        // The next increase's 50 users are built ahead while the plan holds.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !user_events(&goose_attack)
+            .iter()
+            .any(|(event, _)| *event == UserEvent::Built(50))
+        {
+            assert!(std::time::Instant::now() < deadline, "the ahead batch was not built");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(control(&mut goose_attack, &mut run_state, "test_plan 3,1s;3,1h").await);
+        assert!(
+            user_events(&goose_attack)
+                .iter()
+                .any(|(event, _)| *event == UserEvent::DroppedOffLoop(50)),
+            "the dropped batch's 50 users were not handed off the main loop"
+        );
+    }
+
+    /// An `--iterations` run whose increase failed to build ends once every
+    /// user that started has exited, though the plan counts more.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_iterations_end_once_the_users_started_exit() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--users", "4", "--iterations", "1", "--increase-rate", "1000"],
+            vec![index_scenario("Iterations", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        // 2 of the 4 started, the other 2 failed to build, and both exited.
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+        run_state.active_users = 2;
+        goose_attack.metrics.total_users = 2;
+        run_state.users_shutdown.extend([1, 2]);
+        assert!(goose_attack.users_exited(&run_state, false));
+        // While one still runs, the run goes on.
+        run_state.users_shutdown.remove(&2);
+        assert!(!goose_attack.users_exited(&run_state, false));
     }
 }
