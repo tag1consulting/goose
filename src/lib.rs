@@ -809,6 +809,46 @@ impl GooseAttackRunState {
     }
 }
 
+/// What happened to users, in order, as the tests see it.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UserEvent {
+    /// A batch of this many users was built.
+    Built(usize),
+    /// The user with this ordinal started.
+    Started(usize),
+}
+
+/// What the tests count and slow down as users are built and started, one
+/// set for each [`GooseAttack`], so tests running at once never share them.
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct UserTestHooks {
+    /// Every client built for a user: one per user built, plus the one a new
+    /// test plan builds to check it can.
+    clients_built: Arc<std::sync::atomic::AtomicUsize>,
+    /// How long building each user's client takes, on top of building it.
+    build_delay: Duration,
+    /// Each batch built and each user started, with when.
+    events: Arc<Mutex<Vec<(UserEvent, std::time::Instant)>>>,
+}
+
+#[cfg(test)]
+impl UserTestHooks {
+    fn record(&self, event: UserEvent) {
+        self.events
+            .lock()
+            .unwrap()
+            .push((event, std::time::Instant::now()));
+    }
+
+    fn client_built(&self) {
+        std::thread::sleep(self.build_delay);
+        self.clients_built
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Global internal state for the load test.
 pub struct GooseAttack {
     /// An optional transaction that is run one time before starting GooseUsers and running Scenarios.
@@ -890,6 +930,9 @@ pub struct GooseAttack {
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
+    /// What the tests count and slow down as users are built and started.
+    #[cfg(test)]
+    user_test: UserTestHooks,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -964,6 +1007,8 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            #[cfg(test)]
+            user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
@@ -1021,6 +1066,8 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            #[cfg(test)]
+            user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
@@ -1733,6 +1780,8 @@ impl GooseAttack {
             .map(|n| n.get())
             .unwrap_or(1);
         let chunk_size = total_users.div_ceil(num_cpus).max(1);
+        #[cfg(test)]
+        let user_test = &self.user_test;
 
         let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(num_cpus);
@@ -1742,6 +1791,8 @@ impl GooseAttack {
                     let mut users = Vec::with_capacity(chunk.len());
                     for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
                         debug!("creating user state: {} ({})", base + i, scenarios_index);
+                        #[cfg(test)]
+                        user_test.client_built();
                         let reqwest_client = match client_strategy {
                             None => goose::create_reqwest_client(configuration)?,
                             Some(strategy) => strategy.user_client()?,
@@ -1778,6 +1829,8 @@ impl GooseAttack {
             "[scheduler]: created {} weighted_users",
             weighted_users.len()
         );
+        #[cfg(test)]
+        self.user_test.record(UserEvent::Built(weighted_users.len()));
         Ok(weighted_users)
     }
 
@@ -3119,6 +3172,8 @@ impl GooseAttack {
 
                 goose_attack_run_state.users.push(user);
                 self.count_started_user(goose_attack_run_state);
+                #[cfg(test)]
+                self.user_test.record(UserEvent::Started(ordinal));
 
                 if let Some(running_metrics) = self.configuration.running_metrics {
                     if util::ms_timer_expired(
@@ -6471,4 +6526,492 @@ mod tests {
     /// The golden value of [`gaggle_plan`]'s hash: changing it changes every
     /// plan's hash, which the CHANGELOG must say.
     const GAGGLE_PLAN_HASH: u64 = 0xda7d_f883_b1f9_971b;
+
+    /// A load test of `scenarios` against `host` with `args` on its command
+    /// line, prepared and started as `execute` does, with no user started
+    /// yet. Each user's client takes `delay` longer to build.
+    async fn started_attack(
+        host: &str,
+        args: &[&str],
+        scenarios: Vec<Scenario>,
+        delay: Duration,
+    ) -> (GooseAttack, GooseAttackRunState) {
+        let mut line = vec!["--no-telnet", "--no-websocket", "--quiet", "--host", host];
+        line.extend_from_slice(args);
+        let configuration = GooseConfiguration::parse_args_default(&line).unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        goose_attack.user_test.build_delay = delay;
+        for scenario in scenarios {
+            goose_attack = goose_attack.register_scenario(scenario);
+        }
+        let defaults = goose_attack.defaults.clone();
+        goose_attack.configuration.configure(&defaults).unwrap();
+        goose_attack.test_plan = TestPlan::build(&goose_attack.configuration).unwrap();
+        goose_attack.run_shape =
+            run_shape::RunShape::for_configuration(&goose_attack.configuration);
+        goose_attack
+            .build_client_strategy(client::CommandLineClientOptions::default())
+            .unwrap();
+        goose_attack.prepare_load_test().unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        goose_attack.reset_run_state(&mut run_state).await.unwrap();
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Increase);
+        (goose_attack, run_state)
+    }
+
+    /// `--users` `users`, started 1,000 a second, held for an hour.
+    async fn users_attack(
+        host: &str,
+        users: usize,
+        scenarios: Vec<Scenario>,
+        delay: Duration,
+    ) -> (GooseAttack, GooseAttackRunState) {
+        let users = users.to_string();
+        let args = [
+            "--users",
+            &users,
+            "--increase-rate",
+            "1000",
+            "--decrease-rate",
+            "1000",
+            "--run-time",
+            "1h",
+        ];
+        started_attack(host, &args, scenarios, delay).await
+    }
+
+    /// Run one turn of the step machine, as the main loop does, and return
+    /// whether the load test now holds its users.
+    async fn step(goose_attack: &mut GooseAttack, run_state: &mut GooseAttackRunState) -> bool {
+        match goose_attack.attack_phase {
+            AttackPhase::Increase => goose_attack.increase_attack(run_state).await.unwrap(),
+            AttackPhase::Decrease => goose_attack.decrease_attack(run_state).await.unwrap(),
+            AttackPhase::Maintain => return true,
+            phase => panic!("unexpected phase {:?}", phase),
+        }
+        goose_attack.attack_phase == AttackPhase::Maintain
+    }
+
+    /// Run the step machine until every user a change starts or stops has
+    /// been, and the load test holds.
+    async fn ramp_to_hold(goose_attack: &mut GooseAttack, run_state: &mut GooseAttackRunState) {
+        while !step(goose_attack, run_state).await {}
+    }
+
+    /// Requests `/` from the mock server, then waits `wait_ms`.
+    fn index_scenario(name: &str, wait_ms: u64) -> Scenario {
+        async fn get_index(user: &mut GooseUser) -> crate::goose::TransactionResult {
+            let _goose = user.get("/").await?;
+            Ok(())
+        }
+        scenario!(name)
+            .set_wait_time(
+                Duration::from_millis(wait_ms),
+                Duration::from_millis(wait_ms),
+            )
+            .unwrap()
+            .register_transaction(transaction!(get_index))
+    }
+
+    /// A mock server answering `/`.
+    fn index_server() -> httpmock::MockServer {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/");
+            then.status(200);
+        });
+        server
+    }
+
+    /// Wait, as the main loop holds, until `done` or 10 seconds have passed.
+    async fn hold_until(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        done: impl Fn(&GooseAttack, &GooseAttackRunState) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !done(goose_attack, run_state) && std::time::Instant::now() < deadline {
+            goose_attack.maintain_attack(run_state).await.unwrap();
+        }
+    }
+
+    /// How many clients have been built for users so far.
+    fn clients_built(goose_attack: &GooseAttack) -> usize {
+        goose_attack
+            .user_test
+            .clients_built
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Every batch built and user started so far, in order.
+    fn user_events(goose_attack: &GooseAttack) -> Vec<(UserEvent, std::time::Instant)> {
+        goose_attack.user_test.events.lock().unwrap().clone()
+    }
+
+    /// How many users have started so far.
+    fn users_started(goose_attack: &GooseAttack) -> usize {
+        user_events(goose_attack)
+            .iter()
+            .filter(|(event, _)| matches!(event, UserEvent::Started(_)))
+            .count()
+    }
+
+    /// The threads a batch of users is built on.
+    fn build_threads() -> usize {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    }
+
+    /// Weighting users builds no client: a change builds only the clients of
+    /// the users it starts, so a ramp of 5 builds 5.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_weighting_builds_no_client_starting_builds_one() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = users_attack(
+            &server.base_url(),
+            5,
+            vec![index_scenario("Lazy", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        // Setup builds the clients of the 5 users the ramp starts.
+        assert_eq!(clients_built(&goose_attack), 5, "setup built other than 5");
+        // Weighting many more, as a Controller increase does, builds none.
+        let more = goose_attack.weight_scenario_users(100).unwrap();
+        assert_eq!(more.len(), 100);
+        assert_eq!(
+            clients_built(&goose_attack),
+            5,
+            "weighting 100 users built clients"
+        );
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert_eq!(goose_attack.metrics.total_users, 5);
+        assert_eq!(clients_built(&goose_attack), 5, "5 users built other than 5");
+    }
+
+    /// A storm of `users` changes, each landing before the last finished, as
+    /// the Controller sends them: once it settles, a client was built for each
+    /// user that started and at most one more for each build thread of each
+    /// change a later one replaced, and only the running users' tasks are
+    /// held.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_users_storm_builds_and_holds_only_started_users() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = users_attack(
+            &server.base_url(),
+            10,
+            vec![index_scenario("Storm", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let changes = 20;
+        for _ in 0..changes {
+            for users in ["users 50", "users 10"] {
+                assert!(control(&mut goose_attack, &mut run_state, users).await);
+                // One turn of the step machine before the next change lands.
+                step(&mut goose_attack, &mut run_state).await;
+            }
+        }
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert_eq!(run_state.active_users, 10);
+        hold_until(&mut goose_attack, &mut run_state, |_, run_state| {
+            run_state.users.len() == run_state.active_users
+        })
+        .await;
+        let started = goose_attack.metrics.total_users;
+        assert!(
+            clients_built(&goose_attack) <= started + changes * build_threads(),
+            "{} clients built for {} users started",
+            clients_built(&goose_attack),
+            started
+        );
+        assert_eq!(
+            run_state.users.len(),
+            run_state.active_users,
+            "user tasks held, against users running"
+        );
+    }
+
+    /// Users changes that each run to completion, with no hold between them
+    /// in which the main loop prunes: stopped users' tasks are still released
+    /// as new users start, so the tasks held stay bounded.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_users_cycles_release_stopped_tasks_as_users_start() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        // A user told to exit ends once its request is answered, so a wait
+        // long enough not to flood the mock server keeps stopping users short.
+        let (mut goose_attack, mut run_state) = users_attack(
+            &server.base_url(),
+            10,
+            vec![index_scenario("Cycle", 100)],
+            Duration::ZERO,
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let mut most_held = 0;
+        for _ in 0..20 {
+            for users in ["users 50", "users 10"] {
+                assert!(control(&mut goose_attack, &mut run_state, users).await);
+                ramp_to_hold(&mut goose_attack, &mut run_state).await;
+                most_held = most_held.max(run_state.users.len());
+            }
+        }
+        assert_eq!(goose_attack.metrics.total_users, 810);
+        // Without releasing stopped users' tasks, every one of the 810 is
+        // held; a stopping user against the mock server can take seconds to
+        // end, so some are still held.
+        assert!(
+            most_held < 810,
+            "{} user tasks held for at most 50 running users",
+            most_held
+        );
+    }
+
+    /// Users of a weighted load test with several scenarios start in the
+    /// order, with the ordinals and scenarios, main gave them, at setup and
+    /// on a Controller increase.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_weighted_users_start_in_base_order() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let scenarios = vec![
+            index_scenario("Heavy", 10).set_weight(3).unwrap(),
+            index_scenario("Middle", 10).set_weight(2).unwrap(),
+            index_scenario("Light", 10),
+        ];
+        let (mut goose_attack, mut run_state) =
+            users_attack(&server.base_url(), 8, scenarios, Duration::ZERO).await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert!(control(&mut goose_attack, &mut run_state, "users 14").await);
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        // (scenario index, user ordinal) of each user, in the order started.
+        let started: Vec<(usize, usize)> = run_state.running_users.clone();
+        assert_eq!(started, BASE_ORDER);
+    }
+
+    /// The order `test_weighted_users_start_in_base_order` recorded on main
+    /// at 23d8d409, when every weighted user's client was built at once.
+    const BASE_ORDER: &[(usize, usize)] = &[
+        (1, 0),
+        (0, 1),
+        (0, 2),
+        (1, 3),
+        (0, 4),
+        (2, 5),
+        (1, 6),
+        (0, 7),
+        (0, 8),
+        (1, 9),
+        (0, 10),
+        (2, 11),
+        (1, 12),
+        (0, 13),
+    ];
+
+    /// With clients that take 20 ms each to build, a ramp of 50 users holds,
+    /// and resets its metrics, only once all 50 run, and its Maintain row
+    /// says 50 users.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ramp_holds_once_every_user_runs() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = users_attack(
+            &server.base_url(),
+            50,
+            vec![index_scenario("Slow", 10)],
+            Duration::from_millis(20),
+        )
+        .await;
+        while !step(&mut goose_attack, &mut run_state).await {
+            if run_state.all_users_spawned {
+                break;
+            }
+        }
+        // The metrics reset and Maintain both come with every user running.
+        assert!(run_state.all_users_spawned, "the metrics were not reset");
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Maintain);
+        assert_eq!(users_started(&goose_attack), 50, "users running at Maintain");
+        assert_eq!(run_state.active_users, 50);
+        let maintain = goose_attack.metrics.history.last().unwrap();
+        assert_eq!(maintain.action, TestPlanStepAction::Maintaining);
+        assert_eq!(maintain.users, 50);
+    }
+
+    /// No user starts before every client of its batch is built.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_no_user_starts_before_its_batch_is_built() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = users_attack(
+            &server.base_url(),
+            10,
+            vec![index_scenario("Batch", 10)],
+            Duration::from_millis(20),
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert!(control(&mut goose_attack, &mut run_state, "users 30").await);
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        // Every user started counts against a batch built before it.
+        let mut built = 0;
+        let mut started = 0;
+        for (event, _) in user_events(&goose_attack) {
+            match event {
+                UserEvent::Built(users) => built += users,
+                UserEvent::Started(ordinal) => {
+                    started += 1;
+                    assert!(
+                        started <= built,
+                        "user {ordinal} started with {built} users built"
+                    );
+                }
+            }
+        }
+        assert_eq!(started, 30);
+    }
+
+    /// A test plan's increase after a maintain step has its batch built
+    /// during the maintain step, before the step begins, and its users start
+    /// at the step's rate from its start.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_test_plan_builds_the_next_increase_ahead() {
+        let server = index_server();
+        // 5 users at once, held 2 s, then 10 more over 2 s: 5 a second.
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", "5,0s;5,2s;15,2s;15,1h"],
+            vec![index_scenario("Plan", 10)],
+            Duration::from_millis(20),
+        )
+        .await;
+        // Run the step machine, noting when each step began.
+        let mut step_began = std::collections::BTreeMap::new();
+        loop {
+            let current = goose_attack.test_plan.current;
+            step_began
+                .entry(current)
+                .or_insert_with(|| goose_attack.step_started.unwrap_or_else(std::time::Instant::now));
+            if goose_attack.attack_phase == AttackPhase::Maintain && current >= 3 {
+                break;
+            }
+            match goose_attack.attack_phase {
+                AttackPhase::Increase => goose_attack.increase_attack(&mut run_state).await.unwrap(),
+                AttackPhase::Maintain => goose_attack.maintain_attack(&mut run_state).await.unwrap(),
+                phase => panic!("unexpected phase {:?}", phase),
+            }
+        }
+        assert_eq!(run_state.active_users, 15);
+        let events = user_events(&goose_attack);
+        let built: Vec<(usize, std::time::Instant)> = events
+            .iter()
+            .filter_map(|&(event, at)| match event {
+                UserEvent::Built(users) => Some((users, at)),
+                _ => None,
+            })
+            .collect();
+        // Step 1 is the maintain step, 2 the increase after it.
+        let maintain_began = step_began[&1];
+        let increase_began = step_began[&2];
+        let ahead = built
+            .iter()
+            .find(|(users, _)| *users == 10)
+            .expect("no batch of the increase's 10 users");
+        assert!(
+            ahead.1 > maintain_began && ahead.1 < increase_began,
+            "the increase's batch was not built during the maintain step"
+        );
+        // Its 10 users start from the step's start at 5 a second: the last
+        // 1.8 s after the first.
+        let starts: Vec<std::time::Instant> = events
+            .iter()
+            .filter_map(|&(event, at)| match event {
+                UserEvent::Started(_) => Some(at),
+                _ => None,
+            })
+            .skip(5)
+            .collect();
+        assert_eq!(starts.len(), 10);
+        assert!(starts[0] >= increase_began);
+        assert!(starts[0] - increase_began < Duration::from_millis(500));
+        let spread = starts[9] - starts[0];
+        assert!(
+            spread >= Duration::from_millis(1_600) && spread < Duration::from_millis(2_600),
+            "10 users started over {spread:?} at 5 a second"
+        );
+    }
+
+    /// A Controller increase, then a second change before its batch is
+    /// built: the first batch starts no users, and once dropped builds at
+    /// most one more client on each build thread. A batch held for a test
+    /// plan step is dropped when the Controller replaces the test plan.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_change_drops_a_batch_building_or_held() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = users_attack(
+            &server.base_url(),
+            2,
+            vec![index_scenario("Cancel", 10)],
+            Duration::from_millis(20),
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        // 200 users take at least 4 s to build on up to 50 CPUs.
+        assert!(control(&mut goose_attack, &mut run_state, "users 202").await);
+        step(&mut goose_attack, &mut run_state).await;
+        assert_eq!(
+            goose_attack.metrics.total_users, 2,
+            "a user started before its batch was built"
+        );
+        assert!(control(&mut goose_attack, &mut run_state, "users 4").await);
+        let dropped = clients_built(&goose_attack);
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        hold_until(&mut goose_attack, &mut run_state, |_, _| false).await;
+        assert_eq!(goose_attack.metrics.total_users, 4);
+        assert!(
+            clients_built(&goose_attack) - dropped <= 2 + build_threads(),
+            "{} clients built after the batch was dropped, for 2 users started",
+            clients_built(&goose_attack) - dropped
+        );
+        assert!(
+            !user_events(&goose_attack)
+                .iter()
+                .any(|(event, _)| *event == UserEvent::Built(200)),
+            "the dropped batch was built"
+        );
+
+        // A test plan holds its next increase's batch while it maintains.
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", "2,0s;2,1h;400,1s;400,1h"],
+            vec![index_scenario("Held", 10)],
+            Duration::from_millis(20),
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        assert!(control(&mut goose_attack, &mut run_state, "test_plan 3,1s;3,1h").await);
+        let dropped = clients_built(&goose_attack);
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        hold_until(&mut goose_attack, &mut run_state, |_, _| false).await;
+        assert_eq!(goose_attack.metrics.total_users, 3);
+        // The held batch's 398 users are never all built, and none starts.
+        assert!(
+            !user_events(&goose_attack)
+                .iter()
+                .any(|(event, _)| *event == UserEvent::Built(398)),
+            "the dropped batch was built"
+        );
+        assert!(
+            // One user started, and the client the new plan builds to check it can.
+            clients_built(&goose_attack) - dropped <= 2 + build_threads(),
+            "{} clients built after the held batch was dropped, for 1 user started",
+            clients_built(&goose_attack) - dropped
+        );
+    }
 }
