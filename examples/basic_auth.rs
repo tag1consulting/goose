@@ -152,19 +152,20 @@ mod basic_auth_example {
                 info!("Basic Auth successful!");
             }
         }
+        let _ = goose_metrics.discard_body().await;
 
         Ok(())
     }
 
     /// Test user-agent endpoint to show other headers work too
     async fn test_user_agent_endpoint(user: &mut GooseUser) -> TransactionResult {
-        let _goose_metrics = user.get("/user-agent").await?;
+        let _ = user.get("/user-agent").await?.discard_body().await;
         Ok(())
     }
 
     /// Test JSON endpoint with Basic Auth
     async fn test_json_endpoint(user: &mut GooseUser) -> TransactionResult {
-        let _goose_metrics = user.get("/json").await?;
+        let _ = user.get("/json").await?.discard_body().await;
         Ok(())
     }
 
@@ -198,14 +199,19 @@ mod basic_auth_example {
 
     /// Test using the helper function approach
     async fn test_with_helper_function(user: &mut GooseUser) -> TransactionResult {
-        let _goose_response =
-            send_authenticated_request(user, &GooseMethod::Get, "/basic-auth/user/passwd").await?;
+        let _ = send_authenticated_request(user, &GooseMethod::Get, "/basic-auth/user/passwd")
+            .await?
+            .discard_body()
+            .await;
         Ok(())
     }
 
     /// Test POST request using helper function
     async fn test_post_with_helper(user: &mut GooseUser) -> TransactionResult {
-        let _goose_response = send_authenticated_request(user, &GooseMethod::Post, "/post").await?;
+        let _ = send_authenticated_request(user, &GooseMethod::Post, "/post")
+            .await?
+            .discard_body()
+            .await;
         Ok(())
     }
 
@@ -226,7 +232,7 @@ mod basic_auth_example {
             .set_request_builder(reqwest_request_builder)
             .build();
 
-        let _goose_metrics = user.request(goose_request).await?;
+        let _ = user.request(goose_request).await?.discard_body().await;
 
         Ok(())
     }
@@ -254,6 +260,7 @@ mod basic_auth_example {
                 warn!("Manual Basic Auth successful, but static assets would fail!");
             }
         }
+        let _ = goose_metrics.discard_body().await;
 
         Ok(())
     }

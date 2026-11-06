@@ -53,9 +53,12 @@ use goose::prelude::*;
 async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
     let response = user.post("/login", "").await?;
     let response_data = response.response?;
+    let status = response_data.status();
+    // Read the body to the end so the connection is reused.
+    let _ = response_data.bytes().await;
 
-    if !response_data.status().is_success() {
-        return Err(format!("Login failed with status: {}", response_data.status()).into());
+    if !status.is_success() {
+        return Err(format!("Login failed with status: {}", status).into());
     }
 
     Ok(())

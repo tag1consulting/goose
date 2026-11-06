@@ -1,0 +1,86 @@
+# The Goose Book
+
+> Goose is a load testing framework written in Rust. A load test is a Rust program that uses the `goose` crate: it defines scenarios of async transactions, each making HTTP requests as a simulated user, and compiles to a command line tool that runs them against a host. Goose collects metrics on every request, transaction and scenario, writes HTML, Markdown, JSON and PDF reports, serves a live dashboard, can be steered while it runs through telnet, WebSocket or MCP Controllers, and can spread one test over many machines with Gaggle. This Book covers writing, running and reading a load test.
+
+Source: https://github.com/tag1consulting/goose. API documentation: https://docs.rs/goose/. Notes for agents working in the repository: https://github.com/tag1consulting/goose/blob/main/AGENTS.md.
+
+## Start here
+
+- [What Is Goose?](https://book.goose.rs/title-page.html): the introduction to Goose
+- [Requirements](https://book.goose.rs/requirements.html): Rust and Cargo, TLS, the Cargo features, and Chrome for PDF reports
+- [Creating A Load Test](https://book.goose.rs/getting-started/creating.html): a new Cargo project, a transaction function and a scenario, the smallest working load test
+- [Validating Requests](https://book.goose.rs/getting-started/validation.html): failing a request or transaction on what the server returned
+- [Running A Load Test](https://book.goose.rs/getting-started/running.html): building with `--release`, giving a host, and reading the output
+
+## Controllers
+
+- [Controllers](https://book.goose.rs/controller/overview.html): the four ways to watch or change a running load test: the Live Dashboard and three Controllers
+- [MCP Controller](https://book.goose.rs/controller/mcp.html): every Controller command as a Model Context Protocol tool for AI agents (`--features mcp`, `--mcp`), its options, tools, limits and security
+- [Live Dashboard](https://book.goose.rs/controller/dashboard.html): a web UI with live metrics and optional control (`--features dashboard`, `--dashboard`)
+- [Telnet Controller](https://book.goose.rs/controller/telnet.html): the default Controller, its commands and their grammar
+- [WebSocket Controller](https://book.goose.rs/controller/websocket.html): the same commands as JSON over WebSocket (`--websocket`)
+
+## Getting started
+
+- [Getting Started](https://book.goose.rs/getting-started/overview.html): the steps from an empty project to a report
+- [Run-Time Options](https://book.goose.rs/getting-started/runtime-options.html): the command line options
+- [Common Options](https://book.goose.rs/getting-started/common.html): host, users, ramp up and run time
+- [Test Plan](https://book.goose.rs/getting-started/test-plan.html): load shaped as steps of users over time
+- [Throttle](https://book.goose.rs/getting-started/throttle.html): a cap on requests per second
+- [Thresholds](https://book.goose.rs/getting-started/thresholds.html): pass and fail rules such as `p95<500ms`
+- [Killswitch](https://book.goose.rs/getting-started/killswitch.html): stopping a load test from code when a condition is met
+- [Limiting Scenarios](https://book.goose.rs/getting-started/scenarios.html): running only some of the scenarios
+- [Custom Options](https://book.goose.rs/getting-started/custom.html): run-time options of the load test's own, from the environment or the command line
+- [Output Files](https://book.goose.rs/getting-started/output-files.html): reports, logs and run folders
+- [Metrics](https://book.goose.rs/getting-started/metrics.html): what the console and the reports show
+- [Tips](https://book.goose.rs/getting-started/tips.html): practices that keep a load test accurate
+
+## Logging
+
+- [Logging](https://book.goose.rs/logging/overview.html): the logs Goose can write
+- [Request Log](https://book.goose.rs/logging/requests.html): one line per request
+- [Transaction Log](https://book.goose.rs/logging/transactions.html): one line per transaction
+- [Scenario Log](https://book.goose.rs/logging/scenarios.html): one line per scenario run
+- [Error Log](https://book.goose.rs/logging/errors.html): one line per error
+- [Debug Log](https://book.goose.rs/logging/debug.html): request and response detail written from a transaction
+
+## Gaggle
+
+- [Gaggle: Distributed Load Test](https://book.goose.rs/gaggle/overview.html): one load test run by a manager and one or more workers (feature `gaggle`, a preview in 0.20)
+- [Manager](https://book.goose.rs/gaggle/manager.html): running the manager
+- [Worker](https://book.goose.rs/gaggle/worker.html): running a worker
+- [Configuration](https://book.goose.rs/gaggle/config.html): the Gaggle options
+
+## Coordinated omission
+
+- [Coordinated Omission](https://book.goose.rs/coordinated-omission/overview.html): what it is and why it hides slow responses
+- [Mitigation](https://book.goose.rs/coordinated-omission/mitigation.html): how Goose corrects for it
+- [Practical Examples](https://book.goose.rs/coordinated-omission/examples.html): runs with and without mitigation
+
+## Configuration
+
+- [Configuration](https://book.goose.rs/config/overview.html): configuring a load test in Rust code
+- [Defaults](https://book.goose.rs/config/defaults.html): `GooseDefault`, every default an option can take
+- [Scheduling Scenarios And Transactions](https://book.goose.rs/config/scheduler.html): `GooseScheduler` round robin, serial and random
+- [Proxy](https://book.goose.rs/config/proxy.html): sending requests through a proxy
+- [Cookies](https://book.goose.rs/config/cookie.html): the default `cookies` feature, a cookie store for each user
+
+## Examples
+
+- [Examples](https://book.goose.rs/example/overview.html): the examples in the repository and how to run them
+- [Simple](https://book.goose.rs/example/simple.html): a login on start and two pages
+- [Closure](https://book.goose.rs/example/closure.html): transactions built from closures at run time
+- [Session](https://book.goose.rs/example/session.html): JWT authentication kept in per user session data
+- [Basic Authentication](https://book.goose.rs/example/basic-auth.html): HTTP basic auth on every request
+- [GraphQL](https://book.goose.rs/example/graphql.html): GraphQL queries
+- [TCP Load Test](https://book.goose.rs/example/tcp.html): a load test that is not HTTP
+- [Drupal Memcache](https://book.goose.rs/example/drupal-memcache.html): the load test that checks each release of the Drupal Memcache module
+- [Umami](https://book.goose.rs/example/umami.html): a realistic load test of Drupal's Umami demo site
+
+## Optional
+
+- [Glossary](https://book.goose.rs/glossary.html): the terms the Book uses
+- [Dashboard Reference](https://book.goose.rs/controller/dashboard-reference.html): every dashboard flag, bind and token rule and endpoint, and the snapshot fields a client most needs
+- [Gaggle Technical Details](https://book.goose.rs/gaggle/technical.html): the `gaggle` feature, the protocol, the manager's memory and trust
+- [Coordinated Omission Metrics](https://book.goose.rs/coordinated-omission/metrics.html): measured and adjusted response times, and how the reports show them
+- [Upgrading From 0.18](https://book.goose.rs/getting-started/upgrading.html): changes to make when moving from 0.18

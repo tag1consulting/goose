@@ -25,11 +25,12 @@ async fn check_availability(user: &mut GooseUser) -> TransactionResult {
     let goose = user.get("/api/endpoint").await?;
 
     // Stop the test if server returns 503 Service Unavailable
-    if let Ok(response) = goose.response {
+    if let Ok(response) = &goose.response {
         if response.status() == 503 {
             goose::trigger_killswitch("Server returned 503: Service Unavailable");
         }
     }
+    let _ = goose.discard_body().await;
 
     Ok(())
 }
