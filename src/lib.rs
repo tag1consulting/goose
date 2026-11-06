@@ -1050,13 +1050,25 @@ impl Drop for UserBatch {
         self.cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
         // Dropping many users' clients takes long enough to hold up the main
-        // loop, so a blocking thread drops them when there is a runtime.
-        if let BatchUsers::Built(users) = &mut self.users {
-            let users = std::mem::take(users);
-            if let (false, Ok(runtime)) = (users.is_empty(), tokio::runtime::Handle::try_current())
-            {
-                runtime.spawn_blocking(move || drop(users));
-            }
+        // loop, so a blocking thread drops them when there is a runtime. A
+        // batch built ahead and never asked for holds its users in its
+        // channel; one still building drops what it built on its own thread.
+        let users = match &mut self.users {
+            BatchUsers::Built(users) => std::mem::take(users),
+            BatchUsers::Building(built_rx) => match built_rx.try_recv() {
+                Ok(Ok(Some(users))) => users,
+                _ => Vec::new(),
+            },
+            BatchUsers::Failed => Vec::new(),
+        };
+        if users.is_empty() {
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            #[cfg(test)]
+            self.user_test
+                .record(UserEvent::DroppedOffLoop(users.len()));
+            runtime.spawn_blocking(move || drop(users));
         }
     }
 }
@@ -4403,10 +4415,15 @@ impl GooseAttack {
 
     /// Whether the users of a run that ends on `--iterations` have all
     /// exited, so the run ends: when one has just exited (`exited`) and
-    /// every user the plan starts has.
+    /// every user the plan starts has, or, as building some of them failed,
+    /// every user that started has, while the run holds short of its users.
     fn users_exited(&self, goose_attack_run_state: &GooseAttackRunState, exited: bool) -> bool {
         // In Stand-alone mode, all users are started.
-        exited && goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users()
+        (exited && goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users())
+            || (self.configuration.iterations() > 0
+                && self.attack_phase == AttackPhase::Maintain
+                && goose_attack_run_state.active_users < self.current_target_users()
+                && goose_attack_run_state.users_shutdown.len() == self.metrics.total_users)
     }
 
     /// Count one more user running: in the users started over the run, and
@@ -7562,7 +7579,10 @@ mod tests {
             .iter()
             .any(|(event, _)| *event == UserEvent::Built(50))
         {
-            assert!(std::time::Instant::now() < deadline, "the ahead batch was not built");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the ahead batch was not built"
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(control(&mut goose_attack, &mut run_state, "test_plan 3,1s;3,1h").await);
@@ -7581,7 +7601,14 @@ mod tests {
         let server = index_server();
         let (mut goose_attack, mut run_state) = started_attack(
             &server.base_url(),
-            &["--users", "4", "--iterations", "1", "--increase-rate", "1000"],
+            &[
+                "--users",
+                "4",
+                "--iterations",
+                "1",
+                "--increase-rate",
+                "1000",
+            ],
             vec![index_scenario("Iterations", 10)],
             Duration::ZERO,
         )
