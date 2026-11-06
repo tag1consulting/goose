@@ -392,12 +392,14 @@ async fn tools_listed_refused_and_redacted() {
         let refused = mcp.call("set_users", json!({ "users": 0 })).await;
         assert!(!refused.ok);
         assert_eq!(refused.text, telnet_says);
-        assert_eq!(refused.structured["ok"], false);
+        // A refusal carries no structured content: the output schema is for
+        // what a tool answers when it is applied.
+        assert_eq!(refused.structured, Value::Null);
         // So is one the parent refuses: stop while idle.
         let stop = mcp.call("stop", json!({})).await;
         assert!(!stop.ok);
         assert_eq!(stop.text, telnet(telnet_port, "stop").await);
-        assert_eq!(stop.structured["phase"], "idle");
+        assert_eq!(stop.structured, Value::Null);
         // An accepted one returns the whole outcome as structured content.
         let users = mcp.call("set_users", json!({ "users": 3 })).await;
         assert!(users.ok, "{:?}", users);
@@ -720,12 +722,12 @@ async fn set_host_is_opt_in() {
             let telnet_says = telnet(telnet_port, &format!("host {host}")).await;
             let called = mcp.call("set_host", json!({ "host": host })).await;
             assert_eq!(called.text, telnet_says, "{}", host);
-            assert_eq!(
-                called.ok,
-                called.structured["ok"] == json!(true),
-                "{}",
-                host
-            );
+            // Applied, the outcome; refused, no structured content.
+            if called.ok {
+                assert_eq!(called.structured["ok"], true, "{}", host);
+            } else {
+                assert_eq!(called.structured, Value::Null, "{}", host);
+            }
         }
         let config = mcp.call("get_config", json!({})).await;
         assert_eq!(config.structured["host"], "http://192.0.2.1/");
@@ -887,8 +889,9 @@ async fn structured_content_is_the_text() {
         // Stopped, the metrics hold still, so telnet reads the same.
         assert!(mcp.call("stop", json!({})).await.ok);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        // A stop is refused, naming the phase, until the users have stopped.
-        while mcp.call("stop", json!({})).await.structured["phase"] != "idle" {
+        // A stop is refused, saying the load test is not running, once the
+        // users have stopped.
+        while mcp.call("stop", json!({})).await.text != "load test not running, failed to stop" {
             assert!(tokio::time::Instant::now() < deadline, "never stopped");
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -1065,7 +1068,7 @@ async fn saved_runs_tools() {
                 let refused = mcp.call(tool, arguments).await;
                 assert!(!refused.ok, "{} {}", tool, name);
                 assert_eq!(refused.text, format!("no saved run named {name:?}"));
-                assert_eq!(refused.structured["ok"], false);
+                assert_eq!(refused.structured, Value::Null);
                 assert!(!refused.text.contains(&parent));
             }
         }
@@ -1103,6 +1106,114 @@ async fn saved_runs_tools() {
 
         running.shutdown(&mut mcp).await;
         std::fs::remove_dir_all(&runs.parent).ok();
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// Whether `structured`, a tool result's structured content, passes the
+/// output schema `schema` a tool lists: absent content passes, as MCP makes
+/// it optional; present content must be an object holding every required
+/// property, each listed property of the type it names. The schemas the
+/// MCP Controller lists use no more than this.
+fn conforms(schema: &Value, structured: &Value) -> Result<(), String> {
+    if structured.is_null() {
+        return Ok(());
+    }
+    let Some(object) = structured.as_object() else {
+        return Err(format!("not an object: {structured}"));
+    };
+    for required in schema["required"].as_array().into_iter().flatten() {
+        let name = required.as_str().unwrap();
+        if !object.contains_key(name) {
+            return Err(format!("missing required {name:?} in {structured}"));
+        }
+    }
+    for (name, property) in schema["properties"].as_object().into_iter().flatten() {
+        let (Some(value), Some(kind)) = (object.get(name), property["type"].as_str()) else {
+            continue;
+        };
+        let matches = match kind {
+            "string" => value.is_string(),
+            "boolean" => value.is_boolean(),
+            "integer" => value.is_u64() || value.is_i64(),
+            "number" => value.is_number(),
+            "array" => value.is_array(),
+            "object" => value.is_object(),
+            _ => true,
+        };
+        if !matches {
+            return Err(format!("{name:?} is not {kind} in {structured}"));
+        }
+    }
+    Ok(())
+}
+
+/// A refused `list_runs` and `compare_runs` passes the output schema its
+/// tool lists, as an answered one does: a refusal carries no structured
+/// content, where a refusal shaped `{ok, message}` would not pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn refusals_pass_the_output_schema() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let parent = saved_runs::folder("schema");
+        let live = parent.join("live").to_string_lossy().into_owned();
+        let running = Running::start(0, None, |ports| {
+            strings(&[
+                "--mcp",
+                "--mcp-port",
+                &ports[0],
+                "--no-telnet",
+                "--output-dir",
+                &live,
+                "--report-file",
+            ])
+        })
+        .await;
+        let mut mcp = Mcp::new(running.port());
+        let tools = mcp.tools().await;
+        let schema = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap_or_else(|| panic!("{} is not listed", name))["outputSchema"]
+                .clone()
+        };
+        let (list_runs, compare_runs) = (schema("list_runs"), schema("compare_runs"));
+        // The check is not empty: each schema requires fields a refusal
+        // shaped `{ok, message}` lacks.
+        let old_refusal = json!({ "ok": false, "message": "no saved run named \"..\"" });
+        assert!(conforms(&list_runs, &old_refusal).is_err());
+        assert!(conforms(&compare_runs, &old_refusal).is_err());
+
+        for (tool, arguments, schema) in [
+            ("list_runs", json!({ "before": ".." }), &list_runs),
+            ("list_runs", json!({ "before": "missing" }), &list_runs),
+            ("compare_runs", json!({}), &compare_runs),
+            (
+                "compare_runs",
+                json!({ "baseline": "missing" }),
+                &compare_runs,
+            ),
+            (
+                "compare_runs",
+                json!({ "run": "/", "baseline": "missing" }),
+                &compare_runs,
+            ),
+        ] {
+            let called = mcp.call(tool, arguments.clone()).await;
+            assert!(!called.ok, "{} {}: {:?}", tool, arguments, called);
+            assert_eq!(called.structured, Value::Null, "{} {}", tool, arguments);
+            conforms(schema, &called.structured)
+                .unwrap_or_else(|e| panic!("{} {}: {}", tool, arguments, e));
+        }
+        // An answered list_runs passes too.
+        let listed = mcp.call("list_runs", json!({})).await;
+        assert!(listed.ok, "{:?}", listed);
+        conforms(&list_runs, &listed.structured).unwrap();
+        assert!(listed.structured.is_object());
+
+        running.shutdown(&mut mcp).await;
+        std::fs::remove_dir_all(&parent).ok();
     })
     .await
     .expect("test timed out");

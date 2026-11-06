@@ -551,16 +551,25 @@ fn object(value: Value) -> JsonObject {
     }
 }
 
-/// A tool result: `message` as text, `structured` as its structured content,
-/// and an error the model reads when the command was not applied.
+/// A tool result: `message` as text and `structured` as its structured
+/// content when the command was applied; when it was not, an error the
+/// model reads, with no structured content.
 fn tool_result(ok: bool, message: String, structured: Value) -> CallToolResult {
     let content = vec![ContentBlock::text(message)];
-    let mut result = if ok {
-        CallToolResult::success(content)
-    } else {
-        CallToolResult::error(content)
-    };
+    if !ok {
+        return refused_with(content);
+    }
+    let mut result = CallToolResult::success(content);
     result.structured_content = Some(structured);
+    result
+}
+
+/// A refusal: the message as text, and no structured content, which would
+/// have to match the tool's output schema, made for what the tool answers
+/// when it is applied.
+fn refused_with(content: Vec<ContentBlock>) -> CallToolResult {
+    let mut result = CallToolResult::error(content);
+    result.structured_content = None;
     result
 }
 
@@ -575,11 +584,7 @@ fn json_result<T: serde::Serialize>(value: &T) -> CallToolResult {
 /// A refusal with no outcome from the parent: a value the parser refused, a
 /// timeout, or a parent that has gone.
 fn refused(message: &str) -> CallToolResult {
-    tool_result(
-        false,
-        message.to_string(),
-        json!({ "ok": false, "message": message }),
-    )
+    refused_with(vec![ContentBlock::text(message)])
 }
 
 /// What the MCP Controller needs from the configuration.
@@ -1151,7 +1156,8 @@ mod tests {
     }
 
     /// A parent that does not answer in time, or has gone, is a tool error
-    /// with the text telnet prints, never a JSON-RPC error.
+    /// with the text telnet prints and no structured content, never a
+    /// JSON-RPC error.
     #[tokio::test]
     async fn timeout_and_closed_channel_are_tool_errors() {
         tokio::time::timeout(Duration::from_secs(30), async {
@@ -1174,7 +1180,7 @@ mod tests {
                 (
                     Some(true),
                     format!("{:?}", vec![ContentBlock::text(text)]),
-                    Some(json!(false)),
+                    None,
                 )
             };
             // Held but never read: the call times out.
