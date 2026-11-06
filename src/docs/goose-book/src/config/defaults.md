@@ -76,6 +76,7 @@ The following defaults can be configured with a `bool`:
  - do not autostart load test, wait instead for a Controller to start: `GooseDefault::NoAutoStart`
  - do not ask for gzip compressed responses: `GooseDefault::NoGzip`
  - follow redirect of base_url: `GooseDefault::StickyFollow`
+ - drop response bodies the test left unread, as Goose 0.19 did, instead of reading them to the end: `GooseDefault::DropUnreadBodies`
  - accept invalid TLS certificates: `GooseDefault::AcceptInvalidCerts`
  - graph only totals in reports: `GooseDefault::NoGranularData`
  - add graph data to the JSON report: `GooseDefault::ReportGraphData`

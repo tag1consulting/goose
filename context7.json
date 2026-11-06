@@ -19,7 +19,7 @@
   ],
   "rules": [
     "Goose is a Rust load testing framework: a load test is a Rust program that depends on the goose crate and tokio, registers scenarios of async transaction functions with GooseAttack, and is run from the command line with --host",
-    "Each GooseUser runs one scenario; a transaction function takes &mut GooseUser and returns TransactionResult; read every response body so the user keeps its connection",
+    "Each GooseUser runs one scenario; a transaction function takes &mut GooseUser and returns TransactionResult; Goose reads to the end any response body a transaction drops unread, so the user keeps its connection; --drop-unread-bodies turns that off",
     "Load shape comes from --users, --increase-rate or --increase-time, and --run-time, or from a test plan such as --test-plan \"10,1m;10,5m;0,30s\"; --throttle-requests caps requests per second",
     "Thresholds such as --threshold \"p95<500ms\" or \"error-rate<1%\" fail a run that breaks them, and stop it early unless --no-threshold-abort is set",
     "Coordinated omission mitigation, --co-mitigation average, maximum or minimum, is off by default; with it Goose keeps measured and adjusted response times",

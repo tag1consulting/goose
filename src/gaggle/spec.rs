@@ -69,6 +69,7 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) timeout: Option<String>,
     pub(crate) no_gzip: bool,
     pub(crate) sticky_follow: bool,
+    pub(crate) drop_unread_bodies: bool,
     pub(crate) accept_invalid_certs: bool,
     /// Which of the timeout, gzip and certificate options the manager's
     /// command line gave: they win over the worker's client builder, as on
@@ -363,6 +364,7 @@ pub(crate) fn worker_specs(
                 timeout: configuration.timeout.clone(),
                 no_gzip: configuration.no_gzip,
                 sticky_follow: configuration.sticky_follow,
+                drop_unread_bodies: configuration.drop_unread_bodies,
                 accept_invalid_certs: configuration.accept_invalid_certs,
                 client_command_line,
                 no_metrics: configuration.no_metrics,
@@ -423,6 +425,7 @@ impl WorkerRunSpec {
         configuration.timeout = self.timeout.clone();
         configuration.no_gzip = self.no_gzip;
         configuration.sticky_follow = self.sticky_follow;
+        configuration.drop_unread_bodies = self.drop_unread_bodies;
         configuration.accept_invalid_certs = self.accept_invalid_certs;
         configuration.no_metrics = self.no_metrics;
         configuration.no_transaction_metrics = self.no_transaction_metrics;

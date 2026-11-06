@@ -1,8 +1,17 @@
 # Upgrading From 0.18
 
+## Goose 0.20
+
+Goose 0.20 is not released yet; this is what changes on `main` so far.
+
+- **API change**: `GooseResponse.response` is a `Result<GooseHttpResponse, reqwest::Error>`, where it held a `reqwest::Response`. `GooseHttpResponse` dereferences to `reqwest::Response`, so `response.status()`, `response.headers()` and the rest work unchanged, and has its own `text()`, `bytes()`, `json()`, `chunk()` and `error_for_status()`. Code that names `reqwest::Response`, as a function that takes one, takes it with `into_inner()`: `let response = goose.response?.into_inner();`, or names `goose::goose::GooseHttpResponse` instead to keep Goose reading the body. `text_with_charset()` and `bytes_stream()`, which need reqwest features Goose does not turn on, are reached the same way. See [Read every response body](tips.md#read-every-response-body).
+- **behavior change**: a response body a transaction drops unread is read to the end by Goose, before the user's next request and before the transaction ends, so the user keeps its connection; the download counts toward the transaction's time, as `discard_body()`'s does, and request times are unchanged. `--drop-unread-bodies` (or `GooseDefault::DropUnreadBodies`) drops them as 0.19 did. See [Read every response body](tips.md#read-every-response-body).
+
+## Goose 0.19
+
 Change the dependency to `goose = "^0.19"`. The changes below can break a load test written for Goose 0.18, or change what it does.
 
-## Removed options
+### Removed options
 
 | 0.18 | 0.19 |
 |---|---|
@@ -17,7 +26,7 @@ Change the dependency to `goose = "^0.19"`. The changes below can break a load t
 
 The new `--decrease-rate` and `--decrease-time` control the ramp down; without them Goose stops all users at once, as 0.18 did. See [the ramp down rate](common.md#controlling-the-ramp-down-rate). Neither is allowed with `--iterations`: the run fails at startup with ``` `configuration.decrease_rate` can not be set with `configuration.iterations`. ```, or the same for `decrease_time`. Drop the decrease option, as each user stops after its iterations anyway.
 
-## API changes
+### API changes
 
 - **API change**: the command line is parsed with `clap`. Remove `use gumdrop::Options;`: `GooseConfiguration::parse_args_default()` is now a method of its own, and `GooseConfiguration` implements `clap::Parser`. See [Custom options](custom.md#command-line-arguments).
 - **API change**: every `GooseConfiguration` field for an option that takes a single value, such as `host`, `run_time`, `increase_time` or `iterations`, is an `Option`, `None` when not given; set one with `Some`, as in `configuration.run_time = Some("30s".to_string())`. The `help` field is gone. See [Custom options](custom.md#command-line-arguments).
@@ -38,7 +47,7 @@ The new `--decrease-rate` and `--decrease-time` control the ramp down; without t
 - **API change**: `GooseConfiguration` has new public fields: `threshold`, `no_threshold_abort`, `threshold_abort_delay`, `output_dir`, `compress`, `notes`, `report_graph_data`, `render_report` and `websocket`, among others, and, with the `pdf-reports` feature, `pdf_scale` and `pdf_timeout`, an `Option<f64>` and an `Option<u64>` set in code with `GooseDefault::PdfScale` and `GooseDefault::PdfTimeout`. See [Custom options](custom.md#command-line-arguments) and [Output files](output-files.md).
 - **API change**: `config::RUN_FOLDER` and `reset_killswitch()` are public. See [Output files](output-files.md#files) and [Killswitch](killswitch.md).
 
-## Behavior changes
+### Behavior changes
 
 - **behavior change**: `Transaction::set_name()` names only the transaction; its requests keep their own names. Use `set_name_for_transaction_and_requests()` for the 0.18 behavior. See [Naming transactions](creating.md#naming-transactions).
 - **behavior change**: `--scenarios` matches machine names exactly, where 0.18 matched any part of the name; use `*` as a wildcard, as in `--scenarios "anon*"`. See [Limiting scenarios](scenarios.md#running-scenarios-by-machine-name).
