@@ -1000,65 +1000,163 @@ fn build_users(
     Ok(Some(built))
 }
 
-/// The users built, or being built, for the users a test plan step starts.
-/// Dropping it stops a build still running, and drops what it built.
+/// One part of a batch, as built: its users, the next to start last; `None`
+/// when the batch was canceled first.
+type BuiltPart = Result<Option<Vec<GooseUser>>, GooseError>;
+
+/// The most users one part of a batch builds: 4 for each build thread, or
+/// one second of the step's rate, whichever is larger, so users start as
+/// soon as the first part is built and the parts after it keep up with the
+/// rate wherever building can. `rate` is users a second, infinite for a step
+/// that starts all its users at once.
+fn part_size(rate: f64) -> usize {
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let second = if rate.is_finite() {
+        rate.ceil() as usize
+    } else {
+        usize::MAX
+    };
+    (threads * 4).max(second)
+}
+
+/// Build `users` in parts of at most `part` users, in the order they start,
+/// handing each part to `deliver` as soon as it is built. Stops after a part
+/// that failed or was canceled, or when `deliver` says nobody takes parts.
+fn build_parts(
+    users: &[WeightedUser],
+    build: &UserBuild,
+    part: usize,
+    cancel: &std::sync::atomic::AtomicBool,
+    mut deliver: impl FnMut(BuiltPart) -> bool,
+) {
+    // The next user to start is the last, so parts start from the end.
+    for users in users.rchunks(part.max(1)) {
+        let built = build_users(users, build, cancel);
+        let more = matches!(built, Ok(Some(_)));
+        if !deliver(built) || !more {
+            return;
+        }
+    }
+}
+
+/// The users built, or being built, for the users a test plan step starts,
+/// in parts. Dropping it stops a build still running, and drops what it
+/// built.
 struct UserBatch {
     /// The index of the test plan step that starts these users.
     step: usize,
     /// How many users it builds.
     size: usize,
+    /// How many of them have not started.
+    left: usize,
     #[cfg(test)]
     user_test: UserTestHooks,
     /// Set to stop a build still running.
     cancel: Arc<std::sync::atomic::AtomicBool>,
-    users: BatchUsers,
+    /// Each part as it is built, in the order the users start.
+    parts: tokio::sync::mpsc::UnboundedReceiver<BuiltPart>,
+    /// The part users start from now, the next last.
+    next: Vec<GooseUser>,
+    /// Whether the next user was due before its part was built, so its start
+    /// is late and the users after it are due from it, never sooner.
+    stalled: bool,
+    /// Whether building a part failed, so its step starts no more users.
+    failed: bool,
 }
 
-/// Where a [`UserBatch`] is.
-enum BatchUsers {
-    /// Building off the main loop; the result comes on this channel.
-    Building(tokio::sync::oneshot::Receiver<Result<Option<Vec<GooseUser>>, GooseError>>),
-    /// Built, the next user to start last.
-    Built(Vec<GooseUser>),
-    /// Building failed, so its step starts none of them.
-    Failed,
+/// How the current increase step's users have started, for the log.
+struct StepStarts {
+    /// The test plan step.
+    step: usize,
+    /// The second since its boundary that the last user started in.
+    second: u64,
+    /// The users started in that second.
+    in_second: usize,
+}
+
+/// What a [`UserBatch`] has for the next user to start.
+enum NextUser {
+    /// The next user, built.
+    Built(GooseUser),
+    /// Its part is still building.
+    Building,
+    /// Building it failed.
+    Failed(String),
 }
 
 impl UserBatch {
-    /// Build `users` for `step` in one blocking task, so building never
-    /// blocks the main loop.
-    fn build(step: usize, users: Vec<WeightedUser>, build: UserBuild) -> Self {
-        let size = users.len();
-        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (built_tx, built_rx) = tokio::sync::oneshot::channel();
-        let canceled = cancel.clone();
-        #[cfg(test)]
-        let user_test = build.user_test.clone();
-        tokio::task::spawn_blocking(move || {
-            let built = build_users(&users, &build, &canceled);
-            #[cfg(test)]
-            let count = built.as_ref().ok().and_then(|b| b.as_ref().map(Vec::len));
-            // Nobody waits for a batch that was dropped.
-            let _ = built_tx.send(built);
-            // Recorded once the batch is on its channel, where a drop finds it.
-            #[cfg(test)]
-            if let Some(count) = count {
-                build.user_test.record(UserEvent::Built(count));
-            }
-        });
+    /// A batch of `size` users built from `build`, whose parts come on
+    /// `parts`.
+    #[cfg_attr(not(test), allow(unused_variables))]
+    fn new(
+        step: usize,
+        size: usize,
+        parts: tokio::sync::mpsc::UnboundedReceiver<BuiltPart>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        build: &UserBuild,
+    ) -> Self {
         UserBatch {
             step,
             size,
+            left: size,
             #[cfg(test)]
-            user_test,
+            user_test: build.user_test.clone(),
             cancel,
-            users: BatchUsers::Building(built_rx),
+            parts,
+            next: Vec::new(),
+            stalled: false,
+            failed: false,
         }
     }
 
-    /// Whether building this batch failed.
-    fn failed(&self) -> bool {
-        matches!(self.users, BatchUsers::Failed)
+    /// Build `users` for `step`, at `rate` users a second, in one blocking
+    /// task, so building never blocks the main loop: each part goes on the
+    /// channel as soon as it is built.
+    fn build(step: usize, rate: f64, users: Vec<WeightedUser>, build: UserBuild) -> Self {
+        let size = users.len();
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
+        let batch = UserBatch::new(step, size, parts, cancel.clone(), &build);
+        tokio::task::spawn_blocking(move || {
+            build_parts(&users, &build, part_size(rate), &cancel, |built| {
+                #[cfg(test)]
+                let count = built.as_ref().ok().and_then(|b| b.as_ref().map(Vec::len));
+                // Nobody takes the parts of a batch that was dropped.
+                let taken = parts_tx.send(built).is_ok();
+                // Recorded once the part is on its channel, where a drop finds it.
+                #[cfg(test)]
+                if let (true, Some(count)) = (taken, count) {
+                    build.user_test.record(UserEvent::Built(count));
+                }
+                taken
+            });
+        });
+        batch
+    }
+
+    /// The next user to start, waiting up to `wait` for its part.
+    async fn next_user(&mut self, wait: Duration) -> NextUser {
+        if self.next.is_empty() {
+            // A part already on the channel is taken without waiting.
+            let Ok(part) = tokio::time::timeout(wait, self.parts.recv()).await else {
+                return NextUser::Building;
+            };
+            match part {
+                Some(Ok(Some(users))) => self.next = users,
+                Some(Ok(None)) => unreachable!("a batch still held was canceled"),
+                Some(Err(e)) => return NextUser::Failed(e.to_string()),
+                None => return NextUser::Failed("its build stopped".to_string()),
+            }
+        }
+        match self.next.pop() {
+            Some(user) => {
+                self.left -= 1;
+                NextUser::Built(user)
+            }
+            None => NextUser::Building,
+        }
     }
 }
 
@@ -1067,17 +1165,15 @@ impl Drop for UserBatch {
         self.cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
         // Dropping many users' clients takes long enough to hold up the main
-        // loop, so a blocking thread drops them when there is a runtime. A
-        // batch built ahead and never asked for holds its users in its
-        // channel; one still building drops what it built on its own thread.
-        let users = match &mut self.users {
-            BatchUsers::Built(users) => std::mem::take(users),
-            BatchUsers::Building(built_rx) => match built_rx.try_recv() {
-                Ok(Ok(Some(users))) => users,
-                _ => Vec::new(),
-            },
-            BatchUsers::Failed => Vec::new(),
-        };
+        // loop, so a blocking thread drops them when there is a runtime: the
+        // part users start from, and every part built and not yet taken. A
+        // part still building drops what it built on its own thread.
+        let mut users = std::mem::take(&mut self.next);
+        while let Ok(part) = self.parts.try_recv() {
+            if let Ok(Some(part)) = part {
+                users.extend(part);
+            }
+        }
         debug!(
             "[users]: dropping the batch of {} users for step {}: {} built and not started",
             self.size,
@@ -1113,6 +1209,8 @@ pub struct GooseAttack {
     /// most one batch, and ahead of its step only for a test plan's next
     /// increase.
     user_batch: Option<UserBatch>,
+    /// How the current increase step's users have started, for the log.
+    step_starts: Option<StepStarts>,
     /// The global ordinal of this process's first user: 0, unless it runs a
     /// share of a Gaggle's users. User indexes, the users each scenario
     /// counts and coordinated omission events all count from it.
@@ -1260,6 +1358,7 @@ impl GooseAttack {
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
             user_batch: None,
+            step_starts: None,
             #[cfg(test)]
             user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
@@ -1320,6 +1419,7 @@ impl GooseAttack {
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
             user_batch: None,
+            step_starts: None,
             #[cfg(test)]
             user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
@@ -2080,25 +2180,60 @@ impl GooseAttack {
         })
     }
 
+    /// The users a second `step` starts: infinite when it starts them all at
+    /// once.
+    fn step_rate(&self, step: usize) -> f64 {
+        self.step_users_added(step) as f64 / self.test_plan.steps[step].1 as f64 * 1_000.0
+    }
+
+    /// The users `step` adds to the step before it, 0 unless it raises them.
+    fn step_users_added(&self, step: usize) -> usize {
+        let steps = &self.test_plan.steps;
+        let previous = if step == 0 { 0 } else { steps[step - 1].0 };
+        steps[step].0.saturating_sub(previous)
+    }
+
     /// Build the users the first increase starts, before the load test
     /// starts, so a client that can not be built fails it now.
     fn build_first_users(&mut self) -> Result<(), GooseError> {
         self.user_batch = None;
         if let Some((step, users)) = self.next_increase(None) {
             let users = self.take_weighted_users(users);
+            let build = self.user_build();
+            let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
             let not_canceled = std::sync::atomic::AtomicBool::new(false);
-            let built = build_users(&users, &self.user_build(), &not_canceled)?
-                .expect("a build that is never canceled was canceled");
-            #[cfg(test)]
-            self.user_test.record(UserEvent::Built(built.len()));
-            self.user_batch = Some(UserBatch {
+            let mut failed = None;
+            build_parts(
+                &users,
+                &build,
+                part_size(self.step_rate(step)),
+                &not_canceled,
+                |built| match built {
+                    Ok(built) => {
+                        #[cfg(test)]
+                        let count = built.as_ref().map_or(0, Vec::len);
+                        // The receiver is held below, so the send succeeds.
+                        let _ = parts_tx.send(Ok(built));
+                        #[cfg(test)]
+                        self.user_test.record(UserEvent::Built(count));
+                        true
+                    }
+                    Err(e) => {
+                        failed = Some(e);
+                        false
+                    }
+                },
+            );
+            if let Some(e) = failed {
+                return Err(e);
+            }
+            self.user_batch = Some(UserBatch::new(
                 step,
-                size: built.len(),
-                #[cfg(test)]
-                user_test: self.user_test.clone(),
-                cancel: Arc::default(),
-                users: BatchUsers::Built(built),
-            });
+                users.len(),
+                parts,
+                Arc::default(),
+                &build,
+            ));
         }
         Ok(())
     }
@@ -2134,77 +2269,118 @@ impl GooseAttack {
         }
         debug!("[users]: building the {users} users test plan step {step} starts");
         let users = self.take_weighted_users(users);
-        self.user_batch = Some(UserBatch::build(step, users, self.user_build()));
+        let rate = self.step_rate(step);
+        self.user_batch = Some(UserBatch::build(step, rate, users, self.user_build()));
     }
 
-    /// Whether the current step's batch is built, so its next user can start:
-    /// asks for a batch of the users the step still starts when there is
-    /// none, and waits up to 100 ms for one still building.
-    async fn user_batch_ready(&mut self, goose_attack_run_state: &GooseAttackRunState) -> bool {
+    /// The next user the current step starts, once its part is built: asks
+    /// for a batch of the users the step still starts when there is none,
+    /// and waits up to 100 ms for a part still building. `None` while its
+    /// part builds, or when building failed and no more start.
+    async fn next_user(
+        &mut self,
+        goose_attack_run_state: &GooseAttackRunState,
+    ) -> Option<GooseUser> {
         let step = self.test_plan.current;
-        let usable = self.user_batch.as_ref().is_some_and(|batch| {
-            batch.step == step
-                && !matches!(&batch.users, BatchUsers::Built(users) if users.is_empty())
-        });
-        if !usable {
+        if !self
+            .user_batch
+            .as_ref()
+            .is_some_and(|batch| batch.step == step && (batch.left > 0 || batch.failed))
+        {
             // After a batch that failed, fewer users may be left than the step
             // still starts: it starts those left.
             let needed = (self.test_plan.steps[step].0 - goose_attack_run_state.active_users)
                 .min(self.weighted_users.len());
+            let users = self.take_weighted_users(needed);
+            let rate = self.step_rate(step);
+            let mut batch = UserBatch::build(step, rate, users, self.user_build());
             if needed == 0 {
                 error!("[users]: no users are left for test plan step {step} to start, as building earlier users failed");
-                self.user_batch = Some(UserBatch {
-                    step,
-                    size: 0,
-                    #[cfg(test)]
-                    user_test: self.user_test.clone(),
-                    cancel: Arc::default(),
-                    users: BatchUsers::Failed,
-                });
-                return false;
+                batch.failed = true;
             }
-            let users = self.take_weighted_users(needed);
-            self.user_batch = Some(UserBatch::build(step, users, self.user_build()));
+            self.user_batch = Some(batch);
         }
         let batch = self
             .user_batch
             .as_mut()
             .expect("a batch was just asked for");
-        let BatchUsers::Building(built_rx) = &mut batch.users else {
-            return matches!(batch.users, BatchUsers::Built(_));
-        };
-        let Ok(built) = tokio::time::timeout(Duration::from_millis(100), built_rx).await else {
-            return false;
-        };
-        let size = batch.size;
-        let built = match built {
-            Ok(Ok(Some(built))) => Ok(built),
-            Ok(Ok(None)) => unreachable!("a batch still held was canceled"),
-            Ok(Err(e)) => Err(e.to_string()),
-            Err(e) => Err(e.to_string()),
-        };
-        match built {
-            Ok(built) => {
-                let waited = self
-                    .step_started
-                    .map_or(0, |started| started.elapsed().as_millis());
-                info!("[users]: test plan step {step} waited {waited} ms for its {size} users to be built");
-                batch.users = BatchUsers::Built(built);
-                true
+        if batch.failed {
+            return None;
+        }
+        match batch.next_user(Duration::from_millis(100)).await {
+            NextUser::Built(user) => Some(user),
+            NextUser::Building => {
+                batch.stalled = true;
+                None
             }
-            Err(e) => {
-                let first = self.metrics.total_users + 1;
+            NextUser::Failed(e) => {
+                let (first, left) = (self.metrics.total_users + 1, batch.left);
                 error!(
                     "[users]: failed to build users {first} to {}, starting none of them: {e}",
-                    first + size - 1
+                    first + left - 1
                 );
-                batch.users = BatchUsers::Failed;
+                batch.failed = true;
                 // A Gaggle worker's users that never start leave their ordinals.
                 #[cfg(feature = "gaggle")]
                 self.user_ordinals
-                    .drain(..size.min(self.user_ordinals.len()));
-                false
+                    .drain(..left.min(self.user_ordinals.len()));
+                None
             }
+        }
+    }
+
+    /// Log how the current increase step's users start against its `rate`,
+    /// `users` a second: its first new user's delay from the boundary, then
+    /// each second that started fewer than the rate. Called as each user
+    /// starts, and with `last` once the step's users have all started.
+    fn log_step_starts(&mut self, rate: f64, users: usize, last: bool) {
+        let step = self.test_plan.current;
+        let Some(boundary) = self.step_started else {
+            return;
+        };
+        let elapsed = boundary.elapsed();
+        if self.step_starts.as_ref().is_none_or(|starts| starts.step != step) {
+            if last {
+                return;
+            }
+            let at = chrono::Utc::now()
+                - chrono::Duration::from_std(elapsed).unwrap_or_else(|_| chrono::Duration::zero());
+            info!(
+                "[users]: test plan step {step} began at {}, its first new user started {} ms after it",
+                at.format("%H:%M:%S%.3f"),
+                elapsed.as_millis()
+            );
+            self.step_starts = Some(StepStarts {
+                step,
+                second: 0,
+                in_second: 0,
+            });
+        }
+        let starts = self
+            .step_starts
+            .as_mut()
+            .expect("the step's starts were just recorded");
+        // Each second ended since the last start, then the one in progress
+        // once the last user started.
+        let second = elapsed.as_secs();
+        while starts.second < second || (last && starts.second == second) {
+            if rate.is_finite() {
+                let due_by = |second: u64| ((rate * second as f64).floor() as usize).min(users);
+                let due = due_by(starts.second + 1) - due_by(starts.second);
+                if starts.in_second < due {
+                    info!(
+                        "[users]: test plan step {step} started {} of the {due} users due in second {}",
+                        starts.in_second, starts.second
+                    );
+                }
+            }
+            starts.second += 1;
+            starts.in_second = 0;
+        }
+        if last {
+            self.step_starts = None;
+        } else {
+            starts.in_second += 1;
         }
     }
 
@@ -3409,17 +3585,19 @@ impl GooseAttack {
             || self
                 .user_batch
                 .as_ref()
-                .is_some_and(|batch| batch.step == self.test_plan.current && batch.failed());
+                .is_some_and(|batch| batch.step == self.test_plan.current && batch.failed);
 
         if all_users_launched {
             // No user of this step's batch is left to start.
             if self
                 .user_batch
                 .as_ref()
-                .is_some_and(|batch| batch.step == self.test_plan.current && !batch.failed())
+                .is_some_and(|batch| batch.step == self.test_plan.current && !batch.failed)
             {
                 self.user_batch = None;
             }
+            let step = self.test_plan.current;
+            self.log_step_starts(self.step_rate(step), self.step_users_added(step), true);
             self.build_ahead();
 
             // All users were increased, delay until test_plan step time has elapsed.
@@ -3472,23 +3650,21 @@ impl GooseAttack {
                 return Ok(());
             }
 
-            // A user starts only once its whole batch is built.
-            if !self.user_batch_ready(goose_attack_run_state).await {
-                return Ok(());
-            }
-
             // Determine if it's time to spawn a GooseUser.
             if goose_attack_run_state.adjust_due() {
-                let Some(UserBatch {
-                    users: BatchUsers::Built(built),
-                    ..
-                }) = self.user_batch.as_mut()
-                else {
-                    unreachable!("the batch is built");
+                // A user starts only once its part is built.
+                let Some(mut thread_user) = self.next_user(goose_attack_run_state).await else {
+                    return Ok(());
                 };
-                let mut thread_user = built
-                    .pop()
-                    .expect("a built batch has a user for each still to start");
+                // A user due before its part was built starts late, and the next
+                // is due one interval after it: never faster than the rate.
+                if self
+                    .user_batch
+                    .as_mut()
+                    .is_some_and(|batch| std::mem::take(&mut batch.stalled))
+                {
+                    goose_attack_run_state.adjust_user_in_ms = 0;
+                }
                 // The next GooseUser is due one interval, 1 second divided by the
                 // increase_rate, after this one was.
                 goose_attack_run_state
@@ -3587,6 +3763,8 @@ impl GooseAttack {
                 self.count_started_user(goose_attack_run_state);
                 #[cfg(test)]
                 self.user_test.record(UserEvent::Started(ordinal));
+                let step = self.test_plan.current;
+                self.log_step_starts(self.step_rate(step), self.step_users_added(step), false);
 
                 if let Some(running_metrics) = self.configuration.running_metrics {
                     if util::ms_timer_expired(
@@ -7319,7 +7497,7 @@ mod tests {
         assert_eq!(maintain.users, 100);
     }
 
-    /// No user starts before every client of its batch is built: the 10 a
+    /// No user starts before every client of its part is built: the 10 a
     /// ramp starts, then the 20 a Controller increase adds.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_no_user_starts_before_its_batch_is_built() {
