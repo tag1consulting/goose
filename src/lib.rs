@@ -7381,6 +7381,50 @@ mod tests {
         );
     }
 
+    /// Changes landing every 100 ms while a batch builds far faster than
+    /// its users may start, 50 a second: a batch for a running step builds
+    /// little ahead of the users it starts, so the changes leave few clients
+    /// built that never start.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_storm_builds_little_beyond_the_users_it_starts() {
+        use crate::controller::tests::control;
+
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--users", "10", "--increase-rate", "50", "--run-time", "1h"],
+            vec![index_scenario("Paced", 10)],
+            Duration::from_millis(2),
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let (built, started) = (
+            clients_built(&goose_attack),
+            goose_attack.metrics.total_users,
+        );
+        let changes = 10;
+        for _ in 0..changes {
+            for users in ["users 1010", "users 10"] {
+                assert!(control(&mut goose_attack, &mut run_state, users).await);
+                let until = std::time::Instant::now() + Duration::from_millis(100);
+                while std::time::Instant::now() < until {
+                    if step(&mut goose_attack, &mut run_state).await {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }
+            }
+        }
+        let built = clients_built(&goose_attack) - built;
+        let started = goose_attack.metrics.total_users - started;
+        assert!(
+            built <= started + changes * 4 * build_threads(),
+            "{} clients built for {} users started over {} increases",
+            built,
+            started,
+            changes
+        );
+    }
+
     /// Users changes that each run to completion, with no hold between them
     /// in which the main loop prunes: stopped users' tasks are still released
     /// as new users start, so the tasks held stay bounded.
