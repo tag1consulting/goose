@@ -521,7 +521,9 @@ impl Client {
             }
             assert!(
                 time::Instant::now() < deadline,
-                "{users} users were not running 30 s after the change: {last:?}"
+                "{} users were not running 30 s after the change: {:?}",
+                users,
+                last
             );
             tokio::time::sleep(time::Duration::from_millis(100)).await;
         }
