@@ -466,9 +466,17 @@ pub fn static_asset_urls(html: &str) -> Vec<(AssetKind, String)> {
 }
 
 /// Finds all local static elements on the page and loads them, as a browser would.
+///
+/// Each asset's body is read to the end and thrown away, so the user keeps its
+/// connection for the next request, as a browser does. A body that fails to read is
+/// logged at debug level; Goose already recorded the request when its headers arrived.
 pub async fn load_static_elements(user: &mut GooseUser, html: &str) {
     for (kind, asset) in static_asset_urls(html) {
-        let _ = user.get_named(&asset, kind.request_name()).await;
+        if let Ok(goose) = user.get_named(&asset, kind.request_name()).await {
+            if let Err(e) = goose.discard_body().await {
+                log::debug!("{asset}: reading the body failed: {e}");
+            }
+        }
     }
 }
 

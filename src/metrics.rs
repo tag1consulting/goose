@@ -2007,7 +2007,7 @@ impl<'de> Deserialize<'de> for ScenarioMetricAggregate {
 /// }
 ///
 /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
-///     let _goose = user.get("/").await?;
+///     let _ = user.get("/").await?.discard_body().await;
 ///
 ///     Ok(())
 /// }

@@ -71,7 +71,7 @@ Below the `use` line, add the following `loadtest_index` function, which loads t
 
 ```rust,ignore
 async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
-    let _goose_metrics = user.get("").await?;
+    let _ = user.get("").await?.discard_body().await;
 
     Ok(())
 }
@@ -79,7 +79,7 @@ async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
 
 The function is declared `async`, so a user waiting for a page does not block a CPU core. It returns a `TransactionResult`, which is either an empty `Ok(())` on success or a boxed `TransactionError` on failure. Here the `GooseUser` makes a `GET` request for the front page, given as the empty path `""`. The `.await` lets other users run while the server responds. The trailing `?` returns early in two cases: Goose could not build or record the request, for example because the URL is invalid, or the run ended while the request waited on a [throttle](throttle.md). If the request fails because the server answers with a `404` or because Goose cannot connect to it, the `?` does not return. Goose records a failed request, and the function carries on.
 
-The request returns a `GooseResponse`, which holds Goose's record of the request and the server's response. This function stores it in `_goose_metrics`, and the leading underscore (`_`) tells the compiler the variable is unused on purpose. The function then returns `Ok(())`, so Goose counts the transaction as a success even if its request failed. [Validating Requests](validation.md) shows how to fail a transaction.
+The request returns a `GooseResponse`, which holds Goose's record of the request and the server's response. This function does not need the page, so it calls the response's `discard_body()`, which reads the body to the end and throws it away, so the user keeps its connection for the next request (see [Read every response body](tips.md#read-every-response-body)). `let _ =` ignores what `discard_body()` returns, the number of bytes read or an error, on purpose. The function then returns `Ok(())`, so Goose counts the transaction as a success even if its request failed. [Validating Requests](validation.md) shows how to fail a transaction.
 
 Replace the `main()` function with the following, which gives it a return type and registers `loadtest_index` with Goose:
 
@@ -109,7 +109,7 @@ The whole `src/main.rs` now reads:
 use goose::prelude::*;
 
 async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
-    let _goose_metrics = user.get("").await?;
+    let _ = user.get("").await?.discard_body().await;
 
     Ok(())
 }

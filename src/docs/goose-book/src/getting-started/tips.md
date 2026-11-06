@@ -34,7 +34,7 @@ Goose groups requests by name, and a request's name is its path unless you give 
 
 ```rust,ignore
 let path = format!("/node/{nid}");
-let _goose = user.get_named(&path, "/node/%nid").await?;
+let _ = user.get_named(&path, "/node/%nid").await?.discard_body().await;
 ```
 
 ### Give users a wait time

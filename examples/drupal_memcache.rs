@@ -103,7 +103,12 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
                         }
                     }
                     for asset in &urls {
-                        let _ = user.get_named(asset, "static asset").await;
+                        // Read each body to the end so the connection is reused.
+                        if let Ok(goose) = user.get_named(asset, "static asset").await {
+                            if let Err(e) = goose.discard_body().await {
+                                log::debug!("{asset}: reading the body failed: {e}");
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -136,7 +141,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_memcache_node_page(user: &mut GooseUser) -> TransactionResult {
     let nid = rand::rng().random_range(1..10_000);
-    let _goose = user.get(format!("/node/{}", nid).as_str()).await?;
+    let _ = user.get(format!("/node/{}", nid).as_str()).await?.discard_body().await;
 
     Ok(())
 }
@@ -144,7 +149,7 @@ async fn drupal_memcache_node_page(user: &mut GooseUser) -> TransactionResult {
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_memcache_profile_page(user: &mut GooseUser) -> TransactionResult {
     let uid = rand::rng().random_range(2..5_001);
-    let _goose = user.get(format!("/user/{}", uid).as_str()).await?;
+    let _ = user.get(format!("/user/{}", uid).as_str()).await?.discard_body().await;
 
     Ok(())
 }
@@ -184,7 +189,7 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> TransactionResult {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let _goose = user.post_form("/user", &params).await?;
+                    let _ = user.post_form("/user", &params).await?.discard_body().await;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {

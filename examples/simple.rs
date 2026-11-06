@@ -45,21 +45,21 @@ async fn main() -> Result<(), GooseError> {
 /// per user, when the user thread first starts.
 async fn website_login(user: &mut GooseUser) -> TransactionResult {
     let params = [("username", "test_user"), ("password", "")];
-    let _goose = user.post_form("/login", &params).await?;
+    let _ = user.post_form("/login", &params).await?.discard_body().await;
 
     Ok(())
 }
 
 /// A very simple transaction that simply loads the front page.
 async fn website_index(user: &mut GooseUser) -> TransactionResult {
-    let _goose = user.get("/").await?;
+    let _ = user.get("/").await?.discard_body().await;
 
     Ok(())
 }
 
 /// A very simple transaction that simply loads the about page.
 async fn website_about(user: &mut GooseUser) -> TransactionResult {
-    let _goose = user.get("/about/").await?;
+    let _ = user.get("/about/").await?.discard_body().await;
 
     Ok(())
 }

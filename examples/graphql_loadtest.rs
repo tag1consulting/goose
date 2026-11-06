@@ -62,7 +62,7 @@ async fn simple_query(user: &mut GooseUser) -> TransactionResult {
         "query": "{ __typename }"
     });
 
-    let _goose = user.post_graphql("/graphql", &query).await?;
+    let _ = user.post_graphql("/graphql", &query).await?.discard_body().await;
     Ok(())
 }
 
@@ -76,9 +76,11 @@ async fn user_query(user: &mut GooseUser) -> TransactionResult {
     });
 
     // Use named query for better metrics tracking
-    let _goose = user
+    let _ = user
         .post_graphql_named("/graphql", &query, "get user by id")
-        .await?;
+        .await?
+        .discard_body()
+        .await;
     Ok(())
 }
 
@@ -121,9 +123,11 @@ async fn complex_query(user: &mut GooseUser) -> TransactionResult {
         }
     });
 
-    let _goose = user
+    let _ = user
         .post_graphql_named("/graphql", &query, "complex user posts query")
-        .await?;
+        .await?
+        .discard_body()
+        .await;
     Ok(())
 }
 
@@ -152,9 +156,11 @@ async fn mutation_example(user: &mut GooseUser) -> TransactionResult {
         }
     });
 
-    let _goose = user
+    let _ = user
         .post_graphql_named("/graphql", &mutation, "create post")
-        .await?;
+        .await?
+        .discard_body()
+        .await;
     Ok(())
 }
 
