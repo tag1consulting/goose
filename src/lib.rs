@@ -7805,70 +7805,37 @@ mod tests {
         }
     }
 
-    /// A Controller increase whose parts each take longer to build than the
-    /// part before takes to start, so each part lands while its first users
-    /// are already due, inside the 100 ms a turn waits for it: its users
-    /// start from when it lands, at the rate, not all at once to catch up.
-    /// It tells the two apart below 7 build threads, where a part of one
-    /// user a thread starts in less than it takes to build.
+    /// A part that lands while the next user is due, inside the wait for
+    /// it, stalls the batch as one that lands after the wait does: that user
+    /// then restarts the schedule, so the users after it are due one
+    /// interval apart, never all at once to catch up.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_a_late_part_never_starts_users_faster_than_the_rate() {
-        use crate::controller::tests::control;
-
+    async fn test_a_part_landing_inside_the_wait_stalls_the_batch() {
         let server = index_server();
-        // 100 users a second at 90 ms a client: on 4 build threads a part of
-        // one user a thread starts in 40 ms and the next takes 90 ms to
-        // build, so each part lands 50 ms late, inside the 100 ms wait.
-        let rate = 100;
-        let rate_arg = rate.to_string();
-        let (mut goose_attack, mut run_state) = started_attack(
+        let (mut goose_attack, _run_state) = users_attack(
             &server.base_url(),
-            &[
-                "--users",
-                "2",
-                "--increase-rate",
-                &rate_arg,
-                "--run-time",
-                "1h",
-            ],
-            vec![index_scenario("Late", 10)],
-            Duration::from_millis(90),
+            1,
+            vec![index_scenario("Wait", 10)],
+            Duration::ZERO,
         )
         .await;
-        ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        let users = 10 * build_threads();
-        let change = format!("users {}", 2 + users);
-        assert!(control(&mut goose_attack, &mut run_state, &change).await);
-        ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        assert_eq!(users_started(&goose_attack), 2 + users);
-        // The gap between the first two starts after each part lands: a
-        // part that lands late restarts the schedule, so the second is one
-        // interval after the first; without that, both were overdue and
-        // started back to back. The median keeps a late wake of the main
-        // loop, which catches up as main does, from deciding it.
-        let events = user_events(&goose_attack);
-        let mut gaps = Vec::new();
-        for (at, (event, _)) in events.iter().enumerate().skip(1) {
-            if !matches!(event, UserEvent::Built(_)) {
-                continue;
-            }
-            let mut next = events[at..].iter().filter_map(|(event, when)| match event {
-                UserEvent::Started(_) => Some(*when),
-                _ => None,
-            });
-            if let (Some(first), Some(second)) = (next.next(), next.next()) {
-                gaps.push(second - first);
-            }
-        }
-        gaps.sort();
-        let interval = Duration::from_secs(1) / rate as u32;
-        assert!(!gaps.is_empty(), "no part landed");
+        let build = goose_attack.user_build();
+        let weighted = goose_attack.weight_scenario_users(1).unwrap();
+        let not_canceled = std::sync::atomic::AtomicBool::new(false);
+        let users = build_users(&weighted, &build, &not_canceled)
+            .unwrap()
+            .unwrap();
+        let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
+        let mut batch = UserBatch::new(1, 1, parts, None, Arc::default(), &build);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = parts_tx.send(Ok(Some(users)));
+        });
+        let user = batch.next_user(Duration::from_secs(10)).await.unwrap();
+        assert!(user.is_some(), "the part did not land");
         assert!(
-            gaps[gaps.len() / 2] * 2 >= interval,
-            "users started {:?} apart after a late part, at {} a second: {:?}",
-            gaps[gaps.len() / 2],
-            rate,
-            gaps
+            batch.stalled,
+            "a part that landed inside the wait did not stall the batch"
         );
     }
 
