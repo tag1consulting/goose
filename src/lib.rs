@@ -786,7 +786,7 @@ impl GooseAttackRunState {
         let totals = &self.unread_body_totals;
         let ordering = std::sync::atomic::Ordering::Relaxed;
         info!(
-            "unread response bodies: read {} bodies to the end, {} bytes, {} read errors",
+            "unread response bodies: read {} unread bodies, {} bytes, {} read errors",
             totals.bodies.load(ordering),
             totals.bytes.load(ordering),
             totals.errors.load(ordering)

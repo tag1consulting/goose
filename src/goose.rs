@@ -977,7 +977,7 @@ pub(crate) struct UnreadBodyTotals {
 /// It dereferences to [`reqwest::Response`] for the methods that borrow it
 /// (`status`, `headers`, `url`, `content_length`, `error_for_status_ref` and the
 /// rest), and has its own `bytes`, `text`, `json`, `chunk` and `error_for_status`,
-/// which read the body as `reqwest::Response`'s do. Use
+/// which behave as `reqwest::Response`'s do. Use
 /// [`into_inner`](GooseHttpResponse::into_inner) for anything else: a body taken that
 /// way is the caller's, and Goose never reads it. `--drop-unread-bodies` (or
 /// [`GooseDefault::DropUnreadBodies`](../config/enum.GooseDefault.html#variant.DropUnreadBodies))
