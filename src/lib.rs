@@ -7811,9 +7811,7 @@ mod tests {
     }
 
     /// A part that lands while the next user is due, inside the wait for
-    /// it, stalls the batch as one that lands after the wait does: that user
-    /// then restarts the schedule, so the users after it are due one
-    /// interval apart, never all at once to catch up.
+    /// it, stalls the batch as one that lands after the wait does.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_a_part_landing_inside_the_wait_stalls_the_batch() {
         let server = index_server();
@@ -7842,6 +7840,63 @@ mod tests {
             batch.stalled,
             "a part that landed inside the wait did not stall the batch"
         );
+    }
+
+    /// A user due before its part was built starts once the part lands, and
+    /// restarts the schedule from its own start: the next user is due one
+    /// interval after now, not one interval after the time the late user
+    /// was due, which would start every user behind it at once to catch up.
+    /// One thread, so the part is sent only after the stalled turn returns.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_a_stalled_batch_restarts_the_schedule() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--users", "3", "--increase-rate", "1", "--run-time", "1h"],
+            vec![index_scenario("Stall", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        // The first user starts from the batch setup built.
+        goose_attack.increase_attack(&mut run_state).await.unwrap();
+        assert_eq!(run_state.active_users, 1);
+        // The other two come in a part the test sends.
+        let build = goose_attack.user_build();
+        let weighted = goose_attack.weight_scenario_users(2).unwrap();
+        let not_canceled = std::sync::atomic::AtomicBool::new(false);
+        let users = build_users(&weighted, &build, &not_canceled)
+            .unwrap()
+            .unwrap();
+        let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
+        goose_attack.user_batch = Some(UserBatch::new(
+            goose_attack.test_plan.current,
+            2,
+            parts,
+            None,
+            Arc::default(),
+            &build,
+        ));
+        // The next user was due a minute ago.
+        run_state.adjust_user_timer = std::time::Instant::now() - Duration::from_secs(60);
+        // Its part is not built: nothing starts, and the batch stalls.
+        goose_attack.increase_attack(&mut run_state).await.unwrap();
+        assert_eq!(run_state.active_users, 1, "a user started with no part");
+        assert!(
+            goose_attack
+                .user_batch
+                .as_ref()
+                .is_some_and(|batch| batch.stalled),
+            "an empty channel did not stall the batch"
+        );
+        // The part lands, and the late user starts.
+        parts_tx.send(Ok(Some(users))).unwrap();
+        goose_attack.increase_attack(&mut run_state).await.unwrap();
+        assert_eq!(run_state.active_users, 2, "the late user did not start");
+        assert!(
+            run_state.adjust_user_timer > std::time::Instant::now(),
+            "the user after a late one is due at once: the schedule did not restart"
+        );
+        assert!(!run_state.adjust_due());
     }
 
     /// A Controller increase, then a second change before its batch is
