@@ -251,15 +251,18 @@
 //! }
 //! ```
 //!
-//! The returned response is a [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)
-//! struct. You can use it as you would any Reqwest Response.
+//! The returned response is a [`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+//! dereferences to a [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html):
+//! use it as you would any Reqwest Response. A body the transaction drops unread, Goose
+//! reads to the end before the user's next request and when the transaction ends, so the
+//! connection is reused.
 //!
 //!
 //! ### POST
 //!
 //! A helper to make a `POST` request of a string value to the path and collect relevant
 //! metrics. Automatically prepends the correct host. The returned response is a
-//! [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)
+//! [`GooseHttpResponse`](./struct.GooseHttpResponse.html).
 //!
 //! ```rust
 //! use goose::prelude::*;
@@ -299,7 +302,7 @@ use std::fmt::{self, Debug, Formatter, Write as _};
 use std::hash::{Hash, Hasher};
 use std::str;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use std::{future::Future, pin::Pin, time::Instant};
 use url::Url;
@@ -866,23 +869,32 @@ pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, Box<Trans
 pub struct GooseResponse {
     /// The request that this is a response to.
     pub request: GooseRequestMetric,
-    /// The response.
-    pub response: Result<Response, reqwest::Error>,
+    /// The response, or the error that kept Goose from getting one.
+    pub response: Result<GooseHttpResponse, reqwest::Error>,
 }
 impl GooseResponse {
+    /// Builds a `GooseResponse` around a [`reqwest::Response`]. A body this response
+    /// drops unread is dropped, as it was before Goose 0.20: only responses
+    /// [`GooseUser::request`] returns have their unread bodies read by their user.
     pub fn new(request: GooseRequestMetric, response: Result<Response, reqwest::Error>) -> Self {
-        GooseResponse { request, response }
+        GooseResponse {
+            request,
+            response: response.map(GooseHttpResponse::from),
+        }
     }
 
     /// Reads the response body to the end and throws it away, one chunk at a time,
     /// without holding the whole body in memory.
     ///
-    /// Call this when a test does not need a response's body. An HTTP/1.1 connection
-    /// goes back to the client's connection pool once its response body has been
-    /// read to the end. A response dropped with its body unread can close its connection
-    /// instead, so the user's next request opens a new one, and the server may log
-    /// the cut off transfer as an error. Reading the body keeps the connection for the
-    /// next request, as a browser does.
+    /// Goose reads a body the test drops unread itself, on the user's own task before
+    /// the user's next request and before the transaction ends (see
+    /// [`GooseHttpResponse`]), so a test need not call this to keep its connections.
+    /// Call it to read the body at a point of the test's choosing, or to learn how many
+    /// bytes the body held.
+    ///
+    /// An HTTP/1.1 connection goes back to the client's connection pool once its
+    /// response body has been read to the end. Reading the body keeps the connection
+    /// for the next request, as a browser does.
     ///
     /// Goose recorded the request's time when the response headers arrived, before
     /// this method is called, so reading the body does not change the request's
@@ -915,6 +927,222 @@ impl GooseResponse {
             read += chunk.len() as u64;
         }
         Ok(read)
+    }
+}
+
+/// Response bodies dropped unread, waiting for their user to read them to the end.
+/// Shared by a [`GooseUser`] and the responses it returned; the lock is only held to
+/// add or take the list, never across an `.await`.
+pub(crate) type UnreadBodies = Arc<Mutex<Vec<UnreadBody>>>;
+
+/// A response dropped with its body unread, and the name of its request.
+#[derive(Debug)]
+pub(crate) struct UnreadBody {
+    name: Arc<str>,
+    response: Response,
+}
+
+/// Where a [`GooseHttpResponse`] hands its body when it is dropped unread.
+#[derive(Debug)]
+struct UnreadSlot {
+    bodies: UnreadBodies,
+    name: Arc<str>,
+}
+
+/// How many unread bodies the users of one run read, and what it cost.
+#[derive(Debug, Default)]
+pub(crate) struct UnreadBodyTotals {
+    /// Bodies read to the end, or until an error ended the read.
+    pub(crate) bodies: AtomicU64,
+    /// Body bytes read (after decompression).
+    pub(crate) bytes: AtomicU64,
+    /// Reads an error ended.
+    pub(crate) errors: AtomicU64,
+}
+
+/// An HTTP response from a [`GooseUser`] request: a
+/// [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html) whose
+/// body Goose reads to the end if the test drops it unread.
+///
+/// An HTTP/1.1 connection whose response body was not read to the end cannot go back
+/// to the connection pool, so the user's next request would open a new connection, as
+/// no browser does, and the server would log a cut off transfer. When a
+/// `GooseHttpResponse` is dropped with its body unread, it hands the body to its user,
+/// which reads it to the end, one chunk at a time, on the user's own task: before the
+/// user's next request is sent, and after the transaction function returns, before
+/// the transaction's time is recorded. A request's recorded time stays its time to
+/// first byte; the time spent reading a dropped body counts toward the transaction and
+/// scenario that dropped it, as [`GooseResponse::discard_body`]'s does.
+///
+/// It dereferences to [`reqwest::Response`] for the methods that borrow it
+/// (`status`, `headers`, `url`, `content_length`, `error_for_status_ref` and the
+/// rest), and has its own `bytes`, `text`, `json`, `chunk` and `error_for_status`,
+/// which behave as `reqwest::Response`'s do. Use
+/// [`into_inner`](GooseHttpResponse::into_inner) for anything else: a body taken that
+/// way is the caller's, and Goose never reads it. `--drop-unread-bodies` (or
+/// [`GooseDefault::DropUnreadBodies`](../config/enum.GooseDefault.html#variant.DropUnreadBodies))
+/// turns the reading off for a whole run.
+///
+/// # Example
+/// ```rust
+/// use goose::prelude::*;
+///
+/// let mut transaction = transaction!(get_front_page);
+///
+/// /// Check the front page's status. Goose reads the body this drops.
+/// async fn get_front_page(user: &mut GooseUser) -> TransactionResult {
+///     let goose = user.get("/").await?;
+///     if let Ok(response) = &goose.response {
+///         if response.status() != 200 {
+///             return user.set_failure("front page", &mut goose.request.clone(), None, None);
+///         }
+///     }
+///
+///     Ok(())
+/// }
+/// ```
+#[derive(Debug)]
+pub struct GooseHttpResponse {
+    /// The response; only `None` once a method that consumes `self` has taken it.
+    response: Option<Response>,
+    /// Where to hand the body if it is dropped unread; `None` drops it.
+    unread: Option<UnreadSlot>,
+    /// The body was read to its end, or an error ended it: nothing is left to read.
+    body_done: bool,
+}
+
+impl GooseHttpResponse {
+    /// A response whose unread body is handed to `bodies` under `name`.
+    pub(crate) fn tracked(response: Response, bodies: &UnreadBodies, name: &Arc<str>) -> Self {
+        GooseHttpResponse {
+            response: Some(response),
+            unread: Some(UnreadSlot {
+                bodies: bodies.clone(),
+                name: name.clone(),
+            }),
+            body_done: false,
+        }
+    }
+
+    /// Takes the response out, so that dropping `self` hands nothing to its user.
+    fn take(mut self) -> Response {
+        self.unread = None;
+        match self.response.take() {
+            Some(response) => response,
+            // Only a method that consumes `self` takes the response, so it is there.
+            None => unreachable!("GooseHttpResponse used after its response was taken"),
+        }
+    }
+
+    /// Returns the [`reqwest::Response`], the per response opt out: a body taken this
+    /// way is the caller's, and Goose never reads it, so a caller that drops it unread
+    /// costs the user its connection.
+    /// Use it for a response that never ends, such as a stream of server sent events,
+    /// which Goose would otherwise read until the client's timeout.
+    pub fn into_inner(self) -> Response {
+        self.take()
+    }
+
+    /// Reads the full body as bytes, as
+    /// [`reqwest::Response::bytes`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.bytes).
+    pub async fn bytes(self) -> reqwest::Result<bytes::Bytes> {
+        self.take().bytes().await
+    }
+
+    /// Reads the full body as text, as
+    /// [`reqwest::Response::text`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.text).
+    pub async fn text(self) -> reqwest::Result<String> {
+        self.take().text().await
+    }
+
+    /// Reads the full body as JSON, as
+    /// [`reqwest::Response::json`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.json).
+    pub async fn json<T: serde::de::DeserializeOwned>(self) -> reqwest::Result<T> {
+        self.take().json().await
+    }
+
+    /// Reads the next chunk of the body, as
+    /// [`reqwest::Response::chunk`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.chunk).
+    /// A body read this way and then dropped has only its remaining chunks read by
+    /// Goose.
+    pub async fn chunk(&mut self) -> reqwest::Result<Option<bytes::Bytes>> {
+        let chunk = match self.response.as_mut() {
+            Some(response) => response.chunk().await,
+            None => unreachable!("GooseHttpResponse used after its response was taken"),
+        };
+        // At the end of the body, or past an error, nothing is left to read.
+        if !matches!(chunk, Ok(Some(_))) {
+            self.body_done = true;
+        }
+        chunk
+    }
+
+    /// Returns an error if the status is a client or server error, as
+    /// [`reqwest::Response::error_for_status`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.error_for_status).
+    /// Unlike it, an error response's body is still read by Goose, as the response is
+    /// dropped.
+    pub fn error_for_status(self) -> reqwest::Result<Self> {
+        self.error_for_status_ref()?;
+        Ok(self)
+    }
+}
+
+/// A response built outside [`GooseUser::request`]: dropping its body unread drops it.
+impl From<Response> for GooseHttpResponse {
+    fn from(response: Response) -> Self {
+        GooseHttpResponse {
+            response: Some(response),
+            unread: None,
+            body_done: false,
+        }
+    }
+}
+
+impl std::ops::Deref for GooseHttpResponse {
+    type Target = Response;
+
+    fn deref(&self) -> &Response {
+        match self.response.as_ref() {
+            Some(response) => response,
+            None => unreachable!("GooseHttpResponse used after its response was taken"),
+        }
+    }
+}
+
+impl std::ops::DerefMut for GooseHttpResponse {
+    fn deref_mut(&mut self) -> &mut Response {
+        match self.response.as_mut() {
+            Some(response) => response,
+            None => unreachable!("GooseHttpResponse used after its response was taken"),
+        }
+    }
+}
+
+/// Hands a body dropped unread to its user, to read before its next request and
+/// before its transaction ends. Never reads, never blocks beyond pushing onto the
+/// user's list, and never spawns a task.
+impl Drop for GooseHttpResponse {
+    fn drop(&mut self) {
+        if self.body_done {
+            return;
+        }
+        if let (Some(response), Some(slot)) = (self.response.take(), self.unread.take()) {
+            // A body known to be empty, as a HEAD's or a 204's, has nothing to read. A gzip
+            // body's length reads None, so it goes to the user to read as any other.
+            if response.content_length() == Some(0) {
+                return;
+            }
+            // A poisoned lock only means a thread panicked while holding it, between
+            // a push and a take; the list itself is whole.
+            let mut bodies = match slot.bodies.lock() {
+                Ok(bodies) => bodies,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            bodies.push(UnreadBody {
+                name: slot.name,
+                response,
+            });
+        }
     }
 }
 
@@ -1122,6 +1350,15 @@ pub struct GooseUser {
     /// The bytes [`GooseAttack::set_worker_data`](../struct.GooseAttack.html#method.set_worker_data)'s
     /// hook returned for this process, shared by every user.
     pub(crate) worker_data: Option<Arc<[u8]>>,
+    /// Response bodies this user's requests returned and the test dropped unread,
+    /// read to the end before the user's next request and when a transaction ends.
+    unread_bodies: UnreadBodies,
+    /// The list [`read_unread_bodies`](Self::read_unread_bodies) takes from
+    /// `unread_bodies`, kept to reuse its allocation.
+    reading_bodies: Vec<UnreadBody>,
+    /// The run's totals of unread bodies read, shared by every user; `None` outside a
+    /// load test.
+    pub(crate) unread_body_totals: Option<Arc<UnreadBodyTotals>>,
 }
 
 impl Clone for GooseUser {
@@ -1165,6 +1402,10 @@ impl Clone for GooseUser {
             counter_key_buf: String::new(),
             request_counter_key: String::new(),
             worker_data: self.worker_data.clone(),
+            // A clone is another user: it reads only the bodies its own requests drop.
+            unread_bodies: UnreadBodies::default(),
+            reading_bodies: Vec::new(),
+            unread_body_totals: self.unread_body_totals.clone(),
         }
     }
 }
@@ -1233,6 +1474,9 @@ impl GooseUser {
             counter_key_buf: String::new(),
             request_counter_key: String::new(),
             worker_data: None,
+            unread_bodies: UnreadBodies::default(),
+            reading_bodies: Vec::new(),
+            unread_body_totals: None,
         })
     }
 
@@ -1459,7 +1703,8 @@ impl GooseUser {
     ///
     /// Calls to `get()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -1495,7 +1740,8 @@ impl GooseUser {
     ///
     /// Calls to `get_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -1536,7 +1782,8 @@ impl GooseUser {
     ///
     /// Calls to `post()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -1581,7 +1828,8 @@ impl GooseUser {
     ///
     /// Calls to `post_form()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -1627,7 +1875,8 @@ impl GooseUser {
     ///
     /// Calls to `post_json()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -1676,7 +1925,8 @@ impl GooseUser {
     ///
     /// Calls to `post_graphql()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// Make a GraphQL query.
@@ -1721,7 +1971,8 @@ impl GooseUser {
     ///
     /// Calls to `post_graphql_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// Make a named GraphQL query for better metrics tracking.
@@ -1768,7 +2019,8 @@ impl GooseUser {
     ///
     /// Calls to `head()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -1804,7 +2056,8 @@ impl GooseUser {
     ///
     /// Calls to `delete()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// and the response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which
+    /// dereferences to [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -1945,7 +2198,8 @@ impl GooseUser {
     /// on failure. Failure only happens when `--throttle-requests` is enabled and the load test
     /// completes. The [`GooseResponse`](./struct.GooseResponse.html) object contains a copy of
     /// the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)), and the
-    /// response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// response ([`GooseHttpResponse`](./struct.GooseHttpResponse.html), which dereferences to
+    /// [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// Make a GET request.
@@ -1976,6 +2230,11 @@ impl GooseUser {
         &mut self,
         mut request: GooseRequest<'_>,
     ) -> Result<GooseResponse, Box<TransactionError>> {
+        // Read to the end any body an earlier response dropped unread, so its
+        // connection is back in the pool before this request goes out. This comes
+        // before the request is started, so it is not part of the request's time.
+        self.read_unread_bodies().await;
+
         // If the RequestBuilder is already defined in the GooseRequest use it.
         let request_builder = if request.request_builder.is_some() {
             request.request_builder.take().unwrap()
@@ -2072,6 +2331,15 @@ impl GooseUser {
         // Record Time to First Byte (TTFB): client.execute() returns when response headers
         // are received, not when the complete response body is downloaded.
         request_metric.set_response_duration(started.elapsed());
+        // From here, a body dropped unread, by the test or by an early return below,
+        // goes to this user to read, unless --drop-unread-bodies is set.
+        let response = response.map(|response| {
+            if self.config.drop_unread_bodies {
+                GooseHttpResponse::from(response)
+            } else {
+                GooseHttpResponse::tracked(response, &self.unread_bodies, &request_metric.name)
+            }
+        });
 
         // Determine if the request suceeded or failed.
         match &response {
@@ -2159,7 +2427,65 @@ impl GooseUser {
             }));
         }
 
-        Ok(GooseResponse::new(request_metric, response))
+        Ok(GooseResponse {
+            request: request_metric,
+            response,
+        })
+    }
+
+    /// Reads to the end every response body this user's requests returned and the
+    /// test dropped unread, one chunk at a time, on the user's own task, so each
+    /// connection goes back to the pool. Called before each request is sent and when
+    /// each transaction function returns, before its time is recorded.
+    ///
+    /// A read that fails is logged to the debug log with its request's name and
+    /// counted; it never fails the transaction.
+    pub(crate) async fn read_unread_bodies(&mut self) {
+        // With --drop-unread-bodies no body is handed over: skip the lock.
+        if self.config.drop_unread_bodies {
+            return;
+        }
+        loop {
+            // Take the whole list, and let go of the lock before reading.
+            {
+                let mut bodies = match self.unread_bodies.lock() {
+                    Ok(bodies) => bodies,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                if bodies.is_empty() {
+                    return;
+                }
+                std::mem::swap(&mut *bodies, &mut self.reading_bodies);
+            }
+            let mut reading = std::mem::take(&mut self.reading_bodies);
+            for mut body in reading.drain(..) {
+                let mut read = 0u64;
+                let error = loop {
+                    match body.response.chunk().await {
+                        Ok(Some(chunk)) => read += chunk.len() as u64,
+                        Ok(None) => break None,
+                        Err(error) => break Some(error),
+                    }
+                };
+                if let Some(totals) = self.unread_body_totals.as_ref() {
+                    totals.bodies.fetch_add(1, AtomicOrdering::Relaxed);
+                    totals.bytes.fetch_add(read, AtomicOrdering::Relaxed);
+                    if error.is_some() {
+                        totals.errors.fetch_add(1, AtomicOrdering::Relaxed);
+                    }
+                }
+                if let Some(error) = error {
+                    let tag = format!(
+                        "reading the unread body of {} after {read} bytes: {error}",
+                        body.name
+                    );
+                    debug!("[user {}]: {tag}", self.weighted_users_index + 1);
+                    let _ = self.log_debug(&tag, None, None, None);
+                }
+            }
+            // Keep the emptied list's allocation for the next time.
+            self.reading_bodies = reading;
+        }
     }
 
     /// Tracks the time it takes for the current GooseUser to loop through all Transactions

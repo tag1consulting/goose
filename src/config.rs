@@ -940,6 +940,16 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::StickyFollow.
     #[arg(help_heading = "HTTP client", long)]
     pub sticky_follow: bool,
+    /// Don't read bodies the test left unread
+    ///
+    /// By default, Goose reads to the end any response body a transaction drops unread,
+    /// before the user's next request and before the transaction ends, so the connection
+    /// is reused. With this flag such bodies are dropped, closing their connections, as
+    /// Goose 0.19 and earlier did, to compare against those runs or other tools.
+    ///
+    /// Set in code with GooseDefault::DropUnreadBodies.
+    #[arg(help_heading = "HTTP client", long)]
+    pub drop_unread_bodies: bool,
     /// Accept invalid TLS certificates
     ///
     /// Skips TLS certificate validation, for test servers with self signed or expired
@@ -1193,6 +1203,7 @@ impl std::fmt::Debug for GooseConfiguration {
             timeout,
             no_gzip,
             sticky_follow,
+            drop_unread_bodies,
             accept_invalid_certs,
             #[cfg(feature = "gaggle")]
             gaggle_shadow_merge,
@@ -1309,6 +1320,7 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("timeout", timeout)
             .field("no_gzip", no_gzip)
             .field("sticky_follow", sticky_follow)
+            .field("drop_unread_bodies", drop_unread_bodies)
             .field("accept_invalid_certs", accept_invalid_certs);
         #[cfg(feature = "gaggle")]
         debug
@@ -1808,6 +1820,8 @@ pub(crate) struct GooseDefaults {
     pub throttle_requests: Option<usize>,
     /// An optional default to follows base_url redirect with subsequent request.
     pub sticky_follow: Option<bool>,
+    /// An optional default to drop response bodies the test left unread.
+    pub drop_unread_bodies: Option<bool>,
     /// An optional default for host telnet Controller listens on.
     pub telnet_host: Option<String>,
     /// An optional default for port telnet Controller listens on.
@@ -2012,6 +2026,9 @@ pub enum GooseDefault {
     ThrottleRequests,
     /// An optional default to follows base_url redirect with subsequent request.
     StickyFollow,
+    /// An optional default to drop response bodies the test left unread, as Goose 0.19
+    /// and earlier did, instead of reading them to the end.
+    DropUnreadBodies,
     /// An optional default for host telnet Controller listens on, 127.0.0.1 if unset; any
     /// other address prints a warning at startup, as the Controller has no authentication.
     TelnetHost,
@@ -2164,6 +2181,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoGzip`]
 ///  - [`GooseDefault::NoStatusCodes`]
 ///  - [`GooseDefault::StickyFollow`]
+///  - [`GooseDefault::DropUnreadBodies`]
 ///  - [`GooseDefault::NoGranularData`]
 ///  - [`GooseDefault::ReportGraphData`]
 ///  - [`GooseDefault::Dashboard`]
@@ -2291,6 +2309,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
+            | GooseDefault::DropUnreadBodies
             | GooseDefault::NoGranularData
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
@@ -2433,6 +2452,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
+            | GooseDefault::DropUnreadBodies
             | GooseDefault::NoGranularData
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
@@ -2510,6 +2530,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::AcceptInvalidCerts => self.defaults.accept_invalid_certs = Some(value),
             GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
+            GooseDefault::DropUnreadBodies => self.defaults.drop_unread_bodies = Some(value),
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
             GooseDefault::ReportGraphData => self.defaults.report_graph_data = Some(value),
             GooseDefault::Dashboard => self.defaults.dashboard = Some(value),
@@ -2651,6 +2672,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
+            | GooseDefault::DropUnreadBodies
             | GooseDefault::NoGranularData
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
@@ -2795,6 +2817,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
+            | GooseDefault::DropUnreadBodies
             | GooseDefault::NoGranularData
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
@@ -2985,6 +3008,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
+            | GooseDefault::DropUnreadBodies
             | GooseDefault::NoGranularData
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
@@ -4369,6 +4393,24 @@ impl GooseConfiguration {
                     value: defaults.sticky_follow,
                     filter: defaults.sticky_follow.is_none(),
                     message: "sticky_follow",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `drop_unread_bodies`.
+        self.drop_unread_bodies = self
+            .get_value(vec![
+                // Use --drop-unread-bodies if set.
+                GooseValue {
+                    value: Some(self.drop_unread_bodies),
+                    filter: !self.drop_unread_bodies,
+                    message: "drop_unread_bodies",
+                },
+                // Use GooseDefault if not already set.
+                GooseValue {
+                    value: defaults.drop_unread_bodies,
+                    filter: defaults.drop_unread_bodies.is_none(),
+                    message: "drop_unread_bodies",
                 },
             ])
             .unwrap_or(false);
@@ -5989,6 +6031,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::StickyFollow, true)
             .unwrap()
+            .set_default(GooseDefault::DropUnreadBodies, true)
+            .unwrap()
             .set_default(GooseDefault::Dashboard, true)
             .unwrap()
             .set_default(GooseDefault::DashboardControl, true)
@@ -6048,6 +6092,7 @@ mod test {
         );
         assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
         assert!(goose_attack.defaults.sticky_follow == Some(true));
+        assert!(goose_attack.defaults.drop_unread_bodies == Some(true));
         assert!(goose_attack.defaults.dashboard == Some(true));
         assert!(goose_attack.defaults.dashboard_control == Some(true));
         assert!(goose_attack.defaults.dashboard_host == Some("127.0.0.1".to_string()));
@@ -6930,6 +6975,7 @@ mod test {
             "--throttle-requests",
             "11",
             "--sticky-follow",
+            "--drop-unread-bodies",
             "--accept-invalid-certs",
         ];
         if cfg!(feature = "pdf-reports") {
@@ -7015,6 +7061,7 @@ mod test {
         );
         assert_eq!(c.throttle_requests, Some(11));
         assert!(c.sticky_follow);
+        assert!(c.drop_unread_bodies);
         assert!(c.accept_invalid_certs);
     }
 

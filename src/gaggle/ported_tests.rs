@@ -855,3 +855,86 @@ fn ramped_a(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack 
         .unwrap()
         .register_scenario(Scenario::new("A").register_transaction(get("/a")))
 }
+
+// discard_body.rs
+
+/// A keep-alive HTTP/1.1 server answering every request with a 256 KiB
+/// body, too large to arrive with the headers. Returns its base URL and the
+/// connections it accepted.
+async fn body_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    const BODY_BYTES: usize = 256 * 1024;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let accepted = connections.clone();
+    tokio::spawn(async move {
+        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {BODY_BYTES}\r\n\r\n");
+        let body = vec![b'x'; BODY_BYTES];
+        while let Ok((mut socket, _)) = listener.accept().await {
+            accepted.fetch_add(1, Ordering::SeqCst);
+            let (head, body) = (head.clone(), body.clone());
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                loop {
+                    let read = match socket.read(&mut buffer).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => read,
+                    };
+                    request.extend_from_slice(&buffer[..read]);
+                    while let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        request.drain(..end + 4);
+                        if socket.write_all(head.as_bytes()).await.is_err()
+                            || socket.write_all(&body).await.is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    (format!("http://{address}"), connections)
+}
+
+/// Each user GETs /body and drops the response with its body unread.
+fn drops_bodies(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack {
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(
+            Scenario::new("Body").register_transaction(Transaction::new(Arc::new(|user| {
+                Box::pin(async move {
+                    let _goose = user.get("/body").await?;
+                    Ok(())
+                })
+            }))),
+        )
+}
+
+/// A Gaggle worker's user reads the bodies its transactions drop, as one
+/// process does: one user's 10 requests open at most 2 connections, the
+/// second when a request starts before the last connection is back in the
+/// pool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn worker_reads_dropped_bodies() {
+    let (host, connections) = body_server().await;
+    let folder = scratch("unread-bodies");
+    let metrics = clean(
+        within(gaggle(
+            drops_bodies,
+            1,
+            host,
+            &folder,
+            &iterations("1", "10"),
+            &[],
+            &[],
+        ))
+        .await,
+    );
+    assert_eq!(counts(&metrics).values().sum::<usize>(), 10);
+    let opened = connections.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(opened <= 2, "10 requests opened {} connections", opened);
+}

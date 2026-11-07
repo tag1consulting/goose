@@ -44,6 +44,7 @@ enum TestType {
 
 // Needs followup:
 // - GooseDefault::StickyFollow
+// - GooseDefault::DropUnreadBodies
 //     Needs more complex tests
 
 // Test transaction.

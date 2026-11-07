@@ -738,6 +738,7 @@ mod tests {
             &["--mcp-set-host"],
             &["--no-gzip"],
             &["--sticky-follow"],
+            &["--drop-unread-bodies"],
             &["--accept-invalid-certs"],
         ];
         for option in refused {

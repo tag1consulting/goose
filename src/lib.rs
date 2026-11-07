@@ -774,6 +774,9 @@ struct GooseAttackRunState {
     request_counter_registry: GooseRequestCounterRegistry,
     /// Shared epoch counter for coordinating batch validity across metrics resets.
     metrics_epoch: crate::metrics::MetricsEpoch,
+    /// How many response bodies the run's users read because the test dropped them
+    /// unread, and what it cost, logged when the users exit.
+    unread_body_totals: Arc<goose::UnreadBodyTotals>,
 }
 
 impl GooseAttackRunState {
@@ -804,6 +807,22 @@ impl GooseAttackRunState {
         if self.users.len() >= 2 * self.users_pruned_at.max(1) {
             self.prune_finished_users();
         }
+    }
+
+    /// Logs how many response bodies the run's users read to the end because the
+    /// test dropped them unread, how many bytes that was, and how many reads failed.
+    fn log_unread_body_totals(&self, configuration: &GooseConfiguration) {
+        if configuration.drop_unread_bodies {
+            return;
+        }
+        let totals = &self.unread_body_totals;
+        let ordering = std::sync::atomic::Ordering::Relaxed;
+        info!(
+            "unread response bodies: read {} unread bodies, {} bytes, {} read errors",
+            totals.bodies.load(ordering),
+            totals.bytes.load(ordering),
+            totals.errors.load(ordering)
+        );
     }
 
     /// Schedule the next user increase or decrease one `interval` after the
@@ -3416,6 +3435,8 @@ impl GooseAttack {
             )?;
             let function = &t.function;
             let _ = function(&mut user).await;
+            // Read any body the transaction dropped unread, as a user does.
+            user.read_unread_bodies().await;
         }
         Ok(())
     }
@@ -3441,6 +3462,8 @@ impl GooseAttack {
             )?;
             let function = &t.function;
             let _ = function(&mut user).await;
+            // Read any body the transaction dropped unread, as a user does.
+            user.read_unread_bodies().await;
         }
         Ok(())
     }
@@ -3611,6 +3634,7 @@ impl GooseAttack {
             stopping: false,
             request_counter_registry,
             metrics_epoch,
+            unread_body_totals: Arc::default(),
         };
 
         // Catch ctrl-c to allow clean shutdown to display metrics: a Gaggle
@@ -3810,6 +3834,10 @@ impl GooseAttack {
                 thread_user.request_counters =
                     Some(goose_attack_run_state.request_counter_registry.clone());
 
+                // Count the bodies this user reads because the test dropped them unread.
+                thread_user.unread_body_totals =
+                    Some(goose_attack_run_state.unread_body_totals.clone());
+
                 // Copy the GooseUser-shutdown sender channel, used by all threads.
                 thread_user.shutdown_channel =
                     Some(goose_attack_run_state.all_threads_shutdown_tx.clone());
@@ -3942,6 +3970,7 @@ impl GooseAttack {
             let users = std::mem::take(&mut goose_attack_run_state.users);
             futures::future::join_all(users).await;
             debug!("all users exited");
+            goose_attack_run_state.log_unread_body_totals(&self.configuration);
 
             // If the logger thread is enabled, tell it to flush and exit.
             if goose_attack_run_state.logger_handle.is_some() {
@@ -4894,6 +4923,7 @@ impl GooseAttack {
         goose_attack_run_state
             .metrics_epoch
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        goose_attack_run_state.unread_body_totals = Arc::default();
 
         // Re-create the metrics channel and spawn a fresh processor. It reads
         // Save report as start_run_folder left it, so start_run_folder runs

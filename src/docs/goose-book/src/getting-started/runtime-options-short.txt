@@ -99,6 +99,7 @@ HTTP client:
       --timeout <SECS>        Request timeout in seconds [default: 60]
       --no-gzip               Don't send Accept-Encoding: gzip
       --sticky-follow         Keep following the host's redirect
+      --drop-unread-bodies    Don't read bodies the test left unread
       --accept-invalid-certs  Accept invalid TLS certificates
 
 Gaggle:

@@ -2,7 +2,7 @@
 
 The tips follow a load test's life: writing it, checking it, the first runs, scaling up, reading the results and debugging. If you are back with a problem, start here:
 
-- Each request opens a new connection: [Read every response body](#read-every-response-body).
+- Each request opens a new connection (with `--drop-unread-bodies`, a body taken with `into_inner()`, or Goose 0.19): [Read every response body](#read-every-response-body).
 - A request that should fail passes: [Check the page, not only the status code](#check-the-page-not-only-the-status-code).
 - The machine running Goose is the limit: [Check that Goose is not the bottleneck](#check-that-goose-is-not-the-bottleneck).
 - Requests fail to connect once you add users: [Raise the open file limit](#raise-the-open-file-limit).
@@ -31,15 +31,19 @@ async fn website_index(user: &mut GooseUser) -> TransactionResult {
 
 ### Read every response body
 
-A user keeps its HTTP/1.1 connection and sends its next request on it, as a browser does, once the last response's body has been read to the end. A response dropped with its body unread can close its connection, and the next request then opens a new one. Reading the body with `text()`, `bytes()` or `json()` keeps the connection. When a transaction does not need the body, `discard_body()` reads it to the end a chunk at a time, without holding the whole body in memory, and throws it away:
+A user keeps its HTTP/1.1 connection and sends its next request on it, as a browser does, once the last response's body has been read to the end. A response dropped with its body unread cannot go back to the connection pool, and the next request would open a new one.
+
+Goose 0.20 reads such bodies itself. When a transaction drops a response with its body unread, as `let _goose = user.get("/").await?;` does, Goose reads the body to the end, a chunk at a time and without holding it whole, on the user's own task: before the user's next request is sent, and when the transaction function returns, before the transaction's time is recorded. Reading the body with `text()`, `bytes()` or `json()` reads it as before, and `discard_body()` reads it to the end and returns how many bytes it held, at a point of your choosing:
 
 ```rust,ignore
 let _ = user.get("/images/logo.png").await?.discard_body().await;
 ```
 
-Only an empty body is reliably safe to drop. Measured with 50 users against nginx, a dropped uncompressed body of 512 bytes cost a new connection on 11% of requests, 4 KiB on 23%, 16 KiB on 92%, and 64 KiB or more on every request, and from 256 KiB nearly every response was cut off before the server finished sending it; a dropped gzip compressed body kept its connection up to 512 bytes and lost it from 16 KiB. Bodies read to the end kept their connections at every size, about two per user: a request can start before the last connection is back in the pool and open a second one. Against Varnish, Goose's Umami example, which dropped every image, stylesheet and script, opened a new connection for two thirds of its requests.
+Reading a body does not change the time Goose records for a request, which is the [time to first byte](metrics.md#response-times), but the download counts toward the time of the transaction that drops or reads it, and of its scenario. It also downloads every byte, and decompresses a gzip body, so the load generator does more work for each request, as much as `discard_body()` does. When the users exit, Goose logs how many bodies it read this way, how many bytes, and how many reads failed; a failed read is written to the [debug log](../logging/debug.md), when it is on, with its request's name, and never fails the transaction.
 
-Reading a body does not change the time Goose records for a request, which is the [time to first byte](metrics.md#response-times), but the download counts toward the time of the transaction that reads it, and of its scenario. It also downloads every byte, and decompresses a gzip body, so the load generator does more work for each request.
+To keep a body from Goose, take the `reqwest::Response` with `into_inner()`: Goose never reads a body taken this way, so dropping it unread costs its connection. Take it this way, too, for a response that never ends, such as a stream of server sent events: dropped unread, Goose would read it until the client's timeout. `--drop-unread-bodies` (or `GooseDefault::DropUnreadBodies`) turns the reading off for a whole run, as Goose 0.19 and earlier behaved, to compare a run with one from those versions or from another tool.
+
+How much a dropped body cost before Goose 0.20 read it: measured with 50 users against nginx, a dropped uncompressed body of 512 bytes cost a new connection on 11% of requests, 4 KiB on 23%, 16 KiB on 92%, and 64 KiB or more on every request, and from 256 KiB nearly every response was cut off before the server finished sending it; a dropped gzip compressed body kept its connection up to 512 bytes and lost it from 16 KiB. Bodies read to the end kept their connections at every size, about two per user: a request can start before the last connection is back in the pool and open a second one. Against Varnish, Goose's Umami example, which dropped every image, stylesheet and script, opened a new connection for two thirds of its requests.
 
 ### Name requests that carry an ID
 

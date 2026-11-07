@@ -297,6 +297,10 @@ async fn invoke_transaction_function(
     thread_user.transaction_index = Some(thread_transaction_index);
 
     let result = function(thread_user).await;
+    // Read to the end any body the transaction dropped unread, on this task and
+    // before the transaction's time is recorded, so the download counts toward the
+    // transaction as GooseResponse::discard_body's does.
+    thread_user.read_unread_bodies().await;
     raw_transaction.set_duration(started.elapsed(), result.is_ok());
 
     // Only a failed transaction formats its error. A transaction error is
