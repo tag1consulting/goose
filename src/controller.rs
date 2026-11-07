@@ -49,7 +49,7 @@ pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 a
 /// large users change), it can still apply after the timeout, so clients
 /// must check the phase and users before retrying.
 ///
-/// 15s allows non-trivial `weight_scenario_users` work; Start still replies
+/// 15s allows building a Start's first users; Start still replies
 /// before `control_start_finish`, so a client usually hears much sooner.
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -1193,8 +1193,8 @@ impl GooseAttack {
     /// Apply `settings` together, all or none, refused as
     /// [`Self::refuse_settings`] says. A single Controller setting is
     /// applied as settings of its own, so every front end decides alike.
-    /// Hard error: `weight_scenario_users` when a test plan replaces a
-    /// running test's.
+    /// Hard error: `weight_scenario_users` or `check_user_client` when a test
+    /// plan replaces a running test's.
     pub(crate) fn control_settings(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,

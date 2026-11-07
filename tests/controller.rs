@@ -102,11 +102,12 @@ struct Reply {
 type Check = Box<dyn Fn(Protocol, &Reply) + Send>;
 
 // One line sent to the Controller, the check of its reply, and how long to
-// wait after it for Goose to catch up.
+// wait after it for Goose to catch up, or the users to wait for.
 struct Step {
     line: String,
     check: Check,
     pause: time::Duration,
+    reach: Option<usize>,
 }
 
 // A step whose reply must start with `prefix`.
@@ -115,6 +116,7 @@ fn starts(line: &str, prefix: &'static str) -> Step {
         line: line.to_string(),
         check: Box::new(move |_, reply: &Reply| assert!(reply.text.starts_with(prefix))),
         pause: time::Duration::ZERO,
+        reach: None,
     }
 }
 
@@ -124,6 +126,7 @@ fn step(line: &str, check: impl Fn(Protocol, &Reply) + Send + 'static) -> Step {
         line: line.to_string(),
         check: Box::new(check),
         pause: time::Duration::ZERO,
+        reach: None,
     }
 }
 
@@ -131,6 +134,13 @@ impl Step {
     // This step, waiting `pause` after its reply.
     fn then_wait(mut self, pause: time::Duration) -> Self {
         self.pause = pause;
+        self
+    }
+
+    // This step, then waiting until `users` run: a `users` reply means the
+    // change was accepted, not that its users started or stopped.
+    fn then_reach(mut self, users: usize) -> Self {
+        self.reach = Some(users);
         self
     }
 }
@@ -374,20 +384,20 @@ fn commands(server_url: &str) -> Vec<(Command, Vec<Step>)> {
                     "users 99999999999999999999",
                     "users must be an integer between 1 and 100000",
                 ),
-                // Reconfigure the number of users, increasing; give Goose a
-                // second to increase users.
+                // Reconfigure the number of users, increasing; wait until
+                // they all run.
                 starts(
                     &["users ", &MAX_USERS.to_string()].concat(),
                     "users configured",
                 )
-                .then_wait(time::Duration::from_secs(1)),
-                // Reconfigure the number of users, decreasing; give Goose a
-                // second to decrease users.
+                .then_reach(MAX_USERS),
+                // Reconfigure the number of users, decreasing; wait until
+                // only they run.
                 starts(
                     &["users ", &FINAL_USERS.to_string()].concat(),
                     "users configured",
                 )
-                .then_wait(time::Duration::from_secs(1)),
+                .then_reach(FINAL_USERS),
                 // A running load test can be stopped; give Goose a half
                 // second to stop before moving on.
                 starts("stop", "load test stopped").then_wait(time::Duration::from_millis(500)),
@@ -505,6 +515,30 @@ impl Client {
                     text,
                 }
             }
+        }
+    }
+
+    // Poll the Controller's own metrics, at most every 100 ms for up to 30
+    // s, until its history's last row maintains `users`: the users a change
+    // asked for are all running.
+    async fn wait_for_users(&mut self, users: usize) {
+        let deadline = time::Instant::now() + time::Duration::from_secs(30);
+        loop {
+            let reply = self.send("metrics-json").await;
+            let text = &reply.text;
+            let json = &text[text.find('{').unwrap()..=text.rfind('}').unwrap()];
+            let metrics: serde_json::Value = serde_json::from_str(json).unwrap();
+            let last = metrics["history"].as_array().and_then(|rows| rows.last());
+            if last.is_some_and(|row| row["action"] == "Maintaining" && row["users"] == users) {
+                return;
+            }
+            assert!(
+                time::Instant::now() < deadline,
+                "{} users were not running 30 s after the change: {:?}",
+                users,
+                last
+            );
+            tokio::time::sleep(time::Duration::from_millis(100)).await;
         }
     }
 
@@ -635,6 +669,9 @@ async fn drive(protocol: Protocol, server_url: String, mcp_port: u16) {
         for step in steps {
             let reply = client.send(&step.line).await;
             (step.check)(protocol, &reply);
+            if let Some(users) = step.reach {
+                client.wait_for_users(users).await;
+            }
             tokio::time::sleep(step.pause).await;
             // Give the parent process time to catch up.
             tokio::time::sleep(time::Duration::from_millis(100)).await;

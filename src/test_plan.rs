@@ -278,6 +278,8 @@ impl GooseAttack {
         // Record the instant this new step starts, for use with timers.
         let now = time::Instant::now();
         self.step_started = Some(now);
+        // A new step logs how its own users start.
+        self.step_starts = None;
 
         // Each step schedules its user changes from its own start, so a ramp
         // left mid way, as by a Controller, never leaves a stale due time.
@@ -322,9 +324,11 @@ impl GooseAttack {
 
         // Record details about new new TestPlan step that is starting.
         if let Some(action) = action {
+            // The users running, which is the step's target unless building
+            // its users failed.
             self.metrics.history.push(TestPlanHistory::step(
                 action,
-                self.test_plan.steps[self.test_plan.current].0,
+                goose_attack_run_state.active_users,
             ));
         }
 

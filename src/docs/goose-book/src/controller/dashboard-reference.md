@@ -261,7 +261,7 @@ curl -H "Authorization: Bearer SECRET" http://host:5118/api/v1/snapshot
 curl "http://host:5118/api/v1/snapshot?token=SECRET"
 ```
 
-`GET /api/v1/snapshot` returns **503** with an empty body when no snapshot arrives within five seconds, which happens while the main loop (the Goose task that runs the load test's phases) or the metrics processor is busy (for example building the users of a large `users` change), or when the dashboard is shutting down. Retry after a short wait.
+`GET /api/v1/snapshot` returns **503** with an empty body when no snapshot arrives within five seconds, which happens while the main loop (the Goose task that runs the load test's phases) or the metrics processor is busy, or when the dashboard is shutting down. Retry after a short wait.
 
 For **control**, the server accepts **`Authorization: Bearer` only** (query `?token=` is rejected on control routes):
 
@@ -482,7 +482,7 @@ The snapshot's `stopping` field is `true` from the Stop until `idle`; a Controll
 
 ### Users on a running test
 
-A users ramp keeps its shape when the user count changes mid run (Target, the `users` command, or `POST /api/v1/control/users`): Goose takes the new count and keeps the hold (the run time after the ramp up) and the ramp down, and regenerates the steps still ahead from them.
+A users ramp keeps its shape when the user count changes mid run (Target, the `users` command, or `POST /api/v1/control/users`): Goose takes the new count and keeps the hold (the run time after the ramp up) and the ramp down, and regenerates the steps still ahead from them. The answer means the change is accepted, not that its users started: the users it adds are built after the answer, off the main loop, and start at the increase rate as they are built, so `active_users` reaches the new count later.
 
 | When Users arrives | What happens |
 |--------------------|--------------|

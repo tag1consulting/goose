@@ -1071,8 +1071,8 @@ pub struct GooseUser {
     pub metrics_channel: Option<flume::Sender<GooseMetric>>,
     /// Channel for notifying the parent when thread shuts down.
     pub shutdown_channel: Option<flume::Sender<usize>>,
-    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.weighted_users`
-    /// vector, indicating which weighted `GooseUser` is running.
+    /// This user's number among all the users the load test has started,
+    /// counted from 0.
     pub weighted_users_index: usize,
     /// Load test hash.
     pub load_test_hash: u64,
