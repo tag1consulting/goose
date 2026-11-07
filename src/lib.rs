@@ -7406,6 +7406,8 @@ mod tests {
     /// started, and only the running users' tasks are held (releasing
     /// stopped users' tasks is the cycles test's).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
     async fn test_users_storm_builds_and_holds_only_started_users() {
         use crate::controller::tests::control;
 
@@ -7453,6 +7455,8 @@ mod tests {
     /// little ahead of the users it starts, so the changes leave few clients
     /// built that never start.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
     async fn test_a_storm_builds_little_beyond_the_users_it_starts() {
         use crate::controller::tests::control;
 
@@ -7496,6 +7500,8 @@ mod tests {
     /// in which the main loop prunes: stopped users' tasks are still released
     /// as new users start, so the tasks held stay bounded.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
     async fn test_users_cycles_release_stopped_tasks_as_users_start() {
         use crate::controller::tests::control;
 
@@ -7576,6 +7582,8 @@ mod tests {
     /// says 50 users; and so does a Controller increase of 50 more, whose
     /// users are built as it runs.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
     async fn test_ramp_holds_once_every_user_runs() {
         use crate::controller::tests::control;
 
@@ -7739,6 +7747,8 @@ mod tests {
     /// each part is built, from its boundary: before its last part is built,
     /// never before a user's own part, and never faster than its rate.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
     async fn test_a_step_starts_users_as_its_parts_are_built() {
         let server = index_server();
         // 4 users a second for each build thread, so each part is 4 users a
@@ -8063,6 +8073,8 @@ mod tests {
     /// A finished batch built ahead, never asked for and then dropped, has
     /// its users dropped off the main loop, as a built batch does.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
     async fn test_a_dropped_ahead_batch_drops_its_users_off_the_main_loop() {
         use crate::controller::tests::control;
 
