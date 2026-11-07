@@ -903,14 +903,14 @@ async fn body_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
 fn drops_bodies(configuration: GooseConfiguration, _: Option<usize>) -> GooseAttack {
     GooseAttack::initialize_with_config(configuration)
         .unwrap()
-        .register_scenario(Scenario::new("Body").register_transaction(Transaction::new(
-            Arc::new(|user| {
+        .register_scenario(
+            Scenario::new("Body").register_transaction(Transaction::new(Arc::new(|user| {
                 Box::pin(async move {
                     let _goose = user.get("/body").await?;
                     Ok(())
                 })
-            }),
-        )))
+            }))),
+        )
 }
 
 /// A Gaggle worker's user reads the bodies its transactions drop, as one

@@ -218,7 +218,11 @@ async fn dropped_bodies_open_new_connections_when_told() {
 /// connection.
 async fn into_inner_bodies_open_new_connections() {
     let (connections, counted, _) = run(transaction!(into_inner_and_drop), false, &[]).await;
-    assert_not_reused("bodies taken with into_inner() and dropped", connections, counted);
+    assert_not_reused(
+        "bodies taken with into_inner() and dropped",
+        connections,
+        counted,
+    );
 }
 
 #[tokio::test]
