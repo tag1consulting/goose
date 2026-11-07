@@ -7876,7 +7876,9 @@ mod tests {
             Arc::default(),
             &build,
         ));
-        // The next user was due a minute ago.
+        // The next user was due a minute ago: far enough back that one
+        // interval after it is still past, so a schedule that catches up
+        // instead of restarting leaves the next user due at once.
         run_state.adjust_user_timer = std::time::Instant::now() - Duration::from_secs(60);
         // Its part is not built: nothing starts, and the batch stalls.
         goose_attack.increase_attack(&mut run_state).await.unwrap();
