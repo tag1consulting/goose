@@ -329,6 +329,8 @@ pub(crate) struct UserBatch {
     cancel: Arc<std::sync::atomic::AtomicBool>,
     /// The threads each part still to build is built on: see [`build_parts`].
     threads: Arc<std::sync::atomic::AtomicUsize>,
+    /// Every build thread, read once, as its step builds on them all.
+    all_threads: usize,
     /// Each part as it is built, in the order the users start.
     parts: tokio::sync::mpsc::UnboundedReceiver<BuiltPart>,
     /// While its step runs, where the batch says it took a part, and whether
@@ -366,13 +368,15 @@ impl UserBatch {
         cancel: Arc<std::sync::atomic::AtomicBool>,
         build: &UserBuild,
     ) -> Self {
+        let all_threads = build_threads();
         UserBatch {
             step,
             size,
             left: size,
             user_test: build.user_test.clone(),
             cancel,
-            threads: Arc::new(std::sync::atomic::AtomicUsize::new(build_threads())),
+            threads: Arc::new(std::sync::atomic::AtomicUsize::new(all_threads)),
+            all_threads,
             parts,
             taken,
             next: Vec::new(),
@@ -481,28 +485,30 @@ impl Drop for UserBatch {
         // loop, so a blocking thread drops them when there is a runtime: the
         // part users start from, and every part built and not yet taken. A
         // part still building drops what it built on its own thread.
-        let mut users = std::mem::take(&mut self.next);
+        // Gathered as parts, not one Vec, so the main loop moves no user.
+        let mut parts = vec![std::mem::take(&mut self.next)];
         // Closed first, so a part sent after the drain is refused and its
         // builder drops it; only a send already under way as it closes can
         // still be missed here.
         self.parts.close();
         while let Ok(part) = self.parts.try_recv() {
             if let Ok(part) = part {
-                users.extend(part);
+                parts.push(part);
             }
         }
+        let users: usize = parts.iter().map(Vec::len).sum();
         debug!(
             "[users]: dropping the batch of {} users for step {}: {} built and not started",
             self.size,
             self.step,
-            users.len()
+            users
         );
-        if users.is_empty() {
+        if users == 0 {
             return;
         }
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            self.user_test.dropped_off_loop(users.len());
-            runtime.spawn_blocking(move || drop(users));
+            self.user_test.dropped_off_loop(users);
+            runtime.spawn_blocking(move || drop(parts));
         }
     }
 }
@@ -664,7 +670,7 @@ impl GooseAttack {
         // every thread.
         batch
             .threads
-            .store(build_threads(), std::sync::atomic::Ordering::Relaxed);
+            .store(batch.all_threads, std::sync::atomic::Ordering::Relaxed);
         if batch.failed {
             return None;
         }
