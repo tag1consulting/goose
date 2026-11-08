@@ -244,10 +244,12 @@ fn part_size(rate: f64) -> usize {
 /// Build `users` in the order they start, in parts of at most `largest`
 /// users, handing each part to `deliver` as soon as it is built.
 ///
-/// Without `taken`, every part is `largest`: a batch built ahead of its
-/// step, or at setup. With it, the batch's step is running, and the batch
-/// says on `taken` each time it takes a part, and whether it waited for it:
-/// the first part is one user a build thread, and each later part is built
+/// The first part is one user a build thread. Without `taken`, for a batch
+/// built ahead of its step or at setup, each part doubles, up to `largest`,
+/// so a step that begins before its batch is built starts the users already
+/// built and does not wait for one part of them all. With it, the batch's
+/// step is running, and the batch says on `taken` each time it takes a
+/// part, and whether it waited for it: each later part is built
 /// only once the batch took the one before, so it builds at most one part
 /// ahead of the users it starts and a change that drops it leaves few built;
 /// a part doubles, up to `largest`, after the batch waited for one, and is
@@ -269,11 +271,7 @@ fn build_parts(
     mut deliver: impl FnMut(BuiltPart) -> bool,
 ) {
     let part_threads = || threads.load(std::sync::atomic::Ordering::Relaxed).max(1);
-    let mut size = if taken.is_some() {
-        part_threads().min(largest)
-    } else {
-        largest
-    };
+    let mut size = part_threads().min(largest);
     // The next user to start is the last, so parts start from the end.
     let mut rest = users;
     while !rest.is_empty() {
@@ -296,14 +294,16 @@ fn build_parts(
         }
         rest = left;
         let waiting = std::time::Instant::now();
-        if let (Some(taken), false) = (&taken, rest.is_empty()) {
-            size = match taken.recv() {
+        size = match &taken {
+            None => size.saturating_mul(2).min(largest),
+            Some(_) if rest.is_empty() => size,
+            Some(taken) => match taken.recv() {
                 Ok(true) => size.saturating_mul(2).min(largest),
                 Ok(false) => part_threads().min(largest),
                 // The batch was dropped.
                 Err(_) => return,
-            };
-        }
+            },
+        };
         debug!(
             "[users]: built a part of {} users on {on} threads in {build_ms} ms, then waited {} ms for it to be taken, {} left, next part {}",
             part.len(),
@@ -1497,16 +1497,10 @@ pub(crate) mod tests {
         })
         .await;
         assert_eq!(goose_attack.metrics.total_users, 3);
-        // The held batch's 398 users are never all built, and none starts.
-        assert!(
-            !user_events(&goose_attack)
-                .iter()
-                .any(|(event, _)| *event == UserEvent::Built(398)),
-            "the dropped batch was built"
-        );
         assert!(
             // One user started. The new plan's check of its client ran
-            // before `dropped` was read, so it is not counted here.
+            // before `dropped` was read, so it is not counted here. A held
+            // batch kept would build its 398 users through these 3 s.
             clients_built(&goose_attack) - dropped <= 1 + build_threads(),
             "{} clients built after the held batch was dropped, for 1 user started",
             clients_built(&goose_attack) - dropped
@@ -1621,18 +1615,28 @@ pub(crate) mod tests {
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        // The next increase's 50 users are built ahead while the plan holds,
-        // and wait on the batch's channel: `Built` is recorded before the
-        // part is handed on.
+        // The next increase's 50 users are built ahead in parts while the
+        // plan holds, and wait on the batch's channel: `Built` is recorded
+        // before a part is handed on, so every part built must be on it.
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while !(user_events(&goose_attack)
-            .iter()
-            .any(|(event, _)| *event == UserEvent::Built(50))
-            && goose_attack
-                .user_batch
-                .as_ref()
-                .is_some_and(|batch| !batch.parts.is_empty()))
-        {
+        loop {
+            // Setup's part of 2 came first.
+            let parts: Vec<usize> = user_events(&goose_attack)
+                .iter()
+                .skip(1)
+                .filter_map(|(event, _)| match event {
+                    UserEvent::Built(users) => Some(*users),
+                    _ => None,
+                })
+                .collect();
+            if parts.iter().sum::<usize>() == 50
+                && goose_attack
+                    .user_batch
+                    .as_ref()
+                    .is_some_and(|batch| batch.parts.len() == parts.len())
+            {
+                break;
+            }
             assert!(
                 std::time::Instant::now() < deadline,
                 "the ahead batch was not built"
