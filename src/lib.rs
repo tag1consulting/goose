@@ -81,9 +81,7 @@ use crate::metrics::{
     GooseMetric, GooseMetrics, GooseRequestCounterRegistry, MetricsCommand, MetricsProcessor,
 };
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
-use crate::user_batch::{StepStarts, UserBatch, WeightedUser};
-#[cfg(test)]
-use crate::user_batch::{UserEvent, UserTestHooks};
+use crate::user_batch::{StepStarts, UserBatch, UserTestHooks, WeightedUser};
 
 lazy_static! {
     // The reason the killswitch was first triggered (by Ctrl-C or by
@@ -954,7 +952,6 @@ pub struct GooseAttack {
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
     /// What the tests count and slow down as users are built and started.
-    #[cfg(test)]
     user_test: UserTestHooks,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
@@ -1032,7 +1029,6 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             user_batch: None,
             step_starts: None,
-            #[cfg(test)]
             user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
             user_offset: 0,
@@ -1093,7 +1089,6 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             user_batch: None,
             step_starts: None,
-            #[cfg(test)]
             user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
             user_offset: 0,
@@ -3212,8 +3207,7 @@ impl GooseAttack {
                 goose_attack_run_state.users.push(user);
                 goose_attack_run_state.prune_finished_users_when_due();
                 self.count_started_user(goose_attack_run_state);
-                #[cfg(test)]
-                self.user_test.record(UserEvent::Started(ordinal));
+                self.user_test.user_started(ordinal);
                 let step = self.test_plan.current;
                 self.log_step_starts(self.step_rate(step), self.step_users_added(step), false);
 
