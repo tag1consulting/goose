@@ -127,14 +127,16 @@ struct UserBuild {
     user_test: UserTestHooks,
 }
 
-/// The threads users are built on: one for each available CPU.
+/// The threads users are built on: one for each available CPU, but for a
+/// batch built ahead of its step (see [`ahead_threads`]).
 fn build_threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
 /// The threads a batch built ahead of its step is built on until its step
-/// begins: one fewer than [`build_threads`], so the users running while it
-/// builds keep a CPU.
+/// begins: one fewer than [`build_threads`]. The users running while it
+/// builds still share every CPU with it; fewer build threads take less of
+/// them.
 fn ahead_threads() -> usize {
     build_threads().saturating_sub(1).max(1)
 }
@@ -401,8 +403,8 @@ impl UserBatch {
             (None, None)
         };
         let batch = UserBatch::new(step, size, parts, taken_tx, cancel.clone(), &build);
-        // A batch built ahead of its step leaves the users running a CPU
-        // until its step begins.
+        // A batch built ahead of its step builds on fewer threads until its
+        // step begins.
         let threads = batch.threads.clone();
         if !running {
             threads.store(ahead_threads(), std::sync::atomic::Ordering::Relaxed);
@@ -444,11 +446,12 @@ impl UserBatch {
             };
             match part {
                 Some(Ok(users)) => {
+                    let waited = std::mem::take(&mut self.waited);
                     debug!(
                         "[users]: step {} took a part of {} users after waiting {} ms for it, stalled {}",
                         self.step,
                         users.len(),
-                        std::mem::take(&mut self.waited).as_millis(),
+                        waited.as_millis(),
                         self.stalled
                     );
                     self.next = users;
@@ -1632,12 +1635,16 @@ pub(crate) mod tests {
     }
 
     /// A batch built ahead of its step builds on fewer threads than every
-    /// build thread, so the users running while it builds keep a CPU; setup
+    /// build thread, so it takes less of the CPUs the running users share; setup
     /// builds on every thread.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     // Builds clients on every CPU: never beside a real time throttle test.
     #[serial_test::parallel(cpu)]
     async fn test_an_ahead_batch_builds_on_fewer_threads() {
+        // On one CPU an ahead batch has the one thread every batch has.
+        if build_threads() == 1 {
+            return;
+        }
         let server = index_server();
         let (mut goose_attack, mut run_state) = started_attack(
             &server.base_url(),
@@ -1673,7 +1680,6 @@ pub(crate) mod tests {
                 build_threads()
             );
         }
-        assert!(ahead_threads() < build_threads() || build_threads() == 1);
     }
 
     /// When a batch built ahead is not done as its step begins, the step
@@ -1683,8 +1689,12 @@ pub(crate) mod tests {
     // Builds clients on every CPU: never beside a real time throttle test.
     #[serial_test::parallel(cpu)]
     async fn test_an_ahead_batch_builds_on_every_thread_once_its_step_begins() {
+        // On one CPU an ahead batch has the one thread every batch has.
+        if build_threads() == 1 {
+            return;
+        }
         // 10 parts of 4 users a build thread, at 4 a second a build thread,
-        // 100 ms a client: about 600 ms a part ahead on 3 of 4 threads, so a
+        // 100 ms a client: about 600 ms a part ahead on one thread fewer, so a
         // 2 s hold ends with most of the batch still to build.
         let added = 40 * build_threads();
         let plan = format!("2,0s;2,2s;{},10s;{},1h", 2 + added, 2 + added);
