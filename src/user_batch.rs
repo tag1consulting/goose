@@ -48,6 +48,9 @@ pub(crate) struct UserTestHooks {
     /// Each part built and each user started, with when.
     #[cfg(test)]
     events: Arc<Mutex<Vec<(UserEvent, std::time::Instant)>>>,
+    /// Each part built: its users, the threads it was built on, and when.
+    #[cfg(test)]
+    parts_built_on: Arc<Mutex<Vec<(usize, usize, std::time::Instant)>>>,
 }
 
 impl UserTestHooks {
@@ -68,10 +71,17 @@ impl UserTestHooks {
         Ok(())
     }
 
-    /// A part of `_users` users was built, before it is handed on.
-    fn part_built(&self, _users: usize) {
+    /// A part of `_users` users was built on `_threads` threads, before it
+    /// is handed on.
+    fn part_built(&self, _users: usize, _threads: usize) {
         #[cfg(test)]
-        self.record(UserEvent::Built(_users));
+        {
+            self.record(UserEvent::Built(_users));
+            self.parts_built_on
+                .lock()
+                .unwrap()
+                .push((_users, _threads, std::time::Instant::now()));
+        }
     }
 
     /// The user with ordinal `_ordinal` started.
@@ -117,18 +127,29 @@ struct UserBuild {
     user_test: UserTestHooks,
 }
 
+/// The threads users are built on: one for each available CPU.
+fn build_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// The threads a batch built ahead of its step is built on until its step
+/// begins: one fewer than [`build_threads`], so the users running while it
+/// builds keep a CPU.
+fn ahead_threads() -> usize {
+    build_threads().saturating_sub(1).max(1)
+}
+
 /// Build `users` in their order, each with its own client unless one is
-/// shared, on one thread for each available CPU: the only way a user is
-/// built. `None` when `cancel` is set before every client is built, and
-/// what was built is dropped.
+/// shared, on `threads` threads: the only way a user is built. `None` when
+/// `cancel` is set before every client is built, and what was built is
+/// dropped.
 fn build_users(
     users: &[WeightedUser],
     build: &UserBuild,
+    threads: usize,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Option<Vec<GooseUser>>, GooseError> {
-    let num_cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
+    let num_cpus = threads.max(1);
     let chunk_size = users.len().div_ceil(num_cpus).max(1);
     // Clients built by every thread, for the log of a canceled build.
     let clients = std::sync::atomic::AtomicUsize::new(0);
@@ -209,9 +230,7 @@ type BuiltPart = Result<Vec<GooseUser>, GooseError>;
 /// rate wherever building can. `rate` is users a second, infinite for a step
 /// that starts all its users at once.
 fn part_size(rate: f64) -> usize {
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
+    let threads = build_threads();
     let second = if rate.is_finite() {
         rate.ceil() as usize
     } else {
@@ -232,31 +251,38 @@ fn part_size(rate: f64) -> usize {
 /// a part doubles, up to `largest`, after the batch waited for one, and is
 /// one user a build thread again after it did not.
 ///
+/// Each part is built on as many threads as `threads` says when it begins:
+/// a batch built ahead of its step starts with fewer, and has every thread
+/// once its step begins.
+///
 /// Stops after a part that failed or was canceled, when `deliver` says
 /// nobody takes parts, or when the batch is dropped.
 fn build_parts(
     users: &[WeightedUser],
     build: &UserBuild,
     largest: usize,
+    threads: &std::sync::atomic::AtomicUsize,
     cancel: &std::sync::atomic::AtomicBool,
     taken: Option<std::sync::mpsc::Receiver<bool>>,
     mut deliver: impl FnMut(BuiltPart) -> bool,
 ) {
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
-        .min(largest);
-    let mut size = if taken.is_some() { threads } else { largest };
+    let part_threads = || threads.load(std::sync::atomic::Ordering::Relaxed).max(1);
+    let mut size = if taken.is_some() {
+        part_threads().min(largest)
+    } else {
+        largest
+    };
     // The next user to start is the last, so parts start from the end.
     let mut rest = users;
     while !rest.is_empty() {
         let (left, part) = rest.split_at(rest.len() - size.min(rest.len()));
         let building = std::time::Instant::now();
-        let built = match build_users(part, build, cancel) {
+        let on = part_threads();
+        let built = match build_users(part, build, on, cancel) {
             // Canceled: the batch was dropped, and what was built with it.
             Ok(None) => return,
             Ok(Some(users)) => {
-                build.user_test.part_built(users.len());
+                build.user_test.part_built(users.len(), on);
                 Ok(users)
             }
             Err(e) => Err(e),
@@ -271,13 +297,13 @@ fn build_parts(
         if let (Some(taken), false) = (&taken, rest.is_empty()) {
             size = match taken.recv() {
                 Ok(true) => size.saturating_mul(2).min(largest),
-                Ok(false) => threads,
+                Ok(false) => part_threads().min(largest),
                 // The batch was dropped.
                 Err(_) => return,
             };
         }
         debug!(
-            "[users]: built a part of {} users in {build_ms} ms, then waited {} ms for it to be taken, {} left, next part {}",
+            "[users]: built a part of {} users on {on} threads in {build_ms} ms, then waited {} ms for it to be taken, {} left, next part {}",
             part.len(),
             waiting.elapsed().as_millis(),
             rest.len(),
@@ -299,6 +325,8 @@ pub(crate) struct UserBatch {
     user_test: UserTestHooks,
     /// Set to stop a build still running.
     cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// The threads each part still to build is built on: see [`build_parts`].
+    threads: Arc<std::sync::atomic::AtomicUsize>,
     /// Each part as it is built, in the order the users start.
     parts: tokio::sync::mpsc::UnboundedReceiver<BuiltPart>,
     /// While its step runs, where the batch says it took a part, and whether
@@ -342,6 +370,7 @@ impl UserBatch {
             left: size,
             user_test: build.user_test.clone(),
             cancel,
+            threads: Arc::new(std::sync::atomic::AtomicUsize::new(build_threads())),
             parts,
             taken,
             next: Vec::new(),
@@ -372,11 +401,23 @@ impl UserBatch {
             (None, None)
         };
         let batch = UserBatch::new(step, size, parts, taken_tx, cancel.clone(), &build);
+        // A batch built ahead of its step leaves the users running a CPU
+        // until its step begins.
+        let threads = batch.threads.clone();
+        if !running {
+            threads.store(ahead_threads(), std::sync::atomic::Ordering::Relaxed);
+        }
         tokio::task::spawn_blocking(move || {
             // Nobody takes the parts of a batch that was dropped.
-            build_parts(&users, &build, part_size(rate), &cancel, taken, |built| {
-                parts_tx.send(built).is_ok()
-            });
+            build_parts(
+                &users,
+                &build,
+                part_size(rate),
+                &threads,
+                &cancel,
+                taken,
+                |built| parts_tx.send(built).is_ok(),
+            );
         });
         batch
     }
@@ -519,6 +560,7 @@ impl GooseAttack {
                 &users,
                 &build,
                 part_size(self.step_rate(step)),
+                &std::sync::atomic::AtomicUsize::new(build_threads()),
                 &not_canceled,
                 None,
                 |built| match built {
@@ -553,9 +595,10 @@ impl GooseAttack {
             build_users(
                 std::slice::from_ref(user),
                 &self.user_build(),
+                1,
                 &not_canceled,
             )?;
-            self.user_test.part_built(1);
+            self.user_test.part_built(1, 1);
         }
         Ok(())
     }
@@ -614,6 +657,9 @@ impl GooseAttack {
             }
         };
         let batch = self.user_batch.insert(batch);
+        // Its step runs: a batch built ahead builds what is left of it on
+        // every thread.
+        batch.threads.store(build_threads(), std::sync::atomic::Ordering::Relaxed);
         if batch.failed {
             return None;
         }
@@ -827,11 +873,6 @@ pub(crate) mod tests {
             .iter()
             .filter(|(event, _)| matches!(event, UserEvent::Started(_)))
             .count()
-    }
-
-    /// The threads a batch of users is built on.
-    fn build_threads() -> usize {
-        std::thread::available_parallelism().map_or(1, |n| n.get())
     }
 
     /// Weighting users builds no client: a change builds only the clients of
@@ -1300,7 +1341,7 @@ pub(crate) mod tests {
         let build = goose_attack.user_build();
         let weighted = goose_attack.weight_scenario_users(1).unwrap();
         let not_canceled = std::sync::atomic::AtomicBool::new(false);
-        let users = build_users(&weighted, &build, &not_canceled)
+        let users = build_users(&weighted, &build, build_threads(), &not_canceled)
             .unwrap()
             .unwrap();
         let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
@@ -1339,7 +1380,7 @@ pub(crate) mod tests {
         let build = goose_attack.user_build();
         let weighted = goose_attack.weight_scenario_users(2).unwrap();
         let not_canceled = std::sync::atomic::AtomicBool::new(false);
-        let users = build_users(&weighted, &build, &not_canceled)
+        let users = build_users(&weighted, &build, build_threads(), &not_canceled)
             .unwrap()
             .unwrap();
         let (parts_tx, parts) = tokio::sync::mpsc::unbounded_channel();
@@ -1579,4 +1620,132 @@ pub(crate) mod tests {
         );
     }
 
+    /// The parts built so far: users, the threads each was built on, when.
+    fn parts_built_on(goose_attack: &GooseAttack) -> Vec<(usize, usize, std::time::Instant)> {
+        goose_attack.user_test.parts_built_on.lock().unwrap().clone()
+    }
+
+    /// A batch built ahead of its step builds on fewer threads than every
+    /// build thread, so the users running while it builds keep a CPU; setup
+    /// builds on every thread.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
+    async fn test_an_ahead_batch_builds_on_fewer_threads() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", "2,0s;2,1h;52,1s;52,1h"],
+            vec![index_scenario("Fewer", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while parts_built_on(&goose_attack)
+            .iter()
+            .map(|(users, _, _)| users)
+            .sum::<usize>()
+            < 52
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the ahead batch was not built"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let parts = parts_built_on(&goose_attack);
+        assert_eq!(parts[0].0, 2, "setup's part comes first");
+        assert_eq!(parts[0].1, build_threads(), "setup built on every thread");
+        for &(users, threads, _) in &parts[1..] {
+            assert_eq!(
+                threads,
+                ahead_threads(),
+                "a part of {} users built ahead on {} of {} threads",
+                users,
+                threads,
+                build_threads()
+            );
+        }
+        assert!(ahead_threads() < build_threads() || build_threads() == 1);
+    }
+
+    /// When a batch built ahead is not done as its step begins, the step
+    /// begins on time, its first new user starts within a second of the
+    /// boundary, and the parts still to build use every build thread.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
+    async fn test_an_ahead_batch_builds_on_every_thread_once_its_step_begins() {
+        // 10 parts of 4 users a build thread, at 4 a second a build thread,
+        // 100 ms a client: about 600 ms a part ahead on 3 of 4 threads, so a
+        // 2 s hold ends with most of the batch still to build.
+        let added = 40 * build_threads();
+        let plan = format!("2,0s;2,2s;{},10s;{},1h", 2 + added, 2 + added);
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", &plan],
+            vec![index_scenario("Switch", 10)],
+            Duration::from_millis(100),
+        )
+        .await;
+        ramp_to_hold(&mut goose_attack, &mut run_state).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while goose_attack.test_plan.current < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the hold did not end"
+            );
+            goose_attack.maintain_attack(&mut run_state).await.unwrap();
+        }
+        let boundary = goose_attack.step_started.unwrap();
+        // Run the step until two parts were built after it began.
+        while parts_built_on(&goose_attack)
+            .iter()
+            .filter(|(_, _, at)| *at > boundary)
+            .count()
+            < 2
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no part was built after the step began"
+            );
+            goose_attack.increase_attack(&mut run_state).await.unwrap();
+        }
+        let first = user_events(&goose_attack)
+            .into_iter()
+            .find_map(|(event, at)| match event {
+                UserEvent::Started(ordinal) if ordinal >= 2 => Some(at),
+                _ => None,
+            })
+            .expect("no user of the step started");
+        assert!(
+            first.duration_since(boundary) < Duration::from_secs(1),
+            "the step's first new user started {:?} after its boundary",
+            first.duration_since(boundary)
+        );
+        let parts = parts_built_on(&goose_attack);
+        let before: usize = parts[1..]
+            .iter()
+            .filter(|(_, _, at)| *at <= boundary)
+            .map(|(users, _, _)| users)
+            .sum();
+        assert!(before < added, "the ahead batch was done before its step");
+        // The second part done after the boundary was begun after it.
+        let (users, threads, _) = parts
+            .iter()
+            .filter(|(_, _, at)| *at > boundary)
+            .nth(1)
+            .copied()
+            .unwrap();
+        assert_eq!(
+            threads,
+            build_threads(),
+            "a part of {} users built after its step began on {} of {} threads",
+            users,
+            threads,
+            build_threads()
+        );
+    }
 }
