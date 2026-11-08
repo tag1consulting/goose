@@ -1049,6 +1049,55 @@ pub(crate) mod tests {
         );
     }
 
+    /// Users start in the order they were weighted across the parts they are
+    /// built in, whatever the host's build threads: parts of at most 2 users
+    /// on 1 thread, over users of two scenarios.
+    #[tokio::test]
+    async fn test_parts_keep_the_weighted_start_order() {
+        let server = index_server();
+        let (goose_attack, _run_state) = started_attack(
+            &server.base_url(),
+            &["--users", "2", "--run-time", "1h"],
+            vec![index_scenario("First", 10), index_scenario("Second", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        let build = goose_attack.user_build();
+        let base_url = url::Url::parse(&server.base_url()).unwrap();
+        let order = [0, 1, 1, 0, 1, 0, 0];
+        let weighted: Vec<WeightedUser> = order
+            .iter()
+            .map(|&scenarios_index| WeightedUser {
+                scenarios_index,
+                machine_name: Arc::from(["first", "second"][scenarios_index]),
+                base_url: base_url.clone(),
+            })
+            .collect();
+        let mut parts = Vec::new();
+        build_parts(
+            &weighted,
+            &build,
+            2,
+            &std::sync::atomic::AtomicUsize::new(1),
+            &std::sync::atomic::AtomicBool::new(false),
+            None,
+            |built| {
+                parts.push(built.unwrap());
+                true
+            },
+        );
+        assert!(parts.len() > 1, "the users were built in one part");
+        // A batch takes its parts in order and starts each part's users from
+        // its end, as the weighted users are taken from the end.
+        let started: Vec<usize> = parts
+            .into_iter()
+            .flat_map(|mut part| std::iter::from_fn(move || part.pop()))
+            .map(|user| user.scenarios_index)
+            .collect();
+        let weighted_order: Vec<usize> = order.iter().rev().copied().collect();
+        assert_eq!(started, weighted_order, "users started out of order");
+    }
+
     /// Users of a weighted load test with several scenarios start in the
     /// order, with the ordinals and scenarios, main gave them, at setup and
     /// on a Controller increase.
