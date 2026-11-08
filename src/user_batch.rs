@@ -1242,6 +1242,8 @@ pub(crate) mod tests {
             Duration::from_millis(20),
         )
         .await;
+        // Setup built the first 5, in one part or more.
+        let setup = user_events(&goose_attack).len();
         // Run the step machine, noting when each step began.
         let mut step_began = std::collections::BTreeMap::new();
         loop {
@@ -1268,6 +1270,7 @@ pub(crate) mod tests {
         let events = user_events(&goose_attack);
         let built: Vec<(usize, std::time::Instant)> = events
             .iter()
+            .skip(setup)
             .filter_map(|&(event, at)| match event {
                 UserEvent::Built(users) => Some((users, at)),
                 _ => None,
@@ -1278,7 +1281,6 @@ pub(crate) mod tests {
         let increase_began = step_began[&2];
         let ahead: usize = built
             .iter()
-            .skip(1)
             .filter(|(_, at)| *at < increase_began)
             .map(|(users, _)| users)
             .sum();
@@ -1326,6 +1328,8 @@ pub(crate) mod tests {
             Duration::from_millis(50),
         )
         .await;
+        // Setup built the first 2, in one part or more.
+        let setup = user_events(&goose_attack).len();
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !(goose_attack.attack_phase == AttackPhase::Maintain
             && goose_attack.test_plan.current >= 2)
@@ -1345,9 +1349,9 @@ pub(crate) mod tests {
             }
         }
         assert_eq!(run_state.active_users, 2 + users);
-        // Setup built the first 2; the rest are the step's.
+        // The users setup did not build are the step's.
         let events: Vec<(UserEvent, std::time::Instant)> =
-            user_events(&goose_attack).into_iter().skip(1).collect();
+            user_events(&goose_attack).into_iter().skip(setup).collect();
         let (mut built, mut started, mut starts, mut last_built) = (0, 0, Vec::new(), None);
         for (at, &(event, when)) in events.iter().enumerate() {
             match event {
@@ -1663,16 +1667,17 @@ pub(crate) mod tests {
             Duration::ZERO,
         )
         .await;
+        // Setup built the first 2, in one part or more.
+        let setup = user_events(&goose_attack).len();
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         // The next increase's 50 users are built ahead in parts while the
         // plan holds, and wait on the batch's channel: `Built` is recorded
         // before a part is handed on, so every part built must be on it.
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            // Setup's part of 2 came first.
             let parts: Vec<usize> = user_events(&goose_attack)
                 .iter()
-                .skip(1)
+                .skip(setup)
                 .filter_map(|(event, _)| match event {
                     UserEvent::Built(users) => Some(*users),
                     _ => None,
