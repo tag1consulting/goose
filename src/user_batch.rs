@@ -659,7 +659,9 @@ impl GooseAttack {
         let batch = self.user_batch.insert(batch);
         // Its step runs: a batch built ahead builds what is left of it on
         // every thread.
-        batch.threads.store(build_threads(), std::sync::atomic::Ordering::Relaxed);
+        batch
+            .threads
+            .store(build_threads(), std::sync::atomic::Ordering::Relaxed);
         if batch.failed {
             return None;
         }
@@ -738,7 +740,6 @@ impl GooseAttack {
             starts.in_second += 1;
         }
     }
-
 }
 
 #[cfg(test)]
@@ -1622,7 +1623,12 @@ pub(crate) mod tests {
 
     /// The parts built so far: users, the threads each was built on, when.
     fn parts_built_on(goose_attack: &GooseAttack) -> Vec<(usize, usize, std::time::Instant)> {
-        goose_attack.user_test.parts_built_on.lock().unwrap().clone()
+        goose_attack
+            .user_test
+            .parts_built_on
+            .lock()
+            .unwrap()
+            .clone()
     }
 
     /// A batch built ahead of its step builds on fewer threads than every
@@ -1693,10 +1699,7 @@ pub(crate) mod tests {
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         while goose_attack.test_plan.current < 2 {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the hold did not end"
-            );
+            assert!(std::time::Instant::now() < deadline, "the hold did not end");
             goose_attack.maintain_attack(&mut run_state).await.unwrap();
         }
         let boundary = goose_attack.step_started.unwrap();
