@@ -1474,7 +1474,16 @@ pub(crate) mod tests {
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        assert!(control(&mut goose_attack, &mut run_state, "test_plan 3,1s;3,1h").await);
+        // The new plan's increase is step 2, the held batch's step too, so
+        // only dropping the batch with the change keeps it from starting.
+        assert!(
+            control(
+                &mut goose_attack,
+                &mut run_state,
+                "test_plan 2,0s;3,1s;3,1h"
+            )
+            .await
+        );
         let dropped = clients_built(&goose_attack);
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
         hold_until(&mut goose_attack, &mut run_state, |_, _| false).await;
