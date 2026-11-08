@@ -1706,6 +1706,58 @@ pub(crate) mod tests {
         }
     }
 
+    /// A batch built ahead for a step that starts its users at once, a 0 s
+    /// ramp, and that takes longer to build than the hold before it: its
+    /// step starts the users already built while the rest still build, not
+    /// once the whole batch is built.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // Builds clients on every CPU: never beside a real time throttle test.
+    #[serial_test::parallel(cpu)]
+    async fn test_an_ahead_batch_for_a_0s_ramp_starts_users_as_its_parts_are_built() {
+        let server = index_server();
+        // 40 users a build thread at 50 ms a client take at least 2 s to
+        // build, longer than the 1 s hold they are built in.
+        let users = 40 * build_threads();
+        let plan = format!("2,0s;2,1s;{0},0s;{0},1h", 2 + users);
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &["--test-plan", &plan],
+            vec![index_scenario("Ramp", 10)],
+            Duration::from_millis(50),
+        )
+        .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !(goose_attack.attack_phase == AttackPhase::Maintain
+            && goose_attack.test_plan.current >= 3)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the step's users did not all start"
+            );
+            match goose_attack.attack_phase {
+                AttackPhase::Increase => {
+                    goose_attack.increase_attack(&mut run_state).await.unwrap()
+                }
+                AttackPhase::Maintain => {
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap()
+                }
+                phase => panic!("unexpected phase {:?}", phase),
+            }
+        }
+        assert_eq!(run_state.active_users, 2 + users);
+        let events = user_events(&goose_attack);
+        let last_built = events
+            .iter()
+            .rposition(|(event, _)| matches!(event, UserEvent::Built(_)))
+            .unwrap();
+        assert!(
+            events[..last_built].iter().any(
+                |(event, _)| matches!(event, UserEvent::Started(ordinal) if *ordinal >= 2)
+            ),
+            "no user of the step started before its batch's last part was built"
+        );
+    }
+
     /// When a batch built ahead is not done as its step begins, the step
     /// begins on time, its first new user starts within a second of the
     /// boundary, and the parts still to build use every build thread.
