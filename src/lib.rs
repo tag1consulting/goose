@@ -62,6 +62,7 @@ pub mod test_plan;
 pub mod threshold;
 mod throttle;
 mod user;
+mod user_batch;
 pub mod util;
 
 use lazy_static::lazy_static;
@@ -80,6 +81,7 @@ use crate::metrics::{
     GooseMetric, GooseMetrics, GooseRequestCounterRegistry, MetricsCommand, MetricsProcessor,
 };
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
+use crate::user_batch::{StepStarts, UserBatch, UserTestHooks, WeightedUser};
 
 lazy_static! {
     // The reason the killswitch was first triggered (by Ctrl-C or by
@@ -734,9 +736,12 @@ struct GooseAttackRunState {
     metrics_header_displayed: bool,
     /// When entering the idle phase use this flag to only display a message one time.
     idle_status_displayed: bool,
-    /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
-    /// can be stopped later.
+    /// The task of every [`GooseUser`](./goose/struct.GooseUser.html) not yet seen to
+    /// finish, joined when the load test stops. Finished tasks are released as
+    /// users start and while the load test holds.
     users: Vec<tokio::task::JoinHandle<()>>,
+    /// How many tasks `users` held after finished tasks were last released.
+    users_pruned_at: usize,
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
@@ -777,6 +782,35 @@ struct GooseAttackRunState {
 }
 
 impl GooseAttackRunState {
+    /// Release the handles of user tasks that have finished, so a stopped
+    /// user's task is not held until the load test ends. A `Vec` and not a
+    /// `JoinSet`: this run state is dropped on an error return while users
+    /// still run, and dropping a `JoinSet` would abort them where a `Vec`
+    /// leaves them be.
+    fn prune_finished_users(&mut self) {
+        let held = self.users.len();
+        self.users.retain(|user| !user.is_finished());
+        self.users_pruned_at = self.users.len();
+        if self.users.len() < held {
+            debug!(
+                "[users]: released {} finished user tasks, {} held for {} running users",
+                held - self.users.len(),
+                self.users.len(),
+                self.active_users
+            );
+        }
+    }
+
+    /// As [`prune_finished_users`](Self::prune_finished_users), as a user
+    /// starts: only once the tasks held have doubled since they were last
+    /// released, so each start does constant work on average, however long
+    /// stopped users take to end.
+    fn prune_finished_users_when_due(&mut self) {
+        if self.users.len() >= 2 * self.users_pruned_at.max(1) {
+            self.prune_finished_users();
+        }
+    }
+
     /// Logs how many response bodies the run's users read to the end because the
     /// test dropped them unread, how many bytes that was, and how many reads failed.
     fn log_unread_body_totals(&self, configuration: &GooseConfiguration) {
@@ -839,8 +873,15 @@ pub struct GooseAttack {
     scenarios: Vec<Scenario>,
     /// A set of all registered scenario names.
     scenario_machine_names: HashSet<String>,
-    /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
-    weighted_users: Vec<GooseUser>,
+    /// The users still to be built, the next to start last, as weighted:
+    /// which scenario each runs, and its base URL.
+    weighted_users: Vec<WeightedUser>,
+    /// The users built, or being built, for the next users a step starts: at
+    /// most one batch, and ahead of its step only for a test plan's next
+    /// increase.
+    user_batch: Option<UserBatch>,
+    /// How the current increase step's users have started, for the log.
+    step_starts: Option<StepStarts>,
     /// The global ordinal of this process's first user: 0, unless it runs a
     /// share of a Gaggle's users. User indexes, the users each scenario
     /// counts and coordinated omission events all count from it.
@@ -910,6 +951,8 @@ pub struct GooseAttack {
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
+    /// What the tests count and slow down as users are built and started.
+    user_test: UserTestHooks,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -984,6 +1027,9 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            user_batch: None,
+            step_starts: None,
+            user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
@@ -1041,6 +1087,9 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            user_batch: None,
+            step_starts: None,
+            user_test: UserTestHooks::default(),
             #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
@@ -1715,88 +1764,50 @@ impl GooseAttack {
         self.user_ordinals = users.iter().map(|&(ordinal, _)| ordinal).collect();
     }
 
-    /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
-    fn weight_scenario_users(&mut self, total_users: usize) -> Result<Vec<GooseUser>, GooseError> {
+    /// Weight the next `total_users` users across the scenarios: which
+    /// scenario each runs, in the order users start, the first last, as they
+    /// are popped. Builds no client: [`user_batch::build_users`] builds the
+    /// users a change starts, before they start.
+    fn weight_scenario_users(
+        &mut self,
+        total_users: usize,
+    ) -> Result<Vec<WeightedUser>, GooseError> {
         trace!("weight_scenario_users");
 
         let weighted_scenarios = self.user_scenario_order(total_users)?;
 
-        // Allocate a state for each user that will be launched.
+        // Weight a scenario for each user that will be launched.
         info!(
             "[scheduler]: initializing {} user states...",
             self.test_plan.total_users()
         );
 
-        // Gather the parameters needed for each user. This is cheap and must be
-        // sequential to preserve the round-robin scenario assignment order (users
-        // are later .pop()'d so ordering matters).
+        // Each scenario's users share its base URL, resolved once. Sequential to
+        // keep the round-robin scenario assignment order (users are later
+        // .pop()'d so ordering matters).
         let config_host = self.get_configuration_host();
         let defaults_host = self.defaults.host.clone();
-        let mut user_params: Vec<(usize, Arc<str>, url::Url)> = Vec::with_capacity(total_users);
-        for scenarios_index in &weighted_scenarios {
-            let base_url = goose::get_base_url(
-                config_host.clone(),
-                self.scenarios[*scenarios_index].host.clone(),
-                defaults_host.clone(),
-            )?;
-            user_params.push((
-                self.scenarios[*scenarios_index].scenarios_index,
-                self.scenarios[*scenarios_index].machine_name.clone(),
-                base_url,
-            ));
-        }
-
-        // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client unless one is shared, and building it is
-        // the expensive part. Chunks are collected back in order to preserve the
-        // scenario assignment sequence.
-        let configuration = &self.configuration;
-        let client_strategy = &self.client_strategy;
-        let metrics_hash = self.metrics.hash;
-        let num_cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        let chunk_size = total_users.div_ceil(num_cpus).max(1);
-
-        let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(num_cpus);
-            for (chunk_idx, chunk) in user_params.chunks(chunk_size).enumerate() {
-                let base = chunk_idx * chunk_size;
-                handles.push(s.spawn(move || {
-                    let mut users = Vec::with_capacity(chunk.len());
-                    for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
-                        debug!("creating user state: {} ({})", base + i, scenarios_index);
-                        let reqwest_client = match client_strategy {
-                            None => goose::create_reqwest_client(configuration)?,
-                            Some(strategy) => strategy.user_client()?,
-                        };
-                        users.push(GooseUser::new(
-                            *scenarios_index,
-                            machine_name.clone(),
-                            base_url.clone(),
-                            configuration,
-                            metrics_hash,
-                            Some(reqwest_client),
-                        )?);
-                    }
-                    Ok::<Vec<GooseUser>, GooseError>(users)
-                }));
-            }
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join().unwrap_or_else(|_| {
-                        Err(GooseError::Io(io::Error::other(
-                            "user initialization thread panicked",
-                        )))
-                    })
-                })
-                .collect()
-        });
-
+        let mut base_urls: Vec<Option<url::Url>> = vec![None; self.scenarios.len()];
         let mut weighted_users = Vec::with_capacity(total_users);
-        for result in results {
-            weighted_users.extend(result?);
+        for &scenarios_index in &weighted_scenarios {
+            let scenario = &self.scenarios[scenarios_index];
+            let base_url = match &base_urls[scenarios_index] {
+                Some(base_url) => base_url.clone(),
+                None => {
+                    let base_url = goose::get_base_url(
+                        config_host.clone(),
+                        scenario.host.clone(),
+                        defaults_host.clone(),
+                    )?;
+                    base_urls[scenarios_index] = Some(base_url.clone());
+                    base_url
+                }
+            };
+            weighted_users.push(WeightedUser {
+                scenarios_index: scenario.scenarios_index,
+                machine_name: scenario.machine_name.clone(),
+                base_url,
+            });
         }
         debug!(
             "[scheduler]: created {} weighted_users",
@@ -2253,8 +2264,10 @@ impl GooseAttack {
             return Ok(());
         }
 
-        // Allocate a state for each of the users we are about to start.
+        // Weight the users the test plan will start, and build those of its
+        // first increase.
         self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+        self.build_first_users()?;
 
         Ok(())
     }
@@ -2945,6 +2958,7 @@ impl GooseAttack {
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
+            users_pruned_at: 0,
             user_channels: Vec::new(),
             running_users: Vec::new(),
             running_metrics_timer: std_now,
@@ -3006,11 +3020,28 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        // Determine if enough users have been launched.
-        let all_users_launched =
-            goose_attack_run_state.active_users >= self.test_plan.steps[self.test_plan.current].0;
+        // Determine if enough users have been launched: or none can be, as
+        // building them failed.
+        let all_users_launched = goose_attack_run_state.active_users
+            >= self.test_plan.steps[self.test_plan.current].0
+            || self
+                .user_batch
+                .as_ref()
+                .is_some_and(|batch| batch.step == self.test_plan.current && batch.failed);
 
         if all_users_launched {
+            // No user of this step's batch is left to start.
+            if self
+                .user_batch
+                .as_ref()
+                .is_some_and(|batch| batch.step == self.test_plan.current && !batch.failed)
+            {
+                self.user_batch = None;
+            }
+            let step = self.test_plan.current;
+            self.log_step_starts(self.step_rate(step), self.step_users_added(step), true);
+            self.build_ahead();
+
             // All users were increased, delay until test_plan step time has elapsed.
             self.end_of_step_delay().await;
 
@@ -3020,6 +3051,15 @@ impl GooseAttack {
 
                 // Moving to the next phase, reset adjust_user_in_ms.
                 goose_attack_run_state.adjust_user_in_ms = 0;
+
+                // A batch that failed ends with its step.
+                if self
+                    .user_batch
+                    .as_ref()
+                    .is_some_and(|batch| batch.step == self.test_plan.current)
+                {
+                    self.user_batch = None;
+                }
 
                 // Advance to the next TestPlan step.
                 self.advance_test_plan(goose_attack_run_state);
@@ -3054,10 +3094,19 @@ impl GooseAttack {
 
             // Determine if it's time to spawn a GooseUser.
             if goose_attack_run_state.adjust_due() {
-                let mut thread_user = self
-                    .weighted_users
-                    .pop()
-                    .expect("insufficent weighted_users");
+                // A user starts only once its part is built.
+                let Some(mut thread_user) = self.next_user(goose_attack_run_state).await else {
+                    return Ok(());
+                };
+                // A user due before its part was built starts late, and the next
+                // is due one interval after it: never faster than the rate.
+                if self
+                    .user_batch
+                    .as_mut()
+                    .is_some_and(|batch| std::mem::take(&mut batch.stalled))
+                {
+                    goose_attack_run_state.adjust_user_in_ms = 0;
+                }
                 // The next GooseUser is due one interval, 1 second divided by the
                 // increase_rate, after this one was.
                 goose_attack_run_state
@@ -3137,9 +3186,9 @@ impl GooseAttack {
                 let thread_number = self.metrics.total_users + 1;
 
                 // Align request `elapsed` (graph second) with the continuous series
-                // clock so RPS and active-users charts share one timeline. Weighted
-                // users are often created before the run starts; mid-test increases
-                // create users later — both must report seconds since series start.
+                // clock so RPS and active-users charts share one timeline. Users are
+                // often built before the run starts, and mid-test increases build
+                // them later: both must report seconds since series start.
                 if let Some(series_started) = self.series_started {
                     thread_user.started = series_started;
                 }
@@ -3156,7 +3205,11 @@ impl GooseAttack {
                 self.gaggle_watch_user(&user);
 
                 goose_attack_run_state.users.push(user);
+                goose_attack_run_state.prune_finished_users_when_due();
                 self.count_started_user(goose_attack_run_state);
+                self.user_test.user_started(ordinal);
+                let step = self.test_plan.current;
+                self.log_step_starts(self.step_rate(step), self.step_users_added(step), false);
 
                 if let Some(running_metrics) = self.configuration.running_metrics {
                     if util::ms_timer_expired(
@@ -3189,6 +3242,8 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        self.build_ahead();
+
         // Determine if it's time to move to the next test plan step.
         if self.test_plan.current < self.test_plan.steps.len()
             && util::ms_timer_expired(
@@ -3198,6 +3253,8 @@ impl GooseAttack {
         {
             self.advance_test_plan(goose_attack_run_state);
         } else {
+            // Release the tasks of users that have stopped since.
+            goose_attack_run_state.prune_finished_users();
             // Subtract the time spent doing other things, running the main parent loop twice
             // per second.
             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
@@ -3433,6 +3490,8 @@ impl GooseAttack {
         } else if goose_attack_run_state.active_users
             <= self.test_plan.steps[self.test_plan.current].0
         {
+            self.build_ahead();
+
             // Be sure step takes as long as it was configured to.
             self.end_of_step_delay().await;
 
@@ -3506,8 +3565,9 @@ impl GooseAttack {
     //
     // Soft vs hard errors:
     // - Soft: expected rejections → ControlOutcome { ok: false, error: Some(...) }
-    // - Hard: Result::Err(GooseError) (weight_scenario_users on a users or test
-    //   plan increase; reset_run_state in start finish; cancel_attack).
+    // - Hard: Result::Err(GooseError) (weight_scenario_users on a users
+    //   increase or a test plan change; check_user_client on a test plan
+    //   change; reset_run_state in start finish; cancel_attack).
     // `GooseAttack::control` replies with the outcome, or `internal` on a hard
     // error before returning it, so every caller still waiting gets an answer.
     // ========================================================================
@@ -3835,8 +3895,9 @@ impl GooseAttack {
                 self.users_ramp_ms(goose_attack_run_state.active_users, new_users)
             });
 
-            // Allocate more users if increasing users (hard Err on failure),
+            // Weight more users if increasing users (hard Err on failure),
             // before anything changes: a Gaggle manager's run on its workers.
+            // They are built, off the main loop, as the increase starts.
             if new_users > goose_attack_run_state.active_users && !self.is_gaggle_manager() {
                 let weighted = self.weight_scenario_users(user_difference);
                 match weighted {
@@ -3847,6 +3908,10 @@ impl GooseAttack {
                     }
                 }
             }
+
+            // Users not yet started are replaced by this change's: a batch
+            // still building stops, and one built is dropped.
+            self.user_batch = None;
 
             // The rest of the run, generated again from its shape: a ramp to
             // the new count, then the hold and ramp down still ahead.
@@ -3882,7 +3947,7 @@ impl GooseAttack {
     /// Switch a running load test to `test_plan`, from its first step and
     /// the current user count, replacing a users ramp and its shape.
     ///
-    /// Hard error: `weight_scenario_users`.
+    /// Hard error: `weight_scenario_users` or `check_user_client`.
     pub(crate) fn run_test_plan(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3890,9 +3955,13 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         self.run_shape = None;
         self.test_plan = test_plan;
-        // Reallocate users: a Gaggle manager's run on its workers.
+        // The users not yet started are the old plan's.
+        self.user_batch = None;
+        // Weight the new plan's users, and check one can be built: a Gaggle
+        // manager's run on its workers.
         if !self.is_gaggle_manager() {
             self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+            self.check_user_client()?;
         }
         // Insert the current state of the test plan before the new test plan.
         let elapsed = self.step_elapsed() as usize;
@@ -3928,6 +3997,9 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        // No user not yet started will start.
+        self.user_batch = None;
+
         if goose_attack_run_state.active_users == 0 {
             // A stop or Ctrl-C in the tick of its start, or a second shutdown from Idle:
             // a plan maintaining 0 users would never end.
@@ -3991,6 +4063,39 @@ impl GooseAttack {
     /// but never a Gaggle worker, which waits for its manager to say so.
     fn shuts_down_after_stop(&self) -> bool {
         !self.is_gaggle_worker() && !self.configuration.no_autostart
+    }
+
+    /// Whether the users of a run that ends on `--iterations` have all
+    /// exited, so the run ends: when one has just exited (`exited`) and
+    /// every user the plan starts has, or, as building some of them failed,
+    /// every user that started has, while the run holds short of its users.
+    fn users_exited(&self, goose_attack_run_state: &GooseAttackRunState, exited: bool) -> bool {
+        // In Stand-alone mode, all users are started.
+        (exited && goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users())
+            || (self.configuration.iterations() > 0
+                && self.attack_phase == AttackPhase::Maintain
+                && goose_attack_run_state.active_users < self.current_target_users()
+                && goose_attack_run_state.users_shutdown.len() == self.metrics.total_users)
+    }
+
+    /// Record each user that finished its `--iterations` and exited, and end
+    /// the run once they all have.
+    async fn handle_user_exits(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        // Checked after each exit, as several in one tick can step the count
+        // past the plan's total.
+        let mut ended = false;
+        while let Ok(user) = goose_attack_run_state.shutdown_rx.try_recv() {
+            goose_attack_run_state.users_shutdown.insert(user);
+            ended |= self.users_exited(goose_attack_run_state, true);
+        }
+        if ended || self.users_exited(goose_attack_run_state, false) {
+            self.set_ended_by(runs::EndedBy::UsersExited, None);
+            self.cancel_attack(goose_attack_run_state).await?;
+        }
+        Ok(())
     }
 
     /// Count one more user running: in the users started over the run, and
@@ -4083,6 +4188,7 @@ impl GooseAttack {
         goose_attack_run_state.metrics_header_displayed = false;
         goose_attack_run_state.idle_status_displayed = false;
         goose_attack_run_state.users = Vec::new();
+        goose_attack_run_state.users_pruned_at = 0;
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_users = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
@@ -4217,10 +4323,6 @@ impl GooseAttack {
         self.series_started = Some(now);
         // The same start, as the reports' record gives it.
         self.output.started = Some(chrono::Utc::now());
-        // Align pre-created weighted users so request.elapsed matches series time.
-        for user in &mut self.weighted_users {
-            user.started = now;
-        }
 
         Ok(())
     }
@@ -4399,20 +4501,8 @@ impl GooseAttack {
             self.handle_dashboard_requests(goose_attack_run_state)
                 .await?;
 
-            let mut message = goose_attack_run_state.shutdown_rx.try_recv();
-            while message.is_ok() {
-                goose_attack_run_state
-                    .users_shutdown
-                    .insert(message.expect("failed to wrap OK message"));
-
-                // In Stand-alone mode, all users are started.
-                if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
-                    self.set_ended_by(runs::EndedBy::UsersExited, None);
-                    self.cancel_attack(goose_attack_run_state).await?;
-                }
-
-                message = goose_attack_run_state.shutdown_rx.try_recv();
-            }
+            // Users that finished their iterations, and the run's end.
+            self.handle_user_exits(goose_attack_run_state).await?;
 
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
@@ -4822,6 +4912,7 @@ pub(crate) fn plan_hash(scenarios: &[Scenario], scheduler: &GooseScheduler) -> u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::user_batch::tests::{index_scenario, index_server, started_attack};
 
     /// The telnet Controller listens by default and the WebSocket Controller
     /// only with `--websocket`, and with no host given both listen on
@@ -6510,4 +6601,76 @@ mod tests {
     /// The golden value of [`gaggle_plan`]'s hash: changing it changes every
     /// plan's hash, which the CHANGELOG must say.
     const GAGGLE_PLAN_HASH: u64 = 0xda7d_f883_b1f9_971b;
+
+    /// An `--iterations` run whose increase failed to build ends once every
+    /// user that started has exited, though the plan counts more.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_iterations_end_once_the_users_started_exit() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &[
+                "--users",
+                "4",
+                "--iterations",
+                "1",
+                "--increase-rate",
+                "1000",
+            ],
+            vec![index_scenario("Iterations", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        // 2 of the 4 started, the other 2 failed to build, and both exited.
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+        run_state.active_users = 2;
+        goose_attack.metrics.total_users = 2;
+        run_state.users_shutdown.extend([1, 2]);
+        assert!(goose_attack.users_exited(&run_state, false));
+        // While one still runs, the run goes on.
+        run_state.users_shutdown.remove(&2);
+        assert!(!goose_attack.users_exited(&run_state, false));
+    }
+
+    /// When several users exit in one tick, an `--iterations` run ends at
+    /// the exit that brings the users exited to the plan's total, as main
+    /// ends it, though later exits in the same tick step the count past it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_iterations_end_when_several_users_exit_in_one_tick() {
+        let server = index_server();
+        let (mut goose_attack, mut run_state) = started_attack(
+            &server.base_url(),
+            &[
+                "--users",
+                "2",
+                "--iterations",
+                "1",
+                "--increase-rate",
+                "1000",
+            ],
+            vec![index_scenario("Iterations", 10)],
+            Duration::ZERO,
+        )
+        .await;
+        // The plan counts 2 users; 3 started over the run, as after a
+        // Controller decrease and increase, and all 3 exit in one tick.
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+        run_state.active_users = 2;
+        goose_attack.metrics.total_users = 3;
+        for user in 1..=3 {
+            run_state.all_threads_shutdown_tx.send(user).unwrap();
+        }
+        goose_attack
+            .handle_user_exits(&mut run_state)
+            .await
+            .unwrap();
+        assert_eq!(run_state.users_shutdown.len(), 3);
+        assert!(
+            matches!(
+                goose_attack.metrics.history.last().map(|row| &row.action),
+                Some(TestPlanStepAction::Canceling)
+            ),
+            "the run did not end in the tick its users exited"
+        );
+    }
 }

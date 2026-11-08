@@ -200,6 +200,9 @@ mod tests {
     /// 400 a second the burst is 400, and lowered to 50 after a quiet spell,
     /// with 400 slots free, the fillers take back all but 50 of them.
     #[tokio::test]
+    // Measures a rate in real time: never beside the tests that build
+    // clients on every CPU, which starve its filler.
+    #[serial_test::serial(cpu)]
     async fn the_burst_follows_the_rate() {
         let test = async {
             let throttle = start(100);
@@ -224,6 +227,9 @@ mod tests {
     /// start, past the 100 times a channel of one second of the starting
     /// rate allowed: both its rate and its burst follow.
     #[tokio::test]
+    // Measures a rate in real time: never beside the tests that build
+    // clients on every CPU, which starve its filler.
+    #[serial_test::serial(cpu)]
     async fn a_throttle_rises_past_100_times_its_start() {
         let test = async {
             let throttle = start(1);
@@ -248,6 +254,9 @@ mod tests {
     /// one slot free at the start, none once full, one second of the rate
     /// after a quiet spell, and the rate held while users send.
     #[tokio::test]
+    // Measures a rate in real time: never beside the tests that build
+    // clients on every CPU, which starve its filler.
+    #[serial_test::serial(cpu)]
     async fn an_unchanged_rate_is_a_fixed_throttle() {
         let test = async {
             let throttle = start(200);
