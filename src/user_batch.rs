@@ -223,12 +223,15 @@ fn build_parts(
     let mut rest = users;
     while !rest.is_empty() {
         let (left, part) = rest.split_at(rest.len() - size.min(rest.len()));
+        let building = std::time::Instant::now();
         let built = build_users(part, build, cancel);
+        let build_ms = building.elapsed().as_millis();
         let more = matches!(built, Ok(Some(_)));
         if !deliver(built) || !more {
             return;
         }
         rest = left;
+        let waiting = std::time::Instant::now();
         if let (Some(taken), false) = (&taken, rest.is_empty()) {
             size = match taken.recv() {
                 Ok(true) => size.saturating_mul(2).min(largest),
@@ -237,6 +240,13 @@ fn build_parts(
                 Err(_) => return,
             };
         }
+        debug!(
+            "[users]: built a part of {} users in {build_ms} ms, then waited {} ms for it to be taken, {} left, next part {}",
+            part.len(),
+            waiting.elapsed().as_millis(),
+            rest.len(),
+            size.min(rest.len())
+        );
     }
 }
 
@@ -290,6 +300,8 @@ pub(crate) struct UserBatch {
     /// Whether the next user was due before its part was built, so its start
     /// is late and the users after it are due from it, never sooner.
     pub(crate) stalled: bool,
+    /// How long the main loop has waited for the part it waits for now.
+    waited: Duration,
     /// Whether building a part failed, so its step starts no more users.
     pub(crate) failed: bool,
 }
@@ -327,6 +339,7 @@ impl UserBatch {
             taken,
             next: Vec::new(),
             stalled: false,
+            waited: Duration::ZERO,
             failed: false,
         }
     }
@@ -372,7 +385,10 @@ impl UserBatch {
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                     // The next user was due before its part was built.
                     self.stalled = true;
-                    match tokio::time::timeout(wait, self.parts.recv()).await {
+                    let waiting = std::time::Instant::now();
+                    let part = tokio::time::timeout(wait, self.parts.recv()).await;
+                    self.waited += waiting.elapsed();
+                    match part {
                         Ok(part) => part,
                         Err(_) => return Ok(None),
                     }
@@ -380,6 +396,13 @@ impl UserBatch {
             };
             match part {
                 Some(Ok(Some(users))) => {
+                    debug!(
+                        "[users]: step {} took a part of {} users after waiting {} ms for it, stalled {}",
+                        self.step,
+                        users.len(),
+                        std::mem::take(&mut self.waited).as_millis(),
+                        self.stalled
+                    );
                     self.next = users;
                     // The next part is built from now: a builder that stopped
                     // takes no more.
