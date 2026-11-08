@@ -499,9 +499,7 @@ impl Drop for UserBatch {
         let users: usize = parts.iter().map(Vec::len).sum();
         debug!(
             "[users]: dropping the batch of {} users for step {}: {} built and not started",
-            self.size,
-            self.step,
-            users
+            self.size, self.step, users
         );
         if users == 0 {
             return;
