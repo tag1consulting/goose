@@ -1472,19 +1472,30 @@ pub(crate) mod tests {
         )
         .await;
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        // The new plan's increase is step 2, the held batch's step too, so
-        // only dropping the batch with the change keeps it from starting.
+        // The new plan holds 2 users for a second at step 1, then raises them
+        // at step 2, the held batch's step too, so only dropping the batch
+        // with the change keeps step 2 from starting its users. A 0 ms hold
+        // would never end.
         assert!(
             control(
                 &mut goose_attack,
                 &mut run_state,
-                "test_plan 2,0s;3,1s;3,1h"
+                "test_plan 2,1s;3,1s;3,1h"
             )
             .await
         );
         let dropped = clients_built(&goose_attack);
+        hold_until(&mut goose_attack, &mut run_state, |goose_attack, _| {
+            goose_attack.attack_phase != AttackPhase::Maintain
+        })
+        .await;
+        assert_eq!(goose_attack.test_plan.current, 2, "step 2 did not begin");
         ramp_to_hold(&mut goose_attack, &mut run_state).await;
-        hold_until(&mut goose_attack, &mut run_state, |_, _| false).await;
+        let held = std::time::Instant::now();
+        hold_until(&mut goose_attack, &mut run_state, |_, _| {
+            held.elapsed() > Duration::from_secs(2)
+        })
+        .await;
         assert_eq!(goose_attack.metrics.total_users, 3);
         // The held batch's 398 users are never all built, and none starts.
         assert!(
