@@ -37,7 +37,7 @@ async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-Goose builds each user's client with the user agent `goose/0.19.1`, the `--timeout`, gzip unless `--no-gzip`, invalid certificates accepted only with `--accept-invalid-certs`, and a cookie store when the `cookies` feature is enabled. Every user has a client of its own whether or not it keeps cookies. In a run of `examples/simple`, 1,000 users used about 65 MB more memory than 10 users.
+By default, every user has a client of its own. Goose builds it with the user agent `goose/<version>` and, when the `cookies` feature is on, a cookie store. The timeout, gzip and invalid certificate settings each come from the command line (`--timeout`, `--no-gzip`, `--accept-invalid-certs`), else a `GooseDefault`, else Goose's built in default.
 
 ## A Client Without Cookies
 
@@ -87,7 +87,7 @@ To leave cookie support out of the build, turn off Goose's default features:
 goose = { version = "^0.19", default-features = false }
 ```
 
-Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off: they include `http2`, which would let HTTPS requests use HTTP/2 from a client the load test builds itself, and from Goose's own clients when certificates are not checked, where Goose otherwise keeps to HTTP/1.1.
+Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off. They include `http2`, which lets a client you build yourself, or a Goose client that accepts invalid certificates, use HTTP/2 over HTTPS. To get HTTP/2 on purpose, see [TLS](../requirements.html#tls).
 
 ## The Type-Safe Client Builder
 
@@ -146,7 +146,7 @@ fn main() -> Result<(), GooseError> {
 
 With either setter:
 
-- The builder's user agent replaces `goose/0.19.1`.
+- The builder's user agent replaces the default, `goose/<version>`.
 - The timeout, gzip and invalid certificate settings each come from the first of: the option given on the command line (`--timeout`, `--no-gzip`, `--accept-invalid-certs`), the builder, a `GooseDefault` for the option, and Goose's built in default. A setting the builder was not given keeps its `GooseDefault` or built in default.
 - The users that run the `test_start` and `test_stop` transactions, and users a Controller adds, get the builder's clients too.
 - The two setters replace each other, so the last call wins.

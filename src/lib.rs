@@ -1416,9 +1416,9 @@ impl GooseAttack {
         }
 
         // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client unless one is shared, built over one shared
-        // certificate verifier. Chunks are collected back in order to preserve
-        // the scenario assignment sequence.
+        // gets its own reqwest client unless the load test set one client for all
+        // users. Chunks are collected back in order to preserve the scenario
+        // assignment sequence.
         let configuration = &self.configuration;
         let client_strategy = &self.client_strategy;
         let metrics_hash = self.metrics.hash;

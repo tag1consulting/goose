@@ -429,27 +429,29 @@ impl Default for GooseClientBuilder<CookiesEnabled> {
     }
 }
 
-/// The part of reqwest's default TLS setup that is costly to build, shared by every
-/// client Goose builds that checks certificates: the certificate verifier, and the
-/// rustls config builder holding its crypto provider and TLS versions. Each client
-/// builds its own config from the builder, as cloning a built config would share
-/// its session and certificate compression caches.
+/// Built once and shared by every client Goose builds that checks certificates: the
+/// certificate verifier, which is costly to build, and a rustls config builder with
+/// the crypto provider and TLS versions. Goose builds each client's config from the
+/// rustls config builder, because a clone of a built config would share its session
+/// cache and certificate compression cache.
 struct SharedTls {
     builder: ConfigBuilder<ClientConfig, WantsVerifier>,
     verifier: Arc<dyn ServerCertVerifier>,
 }
 
 impl SharedTls {
-    /// What reqwest 0.13 builds for each client by default: the crypto provider
-    /// installed as the process default, else aws-lc-rs, rustls' TLS 1.3 and 1.2,
-    /// and the platform verifier over the system's root certificates.
+    /// What reqwest 0.13 builds for each client by default: the crypto provider from
+    /// [`reqwest_default_provider`], TLS 1.3 and 1.2, and the platform verifier over
+    /// the system's root certificates. `None` if building the verifier or the config
+    /// builder fails.
     fn new() -> Option<Self> {
         let provider = reqwest_default_provider();
         let verifier = rustls_platform_verifier::Verifier::new(provider.clone()).ok()?;
         Self::with_verifier(provider, Arc::new(verifier))
     }
 
-    /// The TLS versions reqwest offers by default, with `provider` and `verifier`.
+    /// The shared setup over `provider` and `verifier`, with reqwest's default TLS
+    /// versions. `None` if `provider` does not support them.
     fn with_verifier(
         provider: Arc<CryptoProvider>,
         verifier: Arc<dyn ServerCertVerifier>,
@@ -460,10 +462,10 @@ impl SharedTls {
         Some(Self { builder, verifier })
     }
 
-    /// A TLS config for one client, set as reqwest sets its default: the shared
-    /// verifier, no client certificate, SNI on, HTTP/1.1 offered by ALPN as reqwest
-    /// is built without HTTP/2, and its own session resumption store, so no TLS
-    /// session is resumed across clients.
+    /// A TLS config for one client: the shared verifier, no client certificate, and
+    /// a session store of its own, so a client never resumes another client's TLS
+    /// session. ALPN offers only HTTP/1.1, as reqwest's default does without `http2`,
+    /// because Goose cannot see whether a load test turned `http2` on.
     fn client_config(&self) -> ClientConfig {
         let mut config = self
             .builder
@@ -476,19 +478,20 @@ impl SharedTls {
     }
 }
 
-/// The crypto provider reqwest 0.13 builds a client's TLS config with.
+/// The crypto provider reqwest 0.13 uses for a client's TLS config: the process
+/// default, else aws-lc-rs.
 fn reqwest_default_provider() -> Arc<CryptoProvider> {
     CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
 }
 
-/// Built the first time a client checks certificates, then shared, so the system's
-/// root certificates are read once per process, where reqwest read them again for
-/// every client, and a crypto provider installed as the process default after that
-/// is not used. `None` if the verifier could not be built, as with no system root
-/// certificates; each client then builds its own, so reqwest returns the error it
-/// always did.
+/// Built with the first client that checks certificates, then shared, so on Linux
+/// Goose reads the system's root certificates once per process. Clients built over
+/// it ignore a crypto provider installed as the process default later. `None` if
+/// building it failed, for example with no system root certificates; each client
+/// then takes reqwest's default TLS path, which in that example returns the error
+/// reqwest always did.
 static SHARED_TLS: OnceLock<Option<SharedTls>> = OnceLock::new();
 
 #[cfg(test)]
@@ -498,14 +501,15 @@ pub(crate) static SHARED_TLS_BUILDS: std::sync::atomic::AtomicUsize =
 
 #[cfg(test)]
 thread_local! {
-    /// How many clients this thread built over the shared verifier. Per thread, so
-    /// unit tests running at the same time do not count each other's.
+    /// How many clients this thread built over the shared verifier. Counted per
+    /// thread, so unit tests running at the same time do not count each other's.
     pub(crate) static SHARED_TLS_CLIENTS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
-/// The shared TLS setup for a client built with `config`, or `None` when it does
-/// not check certificates, as reqwest then loads no root certificates.
+/// The shared TLS setup for a client built with `config`. `None` when `config`
+/// accepts invalid certificates, as that client checks none and reqwest reads no
+/// root certificates for it. Also `None` when building the shared setup failed.
 fn shared_tls(config: &GooseClientConfig) -> Option<&'static SharedTls> {
     if config.accept_invalid_certs {
         return None;
@@ -519,8 +523,10 @@ fn shared_tls(config: &GooseClientConfig) -> Option<&'static SharedTls> {
         .as_ref()
 }
 
-/// A client builder with the settings both kinds of client share, and a TLS config
-/// over `shared` when there is one.
+/// A reqwest client builder with the settings common to clients with and without
+/// cookies, and a TLS config from `shared` when there is one. That config makes
+/// reqwest use rustls for the client even when a load test turns on reqwest's
+/// `native-tls` feature.
 fn client_builder(config: &GooseClientConfig, shared: Option<&SharedTls>) -> ClientBuilder {
     let mut builder = Client::builder()
         .user_agent(&config.user_agent)
@@ -544,7 +550,7 @@ fn client_builder(config: &GooseClientConfig, shared: Option<&SharedTls>) -> Cli
 pub(crate) fn create_reqwest_client_without_cookies(
     config: &GooseClientConfig,
 ) -> Result<Client, reqwest::Error> {
-    // Explicitly do NOT add .cookie_store(true) here
+    // No .cookie_store(true): every user shares this client.
     client_builder(config, shared_tls(config)).build()
 }
 
