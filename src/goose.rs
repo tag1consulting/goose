@@ -314,9 +314,6 @@ use crate::metrics::{
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
-/// By default Goose sets the following User-Agent header when making requests.
-static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-
 /// Atomically decrement `counter` by one, saturating at zero.
 ///
 /// An explicit `compare_exchange_weak` loop with `Relaxed` ordering, equivalent to
@@ -3601,24 +3598,6 @@ impl GooseUser {
         };
         Ok(())
     }
-}
-
-/// Internal helper function to create the default GooseUser reqwest client
-pub(crate) fn create_reqwest_client(
-    configuration: &GooseConfiguration,
-) -> Result<Client, reqwest::Error> {
-    let client_builder = Client::builder()
-        .user_agent(APP_USER_AGENT)
-        .timeout(configuration.request_timeout())
-        // Enable gzip unless `--no-gzip` flag is enabled.
-        .gzip(!configuration.no_gzip)
-        // Validate https certificates unless `--accept-invalid-certs` is enabled.
-        .danger_accept_invalid_certs(configuration.accept_invalid_certs);
-
-    #[cfg(feature = "cookies")]
-    let client_builder = client_builder.cookie_store(true);
-
-    client_builder.build()
 }
 
 /// Defines the HTTP requests that Goose makes.
