@@ -145,9 +145,12 @@
 //! Load tests that set no client builder behave as before. Add a builder when a load
 //! test needs different client settings for every user, or a shared client.
 
-use reqwest::Client;
+use reqwest::{Client, ClientBuilder};
+use rustls::client::danger::ServerCertVerifier;
+use rustls::crypto::CryptoProvider;
+use rustls::{ClientConfig, ConfigBuilder, WantsVerifier};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::{GooseConfiguration, GooseError};
@@ -426,41 +429,113 @@ impl Default for GooseClientBuilder<CookiesEnabled> {
     }
 }
 
-/// Create a reqwest client without cookie support.
-pub(crate) fn create_reqwest_client_without_cookies(
-    config: &GooseClientConfig,
-) -> Result<Client, reqwest::Error> {
+/// The part of reqwest's default TLS setup that is costly to build, built once and
+/// shared by every client Goose builds: the certificate verifier, which on Linux reads
+/// and parses every system root certificate when it is built, and the rustls config
+/// builder holding the crypto provider and TLS versions it was built with.
+struct SharedTls {
+    builder: ConfigBuilder<ClientConfig, WantsVerifier>,
+    verifier: Arc<dyn ServerCertVerifier>,
+}
+
+impl SharedTls {
+    /// What reqwest 0.13 builds for each client by default: the crypto provider
+    /// installed as the process default, else aws-lc-rs, rustls' TLS 1.3 and 1.2,
+    /// and the platform verifier over the system's root certificates.
+    fn new() -> Option<Self> {
+        let provider = CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+        let verifier = rustls_platform_verifier::Verifier::new(provider.clone()).ok()?;
+        Self::with_verifier(provider, Arc::new(verifier))
+    }
+
+    /// The TLS versions reqwest offers by default, with `provider` and `verifier`.
+    fn with_verifier(
+        provider: Arc<CryptoProvider>,
+        verifier: Arc<dyn ServerCertVerifier>,
+    ) -> Option<Self> {
+        let builder = ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(rustls::ALL_VERSIONS)
+            .ok()?;
+        Some(Self { builder, verifier })
+    }
+
+    /// A TLS config for one client, set as reqwest sets its default: the shared
+    /// verifier, no client certificate, SNI on, HTTP/1.1 offered by ALPN as reqwest
+    /// is built without HTTP/2, and its own session resumption store, so no TLS
+    /// session is resumed across clients.
+    fn client_config(&self) -> ClientConfig {
+        let mut config = self
+            .builder
+            .clone()
+            .dangerous()
+            .with_custom_certificate_verifier(self.verifier.clone())
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        config
+    }
+}
+
+/// Built the first time a client checks certificates, then shared. `None` if the
+/// verifier could not be built, as with no system root certificates; each client
+/// then builds its own as before, so reqwest returns the error it always did.
+static SHARED_TLS: OnceLock<Option<SharedTls>> = OnceLock::new();
+
+#[cfg(test)]
+/// How many times [`SHARED_TLS`] was built in this process.
+pub(crate) static SHARED_TLS_BUILDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn shared_tls() -> Option<&'static SharedTls> {
+    SHARED_TLS
+        .get_or_init(|| {
+            #[cfg(test)]
+            SHARED_TLS_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            SharedTls::new()
+        })
+        .as_ref()
+}
+
+/// A client builder with the settings both kinds of client share, and a TLS config
+/// over `shared` unless certificates are not checked, as reqwest then loads no
+/// root certificates.
+fn client_builder(config: &GooseClientConfig, shared: Option<&SharedTls>) -> ClientBuilder {
     let mut client_builder = Client::builder()
         .user_agent(&config.user_agent)
         .gzip(config.gzip)
         .danger_accept_invalid_certs(config.accept_invalid_certs);
 
+    if !config.accept_invalid_certs {
+        if let Some(shared) = shared {
+            client_builder = client_builder.tls_backend_preconfigured(shared.client_config());
+        }
+    }
+
     if let Some(timeout) = config.timeout {
         client_builder = client_builder.timeout(timeout);
     }
 
+    client_builder
+}
+
+/// Create a reqwest client without cookie support.
+pub(crate) fn create_reqwest_client_without_cookies(
+    config: &GooseClientConfig,
+) -> Result<Client, reqwest::Error> {
     // Explicitly do NOT add .cookie_store(true) here
-    client_builder.build()
+    client_builder(config, shared_tls()).build()
 }
 
 /// Create a reqwest client with cookie support.
 pub(crate) fn create_reqwest_client_with_cookies(
     config: &GooseClientConfig,
 ) -> Result<Client, reqwest::Error> {
-    let mut client_builder = Client::builder()
-        .user_agent(&config.user_agent)
-        .gzip(config.gzip)
-        .danger_accept_invalid_certs(config.accept_invalid_certs);
-
-    if let Some(timeout) = config.timeout {
-        client_builder = client_builder.timeout(timeout);
-    }
+    let client_builder = client_builder(config, shared_tls());
 
     // Enable cookie store - this calls reqwest's cookie_store method
     #[cfg(feature = "cookies")]
-    {
-        client_builder = client_builder.cookie_store(true);
-    }
+    let client_builder = client_builder.cookie_store(true);
 
     client_builder.build()
 }
@@ -536,6 +611,196 @@ mod tests {
                 // Success - we got a shared client
             }
             ClientStrategy::Individual(_) => panic!("Expected Shared strategy"),
+        }
+    }
+
+    /// Answers each HTTPS request on 127.0.0.1 with `200 ok`, as `localhost`, with a
+    /// certificate signed by `tests/fixtures/tls/ca.pem`, a CA no system trusts. It
+    /// closes every connection, so each request is a new TLS handshake, and sends
+    /// whether each handshake that got as far as a request resumed a session.
+    fn tls_server() -> (String, std::sync::mpsc::Receiver<rustls::HandshakeKind>) {
+        use rustls::pki_types::pem::PemObject;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+        use std::io::{Read, Write};
+
+        let certs =
+            CertificateDer::pem_slice_iter(include_bytes!("../tests/fixtures/tls/localhost.pem"))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+        let key =
+            PrivateKeyDer::from_pem_slice(include_bytes!("../tests/fixtures/tls/localhost.key"))
+                .unwrap();
+        let config = Arc::new(
+            rustls::ServerConfig::builder_with_provider(Arc::new(
+                rustls::crypto::aws_lc_rs::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .unwrap(),
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "https://localhost:{}/",
+            listener.local_addr().unwrap().port()
+        );
+        let (handshakes, received) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let stream = stream.unwrap();
+                let connection = rustls::ServerConnection::new(config.clone()).unwrap();
+                let mut tls = rustls::StreamOwned::new(connection, stream);
+                let mut request = Vec::new();
+                let mut buffer = [0; 4096];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match tls.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                if !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    // The client refused the certificate.
+                    continue;
+                }
+                handshakes.send(tls.conn.handshake_kind().unwrap()).unwrap();
+                tls.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                )
+                .unwrap();
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+            }
+        });
+        (url, received)
+    }
+
+    /// The crypto provider reqwest 0.13 builds a client's TLS config with.
+    fn reqwest_provider() -> Arc<CryptoProvider> {
+        CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+    }
+
+    /// Every path that builds a user's client, and the shared client, uses one
+    /// verifier, built once in the process however many clients are built.
+    #[test]
+    fn user_clients_share_one_tls_verifier() {
+        let strategy = GooseClientBuilder::new().build_strategy();
+        for _ in 0..3 {
+            strategy.user_client().unwrap();
+        }
+        let configuration =
+            crate::GooseConfiguration::parse_args_default(&Vec::<&str>::new()).unwrap();
+        for _ in 0..2 {
+            crate::goose::GooseUser::new(
+                0,
+                Arc::from(""),
+                url::Url::parse("http://localhost/").unwrap(),
+                &configuration,
+                0,
+                None,
+            )
+            .unwrap();
+        }
+        GooseClientBuilder::new()
+            .without_cookies()
+            .build_strategy()
+            .unwrap();
+        assert_eq!(
+            SHARED_TLS_BUILDS.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    /// Each client keeps its own TLS session resumption store: a client resumes its
+    /// own session, as with reqwest's default, and a second client sharing the
+    /// verifier starts a full handshake.
+    #[tokio::test]
+    async fn user_clients_do_not_share_tls_sessions() {
+        let (url, handshakes) = tls_server();
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(
+                rustls::pki_types::pem::PemObject::from_pem_slice(include_bytes!(
+                    "../tests/fixtures/tls/ca.pem"
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+        let provider = reqwest_provider();
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            provider.clone(),
+        )
+        .build()
+        .unwrap();
+        let shared = SharedTls::with_verifier(provider, verifier).unwrap();
+        let config = GooseClientConfig::default();
+        let first = client_builder(&config, Some(&shared)).build().unwrap();
+        let second = client_builder(&config, Some(&shared)).build().unwrap();
+
+        let mut kinds = Vec::new();
+        for client in [&first, &first, &second, &second] {
+            let body = client.get(&url).send().await.unwrap().text().await.unwrap();
+            assert_eq!(body, "ok");
+            kinds.push(handshakes.recv_timeout(Duration::from_secs(10)).unwrap());
+        }
+        use rustls::HandshakeKind::{Full, Resumed};
+        assert_eq!(kinds, [Full, Resumed, Full, Resumed]);
+    }
+
+    /// The shared verifier trusts what reqwest's own default build trusts: the same
+    /// platform verifier with the same root certificates (rustls shows how many in
+    /// `Debug`, not which), and a certificate from a CA the system does not trust is
+    /// refused with the same error as by a client reqwest builds itself, and
+    /// accepted by both when certificates are not checked.
+    #[tokio::test]
+    async fn user_clients_trust_what_reqwest_trusts() {
+        let shared = shared_tls().unwrap();
+        let reqwest_default = rustls_platform_verifier::Verifier::new(reqwest_provider()).unwrap();
+        assert_eq!(
+            format!("{:?}", shared.verifier),
+            format!("{:?}", reqwest_default)
+        );
+
+        fn error_chain(error: &reqwest::Error) -> Vec<String> {
+            let mut chain = vec![error.to_string()];
+            let mut source = std::error::Error::source(error);
+            while let Some(error) = source {
+                chain.push(error.to_string());
+                source = error.source();
+            }
+            chain
+        }
+
+        let (url, _handshakes) = tls_server();
+        let checked = GooseClientConfig::default();
+        let goose = create_reqwest_client_with_cookies(&checked).unwrap();
+        let reqwest = Client::builder().build().unwrap();
+        let goose_error = goose.get(&url).send().await.unwrap_err();
+        let reqwest_error = reqwest.get(&url).send().await.unwrap_err();
+        assert!(
+            error_chain(&goose_error)
+                .iter()
+                .any(|e| e.contains("UnknownIssuer")),
+            "{:?}",
+            error_chain(&goose_error)
+        );
+        assert_eq!(error_chain(&goose_error), error_chain(&reqwest_error));
+
+        let unchecked = GooseClientConfig {
+            accept_invalid_certs: true,
+            ..GooseClientConfig::default()
+        };
+        let goose = create_reqwest_client_with_cookies(&unchecked).unwrap();
+        let reqwest = Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .unwrap();
+        for client in [&goose, &reqwest] {
+            let body = client.get(&url).send().await.unwrap().text().await.unwrap();
+            assert_eq!(body, "ok");
         }
     }
 }

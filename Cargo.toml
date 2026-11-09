@@ -42,6 +42,16 @@ reqwest = { version = "0.13", default-features = false, features = [
     "gzip",
     "json",
 ] }
+# reqwest builds a certificate verifier for each client, which on Linux reads and
+# parses every system root certificate; src/client.rs builds one and shares it.
+# The requirements and crypto provider reqwest 0.13 uses, so that Cargo resolves
+# one version of each and reqwest accepts the TLS config Goose hands it.
+rustls = { version = "0.23.4", default-features = false, features = [
+    "aws-lc-rs",
+    "std",
+    "tls12",
+] }
+rustls-platform-verifier = { version = ">=0.6.0, <0.8.0", default-features = false }
 serde = { version = "1.0", features = [
     "derive",
 ] }
