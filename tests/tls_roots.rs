@@ -1,6 +1,10 @@
 //! A Goose user trusts the CA the system trusts, as a client reqwest builds itself
 //! does. Its own test binary, as it points `SSL_CERT_FILE` at the test CA before
-//! the first client in the process reads the system's root certificates.
+//! the first client in the process reads the system's root certificates, and the
+//! only test in it, so no other thread reads the environment while it is set. Only
+//! where the platform verifier reads the roots through `rustls-native-certs`, which
+//! honors `SSL_CERT_FILE`: not on macOS, iOS, Windows or Android.
+#![cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
 
 use goose::config::GooseConfiguration;
 use goose::goose::GooseUser;
@@ -55,8 +59,7 @@ fn tls_server() -> String {
 
 #[tokio::test]
 async fn user_trusts_the_systems_roots_as_reqwest_does() {
-    // rustls-native-certs reads the system's roots from this file on Linux, where
-    // Goose's CI runs; set before any client in this process is built.
+    // Set before any client in this process is built.
     std::env::set_var("SSL_CERT_FILE", "tests/fixtures/tls/ca.pem");
     let url = tls_server();
 

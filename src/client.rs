@@ -316,6 +316,18 @@ impl ClientStrategy {
     }
 }
 
+/// A client for one user: from `strategy` when the load test set a client
+/// builder, else built from `configuration`.
+pub(crate) fn user_client(
+    strategy: Option<&ClientStrategy>,
+    configuration: &GooseConfiguration,
+) -> Result<Client, reqwest::Error> {
+    match strategy {
+        Some(strategy) => strategy.user_client(),
+        None => create_reqwest_client_with_cookies(&GooseClientConfig::from(configuration)),
+    }
+}
+
 /// Type-safe builder for configuring Goose HTTP clients.
 pub struct GooseClientBuilder<State = CookiesEnabled> {
     config: GooseClientConfig,
@@ -497,9 +509,12 @@ pub(crate) static SHARED_TLS_BUILDS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(test)]
-/// How many clients this process built over the shared verifier.
-pub(crate) static SHARED_TLS_CLIENTS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    /// How many clients this thread built over the shared verifier. Per thread, so
+    /// unit tests running at the same time do not count each other's.
+    pub(crate) static SHARED_TLS_CLIENTS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
 
 /// The shared TLS setup for a client built with `config`, or `None` when it does
 /// not check certificates, as reqwest then loads no root certificates.
@@ -527,7 +542,7 @@ fn client_builder(config: &GooseClientConfig, shared: Option<&SharedTls>) -> Cli
     if let Some(shared) = shared {
         builder = builder.tls_backend_preconfigured(shared.client_config());
         #[cfg(test)]
-        SHARED_TLS_CLIENTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        SHARED_TLS_CLIENTS.with(|clients| clients.set(clients.get() + 1));
     }
 
     if let Some(timeout) = config.timeout {
@@ -693,16 +708,31 @@ mod tests {
         (url, received)
     }
 
-    /// Every path that builds a user's client, and the shared client, uses one
-    /// verifier, built once in the process however many clients are built.
+    /// Every path that builds a user's client, and the shared client, builds it over
+    /// the one verifier, which is built once in the process.
     #[test]
     fn user_clients_share_one_tls_verifier() {
-        let strategy = GooseClientBuilder::new().build_strategy();
-        for _ in 0..3 {
-            strategy.user_client().unwrap();
-        }
+        let clients = || SHARED_TLS_CLIENTS.with(|clients| clients.get());
         let configuration =
             crate::GooseConfiguration::parse_args_default(&Vec::<&str>::new()).unwrap();
+
+        // A load test that set a client builder with cookies.
+        let strategy = GooseClientBuilder::new().build_strategy();
+        let before = clients();
+        for _ in 0..3 {
+            user_client(Some(&strategy), &configuration).unwrap();
+        }
+        assert_eq!(clients() - before, 3, "client builder with cookies");
+
+        // A load test that set no client builder, the default.
+        let before = clients();
+        for _ in 0..2 {
+            user_client(None, &configuration).unwrap();
+        }
+        assert_eq!(clients() - before, 2, "no client builder");
+
+        // A user created without a client.
+        let before = clients();
         for _ in 0..2 {
             crate::goose::GooseUser::new(
                 0,
@@ -714,10 +744,16 @@ mod tests {
             )
             .unwrap();
         }
+        assert_eq!(clients() - before, 2, "GooseUser::new without a client");
+
+        // The client shared by every user when cookies are off.
+        let before = clients();
         GooseClientBuilder::new()
             .without_cookies()
             .build_strategy()
             .unwrap();
+        assert_eq!(clients() - before, 1, "client builder without cookies");
+
         assert_eq!(
             SHARED_TLS_BUILDS.load(std::sync::atomic::Ordering::SeqCst),
             1

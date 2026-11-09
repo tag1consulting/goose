@@ -1435,12 +1435,8 @@ impl GooseAttack {
                     let mut users = Vec::with_capacity(chunk.len());
                     for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
                         debug!("creating user state: {} ({})", base + i, scenarios_index);
-                        let reqwest_client = match client_strategy {
-                            None => client::create_reqwest_client_with_cookies(
-                                &client::GooseClientConfig::from(configuration),
-                            )?,
-                            Some(strategy) => strategy.user_client()?,
-                        };
+                        let reqwest_client =
+                            client::user_client(client_strategy.as_ref(), configuration)?;
                         users.push(GooseUser::new(
                             *scenarios_index,
                             machine_name.clone(),
@@ -5435,36 +5431,6 @@ mod tests {
             builds() - before,
             1,
             "users weighted later were given a newly built shared client"
-        );
-    }
-
-    /// Users of a load test that sets no client builder, the default, each get
-    /// a client over the one shared TLS verifier.
-    #[test]
-    fn default_users_share_the_tls_verifier() {
-        let configuration =
-            GooseConfiguration::parse_args_default(&["--host", "http://127.0.0.1", "--quiet"])
-                .unwrap();
-        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
-            .unwrap()
-            .register_scenario(
-                scenario!("Default").register_transaction(transaction!(noop_transaction)),
-            );
-        goose_attack
-            .configuration
-            .configure(&goose_attack.defaults)
-            .unwrap();
-        goose_attack
-            .build_client_strategy(client::CommandLineClientOptions::default())
-            .unwrap();
-
-        let clients = || client::SHARED_TLS_CLIENTS.load(std::sync::atomic::Ordering::SeqCst);
-        let before = clients();
-        let users = goose_attack.weight_scenario_users(4).unwrap();
-        assert_eq!(users.len(), 4);
-        assert!(
-            clients() - before >= 4,
-            "a default user's client was built without the shared verifier"
         );
     }
 }
