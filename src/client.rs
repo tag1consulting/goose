@@ -316,18 +316,6 @@ impl ClientStrategy {
     }
 }
 
-/// A client for one user: from `strategy` when the load test set a client
-/// builder, else built from `configuration`.
-pub(crate) fn user_client(
-    strategy: Option<&ClientStrategy>,
-    configuration: &GooseConfiguration,
-) -> Result<Client, reqwest::Error> {
-    match strategy {
-        Some(strategy) => strategy.user_client(),
-        None => create_reqwest_client_with_cookies(&GooseClientConfig::from(configuration)),
-    }
-}
-
 /// Type-safe builder for configuring Goose HTTP clients.
 pub struct GooseClientBuilder<State = CookiesEnabled> {
     config: GooseClientConfig,
@@ -566,7 +554,6 @@ pub(crate) fn create_reqwest_client_with_cookies(
 ) -> Result<Client, reqwest::Error> {
     let builder = client_builder(config, shared_tls(config));
 
-    // Enable cookie store - this calls reqwest's cookie_store method
     #[cfg(feature = "cookies")]
     let builder = builder.cookie_store(true);
 
@@ -709,7 +696,7 @@ mod tests {
     }
 
     /// Every path that builds a user's client, and the shared client, builds it over
-    /// the one verifier, which is built once in the process.
+    /// the one verifier, which is built once in the process (the build count).
     #[test]
     fn user_clients_share_one_tls_verifier() {
         let clients = || SHARED_TLS_CLIENTS.with(|clients| clients.get());
@@ -720,18 +707,12 @@ mod tests {
         let strategy = GooseClientBuilder::new().build_strategy();
         let before = clients();
         for _ in 0..3 {
-            user_client(Some(&strategy), &configuration).unwrap();
+            strategy.user_client().unwrap();
         }
         assert_eq!(clients() - before, 3, "client builder with cookies");
 
-        // A load test that set no client builder, the default.
-        let before = clients();
-        for _ in 0..2 {
-            user_client(None, &configuration).unwrap();
-        }
-        assert_eq!(clients() - before, 2, "no client builder");
-
-        // A user created without a client.
+        // A user created without a client, as every user of a load test that set
+        // no client builder, the default, is.
         let before = clients();
         for _ in 0..2 {
             crate::goose::GooseUser::new(

@@ -1416,9 +1416,9 @@ impl GooseAttack {
         }
 
         // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client unless one is shared, and building it is
-        // the expensive part. Chunks are collected back in order to preserve the
-        // scenario assignment sequence.
+        // gets its own reqwest client unless one is shared, built over one shared
+        // certificate verifier. Chunks are collected back in order to preserve
+        // the scenario assignment sequence.
         let configuration = &self.configuration;
         let client_strategy = &self.client_strategy;
         let metrics_hash = self.metrics.hash;
@@ -1435,15 +1435,18 @@ impl GooseAttack {
                     let mut users = Vec::with_capacity(chunk.len());
                     for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
                         debug!("creating user state: {} ({})", base + i, scenarios_index);
-                        let reqwest_client =
-                            client::user_client(client_strategy.as_ref(), configuration)?;
+                        // With no client builder, GooseUser::new builds the client.
+                        let reqwest_client = client_strategy
+                            .as_ref()
+                            .map(client::ClientStrategy::user_client)
+                            .transpose()?;
                         users.push(GooseUser::new(
                             *scenarios_index,
                             machine_name.clone(),
                             base_url.clone(),
                             configuration,
                             metrics_hash,
-                            Some(reqwest_client),
+                            reqwest_client,
                         )?);
                     }
                     Ok::<Vec<GooseUser>, GooseError>(users)
