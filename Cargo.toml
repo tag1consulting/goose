@@ -44,6 +44,16 @@ reqwest = { version = "0.13", default-features = false, features = [
     "gzip",
     "json",
 ] }
+# src/client.rs builds the certificate verifier reqwest would build for each
+# client once, and shares it. Same version requirements and crypto provider as
+# reqwest 0.13, so Cargo resolves one copy of each and reqwest accepts the
+# rustls ClientConfig Goose passes.
+rustls = { version = "0.23.4", default-features = false, features = [
+    "aws-lc-rs",
+    "std",
+    "tls12",
+] }
+rustls-platform-verifier = { version = ">=0.6.0, <0.8.0", default-features = false }
 serde = { version = "1.0", features = [
     "derive",
 ] }
@@ -103,7 +113,6 @@ gaggle = ["dep:http-body", "dep:libc", "dep:postcard", "dep:prost", "dep:sha1", 
 
 [dev-dependencies]
 httpmock = "0.8"
-rustls = "0.23"
 serial_test = "3.2"
 # A strict CSV reader, to check every error log row has the header's columns.
 csv = "1.3"

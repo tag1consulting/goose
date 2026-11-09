@@ -10,11 +10,15 @@
 
 ## TLS
 
-Goose makes requests with [Reqwest](https://docs.rs/reqwest) 0.13, whose default TLS backend is [rustls](https://docs.rs/rustls), so a load test needs no OpenSSL. Reqwest checks certificates with [`rustls-platform-verifier`](https://docs.rs/rustls-platform-verifier), which uses the operating system's certificate store, so a CA you have added to the system is trusted. `--accept-invalid-certs` turns certificate checks off, for test servers with self signed or expired certificates.
+Goose makes requests with [Reqwest](https://docs.rs/reqwest) 0.13, whose default TLS backend is [rustls](https://docs.rs/rustls), so a load test needs no OpenSSL. The clients Goose builds check certificates with [`rustls-platform-verifier`](https://docs.rs/rustls-platform-verifier), which uses the operating system's certificate store, so they trust a CA you have added to the system. They check certificates unless you accept invalid ones with `--accept-invalid-certs`, `GooseDefault::AcceptInvalidCerts` or `accept_invalid_certs(true)` on a `GooseClientBuilder`. Accept invalid certificates only for a test server with a self signed or expired certificate.
 
-Goose before 0.19 used Reqwest 0.12 and native TLS by default, with rustls through the `rustls-tls` feature. In 0.19 the `rustls-tls` feature still exists, so a `Cargo.toml` that enables it keeps building, but HTTP requests use rustls with or without it.
+Goose builds the certificate verifier once per process, with the first of its clients set to check certificates, even when the target is plain HTTP and no certificate is ever checked. At that moment, Goose takes the process default rustls crypto provider, or aws-lc-rs if there is none. If you install a provider, do it at the start of `main`, before any Goose call. On Linux, the verifier also reads the system's root certificates at that moment, so restart the load test process to trust a CA added later.
 
-Goose does not enable Reqwest's `http2` feature, so requests use HTTP/1.1.
+Goose before 0.19 used Reqwest 0.12 and native TLS by default, with rustls through the `rustls-tls` feature. In 0.19 the `rustls-tls` feature still exists, so a `Cargo.toml` that enables it keeps building, but the feature does not change which TLS library HTTP requests use.
+
+Goose does not enable Reqwest's `http2` feature, but any `reqwest` 0.13 dependency with default features turns it on, including one that another crate pulls in. `cargo tree -e features -i reqwest@0.13` shows whether it is on. Since 0.19.2, the clients Goose builds, including those from `GooseClientBuilder`, use HTTP/1.1 over rustls whenever they check certificates, even if `http2` or Reqwest's `native-tls` feature is on. Before 0.19.2, these clients used HTTP/2 with an HTTPS server that offered it when `http2` was on, and native TLS when `native-tls` was on. Clients from `GooseUser::set_client_builder`, and the clients Goose builds that accept invalid certificates, can use HTTP/2 when `http2` is on and native TLS when `native-tls` is on.
+
+To keep HTTP/2 or native TLS with certificate checks, pass a `reqwest::ClientBuilder` to `GooseUser::set_client_builder`, as [A Client Without Cookies](./config/cookie.html#a-client-without-cookies) shows. The `reqwest` dependency line in that section turns default features off, so add `features = ["http2"]` or `features = ["native-tls"]` to it. A client from your `ClientBuilder` replaces Goose's defaults for that user, so set the ones you need on your builder, such as the timeout, or `.cookie_store(true)` for cookies. On Linux, each such client over rustls reads the system's root certificates when Reqwest builds it, so it is slower to build than the clients Goose builds.
 
 ## Features
 
