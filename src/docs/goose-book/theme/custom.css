@@ -1,0 +1,794 @@
+/* Goose Book theme, following the Tag1 Consulting brand.
+   Loaded through book.toml additional-css, after mdBook's own styles.
+
+   Brand: Poppins type; Merge Request Navy, Node Jade, Fork Orange Red,
+   Bus Factor Blue, Copyleft Purple, plus the tag1.com web palette
+   (cream, turquoise, green). Square corners, no shadows, thin frames
+   with small square corner marks. Goose has no logo of its own: it is
+   "Goose, a Tag1 Innovation", with the Tag1 wordmark as designed. */
+
+/* ---------- Fonts (Poppins, SIL OFL, latin subset in src/fonts) ---------- */
+
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/poppins-400.woff") format("woff"); }
+@font-face { font-family: "Poppins"; font-style: italic; font-weight: 400; font-display: swap; src: url("../fonts/poppins-400i.woff") format("woff"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 500; font-display: swap; src: url("../fonts/poppins-500.woff") format("woff"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 600; font-display: swap; src: url("../fonts/poppins-600.woff") format("woff"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 700; font-display: swap; src: url("../fonts/poppins-700.woff") format("woff"); }
+
+/* ---------- Brand tokens ---------- */
+
+:root {
+  --t1-navy: #061E32;
+  --t1-navy-deep: #03121F;
+  --t1-jade: #15787C;
+  --t1-orange: #E65C00;
+  --t1-blue: #D1EAF1;
+  --t1-purple: #4B185E;
+  --t1-cream: #EEEFE8;
+  --t1-turquoise: #53D4CC;
+  --t1-bright-turquoise: #22EDE0;
+  --t1-green: #94FB81;
+  --t1-grey: #BDC2C2;
+  --t1-dark-grey: #707070;
+  --t1-lightest-grey: #F5F5F5;
+
+  --sidebar-target-width: 290px;
+  --content-max-width: 800px;
+  --menu-bar-height: 56px;
+  --mono-font: "Source Code Pro", ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* Light (also used for mdBook's "rust" theme) */
+html.light, html.rust, html:not(.js) {
+  --bg: #FFFFFF;
+  --fg: var(--t1-navy);
+  --heading: var(--t1-navy);
+  --heading-2: var(--t1-jade);
+  --muted: #3E5466;
+  --rule: var(--t1-blue);
+  --panel: var(--t1-lightest-grey);
+
+  --sidebar-bg: var(--t1-navy);
+  --sidebar-fg: #D7DEE3;
+  --sidebar-non-existant: #8197A8;
+  --sidebar-active: var(--t1-green);
+  --sidebar-spacer: rgba(209, 234, 241, 0.18);
+  --sidebar-header-border-color: var(--t1-turquoise);
+  --scrollbar: #6F8494;
+
+  --icons: #4B6273;
+  --icons-hover: var(--t1-jade);
+  --links: var(--t1-jade);
+  --inline-code-color: var(--t1-purple);
+
+  --theme-popup-bg: #FFFFFF;
+  --theme-popup-border: var(--t1-blue);
+  --theme-hover: var(--t1-blue);
+
+  --quote-bg: #F2F8FA;
+  --quote-border: var(--t1-jade);
+  --warning-border: var(--t1-orange);
+
+  --table-border-color: var(--t1-blue);
+  --table-header-bg: var(--t1-blue);
+  --table-alternate-bg: #FAFBFB;
+
+  --searchbar-border-color: var(--t1-dark-grey);
+  --searchbar-bg: #FFFFFF;
+  --searchbar-fg: var(--t1-navy);
+  --searchbar-shadow-color: transparent;
+  --searchresults-header-fg: #4B6273;
+  --searchresults-border-color: var(--t1-blue);
+  --searchresults-li-bg: #EAF5F8;
+  --search-mark-bg: #FBD3B8;
+
+  --marker: var(--t1-jade);
+  --color-scheme: light;
+}
+
+/* Dark (navy, coal and ayu all map here) */
+html.navy, html.coal, html.ayu {
+  --bg: var(--t1-navy);
+  --fg: var(--t1-cream);
+  --heading: #FFFFFF;
+  --heading-2: var(--t1-turquoise);
+  --muted: #A9B8C3;
+  --rule: rgba(209, 234, 241, 0.22);
+  --panel: #0B2A43;
+
+  --sidebar-bg: var(--t1-navy-deep);
+  --sidebar-fg: #C9D4DC;
+  --sidebar-non-existant: #8197A8;
+  --sidebar-active: var(--t1-green);
+  --sidebar-spacer: rgba(209, 234, 241, 0.14);
+  --sidebar-header-border-color: var(--t1-turquoise);
+  --scrollbar: #4B6273;
+
+  --icons: #A9B8C3;
+  --icons-hover: var(--t1-turquoise);
+  --links: var(--t1-turquoise);
+  --inline-code-color: var(--t1-green);
+
+  --theme-popup-bg: var(--t1-navy-deep);
+  --theme-popup-border: #24435C;
+  --theme-hover: #0B2A43;
+
+  --quote-bg: #0B2A43;
+  --quote-border: var(--t1-turquoise);
+  --warning-border: var(--t1-orange);
+
+  --table-border-color: #24435C;
+  --table-header-bg: #0F3350;
+  --table-alternate-bg: #08243B;
+
+  --searchbar-border-color: #6F8494;
+  --searchbar-bg: #0B2A43;
+  --searchbar-fg: var(--t1-cream);
+  --searchbar-shadow-color: transparent;
+  --searchresults-header-fg: #A9B8C3;
+  --searchresults-border-color: #24435C;
+  --searchresults-li-bg: #0F3350;
+  --search-mark-bg: rgba(230, 92, 0, 0.4);
+
+  --marker: var(--t1-turquoise);
+  --color-scheme: dark;
+}
+
+/* ---------- Base type ---------- */
+
+html { font-family: "Poppins", "Helvetica Neue", Arial, sans-serif; }
+body { background: var(--bg); color: var(--fg); font-size: 1.6rem; line-height: 1.75; }
+
+.content main { padding-block-end: 4rem; }
+.content p, .content li { font-weight: 400; }
+.content strong { font-weight: 600; }
+
+.content h1, .content h2, .content h3, .content h4 {
+  font-family: "Poppins", sans-serif;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.content h1 { color: var(--heading); font-size: 3.4rem; font-weight: 600; margin-block: 2.4rem 1.6rem; }
+.content h2 { color: var(--heading-2); font-size: 2.4rem; font-weight: 500; margin-block: 4rem 1.2rem; }
+.content h3 { color: var(--heading); font-size: 1.9rem; font-weight: 600; margin-block: 2.8rem 0.8rem; }
+.content h4 { color: var(--heading); font-size: 1.6rem; font-weight: 600; }
+
+.content a:where(:not(.header)), .content a:where(:not(.header)):visited {
+  color: var(--links);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+.content a:where(:not(.header)):hover { text-decoration-thickness: 2px; }
+
+.content hr { border: 0; border-top: 1px solid var(--rule); margin: 3.2rem 0; }
+
+.content li::marker { color: var(--marker); }
+
+/* Code */
+:not(pre) > .hljs, code:not(.hljs) {
+  border-radius: 0;
+}
+.content :not(pre) > code {
+  background: var(--panel);
+  padding: 0.05em 0.2em;
+  font-size: 0.85em;
+}
+.content pre { border-radius: 0; }
+.content pre > code { border-radius: 0; padding: 1.4rem 1.2rem; }
+
+/* Tables, per the Tag1 document standard: blue header row and borders, no verticals */
+.content table { border-collapse: collapse; margin: 2rem 0; }
+.content table td, .content table th { border: 0; border-bottom: 1px solid var(--table-border-color); padding: 0.8rem 1.2rem; }
+.content table thead th { font-weight: 600; text-align: start; }
+.content table thead { background: var(--table-header-bg); }
+
+/* Blockquotes */
+.content blockquote { border-inline-start: 3px solid var(--quote-border); border-block: 0; border-inline-end: 0; padding: 0.4rem 1.6rem; }
+
+/* ---------- Chrome: menu bar ---------- */
+
+#mdbook-menu-bar, #mdbook-menu-bar.bordered {
+  background: var(--bg);
+  border-block-end: 1px solid var(--rule);
+}
+.menu-title {
+  font-family: "Poppins", sans-serif;
+  font-weight: 600;
+  font-size: 1.8rem;
+  color: var(--heading);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+}
+.icon-button, .right-buttons a { color: var(--icons); }
+
+/* One light look and one dark look: the six-theme picker has nothing left to choose */
+#mdbook-theme-toggle { display: none; }
+
+/* ---------- Chrome: sidebar ---------- */
+
+.sidebar { font-size: 1.45rem; }
+.sidebar .sidebar-scrollbox { padding: 1.6rem 1.4rem 2.4rem; }
+.chapter li a { color: var(--sidebar-fg); padding: 0.45rem 0; }
+.chapter li a:hover { color: #FFFFFF; text-decoration: underline; text-underline-offset: 0.2em; }
+.chapter li a.active { color: var(--sidebar-active); font-weight: 500; }
+.chapter li.part-title {
+  color: var(--t1-turquoise);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin: 2.2rem 0 0.6rem;
+}
+.chapter li.spacer { background-color: var(--sidebar-spacer); }
+.sidebar-resize-handle .sidebar-resize-indicator { display: none; }
+
+/* ---------- Chrome: prev/next ---------- */
+
+.nav-chapters, .mobile-nav-chapters { border-radius: 0; color: var(--icons); }
+.nav-chapters:hover { color: var(--icons-hover); background: transparent; }
+.content a.mobile-nav-chapters:hover { color: var(--icons-hover); }
+.mobile-nav-chapters { background: var(--panel); }
+
+/* ---------- Search ---------- */
+
+#mdbook-searchbar { border-radius: 0; font-family: inherit; }
+
+
+/* ===================================================================
+   Shared components (usable on any page)
+   =================================================================== */
+
+/* Frame: thin outline with square corner marks, as on tag1.com.
+   The frame takes currentColor; set `color` on the framed box and
+   reset it on the children. */
+.t1-frame { position: relative; border: 1px solid currentColor; }
+.t1-frame::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  background:
+    linear-gradient(currentColor, currentColor) top left / 7px 7px no-repeat,
+    linear-gradient(currentColor, currentColor) top right / 7px 7px no-repeat,
+    linear-gradient(currentColor, currentColor) bottom left / 7px 7px no-repeat,
+    linear-gradient(currentColor, currentColor) bottom right / 7px 7px no-repeat;
+}
+
+/* Eyebrow: works on p, h2 or h3 (the .content selector beats mdBook's heading rules) */
+.t1-eyebrow, .content .t1-eyebrow {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  text-transform: uppercase;
+  margin: 0 0 1rem;
+}
+
+/* Keyboard focus, everywhere */
+.icon-button:focus-visible, .right-buttons a:focus-visible,
+.chapter li a:focus-visible, .nav-chapters:focus-visible,
+.mobile-nav-chapters:focus-visible, .content main a:focus-visible {
+  outline: 2px solid var(--t1-orange);
+  outline-offset: -2px;
+}
+.content main a:focus-visible, .chapter li a:focus-visible { outline-offset: 2px; }
+
+/* ===================================================================
+   Landing page (title-page.md)
+
+   Everything is scoped under .gb. The page-level rules use
+   html:has(main > .gb:only-child): on the real landing the .gb wrapper
+   is all of main, while print.html puts every chapter after it and
+   keeps the normal docs layout.
+   =================================================================== */
+
+html:has(main > .gb:only-child) :is(#mdbook-sidebar, #mdbook-sidebar-toggle, .nav-wrapper, .nav-wide-wrapper, #mdbook-sidebar-resize-handle, a[rel="edit"]) {
+  display: none !important;
+}
+html:has(main > .gb:only-child) #mdbook-sidebar-toggle-anchor ~ .page-wrapper {
+  margin-inline-start: 0 !important;
+  transform: none !important;
+  overflow-x: clip;
+}
+html:has(main > .gb:only-child) .page { padding: 0; }
+html:has(main > .gb:only-child) .content { padding: 0; overflow-x: clip; }
+html:has(main > .gb:only-child) .content main { max-width: none; padding: 0; margin: 0; }
+html:has(main > .gb:only-child) #mdbook-menu-bar {
+  box-sizing: border-box;
+  margin-inline: 0;
+  padding-inline: 1.6rem;
+  background: var(--gb-white-bg);
+}
+html:has(main > .gb:only-child) #mdbook-search-wrapper { padding-inline: 2.4rem; box-sizing: border-box; max-width: calc(1120px + 4.8rem); margin-inline: auto; }
+html:has(main > .gb:only-child) #mdbook-search-wrapper > * { max-width: none; }
+
+/* print.html: leave the landing (and the page break after it) out of the book */
+main > .gb:not(:only-child),
+main > .gb:not(:only-child) + div[style*="break-before"] { display: none; }
+
+/* ---------- Band tokens ----------
+   Each band sets the same small set of variables; components only read them.
+   Light theme first, then the dark theme overrides. */
+
+html.light, html.rust, html:not(.js) {
+  --gb-white-bg: #FFFFFF;
+  --gb-blue-bg: var(--t1-blue);
+  --gb-cream-bg: var(--t1-cream);
+  --gb-navy-bg: var(--t1-navy);
+}
+html.navy, html.coal, html.ayu {
+  --gb-white-bg: #0A253B;
+  --gb-blue-bg: #0F3350;
+  --gb-cream-bg: #12304A;
+  --gb-navy-bg: var(--t1-navy-deep);
+}
+
+.gb-band {
+  /* light-band defaults */
+  --b-fg: var(--t1-navy);
+  --b-muted: #3E5466;
+  --b-head: var(--t1-navy);
+  --b-eyebrow: var(--t1-navy);
+  --b-accent: var(--t1-jade);        /* frames and card titles */
+  --b-code-bg: rgba(6, 30, 50, 0.07);
+  --b-code-fg: var(--t1-purple);
+  --b-card-bg: #FFFFFF;
+  width: 100%;
+  padding: 8rem 2.4rem;
+  box-sizing: border-box;
+  background: var(--b-bg);
+  color: var(--b-fg);
+}
+.gb-band-white { --b-bg: var(--gb-white-bg); }
+.gb-band-blue { --b-bg: var(--gb-blue-bg); }
+.gb-band-cream { --b-bg: var(--gb-cream-bg); }
+
+/* Dark bands: navy and purple always; white, blue and cream in dark mode */
+.gb-band-navy, .gb-band-purple,
+html:is(.navy, .coal, .ayu) :is(.gb-band-white, .gb-band-blue, .gb-band-cream) {
+  --b-fg: #E3EAEE;
+  --b-muted: #A9B8C3;
+  --b-head: var(--t1-green);
+  --b-eyebrow: #FFFFFF;
+  --b-accent: var(--t1-turquoise);
+  --b-code-bg: rgba(209, 234, 241, 0.12);
+  --b-code-fg: #FFFFFF;
+  --b-card-bg: #0F3350;
+}
+html:is(.navy, .coal, .ayu) .gb-band-cream { --b-card-bg: #0A253B; }
+.gb-band-navy { --b-bg: var(--gb-navy-bg); }
+.gb-band-purple { --b-bg: var(--t1-purple); --b-fg: #FFFFFF; --b-head: #FFFFFF; --b-muted: #E9DDEE; }
+
+.gb-inner { max-width: 1120px; margin: 0 auto; }
+.gb p, .gb li { line-height: 1.7; }
+.gb h1, .gb h2, .gb h3 { margin: 0; color: inherit; text-wrap: balance; }
+.gb a.header { color: inherit; }
+.gb .t1-eyebrow { color: var(--b-eyebrow); }
+.gb code { background: var(--b-code-bg) !important; color: var(--b-code-fg) !important; }
+.content .gb :not(pre) > code { padding: 0.05em 0.15em; }
+.content main .gb a:focus-visible { outline: 2px solid var(--t1-orange); outline-offset: 3px; }
+.content main .gb-band-purple a:focus-visible { outline-color: #FFFFFF; }
+html:not(.navy):not(.coal):not(.ayu) .content main .gb-band-blue a:focus-visible { outline-color: var(--t1-navy); }
+
+/* ---------- Hero ---------- */
+.gb-hero { padding-block: 7.2rem 8rem; }
+.gb-hero .gb-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 5.6rem;
+  align-items: center;
+}
+.gb-hero .t1-eyebrow { color: var(--b-eyebrow); margin-bottom: 2rem; }
+
+/* ---------- Links and buttons ----------
+   The button follows the tag1.com link button: a label block plus a separate chevron block. */
+.gb-actions { display: flex; flex-wrap: wrap; gap: 1.6rem 2.4rem; align-items: center; }
+.gb a.gb-btn:is(:link, :visited) {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  text-decoration: none;
+  color: var(--t1-navy);
+  font-weight: 500;
+  font-size: 1.6rem;
+}
+.gb-btn span { background: var(--t1-turquoise); color: var(--t1-navy); padding: 1.1rem 1.8rem; transition: background-color 0.15s; }
+.gb-btn span + span { padding: 0 1.1rem; display: grid; place-items: center; }
+.gb-btn span + span::before {
+  content: "";
+  width: 0.9rem;
+  height: 0.9rem;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: translateX(-2px) rotate(45deg);
+}
+.gb-btn:hover span, .gb-btn:focus-visible span { background: var(--t1-bright-turquoise); }
+
+.gb a.gb-link:is(:link, :visited) {
+  color: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--t1-orange);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.3em;
+}
+.gb a.gb-link:hover { text-decoration-color: currentColor; }
+
+/* ---------- Section heads ---------- */
+.gb-head { max-width: 760px; margin: 0 0 4.8rem; }
+.gb-head-center { margin-inline: auto; text-align: center; }
+.gb-head h2 { color: var(--b-head); font-size: clamp(2.8rem, 3.6vw, 3.8rem); font-weight: 600; line-height: 1.2; margin: 0 0 1.6rem; }
+.gb-head p { font-size: 1.75rem; margin: 0; }
+.gb-head p + p { margin-top: 1.6rem; }
+
+/* ---------- Watching a run: framed block with two columns ---------- */
+.gb-works { box-sizing: border-box; padding: 6.4rem 5.6rem; color: rgba(209, 234, 241, 0.45); }
+.gb-works > * { color: var(--b-fg); }
+.gb-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4.8rem; }
+.gb-col h3 { color: var(--t1-green); font-size: 2rem; font-weight: 500; margin: 0 0 1.2rem; }
+.gb-col p { margin: 0; font-size: 1.55rem; }
+
+/* ---------- Why use Goose: four cards ---------- */
+.gb-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3.2rem; }
+.gb-card { color: var(--b-accent); padding: 3.2rem 2.8rem; display: grid; grid-template-rows: subgrid; grid-row: span 2; row-gap: 1.2rem; }
+.gb-card h3 { color: var(--b-head); font-size: 2rem; font-weight: 500; margin: 0; align-self: start; }
+html:not(.navy):not(.coal):not(.ayu) .gb-band-white .gb-card h3 { color: var(--t1-jade); }
+.gb-card p { color: var(--b-fg); margin: 0; font-size: 1.55rem; }
+
+/* ---------- Brought to you by, and more documentation ---------- */
+.gb-story { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 5.6rem; align-items: start; }
+.gb-reads { display: grid; gap: 1.6rem; }
+.gb a.gb-read:is(:link, :visited) {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: var(--b-accent);
+  background: var(--b-card-bg);
+  padding: 2rem 2.4rem;
+}
+.gb-read strong { display: block; color: var(--b-head); font-weight: 600; font-size: 1.7rem; margin-bottom: 0.4rem; }
+html:not(.navy):not(.coal):not(.ayu) .gb-band-cream .gb-read strong { color: var(--t1-navy); }
+.gb-read span { display: block; color: var(--b-muted); font-size: 1.45rem; }
+.gb-read:is(:hover, :focus-visible) strong { text-decoration: underline; text-underline-offset: 0.2em; }
+
+/* From the Tag1 blog: the newest post large, the next four beside it */
+.gb .gb-posts-head { margin: 6.4rem 0 2.4rem; }
+/* the lead column ends where the More Documentation column above begins (50% + 2.8rem, less the 2.4rem gap) */
+.gb-posts { display: grid; grid-template-columns: minmax(0, calc(50% + 0.4rem)) minmax(0, 1fr) minmax(0, 1fr); gap: 2.4rem; }
+.gb a.gb-post:is(:link, :visited) {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: var(--b-accent);
+  background: var(--b-card-bg);
+  padding-bottom: 2rem;
+}
+.gb-post-lead { grid-row: span 2; }
+.gb .gb-post:not(.gb-post-lead) .gb-post-meta { font-size: 1.1rem; letter-spacing: 0.04em; }
+.gb-nw { white-space: nowrap; }
+.gb-post img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; margin: 0 0 1.6rem; }
+.gb-post > :not(img) { margin-inline: 2rem; }
+.gb .gb-post .gb-post-meta { display: block; color: var(--b-muted); font-size: 1.15rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.6rem; }
+.gb-post strong { display: block; color: var(--b-head); font-weight: 600; font-size: 1.6rem; line-height: 1.35; text-wrap: pretty; }
+html:not(.navy):not(.coal):not(.ayu) .gb-band-cream .gb-post strong { color: var(--t1-navy); }
+.gb .gb-post .gb-post-meta { order: -1; }
+.gb-post img { order: -2; }
+.gb-post-lead strong { font-size: 2.2rem; line-height: 1.3; margin-bottom: 1rem; text-wrap: balance; }
+@media (min-width: 1101px), (min-width: 530px) and (max-width: 600px) {
+  .gb-post:not(.gb-post-lead) .gb-sep { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .gb-post:not(.gb-post-lead) .gb-post-meta .gb-nw { display: block; }
+}
+@media (min-width: 530px) and (max-width: 1100px) {
+  .gb-post:not(.gb-post-lead) img { aspect-ratio: 2.4 / 1; }
+}
+.gb .gb-post .gb-post-sum { display: block; color: var(--b-fg); font-size: 1.55rem; line-height: 1.6; text-wrap: pretty; }
+.gb-post:is(:hover, :focus-visible) strong { text-decoration: underline; text-underline-offset: 0.2em; }
+.gb-post-lead img { flex: 1 1 auto; height: 0; min-height: 28rem; aspect-ratio: auto; }
+
+/* ---------- Coming from 0.18 (purple) ---------- */
+.gb-cta { box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 4.8rem; align-items: center; padding: 5.6rem; color: rgba(255, 255, 255, 0.5); }
+.gb-cta > * { color: #FFFFFF; }
+.gb-cta h2 { font-size: clamp(2.8rem, 3.4vw, 3.6rem); font-weight: 600; margin: 0 0 1.6rem; }
+.gb-cta p { margin: 0; font-size: 1.7rem; max-width: 40em; }
+.gb-cta-side { display: grid; gap: 2rem; justify-items: end; }
+.gb-cta .gb-actions { justify-content: flex-end; }
+
+/* ---------- Goose: hero display line, proof line, credit and screenshot ---------- */
+.gb .gb-display {
+  color: var(--t1-orange);
+  font-size: clamp(3.4rem, 4.8vw, 5.4rem);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  text-transform: uppercase;
+  text-wrap: balance;
+  margin: 0 0 2.4rem;
+}
+.gb-lede a:is(:link, :visited) { text-decoration: underline; text-decoration-color: var(--t1-turquoise); text-underline-offset: 0.2em; }
+.gb-hero a.gb-link:is(:link, :visited) { color: #FFFFFF; }
+.gb-hero a.gb-link:hover { text-decoration-color: currentColor; }
+.gb-tag1 { height: 1.25em; width: auto; fill: currentColor; position: relative; top: -0.04em; }
+.gb-eyebrow-more { color: var(--b-muted); }
+.gb .gb-proof { text-wrap: pretty; font-size: 1.95rem; line-height: 1.55; max-width: 34em; margin: 0 0 2rem; }
+.gb-proof strong { color: var(--t1-green); font-weight: 600; }
+.gb-proof a:is(:link, :visited) { text-decoration: underline; text-decoration-color: var(--t1-turquoise); text-underline-offset: 0.2em; }
+.gb-hero .gb-lede { font-size: 1.65rem; color: var(--b-muted); max-width: 36em; margin: 0 0 3.2rem; text-wrap: pretty; }
+.gb-credit { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin: 3.2rem 0 0; color: #FFFFFF; font-size: 1.5rem; font-weight: 500; }
+.gb-hero-shot .gb-window { color: var(--t1-turquoise); border-color: rgba(209, 234, 241, 0.45); }
+.gb-hero-shot .gb-window-bar { background: var(--t1-navy-deep); border-bottom: 1px solid rgba(209, 234, 241, 0.3); }
+.gb a.gb-shot-link { display: block; cursor: zoom-in; }
+.gb-hero-shot figcaption { font-size: 1.35rem; color: var(--b-muted); margin: 1rem 0 0; text-wrap: balance; }
+.gb-post:not(.gb-post-lead) strong { text-wrap: balance; }
+.gb .gb-proof a:is(:link, :visited), .gb .gb-lede a:is(:link, :visited) { text-decoration-thickness: 1px; }
+.gb .gb-proof a:hover, .gb .gb-lede a:hover { text-decoration-color: #FFFFFF; text-decoration-thickness: 2px; }
+.gb-hero-shot .gb-window:has(.gb-shot-link:hover) { border-color: var(--t1-turquoise); }
+.content main .gb a.gb-shot-link:focus-visible { outline: none; }
+.gb-hero-shot .gb-window:has(.gb-shot-link:focus-visible) { outline: 2px solid var(--t1-orange); outline-offset: 3px; }
+.gb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (min-width: 961px) {
+  .gb-cmd { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 5.6rem; align-items: end; }
+  .gb-cmd .gb-head.gb-cmd-text { margin-bottom: 0; }
+  .gb-cmd .gb-cmd-text p:last-child { margin-bottom: 0; }
+}
+@media (min-width: 961px) and (max-width: 1100px) {
+  .gb-hero { padding-block-start: 5.6rem; }
+  .gb .gb-display { margin-bottom: 2rem; }
+  .gb-credit { margin-top: 2.4rem; }
+}
+@media (max-width: 960px) {
+  .gb-hero-shot, .gb-cmd pre { max-width: 760px; }
+}
+@media (min-width: 961px) and (max-height: 800px) {
+  .gb-hero { padding-block-start: 5.6rem; }
+}
+
+/* ---------- Screenshot window (hero) and Run It Yourself ---------- */
+.gb-shot { margin: 0; }
+.gb-window {
+  background: #FFFFFF;
+  border: 1px solid var(--t1-navy);
+}
+.gb-window-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.6rem;
+  background: var(--t1-navy);
+  color: #FFFFFF;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.9rem 1.6rem;
+}
+.gb-window-bar span:last-child { color: var(--t1-turquoise); font-weight: 500; letter-spacing: 0.04em; text-transform: none; }
+.gb-window img { display: block; width: 100%; height: auto; }
+.gb-cmd p { font-size: 1.6rem; margin: 0 0 1.6rem; max-width: 46em; }
+.gb-cmd .gb-head { margin-bottom: 2.4rem; }
+.content .gb-cmd pre { background: var(--t1-navy) !important; margin: 0; padding: 0; border-radius: 0; }
+.content .gb-cmd pre > code { display: block; padding: 1.6rem 2rem; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--t1-turquoise) transparent; }
+.content .gb-cmd pre code, .content .gb-cmd pre code * { background: none !important; color: #E3EAEE !important; font-size: 1.4rem; }
+html:is(.navy, .coal, .ayu) .gb-window { border-color: rgba(209, 234, 241, 0.3); }
+html:is(.navy, .coal, .ayu) .content .gb-cmd pre { background: var(--t1-navy-deep) !important; }
+
+/* ---------- Watching a run: the closing note ---------- */
+.gb-aside { margin: 4.8rem 0 0; padding-top: 2.4rem; border-top: 1px solid rgba(209, 234, 241, 0.25); color: var(--b-muted); font-size: 1.5rem; max-width: none; padding-inline-end: max(0px, calc(100% - 44em)); }
+.gb .gb-big { font-size: 2.2rem; line-height: 1.55; font-weight: 400; margin: 0; text-wrap: pretty; }
+.gb-story .t1-eyebrow { margin-bottom: 2rem; }
+.gb-story .gb-reads .t1-eyebrow { margin-bottom: 0.4rem; }
+
+/* Links in bands: turquoise on the dark bands, navy with a jade underline on blue */
+.content main .gb-band-navy a:where(:not(.gb-btn, .gb-link, .gb-read, .gb-post)):is(:link, :visited) { color: var(--t1-turquoise); }
+html:not(.navy):not(.coal):not(.ayu) .content main .gb-band-blue a:where(:not(.gb-btn, .gb-link)):is(:link, :visited) { color: var(--t1-navy); text-decoration: underline; text-decoration-color: var(--t1-jade); text-underline-offset: 0.2em;  text-decoration-thickness: 1px; }
+/* The landing command block is navy in both themes, so its copy button uses the dark look */
+html:not(.navy):not(.coal):not(.ayu) .gb-cmd { --copy-button-filter: invert(80%); --copy-button-filter-hover: invert(78%) sepia(40%) saturate(560%) hue-rotate(120deg) brightness(95%); }
+html:not(.navy):not(.coal):not(.ayu) .gb-cmd .clip-button { background: var(--t1-navy-deep); border-color: #A9B8C3; }
+html:not(.navy):not(.coal):not(.ayu) .gb-cmd .clip-button:hover { border-color: var(--t1-turquoise); background: #0B2A43; }
+/* Copy button icon: grey at rest, jade (light) or turquoise (dark) on hover */
+html.light, html.rust, html:not(.js) { --copy-button-filter: invert(30%); --copy-button-filter-hover: invert(34%) sepia(61%) saturate(620%) hue-rotate(137deg) brightness(88%); }
+html.navy, html.coal, html.ayu { --copy-button-filter: invert(80%); --copy-button-filter-hover: invert(78%) sepia(40%) saturate(560%) hue-rotate(120deg) brightness(95%); }
+.chapter li.header-item a code { overflow-wrap: anywhere; }
+.content main a > img { vertical-align: top; }
+/* Docs screenshots get a thin frame */
+.content main > img, .content main > :not(.gb) img { box-sizing: border-box; border: 1px solid var(--t1-blue); }
+html:is(.navy, .coal, .ayu) .content main > img, html:is(.navy, .coal, .ayu) .content main > :not(.gb) img { border-color: rgba(209, 234, 241, 0.3); }
+ul#mdbook-searchresults li { padding-inline: 1.2rem; border-inline-start: 3px solid transparent; }
+ul#mdbook-searchresults li:hover { background-color: #EEF6F8; }
+html:is(.navy, .coal, .ayu) ul#mdbook-searchresults li:hover { background-color: #0B2A43; }
+ul#mdbook-searchresults li.focus { background-color: var(--searchresults-li-bg); }
+ul#mdbook-searchresults:has(a:focus-visible) li.focus { border-inline-start-color: transparent; background-color: transparent; }
+ul#mdbook-searchresults .teaser { overflow-wrap: anywhere; }
+#mdbook-searchresults-header { padding-inline-start: calc(1.2rem + 3px); }
+ul#mdbook-searchresults li.focus { border-inline-start-color: var(--t1-orange); }
+html:not(.navy):not(.coal):not(.ayu) .content mark { color: var(--t1-navy); }
+ul#mdbook-searchresults a:focus-visible, .content .table-wrapper:focus-visible { outline: 2px solid var(--t1-orange); outline-offset: 2px; }
+.clip-button, .tooltiptext, ul#mdbook-searchresults li, #mdbook-help-popup, #mdbook-help-popup kbd { border-radius: 0 !important; }
+#mdbook-help-popup kbd { box-shadow: none; }
+#mdbook-help-popup { border: 1px solid var(--t1-blue); box-shadow: none !important; max-width: min(500px, calc(100vw - 3.2rem)); min-width: 0; }
+html:is(.navy, .coal, .ayu) #mdbook-help-popup { background: var(--t1-navy-deep); border: 1px solid var(--t1-turquoise); }
+#mdbook-help-container { background: rgba(6, 30, 50, 0.55); }
+html:is(.navy, .coal, .ayu) #mdbook-help-container { background: rgba(3, 18, 31, 0.8); }
+.content pre > code { scrollbar-width: thin; scrollbar-color: var(--t1-jade) transparent; }
+.tooltiptext { background: var(--t1-navy) !important; color: #FFFFFF !important; font-style: normal; font-family: "Poppins", sans-serif; line-height: 1.3; top: auto !important; bottom: calc(100% + 6px); margin: 0; }
+html:is(.navy, .coal, .ayu) .tooltiptext { background: var(--t1-navy-deep) !important; border: 1px solid var(--t1-turquoise); }
+.content a.mobile-nav-chapters { color: var(--icons); text-decoration: none; }
+html:not(.navy):not(.coal):not(.ayu) .content pre mark, html:not(.navy):not(.coal):not(.ayu) .content pre mark * { color: var(--t1-navy) !important; }
+html:is(.navy, .coal, .ayu) .content pre mark, html:is(.navy, .coal, .ayu) .content pre mark * { color: #FFFFFF !important; }
+/* Search marks in the landing command block (beats the per-theme pre mark rules above) */
+html:not(.navy):not(.coal):not(.ayu) .content .gb-cmd pre mark, html:not(.navy):not(.coal):not(.ayu) .content .gb-cmd pre mark *,
+html:is(.navy, .coal, .ayu) .content .gb-cmd pre mark, html:is(.navy, .coal, .ayu) .content .gb-cmd pre mark * { background: rgba(230, 92, 0, 0.45) !important; color: #FFFFFF !important; }
+.content .gb mark { margin-inline: 0; padding-inline: 0.1em; }
+html:is(.navy, .coal, .ayu) .content .gb mark { color: #FFFFFF; }
+html:not(.navy):not(.coal):not(.ayu) .content .gb .gb-display mark { color: var(--t1-navy); }
+.content .gb :is(.gb-credit, .gb-btn) mark { background: none !important; color: inherit !important; }
+.content em code { font-style: normal; }
+ul#mdbook-searchresults { padding-inline-start: 0; }
+#mdbook-help-popup h2 { line-height: 1.3; }
+.chapter li a code { line-height: inherit; }
+html:is(.navy, .coal, .ayu) .content blockquote :not(pre) > code { background: var(--t1-navy-deep); }
+#mdbook-searchresults-outer { border-bottom-style: solid; }
+html:not(.navy):not(.coal):not(.ayu) .content blockquote :is(pre > code, :not(pre) > code) { background: #FFFFFF; }
+html:not(.navy):not(.coal):not(.ayu) .content .gb-band-blue pre > code:focus-visible { outline-color: var(--t1-navy); }
+html:is(.navy, .coal, .ayu) .content mark { color: inherit; }
+html:is(.navy, .coal, .ayu) .content a:not(.header) code { color: var(--links); }
+.content .table-wrapper { scrollbar-width: thin; scrollbar-color: var(--t1-jade) transparent; }
+.content mark { border-radius: 0; }
+.gb-cta p, .gb-col p, .gb-card p, .gb-read span, .gb-aside, .gb-head p { text-wrap: pretty; }
+/* Keep the title page's short CLI flags whole: a line should not end in a bare -- */
+.content .gb :not(pre) > code { white-space: nowrap; }
+
+/* ---------- Footer line ---------- */
+.gb-foot { padding: 3.2rem 2.4rem; border-top: 1px solid var(--rule); background: var(--gb-white-bg); font-size: 1.4rem; color: var(--muted); }
+html:is(.navy, .coal, .ayu) .gb-foot { background: var(--t1-navy-deep); }
+.gb-foot .gb-inner { display: flex; flex-wrap: wrap; gap: 0.8rem 2.4rem; justify-content: space-between; }
+.gb-foot p { margin: 0; }
+.gb-foot a:is(:link, :visited) { color: inherit; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1100px) {
+  .gb-posts { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .gb a.gb-post-lead:is(:link, :visited) { grid-column: 1 / -1; grid-row: auto; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-template-rows: minmax(2rem, 1fr) auto auto auto minmax(2rem, 1fr); column-gap: 2.4rem; padding: 0 2.4rem 0 0; }
+  .gb-post-lead img { grid-row: 1 / -1; grid-column: 1; flex: none; height: 100%; min-height: 0; aspect-ratio: 16 / 9; margin: 0; }
+  .gb-post-lead > :not(img) { grid-column: 2; margin-inline: 0; }
+  .gb .gb-post-lead .gb-post-meta { grid-row: 2; }
+  .gb-post-lead strong { grid-row: 3; }
+  .gb .gb-post-lead .gb-post-sum { grid-row: 4; }
+}
+@media (min-width: 961px) and (max-width: 1100px) {
+  .gb-posts { column-gap: 5.6rem; }
+}
+@media (max-width: 799px) {
+  .gb a.gb-post-lead:is(:link, :visited) { display: flex; padding: 0 0 2rem; }
+  .gb-post-lead img { height: auto; margin: 0 0 1.6rem; }
+  .gb-post-lead > :not(img) { margin-inline: 2rem; }
+}
+@media (max-width: 529px) {
+  .gb-posts { grid-template-columns: minmax(0, 1fr); gap: 1.6rem; }
+}
+@media (max-width: 1100px) {
+  .gb-cta { grid-template-columns: minmax(0, 1fr); gap: 3.2rem; }
+  .gb-cta-side { justify-items: start; }
+  .gb-cta .gb-actions { justify-content: flex-start; }
+}
+@media (max-width: 960px) {
+  .gb-hero .gb-inner { grid-template-columns: minmax(0, 1fr); gap: 4rem; }
+  .gb-story { grid-template-columns: minmax(0, 1fr); gap: 4.8rem; }
+}
+@media (max-width: 719px) {
+  .gb-cols, .gb-cards { grid-template-columns: minmax(0, 1fr); gap: 3.2rem; }
+  .gb-card { grid-template-rows: none; grid-row: auto; }
+}
+@media (max-width: 529px) {
+  .content .gb-cmd pre > code { mask-image: linear-gradient(to right, #000 calc(100% - 1.6rem), transparent); }
+  .content .gb-cmd pre > code:focus-visible { mask-image: none; }
+}
+@media (max-width: 600px) {
+  .content .gb-cmd pre > code { padding-inline: 1.6rem; }
+  .gb-eyebrow-more { display: block; margin-top: 0.4rem; }
+  .gb-dot { display: none; }
+  html:has(main > .gb:only-child) #mdbook-search-wrapper { padding-inline: 1.6rem; max-width: calc(1120px + 3.2rem); }
+  #mdbook-help-popup { padding: 1.6rem 2rem; }
+  .gb-band { padding: 5.6rem 1.6rem; }
+  .gb-hero { padding-block: 4rem 5.6rem; }
+  .gb-foot { padding-inline: 1.6rem; }
+  .gb-works, .gb-cta { padding: 4rem 2.4rem; }
+  .gb-card { padding: 2.4rem 2rem; }
+  .content .gb-cmd pre code { font-size: 1.25rem; }
+}
+
+/* ---------- Print ---------- */
+@media print {
+  @page { margin: 16mm; }
+  html, body, .page-wrapper, .page, .content { background: #FFFFFF !important; }
+  html:is(.navy, .coal, .ayu) {
+    --bg: #FFFFFF; --fg: #061E32; --heading: #061E32; --heading-2: #15787C; --muted: #3E5466;
+    --rule: #D1EAF1; --panel: #F5F5F5; --links: #15787C; --inline-code-color: #4B185E; --marker: #15787C;
+    --table-header-bg: #D1EAF1; --table-alternate-bg: #FAFBFB; --table-border-color: #D1EAF1; --quote-bg: #F2F8FA; --quote-border: #15787C;
+    --color-scheme: light;
+    color-scheme: light;
+  }
+  html:is(.navy, .coal, .ayu) .content pre > code,
+  html:is(.navy, .coal, .ayu) .content pre > code * { color: #061E32 !important; background: #F5F5F5 !important; }
+  .content pre > code { font-size: 0.78em; }
+  .gb-band, .gb-foot { padding: 2rem 2px; background: none !important; }
+  .gb-band *, .gb-band a:link, .gb-band a:visited, .gb-foot, .gb-foot * { color: #061E32 !important; }
+  .gb-band code { background: #F5F5F5 !important; color: #4B185E !important; }
+  .gb-display { color: #E65C00 !important; }
+  .content .gb-cmd pre { background: #F5F5F5 !important; }
+  .gb-story { display: block; }
+  .gb-story > * + * { margin-top: 3.2rem; }
+  .gb-shot { max-width: 100mm; }
+  .gb-window img { width: 100%; }
+  .t1-frame::before { display: none; }
+  .t1-frame, .gb-works, .gb-cta { border-color: #BDC2C2 !important; }
+  .gb-window-bar { background: none !important; border-bottom: 1px solid #BDC2C2; }
+  .gb-btn span { background: none !important; border: 1px solid #061E32; }
+  .gb-reads { display: block; }
+  .gb-posts { display: block; }
+  .gb-post img { display: none; }
+  .gb a.gb-post:is(:link, :visited) { display: block !important; margin-bottom: 2rem; padding: 0 !important; background: none !important; border: 0 !important; break-inside: avoid; }
+  .gb .gb-post .gb-post-meta { margin-top: 0; }
+  .gb-read[href^="http"]::after { content: attr(href); display: block; font-size: 0.85em; color: #3E5466; }
+  .gb-proof a::after { content: " (" attr(href) ")"; overflow-wrap: anywhere; font-size: 0.8em; }
+  .gb-post::after { content: attr(href); display: block; font-size: 0.85em; color: #3E5466; overflow-wrap: anywhere; }
+  .gb-post > :not(img) { margin-inline: 0; }
+  .gb a.gb-read:is(:link, :visited) { margin-bottom: 1.2rem; padding: 0 !important; background: none !important; }
+  .t1-eyebrow, .gb-head h2 { break-after: avoid; }
+  .gb-works { border: 0 !important; padding: 0 !important; }
+  .content .gb-cmd pre code, .content .gb-cmd pre code * { color: #061E32 !important; }
+  .gb a.gb-read:is(:link, :visited) { border: 0 !important; }
+  .gb a { text-decoration-color: #15787C !important; }
+  .gb-hero-shot .gb-window { border-color: #BDC2C2 !important; }
+  .gb-head-center { text-align: start; margin-inline: 0; }
+  .content .table-wrapper { overflow: visible; }
+  .content table { font-size: 0.85em; }
+  .content table :not(pre) > code { white-space: normal; overflow-wrap: break-word; }
+  .content tr { break-inside: avoid; }
+  .gb-story .gb-reads { break-inside: avoid; }
+  html:is(.navy, .coal, .ayu) .content blockquote :not(pre) > code { background: #FFFFFF; }
+  html:is(.navy, .coal, .ayu) .content .gb-cmd pre { background: #F5F5F5 !important; }
+  .gb-card, .gb-col, .gb-shot, .gb-read, .gb-cta, .gb-cmd { break-inside: avoid; }
+}
+
+/* ---------- Docs details ---------- */
+.content :is(h1, h2, h3, h4) a.header:is(:link, :visited) { color: inherit; text-decoration: none; }
+.content :not(pre) > code { hyphens: none; }
+html:is(.navy, .coal, .ayu) .content pre > code { background: var(--t1-navy-deep); }
+.chapter li.chapter-item > .chapter-link-wrapper > span { color: var(--sidebar-fg); font-weight: 500; }
+/* mdBook 0.5 lists the current page's headings under the active chapter; keep only the chapter green */
+.chapter li.header-item a.header-in-summary { color: var(--sidebar-fg); font-weight: 400; }
+.chapter li.header-item a.header-in-summary:hover { color: #FFFFFF; }
+.chapter li.header-item a.current-header { color: var(--t1-turquoise); }
+#mdbook-searchbar:focus { outline: 2px solid var(--t1-orange); outline-offset: 0; }
+.content table td { vertical-align: top; }
+@media (max-width: 600px) {
+  .content table td, .content table th { padding: 0.6rem 0.8rem; }
+}
+/* Visitors with a stored "ayu" choice from the old theme picker keep ayu's syntax colors; lift the ones that fail AA on our dark code background */
+html.ayu .content pre :is(.hljs-comment, .hljs-quote, .hljs-emphasis) { color: #8F9DA9; }
+html.ayu .content pre .hljs-tag { color: #5CCFE6; }
+
+/* Closing round */
+.gb :target::before { content: none; }
+.gb [id] { scroll-margin-top: calc(var(--menu-bar-height) + 4rem); }
+.content pre > code:focus-visible { outline: 2px solid var(--t1-orange); outline-offset: 2px; }
+@media (forced-colors: active) {
+  .gb-btn span { border: 1px solid ButtonText; }
+  .gb-window { border: 1px solid CanvasText; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .page-wrapper, .nav-chapters, .icon-button, .gb-btn span { transition: none !important; }
+}
+
+.content table { line-height: 1.5; }
+.content .checkbox-img:focus + img { outline: none; }
+.content .checkbox-img:focus-visible + img { outline: 2px solid var(--t1-orange); outline-offset: 2px; }
+.content .checkbox-img:checked ~ .img-wrapper { background-color: rgba(3, 18, 31, 0.6); }
+html:is(.navy, .coal, .ayu) .content .checkbox-img:checked ~ .img-wrapper { background-color: rgba(3, 18, 31, 0.8); }
+.content .checkbox-img:checked ~ .img-wrapper > img { background: #FFFFFF; padding: 0; }
+.sidebar-iframe-outer { width: 100%; }
+html:not(.js) .content pre > code { display: block; overflow-x: auto; background: var(--panel); }
+.gb-foot a:hover { color: var(--fg); }
+html:not(.navy):not(.coal):not(.ayu) .content main .gb-band-blue a:where(:not(.gb-btn, .gb-link)):hover { text-decoration-thickness: 2px; text-decoration-color: var(--t1-navy); }
