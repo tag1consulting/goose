@@ -3,7 +3,13 @@ authors = ["Jeremy Andrews"]
 language = "en"
 src = "src"
 title = "The Goose Book"
+description = "Goose is a load testing tool written in Rust and inspired by Locust."
 
 [rust]
 edition = "2018"
 
+[output.html]
+additional-css = ["theme/custom.css"]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/tag1consulting/goose"
