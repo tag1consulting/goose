@@ -1110,6 +1110,9 @@ pub struct GooseUser {
     /// Shared registry of atomic request counters, keyed by `"METHOD path"`.
     /// User threads lazily insert counters on first use and then increment atomically.
     pub(crate) request_counters: Option<GooseRequestCounterRegistry>,
+    /// The run's count of requests sent again after the connection closed before a
+    /// response, shared by every user and logged when the run ends.
+    pub(crate) resends: Option<Arc<AtomicU64>>,
     /// Local cache of `Arc<GooseRequestCounters>` handles to avoid repeated mutex lookups.
     request_counter_cache: HashMap<String, Arc<GooseRequestCounters>>,
     /// Reusable buffer for formatting counter keys, avoiding per-request heap allocation.
@@ -1155,6 +1158,7 @@ impl Clone for GooseUser {
             metrics_epoch: self.metrics_epoch.clone(),
             session_data: self.session_data.clone(),
             request_counters: self.request_counters.clone(),
+            resends: self.resends.clone(),
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
             request_counter_key: String::new(),
@@ -1222,6 +1226,7 @@ impl GooseUser {
             metrics_epoch: None,
             session_data: None,
             request_counters: None,
+            resends: None,
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
             request_counter_key: String::new(),
@@ -2050,10 +2055,43 @@ impl GooseUser {
             self.weighted_users_index,
         );
 
+        // Keep a copy of an idempotent request, to send it once more if the server
+        // closes the connection before responding. None if the body can't be cloned.
+        let resend_request = if is_idempotent(built_request.method()) {
+            built_request.try_clone()
+        } else {
+            None
+        };
+
         // Make the actual request.
-        let response = self.client.execute(built_request).await;
+        let mut response = self.client.execute(built_request).await;
+
+        // A server can close an idle keep-alive connection just as the next request
+        // goes out on it. A browser sends such a request again on a new connection,
+        // and so does Goose, once, and only for an idempotent method: Goose can't see
+        // whether any of the response arrived before the close.
+        if let Some(resend_request) = resend_request {
+            let resend = match &response {
+                Err(e) if is_closed_before_response(e) => {
+                    debug!(
+                        "{}: connection closed before a response, sending again: {}",
+                        request_metric.raw.url, e
+                    );
+                    true
+                }
+                _ => false,
+            };
+            if resend {
+                if let Some(resends) = &self.resends {
+                    resends.fetch_add(1, AtomicOrdering::Relaxed);
+                }
+                response = self.client.execute(resend_request).await;
+            }
+        }
+
         // Record Time to First Byte (TTFB): client.execute() returns when response headers
-        // are received, not when the complete response body is downloaded.
+        // are received, not when the complete response body is downloaded. A request sent
+        // again counts the time of both attempts.
         request_metric.set_response_duration(started.elapsed());
 
         // Determine if the request suceeded or failed.
@@ -3937,6 +3975,51 @@ fn clean_reqwest_error(e: &reqwest::Error, request_name: &str) -> String {
     } else {
         format!("{kind} {request_name}")
     }
+}
+
+/// Whether a request with this method may be sent again without the server seeing a
+/// change, so is idempotent as RFC 9110 section 9.2.2 defines it. A client may send
+/// such a request again after its connection fails.
+fn is_idempotent(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS | Method::TRACE
+    )
+}
+
+/// The text of hyper's `IncompleteMessage` error, which hyper returns when the
+/// connection closes before the whole response head arrives, whether or not some of
+/// it did. Goose has no direct dependency on hyper to downcast to its error type.
+const HYPER_INCOMPLETE_MESSAGE: &str = "connection closed before message completed";
+
+/// Whether `execute` failed because the connection closed, or was reset, after the
+/// request was sent and before the response head arrived: the error a server's close
+/// of an idle keep-alive connection gives the request that went out on it. Never a
+/// timeout, nor a connect error (which covers DNS, TCP connect and TLS handshake
+/// errors). Any error after the response head arrived comes from reading the body,
+/// not from `execute`.
+fn is_closed_before_response(e: &reqwest::Error) -> bool {
+    if e.is_timeout() || e.is_connect() || !e.is_request() {
+        return false;
+    }
+    let mut source = std::error::Error::source(e);
+    while let Some(error) = source {
+        if let Some(io) = error.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::NotConnected
+            );
+        }
+        if error.to_string() == HYPER_INCOMPLETE_MESSAGE {
+            return true;
+        }
+        source = error.source();
+    }
+    false
 }
 
 /// Extract the path of a request URL for the request log lines in `request()`, or
