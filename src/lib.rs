@@ -692,6 +692,9 @@ struct GooseAttackRunState {
     /// Shared registry of atomic request counters, keyed by `"METHOD path"`.
     /// User threads increment these directly; the parent reads them at report time.
     request_counter_registry: GooseRequestCounterRegistry,
+    /// Requests the run's users sent again after the connection closed before a
+    /// response, logged when the run ends.
+    resends: Arc<std::sync::atomic::AtomicU64>,
     /// Shared epoch counter for coordinating batch validity across metrics resets.
     metrics_epoch: crate::metrics::MetricsEpoch,
 }
@@ -2559,6 +2562,7 @@ impl GooseAttack {
             canceling: false,
             stopping: false,
             request_counter_registry,
+            resends: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             metrics_epoch,
         };
 
@@ -2701,6 +2705,9 @@ impl GooseAttack {
                 // Share the atomic request counter registry with this user thread.
                 thread_user.request_counters =
                     Some(goose_attack_run_state.request_counter_registry.clone());
+
+                // Share the run's count of requests sent again with this user thread.
+                thread_user.resends = Some(goose_attack_run_state.resends.clone());
 
                 // Copy the GooseUser-shutdown sender channel, used by all threads.
                 thread_user.shutdown_channel =
@@ -2912,6 +2919,14 @@ impl GooseAttack {
             // Write the --report-file reports and Save report's, only when a
             // run happened since the last time (not on a shutdown from Idle).
             let ran = self.run_in_progress;
+            let resends = goose_attack_run_state
+                .resends
+                .swap(0, std::sync::atomic::Ordering::Relaxed);
+            if ran && resends > 0 {
+                info!(
+                    "{resends} requests were sent again after the server closed a reused connection before responding"
+                );
+            }
             let reports = if ran {
                 self.write_end_of_run(!goose_attack_run_state.shutdown_after_stop)
                     .await
@@ -3594,6 +3609,9 @@ impl GooseAttack {
         goose_attack_run_state
             .metrics_epoch
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        goose_attack_run_state
+            .resends
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         // Re-create the metrics channel and spawn a fresh processor. It reads
         // Save report as start_run_folder left it, so start_run_folder runs
