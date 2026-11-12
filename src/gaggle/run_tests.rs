@@ -696,8 +696,8 @@ async fn gaggle_worker_fails_without_its_reset() {
 }
 
 /// The client settings a worker's users get, its load test's client
-/// builder asking for a 30 second timeout, gzip and checked certificates,
-/// under a manager given `manager_args`.
+/// builder asking for a 30 second timeout, gzip, checked certificates and
+/// HTTP/2 offered, under a manager given `manager_args`.
 async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClientConfig {
     let server = answering().await;
     let folder = scratch("client-config");
@@ -713,7 +713,8 @@ async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClie
             .without_cookies()
             .timeout(Duration::from_secs(30))
             .gzip(true)
-            .accept_invalid_certs(false);
+            .accept_invalid_certs(false)
+            .http1_only(false);
         let attack = attack.set_client_builder_without_cookies(builder).unwrap();
         match report.lock().unwrap().take() {
             Some(report) => attack.report_client_config(report),
@@ -726,22 +727,30 @@ async fn worker_client_config(manager_args: &[&str]) -> crate::client::GooseClie
     reported.await.expect("the worker builds its clients")
 }
 
-/// The manager's --timeout, --no-gzip and --accept-invalid-certs win over a
-/// worker's client builder, as a command line wins over a builder on one
-/// process; without them, the builder's settings stand.
+/// The manager's --timeout, --no-gzip, --accept-invalid-certs and
+/// --http1-only win over a worker's client builder, as a command line wins
+/// over a builder on one process; without them, the builder's settings stand.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_manager_client_options_win_on_workers() {
     let test = async {
-        let config =
-            worker_client_config(&["--timeout", "1", "--no-gzip", "--accept-invalid-certs"]).await;
+        let config = worker_client_config(&[
+            "--timeout",
+            "1",
+            "--no-gzip",
+            "--accept-invalid-certs",
+            "--http1-only",
+        ])
+        .await;
         assert_eq!(config.timeout, Some(Duration::from_secs(1)));
         assert!(!config.gzip);
         assert!(config.accept_invalid_certs);
+        assert!(config.http1_only);
         let config = worker_client_config(&[]).await;
         assert_eq!(config.timeout, Some(Duration::from_secs(30)));
         assert!(config.gzip);
         assert!(!config.accept_invalid_certs);
+        assert!(!config.http1_only);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await

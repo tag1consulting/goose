@@ -1362,15 +1362,15 @@ impl GooseAttack {
     /// transactions get one too.
     ///
     /// The builder's user agent replaces Goose's `goose/<version>`. The timeout,
-    /// gzip and invalid certificate settings also have a configuration option
-    /// (`--timeout`, `--no-gzip`, `--accept-invalid-certs`), and each comes from the
-    /// first of:
+    /// gzip, invalid certificate and HTTP/1.1 only settings also have a configuration
+    /// option (`--timeout`, `--no-gzip`, `--accept-invalid-certs`, `--http1-only`),
+    /// and each comes from the first of:
     ///
     /// 1. the option, when it was given on the command line;
     /// 2. the builder, when it was given that setting;
     /// 3. a [`GooseDefault`](./config/enum.GooseDefault.html) for the option;
     /// 4. Goose's built in default: a 60 second timeout, gzip on, certificates
-    ///    checked.
+    ///    checked, HTTP/2 offered over HTTPS.
     ///
     /// A transaction can still give its user a different client with
     /// [`GooseUser::set_client_builder`](./goose/struct.GooseUser.html#method.set_client_builder).

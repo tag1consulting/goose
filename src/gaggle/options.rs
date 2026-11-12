@@ -740,6 +740,7 @@ mod tests {
             &["--sticky-follow"],
             &["--drop-unread-bodies"],
             &["--accept-invalid-certs"],
+            &["--http1-only"],
         ];
         for option in refused {
             let args = with(&worker, option);

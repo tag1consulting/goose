@@ -18,12 +18,14 @@
 //!
 //! ## Which settings win
 //!
-//! The builder's user agent replaces Goose's `goose/<version>`. The timeout, gzip
-//! and invalid certificate settings also have a configuration option, and each comes
-//! from the first of: `--timeout`, `--no-gzip` or `--accept-invalid-certs` given on
-//! the command line; the builder, when it was given that setting; a
+//! The builder's user agent replaces Goose's `goose/<version>`. The timeout, gzip,
+//! invalid certificate and HTTP/1.1 only settings also have a configuration option,
+//! and each comes from the first of: `--timeout`, `--no-gzip`,
+//! `--accept-invalid-certs` or `--http1-only` given on the command line; the
+//! builder, when it was given that setting; a
 //! [`GooseDefault`](crate::config::GooseDefault) for the option; Goose's built in
-//! default (a 60 second timeout, gzip on, certificates checked). The users that run
+//! default (a 60 second timeout, gzip on, certificates checked, HTTP/2 offered over
+//! HTTPS). The users that run
 //! the `test_start` and `test_stop` transactions get the builder's clients too.
 //! A transaction that calls [`GooseUser::set_client_builder`](crate::goose::GooseUser::set_client_builder)
 //! still replaces its own user's client, and with a shared client that user leaves it
@@ -172,6 +174,9 @@ pub struct GooseClientConfig {
     pub gzip: bool,
     /// Whether to accept invalid certificates.
     pub accept_invalid_certs: bool,
+    /// Whether to use HTTP/1.1 only. Otherwise the client offers HTTP/2 and HTTP/1.1
+    /// over HTTPS, and the server chooses.
+    pub http1_only: bool,
     /// Whether to enable cookies (determined by type state).
     pub cookies_enabled: bool,
 }
@@ -183,6 +188,7 @@ impl Default for GooseClientConfig {
             user_agent: concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")).to_string(),
             gzip: true,
             accept_invalid_certs: false,
+            http1_only: false,
             cookies_enabled: true,
         }
     }
@@ -195,6 +201,7 @@ impl From<&GooseConfiguration> for GooseClientConfig {
             user_agent: concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")).to_string(),
             gzip: !config.no_gzip,
             accept_invalid_certs: config.accept_invalid_certs,
+            http1_only: config.http1_only,
             cookies_enabled: true, // Default to enabled, will be overridden by type state
         }
     }
@@ -237,6 +244,8 @@ pub(crate) struct CommandLineClientOptions {
     no_gzip: bool,
     /// `--accept-invalid-certs`.
     accept_invalid_certs: bool,
+    /// `--http1-only`.
+    http1_only: bool,
 }
 
 impl CommandLineClientOptions {
@@ -246,6 +255,7 @@ impl CommandLineClientOptions {
             timeout: configuration.timeout.is_some(),
             no_gzip: configuration.no_gzip,
             accept_invalid_certs: configuration.accept_invalid_certs,
+            http1_only: configuration.http1_only,
         }
     }
 }
@@ -257,6 +267,7 @@ struct ExplicitSettings {
     timeout: bool,
     gzip: bool,
     accept_invalid_certs: bool,
+    http1_only: bool,
 }
 
 /// What a [`GooseClientBuilder`] handed to a
@@ -292,6 +303,9 @@ impl ClientBuilderSettings {
         }
         if self.explicit.accept_invalid_certs && !command_line.accept_invalid_certs {
             config.accept_invalid_certs = self.config.accept_invalid_certs;
+        }
+        if self.explicit.http1_only && !command_line.http1_only {
+            config.http1_only = self.config.http1_only;
         }
         config
     }
@@ -420,6 +434,14 @@ impl<State> GooseClientBuilder<State> {
     pub fn accept_invalid_certs(mut self, enabled: bool) -> Self {
         self.config.accept_invalid_certs = enabled;
         self.explicit.accept_invalid_certs = true;
+        self
+    }
+
+    /// Use HTTP/1.1 only, or offer HTTP/2 and HTTP/1.1 over HTTPS and let the server
+    /// choose, the default.
+    pub fn http1_only(mut self, enabled: bool) -> Self {
+        self.config.http1_only = enabled;
+        self.explicit.http1_only = true;
         self
     }
 }
@@ -573,8 +595,30 @@ mod test_tls_server;
 
 #[cfg(test)]
 mod tests {
-    use super::test_tls_server::tls_server;
+    use super::test_tls_server::{alpn_server, tls_server, Offer};
     use super::*;
+
+    /// The shared TLS setup over a verifier that trusts only the test CA,
+    /// `tests/fixtures/tls/ca.pem`.
+    fn test_ca_shared_tls() -> SharedTls {
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(
+                rustls::pki_types::pem::PemObject::from_pem_slice(include_bytes!(
+                    "../tests/fixtures/tls/ca.pem"
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+        let provider = reqwest_default_provider();
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            provider.clone(),
+        )
+        .build()
+        .unwrap();
+        SharedTls::with_verifier(provider, verifier).unwrap()
+    }
 
     #[test]
     fn test_type_state_transitions() {
@@ -698,23 +742,7 @@ mod tests {
     #[tokio::test]
     async fn user_clients_do_not_share_tls_sessions() {
         let (url, handshakes) = tls_server();
-        let mut roots = rustls::RootCertStore::empty();
-        roots
-            .add(
-                rustls::pki_types::pem::PemObject::from_pem_slice(include_bytes!(
-                    "../tests/fixtures/tls/ca.pem"
-                ))
-                .unwrap(),
-            )
-            .unwrap();
-        let provider = reqwest_default_provider();
-        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
-            Arc::new(roots),
-            provider.clone(),
-        )
-        .build()
-        .unwrap();
-        let shared = SharedTls::with_verifier(provider, verifier).unwrap();
+        let shared = test_ca_shared_tls();
         let config = GooseClientConfig::default();
         let first = client_builder(&config, Some(&shared)).build().unwrap();
         let second = client_builder(&config, Some(&shared)).build().unwrap();
@@ -772,6 +800,49 @@ mod tests {
         for client in [&goose, &reqwest] {
             let body = client.get(&url).send().await.unwrap().text().await.unwrap();
             assert_eq!(body, "ok");
+        }
+    }
+
+    /// Over HTTPS a client Goose builds, checking certificates or not, negotiates
+    /// HTTP/2 when the server offers it and `http1_only` is off, and HTTP/1.1 in
+    /// every other case.
+    #[tokio::test]
+    async fn clients_negotiate_http2_unless_http1_only() {
+        let shared = test_ca_shared_tls();
+        for offer in [Offer::Http2AndHttp1, Offer::Http1] {
+            let (url, protocols) = alpn_server(offer, None);
+            for accept_invalid_certs in [false, true] {
+                for http1_only in [false, true] {
+                    let case = format!(
+                        "server offers {offer:?}, accept_invalid_certs {accept_invalid_certs}, http1_only {http1_only}"
+                    );
+                    let config = GooseClientConfig {
+                        accept_invalid_certs,
+                        http1_only,
+                        ..GooseClientConfig::default()
+                    };
+                    // As shared_tls() gives it: only to a client that checks
+                    // certificates.
+                    let shared = if accept_invalid_certs {
+                        None
+                    } else {
+                        Some(&shared)
+                    };
+                    let client = client_builder(&config, shared).build().unwrap();
+                    let response = client.get(&url).send().await.unwrap();
+                    let version = response.version();
+                    assert_eq!(response.text().await.unwrap(), "ok", "{case}");
+                    let negotiated = protocols.recv_timeout(Duration::from_secs(10)).unwrap();
+                    let http2 = matches!(offer, Offer::Http2AndHttp1) && !http1_only;
+                    let (expected, expected_version) = if http2 {
+                        ("h2", reqwest::Version::HTTP_2)
+                    } else {
+                        ("http/1.1", reqwest::Version::HTTP_11)
+                    };
+                    assert_eq!(negotiated, expected, "{case}");
+                    assert_eq!(version, expected_version, "{case}");
+                }
+            }
         }
     }
 }
