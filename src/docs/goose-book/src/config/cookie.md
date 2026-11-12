@@ -87,7 +87,7 @@ To leave cookie support out of the build, turn off Goose's default features:
 goose = { version = "^0.19", default-features = false }
 ```
 
-Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off; [Proxy](proxy.html) lists what they add.
+Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off; [Proxy](proxy.html) names some of what they add.
 
 ## The Type-Safe Client Builder
 
@@ -124,7 +124,7 @@ async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
 
 `set_client_builder_with_cookies` gives every user a client of its own, built from the builder, with its own cookie jar. Without the `cookies` feature it returns `GooseError::FeatureNotEnabled`, as the clients could not keep cookies.
 
-`set_client_builder_without_cookies` builds one client without a cookie store before any user starts, and every user shares it. Clones of a Reqwest client share one connection pool, so this suits a load test with many users that needs no cookies. Over HTTP/2 the users share one connection to each host; see [Which HTTP version Goose speaks](../requirements.html#which-http-version-goose-speaks). If the client can't be built, the load test fails before any user starts.
+`set_client_builder_without_cookies` builds one client without a cookie store before any user starts, and every user shares it. Clones of a Reqwest client share one connection pool, so this suits a load test with many users that needs no cookies. Over HTTP/2 the users share one connection to each host, and the server limits how many of their requests run on it at once; see [Which HTTP version Goose speaks](../requirements.html#which-http-version-goose-speaks). If the client can't be built, the load test fails before any user starts.
 
 ```rust
 use goose::client::GooseClientBuilder;

@@ -963,7 +963,7 @@ pub struct GooseConfiguration {
     ///
     /// By default, Goose offers HTTP/2 and HTTP/1.1 over HTTPS and the server
     /// chooses. With this flag Goose offers only HTTP/1.1, as Goose 0.19 and earlier
-    /// did. Plain HTTP is always HTTP/1.1.
+    /// did by default. Plain HTTP is always HTTP/1.1.
     ///
     /// Set in code with GooseDefault::Http1Only.
     #[arg(help_heading = "HTTP client", long)]

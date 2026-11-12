@@ -25,8 +25,8 @@
 //! builder, when it was given that setting; a
 //! [`GooseDefault`](crate::config::GooseDefault) for the option; Goose's built in
 //! default (a 60 second timeout, gzip on, certificates checked, HTTP/2 offered over
-//! HTTPS). The users that run
-//! the `test_start` and `test_stop` transactions get the builder's clients too.
+//! HTTPS). The users that run the `test_start` and `test_stop` transactions get the
+//! builder's clients too.
 //! A transaction that calls [`GooseUser::set_client_builder`](crate::goose::GooseUser::set_client_builder)
 //! still replaces its own user's client, and with a shared client that user leaves it
 //! for a client of its own.
@@ -138,10 +138,10 @@
 //! - **Use cases**: applications that need sessions or other per user state
 //!
 //! ### Shared Client (CookiesDisabled)
-//! - **Memory usage**: one client, and one connection pool, for every user; over
-//!   HTTP/2, one connection to each host
+//! - **Memory usage**: one client, and one connection pool, for every user
 //! - **Cookie support**: none
-//! - **Use cases**: stateless API tests, and load tests with many users
+//! - **Use cases**: stateless API tests, and load tests with many users over
+//!   HTTP/1.1; over HTTP/2 every user shares one connection to each host
 //!
 //! ## Migration Guide
 //!
