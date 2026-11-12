@@ -944,8 +944,9 @@ pub struct GooseConfiguration {
     ///
     /// By default, Goose reads to the end any response body a transaction drops unread,
     /// before the user's next request and before the transaction ends, so the connection
-    /// is reused. With this flag such bodies are dropped, closing their connections, as
-    /// Goose 0.19 and earlier did, to compare against those runs or other tools.
+    /// is reused. With this flag such bodies are dropped, closing their HTTP/1.1
+    /// connections, as Goose 0.19 and earlier did. To compare against those runs, add
+    /// --http1-only too.
     ///
     /// Set in code with GooseDefault::DropUnreadBodies.
     #[arg(help_heading = "HTTP client", long)]
