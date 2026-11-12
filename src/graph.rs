@@ -4454,8 +4454,15 @@ mod test {
         assert_eq!(graph.transactions_per_second.data[4], 0);
         assert_eq!(graph.transactions_per_second.data[5], 1);
         assert_eq!(graph.transactions_per_second.data[100], 3);
-        for second in 6..100 {
-            assert_eq!(graph.transactions_per_second.data[second], 0);
+        for (second, &transactions) in graph
+            .transactions_per_second
+            .data
+            .iter()
+            .enumerate()
+            .take(100)
+            .skip(6)
+        {
+            assert_eq!(transactions, 0, "transactions_per_second[{second}]");
         }
         assert_eq!(graph.transactions_per_second.total(), 16);
     }
@@ -4485,8 +4492,15 @@ mod test {
         assert_eq!(graph.users_per_second.data[4], 2);
         assert_eq!(graph.users_per_second.data[5], 5);
         assert_eq!(graph.users_per_second.data[37], 10);
-        for second in 6..36 {
-            assert_eq!(graph.users_per_second.data[second], 5);
+        for (second, &users) in graph
+            .users_per_second
+            .data
+            .iter()
+            .enumerate()
+            .take(36)
+            .skip(6)
+        {
+            assert_eq!(users, 5, "users_per_second[{second}]");
         }
         assert_eq!(graph.users_per_second.total(), 187);
     }
@@ -4635,25 +4649,27 @@ mod test {
         let window = graph.export_series_window(300);
         assert_eq!(window.users.len(), 79);
         // Steady region.
-        for s in 0..=60 {
-            assert_eq!(window.users[s], 10, "steady users[{s}]");
+        for (s, &users) in window.users.iter().enumerate().take(61) {
+            assert_eq!(users, 10, "steady users[{s}]");
         }
         // Monotonic ramp — no dips.
-        for s in 61..=70 {
+        for (s, &users) in window.users.iter().enumerate().take(71).skip(61) {
             let expected = (s - 60 + 10) as u64; // 11..20
-            assert_eq!(window.users[s], expected, "ramp users[{s}]");
+            assert_eq!(users, expected, "ramp users[{s}]");
             if s > 61 {
+                let previous = window.users[s - 1];
                 assert!(
-                    window.users[s] >= window.users[s - 1],
-                    "ramp must be non-decreasing at {s}: {} < {}",
-                    window.users[s],
-                    window.users[s - 1]
+                    users >= previous,
+                    "ramp must be non-decreasing at {}: {} < {}",
+                    s,
+                    users,
+                    previous
                 );
             }
         }
         // Trailing hold at 20 (not 0, not a dip).
-        for s in 71..=78 {
-            assert_eq!(window.users[s], 20, "hold users[{s}]");
+        for (s, &users) in window.users.iter().enumerate().take(79).skip(71) {
+            assert_eq!(users, 20, "hold users[{s}]");
         }
     }
 
@@ -4866,8 +4882,8 @@ mod test {
         assert_eq!(window.users.len(), 9); // seconds 0..8
         assert_eq!(window.users[2], 7);
         // Hold last known level through the hint ("now").
-        for s in 3..=8 {
-            assert_eq!(window.users[s], 7, "hold users[{s}]");
+        for (s, &users) in window.users.iter().enumerate().take(9).skip(3) {
+            assert_eq!(users, 7, "hold users[{s}]");
         }
     }
 
