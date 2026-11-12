@@ -36,7 +36,7 @@ tokio = "^1"
 reqwest = { version = "0.13", default-features = false, features = ["socks"] }
 ```
 
-**Note**: Cargo automatically unifies features across all dependencies. Goose turns off reqwest's default features and enables `default-tls`, `form`, `gzip` and `json` (and `cookies` with Goose's default `cookies` feature), so adding `socks` in your own dependency results in reqwest being compiled with those features plus `socks`. Keep `default-features = false` on your reqwest line if you don't want reqwest's own defaults, such as `http2` and `system-proxy`, added to the build.
+**Note**: Cargo automatically unifies features across all dependencies. Goose turns off reqwest's default features and enables `default-tls`, `form`, `gzip`, `http2` and `json` (and `cookies` with Goose's default `cookies` feature), so adding `socks` in your own dependency results in reqwest being compiled with those features plus `socks`. Keep `default-features = false` on your reqwest line if you don't want reqwest's own defaults, such as `charset` and `system-proxy`, added to the build.
 
 ### Environment Variables
 
