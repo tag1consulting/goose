@@ -260,10 +260,16 @@ jobs:
         fi
 
   # PDF reports with an installed browser and CHROME unset, the setup in #753:
-  # Google ships no arm64 Linux Chrome, so this job installs Chromium.
+  # .github/scripts/install-arm64-chromium.sh puts chromium on PATH from the
+  # first source that works (Playwright's CDN, Debian, ppa:xtradeb/apps, then the
+  # snap), so one host being down, as the Snap Store was on 2026-11-11, does not
+  # fail the job.
   pdf-reports-arm64:
     name: PDF report tests (arm64 Linux)
     runs-on: ubuntu-24.04-arm
+    env:
+      # The Chrome for Testing build the install script downloads, and caches.
+      CHROMIUM_VERSION: 158.0.8127.18
 
     steps:
     - name: Checkout code
@@ -277,9 +283,16 @@ jobs:
       with:
         toolchain: stable
 
+    - name: Cache Chromium
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ci-chromium
+        key: chromium-${{ env.CHROMIUM_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
     - name: Install Chromium
+      timeout-minutes: 15
       run: |
-        sudo snap install chromium
+        .github/scripts/install-arm64-chromium.sh
         # Pass: Goose can find chromium on PATH. Fail: it is not there.
         command -v chromium
         chromium --version

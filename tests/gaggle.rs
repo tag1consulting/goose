@@ -20,21 +20,24 @@ const HEARTBEAT: u64 = 6;
 static HEARTBEAT_TIMEOUT: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| format!("{HEARTBEAT}s"));
 
-/// An example binary, built by `cargo test` beside this test.
+/// An example binary, built by `cargo test` into `<profile>/examples`. This
+/// test runs from `<profile>/deps` up to Rust 1.99 and from
+/// `<profile>/build/goose/<hash>/out` from Rust 1.100, so look for
+/// `examples/<name>` in each folder above it.
 fn example(name: &str) -> PathBuf {
-    let deps = std::env::current_exe().unwrap();
-    let path = deps
-        .parent()
-        .and_then(Path::parent)
-        .unwrap()
-        .join("examples")
-        .join(name);
+    let exe = std::env::current_exe().unwrap();
+    let path = exe
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("examples").join(name))
+        .find(|path| path.is_file());
     assert!(
-        path.is_file(),
-        "{} is not built: run the tests with `cargo test --features gaggle`, which builds the examples",
-        path.display()
+        path.is_some(),
+        "examples/{} is in no folder above {}: run the tests with `cargo test --features gaggle`, which builds the examples",
+        name,
+        exe.display()
     );
-    path
+    path.unwrap()
 }
 
 /// Every process a test started and every scratch folder it made, for
