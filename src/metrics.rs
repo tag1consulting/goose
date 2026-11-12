@@ -1652,12 +1652,12 @@ impl TransactionMetric {
 /// microseconds and count, each of which it needs.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TransactionMetricAggregate {
-    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
+    /// An index into [`GooseAttack`]`.scenarios`,
     /// indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
     pub scenario_name: Arc<str>,
-    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`,
+    /// An index into [`Scenario`]`.transaction`,
     /// indicating which transaction this is.
     pub transaction_index: usize,
     /// An optional name for the transaction.
@@ -1825,7 +1825,7 @@ impl<'a> RunTimesOut<'a> {
 /// microseconds and count, each of which it needs.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ScenarioMetricAggregate {
-    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
+    /// An index into [`GooseAttack`]`.scenarios`,
     /// indicating which scenario this is.
     pub index: usize,
     /// The scenario name.
@@ -3482,13 +3482,13 @@ pub struct GooseTransactionErrorMetric {
     /// How many milliseconds the load test had been running when the
     /// transaction started.
     pub elapsed: u64,
-    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
+    /// An index into [`GooseAttack`]`.scenarios`,
     /// indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
     #[serde(with = "arc_str_serde")]
     pub scenario_name: Arc<str>,
-    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`,
+    /// An index into [`Scenario`]`.transaction`,
     /// indicating which transaction this is.
     pub transaction_index: usize,
     /// The transaction name, empty when it has none.
@@ -3517,11 +3517,11 @@ pub type GooseTransactionErrorMetrics = BTreeMap<String, GooseTransactionErrorMe
 /// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary).
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct GooseTransactionErrorMetricAggregate {
-    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`.
+    /// An index into [`GooseAttack`]`.scenarios`.
     pub scenario_index: usize,
     /// The scenario name.
     pub scenario_name: String,
-    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`.
+    /// An index into [`Scenario`]`.transaction`.
     pub transaction_index: usize,
     /// The transaction name, empty when it has none.
     pub transaction_name: String,
