@@ -1,11 +1,13 @@
 //! Every path that builds a Goose client negotiates HTTP/2 over HTTPS when the
 //! server offers it, and HTTP/1.1 with `--http1-only`, whether it checks
-//! certificates or not; plain HTTP is HTTP/1.1. Its own test binary, as it points
-//! `SSL_CERT_FILE` at the test CA before the first client in the process reads the
-//! system's root certificates, and the only test in it, so no other thread reads
-//! the environment while it is set. Only where the platform verifier reads the
-//! roots through `rustls-native-certs`, which honors `SSL_CERT_FILE`: not on macOS,
-//! iOS, Windows or Android.
+//! certificates or not; plain HTTP is HTTP/1.1.
+//!
+//! It is its own test binary, and the only test in it. It sets `SSL_CERT_FILE` to
+//! the test CA before any client in the process reads the system's root
+//! certificates, and no other thread reads the environment while it is set. It
+//! runs only where the platform verifier reads the roots through
+//! `rustls-native-certs`, which honors `SSL_CERT_FILE`, so not on macOS, iOS,
+//! Windows or Android.
 #![cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
 
 #[path = "common/tls_server.rs"]

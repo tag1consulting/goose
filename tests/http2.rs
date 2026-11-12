@@ -19,10 +19,11 @@ async fn request_root(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-/// The protocols one user negotiated with a server that offers HTTP/2 and
-/// HTTP/1.1, over a client builder without cookies given `builder_http1_only`
-/// when set, with `command_line`, and with the `GooseDefault::Http1Only`
-/// `default` when set.
+/// Runs one user against a server that offers HTTP/2 and HTTP/1.1, and returns
+/// the protocols it negotiated. The user's client comes from a client builder
+/// without cookies. `builder_http1_only`, when set, is the builder's
+/// `http1_only`. `command_line` is added to the command line. `default`, when
+/// set, is the `GooseDefault::Http1Only`.
 async fn negotiated(
     builder_http1_only: Option<bool>,
     command_line: &[&str],
