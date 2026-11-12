@@ -78,7 +78,10 @@ async fn run(path: ClientPath, host: &str, options: &[&str]) -> Vec<reqwest::Ver
         }
     }
     let metrics = goose_attack.execute().await.unwrap();
-    let requests = metrics.requests.get("GET /").expect("the user made a request");
+    let requests = metrics
+        .requests
+        .get("GET /")
+        .expect("the user made a request");
     assert_eq!(requests.fail_count, 0, "{path:?} {options:?}");
     std::mem::take(&mut *VERSIONS.lock().unwrap())
 }

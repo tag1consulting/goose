@@ -163,7 +163,11 @@ async fn http2_goaway_neither_hangs_nor_breaks_later_requests() {
     .await
     .expect("every request ends within 60 seconds");
 
-    let failed = outcomes.iter().flatten().filter(|&&answered| !answered).count();
+    let failed = outcomes
+        .iter()
+        .flatten()
+        .filter(|&&answered| !answered)
+        .count();
     println!(
         "GOAWAY after {GOAWAY_AFTER} requests: {failed} of {} requests failed",
         USERS * REQUESTS
