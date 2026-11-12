@@ -114,7 +114,7 @@ pub(crate) fn alpn_server(
             let first_http2 = Arc::new(AtomicBool::new(true));
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
-                    continue;
+                    return;
                 };
                 let acceptor = acceptor.clone();
                 let protocols = protocols.clone();

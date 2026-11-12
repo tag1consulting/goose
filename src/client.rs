@@ -820,7 +820,7 @@ mod tests {
     /// every other case.
     #[tokio::test]
     async fn clients_negotiate_http2_unless_http1_only() {
-        let shared = test_ca_shared_tls();
+        let test_ca = test_ca_shared_tls();
         for offer in [Offer::Http2AndHttp1, Offer::Http1] {
             let (url, protocols) = alpn_server(offer, None);
             for accept_invalid_certs in [false, true] {
@@ -838,7 +838,7 @@ mod tests {
                     let shared = if accept_invalid_certs {
                         None
                     } else {
-                        Some(&shared)
+                        Some(&test_ca)
                     };
                     let client = client_builder(&config, shared).build().unwrap();
                     let response = client.get(&url).send().await.unwrap();

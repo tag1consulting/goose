@@ -143,6 +143,6 @@ async fn every_client_path_negotiates_http2_unless_http1_only() {
         }
     }
     // Nothing else connected to the TLS server.
-    std::thread::sleep(Duration::from_millis(100));
+    tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(protocols.try_iter().count(), 0);
 }
