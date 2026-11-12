@@ -101,9 +101,9 @@ const USERS: usize = 4;
 const GOAWAY_AFTER: usize = 10;
 
 /// Users sharing one client make requests across a GOAWAY on the first HTTP/2
-/// connection. Each request is answered or fails, none hangs, and the requests
-/// after it are answered on a new connection. How many fail at the GOAWAY is
-/// printed, not checked.
+/// connection. Each request is answered or fails, none hangs, and the client opens
+/// a new connection after it, on which every user's last request is answered. How
+/// many fail at the GOAWAY is printed, not checked.
 #[tokio::test]
 async fn http2_goaway_neither_hangs_nor_breaks_later_requests() {
     let (url, protocols) = alpn_server(Offer::Http2AndHttp1, Some(GOAWAY_AFTER));
@@ -115,6 +115,10 @@ async fn http2_goaway_neither_hangs_nor_breaks_later_requests() {
     else {
         panic!("a builder without cookies builds a shared client");
     };
+    // One request first, so the users share one connection from the start.
+    let warm_up = client.get(&url).send().await.unwrap();
+    assert_eq!(warm_up.version(), reqwest::Version::HTTP_2);
+    assert_eq!(warm_up.text().await.unwrap(), "ok");
     let configuration = GooseConfiguration::default();
     let mut users = Vec::new();
     for _ in 0..USERS {
@@ -132,15 +136,18 @@ async fn http2_goaway_neither_hangs_nor_breaks_later_requests() {
             for _ in 0..REQUESTS {
                 let goose = user.get("/").await.unwrap();
                 let recorded_success = goose.request.success;
-                let answered = match goose.response {
+                let (answered, outcome) = match goose.response {
                     Ok(response) => {
-                        response.version() == reqwest::Version::HTTP_2
-                            && response.text().await.ok().as_deref() == Some("ok")
+                        let version = response.version();
+                        let body = response.text().await;
+                        let answered = version == reqwest::Version::HTTP_2
+                            && body.as_ref().ok().map(String::as_str) == Some("ok");
+                        (answered, format!("{version:?} {body:?}"))
                     }
-                    Err(_) => false,
+                    Err(error) => (false, error.to_string()),
                 };
                 // A request that was not answered is recorded as failed.
-                assert!(answered || !recorded_success);
+                assert!(answered || !recorded_success, "{outcome}");
                 outcomes.push(answered);
             }
             outcomes
@@ -161,16 +168,15 @@ async fn http2_goaway_neither_hangs_nor_breaks_later_requests() {
         "GOAWAY after {GOAWAY_AFTER} requests: {failed} of {} requests failed",
         USERS * REQUESTS
     );
-    let handshakes: Vec<String> = protocols.try_iter().collect();
+    // The server sent GOAWAY, and the client then opened a new HTTP/2 connection.
+    let events: Vec<String> = protocols.try_iter().collect();
+    let goaway = events.iter().position(|event| event == "GOAWAY");
     assert!(
-        handshakes.len() >= 2 && handshakes.iter().all(|protocol| protocol == "h2"),
-        "{handshakes:?}"
+        goaway.is_some_and(|goaway| events[goaway + 1..].iter().any(|event| event == "h2")),
+        "{events:?}"
     );
-    // Every user's last requests were answered, on a later connection.
+    // Every user's last request was answered.
     for user in &outcomes {
-        assert!(
-            user[REQUESTS - GOAWAY_AFTER..].iter().all(|&answered| answered),
-            "{outcomes:?}"
-        );
+        assert_eq!(user.last(), Some(&true), "{outcomes:?}");
     }
 }

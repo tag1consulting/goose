@@ -84,7 +84,8 @@ pub(crate) enum Offer {
 /// protocol each completed handshake negotiated, `h2` or `http/1.1`, or an empty
 /// string when the client offered neither. With `goaway_after` set to `Some(n)`, it
 /// shuts the first HTTP/2 connection down gracefully, with GOAWAY, after `n`
-/// requests, and keeps accepting new connections. A dropped receiver is ignored.
+/// requests, sends `GOAWAY` when it does, and keeps accepting new connections. A
+/// dropped receiver is ignored.
 pub(crate) fn alpn_server(
     offer: Offer,
     goaway_after: Option<usize>,
@@ -131,9 +132,10 @@ pub(crate) fn alpn_server(
                         .unwrap_or_default();
                     let _ = protocols.send(protocol.clone());
                     if protocol == "h2" {
+                        // Only the first HTTP/2 connection gets GOAWAY.
                         let goaway_after =
                             goaway_after.filter(|_| first_http2.swap(false, Ordering::SeqCst));
-                        serve_http2(tls, goaway_after).await;
+                        serve_http2(tls, goaway_after, &protocols).await;
                     } else {
                         serve_http1(tls).await;
                     }
@@ -161,10 +163,12 @@ async fn serve_http1(mut tls: tokio_rustls::server::TlsStream<tokio::net::TcpStr
 }
 
 /// Answers every HTTP/2 request on the connection with `200 ok`, and after
-/// `goaway_after` requests, when set, shuts the connection down gracefully.
+/// `goaway_after` requests, when set, shuts the connection down gracefully and
+/// sends `GOAWAY` on `events`.
 async fn serve_http2(
     tls: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     goaway_after: Option<usize>,
+    events: &std::sync::mpsc::Sender<String>,
 ) {
     let Ok(mut connection) = h2::server::handshake(tls).await else {
         return;
@@ -177,6 +181,7 @@ async fn serve_http2(
         answered += 1;
         if goaway_after == Some(answered) {
             connection.graceful_shutdown();
+            let _ = events.send("GOAWAY".to_string());
         }
     }
 }

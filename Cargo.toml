@@ -122,7 +122,6 @@ tokio = { version = "1", features = ["test-util"] }
 # The HTTP/2 test servers in tests/common/tls_server.rs: TLS from the rustls
 # reqwest uses, and HTTP/2 from the crate reqwest's `http2` feature pulls in.
 h2 = "0.4"
-http = "1"
 tokio-rustls = { version = "0.26", default-features = false }
 # Generates src/dashboard/static/snapshot.d.ts from the snapshot structs in a
 # unit test; a dev-dependency, so normal builds do not depend on it.
