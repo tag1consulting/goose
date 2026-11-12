@@ -18,7 +18,7 @@ Goose before 0.19 used Reqwest 0.12 and native TLS by default, with rustls throu
 
 ## Which HTTP version Goose speaks
 
-Over HTTPS, Goose offers HTTP/2 and HTTP/1.1 and the server chooses, as a browser does. Plain HTTP is HTTP/1.1. `--http1-only` (`GooseDefault::Http1Only`, or `http1_only(true)` on a `GooseClientBuilder`) keeps Goose to HTTP/1.1, for example to compare with runs from Goose 0.19 or earlier.
+Over HTTPS, Goose offers HTTP/2 and HTTP/1.1 and the server chooses, as a browser does. Plain HTTP is HTTP/1.1. `--http1-only` (`GooseDefault::Http1Only`, or `http1_only(true)` on a `GooseClientBuilder`) keeps Goose to HTTP/1.1, for example, with `--drop-unread-bodies`, to compare with a run from Goose 0.19 or earlier.
 
 Over HTTP/2 a client sends all its requests to a host on one connection. Each user has a client of its own unless the load test calls `set_client_builder_without_cookies`, which gives every user one shared client. Over HTTP/2 all users then share one connection, and the server limits how many of their requests run on it at once. To give each user its own connection, use a client for each user, or `--http1-only`.
 
