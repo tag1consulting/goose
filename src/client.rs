@@ -487,16 +487,20 @@ impl SharedTls {
 
     /// A TLS config for one client: the shared verifier, no client certificate, and
     /// a session store of its own, so a client never resumes another client's TLS
-    /// session. ALPN offers only HTTP/1.1, as reqwest's default does without `http2`,
-    /// because Goose cannot see whether a load test turned `http2` on.
-    fn client_config(&self) -> ClientConfig {
+    /// session. ALPN offers HTTP/2 then HTTP/1.1, as reqwest's default does, or
+    /// HTTP/1.1 only with `http1_only`.
+    fn client_config(&self, http1_only: bool) -> ClientConfig {
         let mut config = self
             .builder
             .clone()
             .dangerous()
             .with_custom_certificate_verifier(self.verifier.clone())
             .with_no_client_auth();
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        config.alpn_protocols = if http1_only {
+            vec![b"http/1.1".to_vec()]
+        } else {
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        };
         config
     }
 }
@@ -550,14 +554,21 @@ fn shared_tls(config: &GooseClientConfig) -> Option<&'static SharedTls> {
 /// cookies, and a TLS config from `shared` when there is one. That config makes
 /// reqwest use rustls for the client even when a load test turns on reqwest's
 /// `native-tls` feature.
+///
+/// Over HTTPS the client offers HTTP/2 and HTTP/1.1 and the server chooses, or
+/// with `http1_only` it offers HTTP/1.1 only. Plain HTTP is HTTP/1.1.
 fn client_builder(config: &GooseClientConfig, shared: Option<&SharedTls>) -> ClientBuilder {
     let mut builder = Client::builder()
         .user_agent(&config.user_agent)
         .gzip(config.gzip)
         .danger_accept_invalid_certs(config.accept_invalid_certs);
 
+    if config.http1_only {
+        builder = builder.http1_only();
+    }
+
     if let Some(shared) = shared {
-        builder = builder.tls_backend_preconfigured(shared.client_config());
+        builder = builder.tls_backend_preconfigured(shared.client_config(config.http1_only));
         #[cfg(test)]
         SHARED_TLS_CLIENTS.with(|clients| clients.set(clients.get() + 1));
     }
