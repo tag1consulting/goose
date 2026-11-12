@@ -20,6 +20,8 @@ Goose before 0.19 used Reqwest 0.12 and native TLS by default, with rustls throu
 
 Over HTTPS, Goose offers HTTP/2 and HTTP/1.1 and the server chooses, as a browser does. Plain HTTP is HTTP/1.1. `--http1-only` (`GooseDefault::Http1Only`, or `http1_only(true)` on a `GooseClientBuilder`) keeps Goose to HTTP/1.1, for example to compare with runs from Goose 0.19 or earlier.
 
+Over HTTP/2 a client sends all its requests to a host on one connection. Each user has a client of its own unless the load test calls `set_client_builder_without_cookies`, whose one client every user shares: over HTTP/2 all users then share one connection, and the server limits how many of their requests run on it at once. To give each user its own connection, use a client for each user, or `--http1-only`.
+
 Aimed at a CDN, a load balancer or a TLS front end, Goose tests the HTTP/2 path browsers use. Aimed at an origin that offers only HTTP/1.1, as most CDNs reach their origins, it speaks HTTP/1.1. Goose does not support HTTP/3, which carries a large share of browser traffic, because Reqwest still marks its HTTP/3 client unstable.
 
 A client you pass to `GooseUser::set_client_builder` follows your `reqwest::ClientBuilder`, not `--http1-only`: it offers HTTP/2 and HTTP/1.1 unless your builder calls `.http1_only()`, and it uses native TLS when your `reqwest` dependency has `features = ["native-tls"]`. [A Client Without Cookies](./config/cookie.html#a-client-without-cookies) shows how to pass one. It replaces Goose's defaults for that user, so set the ones you need on your builder, such as the timeout, or `.cookie_store(true)` for cookies.

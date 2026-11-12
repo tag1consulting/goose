@@ -138,7 +138,8 @@
 //! - **Use cases**: applications that need sessions or other per user state
 //!
 //! ### Shared Client (CookiesDisabled)
-//! - **Memory usage**: one client, and one connection pool, for every user
+//! - **Memory usage**: one client, and one connection pool, for every user; over
+//!   HTTP/2, one connection to each host
 //! - **Cookie support**: none
 //! - **Use cases**: stateless API tests, and load tests with many users
 //!

@@ -91,7 +91,7 @@ Reqwest is then built without its `cookies` feature, unless another dependency t
 
 ## The Type-Safe Client Builder
 
-The `goose::client` module, which is not part of the prelude, has a [`GooseClientBuilder`](https://docs.rs/goose/*/goose/client/struct.GooseClientBuilder.html) that records its cookie choice in its type: it starts in the `CookiesEnabled` state, `without_cookies()` moves it to `CookiesDisabled` and `with_cookies()` moves it back. `timeout`, `user_agent`, `gzip` and `accept_invalid_certs` are available in both states. [`GooseAttack::set_client_builder_with_cookies`](https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_client_builder_with_cookies) takes a `CookiesEnabled` builder and [`set_client_builder_without_cookies`](https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_client_builder_without_cookies) a `CookiesDisabled` one, and both return a `Result`:
+The `goose::client` module, which is not part of the prelude, has a [`GooseClientBuilder`](https://docs.rs/goose/*/goose/client/struct.GooseClientBuilder.html) that records its cookie choice in its type: it starts in the `CookiesEnabled` state, `without_cookies()` moves it to `CookiesDisabled` and `with_cookies()` moves it back. `timeout`, `user_agent`, `gzip`, `accept_invalid_certs` and `http1_only` are available in both states. [`GooseAttack::set_client_builder_with_cookies`](https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_client_builder_with_cookies) takes a `CookiesEnabled` builder and [`set_client_builder_without_cookies`](https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_client_builder_without_cookies) a `CookiesDisabled` one, and both return a `Result`:
 
 ```rust
 use goose::client::GooseClientBuilder;
@@ -124,7 +124,7 @@ async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
 
 `set_client_builder_with_cookies` gives every user a client of its own, built from the builder, with its own cookie jar. Without the `cookies` feature it returns `GooseError::FeatureNotEnabled`, as the clients could not keep cookies.
 
-`set_client_builder_without_cookies` builds one client without a cookie store before any user starts, and every user shares it. Clones of a Reqwest client share one connection pool, so this suits a load test with many users that needs no cookies. If the client can't be built, the load test fails before any user starts.
+`set_client_builder_without_cookies` builds one client without a cookie store before any user starts, and every user shares it. Clones of a Reqwest client share one connection pool, so this suits a load test with many users that needs no cookies. Over HTTP/2 the users share one connection to each host; see [Which HTTP version Goose speaks](../requirements.html#which-http-version-goose-speaks). If the client can't be built, the load test fails before any user starts.
 
 ```rust
 use goose::client::GooseClientBuilder;
