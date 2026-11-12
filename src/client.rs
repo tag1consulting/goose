@@ -438,8 +438,8 @@ impl<State> GooseClientBuilder<State> {
         self
     }
 
-    /// Use HTTP/1.1 only, or offer HTTP/2 and HTTP/1.1 over HTTPS and let the server
-    /// choose, the default.
+    /// With `true`, use HTTP/1.1 only. With `false`, the default, offer HTTP/2 and
+    /// HTTP/1.1 over HTTPS and let the server choose.
     pub fn http1_only(mut self, enabled: bool) -> Self {
         self.config.http1_only = enabled;
         self.explicit.http1_only = true;
