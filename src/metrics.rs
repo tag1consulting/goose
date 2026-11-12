@@ -7601,8 +7601,8 @@ mod test {
         assert_eq!(users_window.users[2], 3);
         assert_eq!(users_window.users[3], 4);
         assert_eq!(users_window.users[4], 5);
-        for s in 5..=10 {
-            assert_eq!(users_window.users[s], 5, "steady users[{s}]");
+        for (s, &users) in users_window.users.iter().enumerate().take(11).skip(5) {
+            assert_eq!(users, 5, "steady users[{s}]");
         }
 
         // Post-reset recording continues on the same clock (no restart at 0).
