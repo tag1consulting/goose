@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.20.0-dev
- - [#PR](https://github.com/tag1consulting/goose/pull/PR) HTTPS requests now negotiate HTTP/2 with a server that offers it, as browsers do; plain HTTP stays HTTP/1.1
+ - [#829](https://github.com/tag1consulting/goose/pull/829) HTTPS requests now negotiate HTTP/2 with a server that offers it, as browsers do; plain HTTP stays HTTP/1.1
     o **Breaking**: the clients Goose builds, including those from `GooseClientBuilder`, offer HTTP/2 and HTTP/1.1 over HTTPS by default and use HTTP/2 when the server agrees; `--http1-only` (`GooseDefault::Http1Only`, `GooseClientBuilder::http1_only`) keeps HTTP/1.1; a Gaggle manager passes it to its workers
     o **Breaking**: a new public `GooseConfiguration` field and `GooseDefault` variant (a `match` on `GooseDefault` outside Goose needs an arm for it), and a new public `GooseClientConfig` field, each named `http1_only` or `Http1Only`
     o new dependency `h2`, through reqwest's `http2` feature
