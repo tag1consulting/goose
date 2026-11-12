@@ -84,8 +84,8 @@ pub(crate) enum Offer {
 /// protocol each completed handshake negotiated, `h2` or `http/1.1`, or an empty
 /// string when the client offered neither. With `goaway_after` set to `Some(n)`, it
 /// shuts the first HTTP/2 connection down gracefully, with GOAWAY, after `n`
-/// requests, sends `GOAWAY` when it does, and keeps accepting new connections. A
-/// dropped receiver is ignored.
+/// requests, reports `GOAWAY` on the channel when it does, and keeps accepting new
+/// connections. A dropped receiver is ignored.
 pub(crate) fn alpn_server(
     offer: Offer,
     goaway_after: Option<usize>,
