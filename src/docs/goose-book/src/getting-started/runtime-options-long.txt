@@ -750,6 +750,15 @@ HTTP client:
 
           Set in code with GooseDefault::AcceptInvalidCerts.
 
+      --http1-only
+          Use HTTP/1.1 only, never HTTP/2
+
+          By default, Goose offers HTTP/2 and HTTP/1.1 over HTTPS and the server
+          chooses. With this flag Goose offers only HTTP/1.1, as Goose 0.19 and
+          earlier did. Plain HTTP is always HTTP/1.1.
+
+          Set in code with GooseDefault::Http1Only.
+
 Gaggle:
       --manager
           Run as a Gaggle manager

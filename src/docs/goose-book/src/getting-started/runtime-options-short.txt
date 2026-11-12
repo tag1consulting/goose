@@ -101,6 +101,7 @@ HTTP client:
       --sticky-follow         Keep following the host's redirect
       --drop-unread-bodies    Don't read bodies the test left unread
       --accept-invalid-certs  Accept invalid TLS certificates
+      --http1-only            Use HTTP/1.1 only, never HTTP/2
 
 Gaggle:
       --manager                          Run as a Gaggle manager

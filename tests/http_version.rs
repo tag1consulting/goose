@@ -115,10 +115,19 @@ async fn every_client_path_negotiates_http2_unless_http1_only() {
             };
             assert_eq!(versions, [expected_version], "{path:?} {options:?}");
             let negotiated: Vec<String> = protocols.try_iter().collect();
-            assert!(!negotiated.is_empty(), "{path:?} {options:?}: no handshake");
+            assert!(
+                !negotiated.is_empty(),
+                "{:?} {:?}: no handshake",
+                path,
+                options
+            );
             assert!(
                 negotiated.iter().all(|protocol| protocol == expected),
-                "{path:?} {options:?}: {negotiated:?}, expected {expected}"
+                "{:?} {:?}: {:?}, expected {}",
+                path,
+                options,
+                negotiated,
+                expected
             );
 
             // The same options over plain HTTP: always HTTP/1.1.

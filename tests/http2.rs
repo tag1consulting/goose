@@ -147,7 +147,7 @@ async fn http2_goaway_neither_hangs_nor_breaks_later_requests() {
                     Err(error) => (false, error.to_string()),
                 };
                 // A request that was not answered is recorded as failed.
-                assert!(answered || !recorded_success, "{outcome}");
+                assert!(answered || !recorded_success, "{}", outcome);
                 outcomes.push(answered);
             }
             outcomes
@@ -173,7 +173,8 @@ async fn http2_goaway_neither_hangs_nor_breaks_later_requests() {
     let goaway = events.iter().position(|event| event == "GOAWAY");
     assert!(
         goaway.is_some_and(|goaway| events[goaway + 1..].iter().any(|event| event == "h2")),
-        "{events:?}"
+        "{:?}",
+        events
     );
     // Every user's last request was answered.
     for user in &outcomes {
