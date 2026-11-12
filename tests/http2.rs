@@ -30,7 +30,7 @@ async fn negotiated(
     let (url, protocols) = alpn_server(Offer::Http2AndHttp1, None);
     let mut args = vec![
         "--host",
-        &url,
+        url.as_str(),
         "--users",
         "1",
         "--increase-rate",
