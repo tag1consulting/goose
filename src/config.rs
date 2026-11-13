@@ -944,8 +944,9 @@ pub struct GooseConfiguration {
     ///
     /// By default, Goose reads to the end any response body a transaction drops unread,
     /// before the user's next request and before the transaction ends, so the connection
-    /// is reused. With this flag such bodies are dropped, closing their connections, as
-    /// Goose 0.19 and earlier did, to compare against those runs or other tools.
+    /// is reused. With this flag such bodies are dropped, closing their HTTP/1.1
+    /// connections, as Goose 0.19 and earlier did. To compare against those runs, add
+    /// --http1-only too.
     ///
     /// Set in code with GooseDefault::DropUnreadBodies.
     #[arg(help_heading = "HTTP client", long)]
@@ -958,6 +959,15 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::AcceptInvalidCerts.
     #[arg(help_heading = "HTTP client", long)]
     pub accept_invalid_certs: bool,
+    /// Use HTTP/1.1 only, never HTTP/2
+    ///
+    /// By default, Goose offers HTTP/2 and HTTP/1.1 over HTTPS and the server
+    /// chooses. With this flag Goose offers only HTTP/1.1, as Goose 0.19 and earlier
+    /// did by default. Plain HTTP is always HTTP/1.1.
+    ///
+    /// Set in code with GooseDefault::Http1Only.
+    #[arg(help_heading = "HTTP client", long)]
+    pub http1_only: bool,
     /// Check Gaggle metrics merging against this run
     ///
     /// Runs the load test as its own Gaggle worker and manager: each second's metrics
@@ -1205,6 +1215,7 @@ impl std::fmt::Debug for GooseConfiguration {
             sticky_follow,
             drop_unread_bodies,
             accept_invalid_certs,
+            http1_only,
             #[cfg(feature = "gaggle")]
             gaggle_shadow_merge,
             #[cfg(feature = "gaggle")]
@@ -1321,7 +1332,8 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("no_gzip", no_gzip)
             .field("sticky_follow", sticky_follow)
             .field("drop_unread_bodies", drop_unread_bodies)
-            .field("accept_invalid_certs", accept_invalid_certs);
+            .field("accept_invalid_certs", accept_invalid_certs)
+            .field("http1_only", http1_only);
         #[cfg(feature = "gaggle")]
         debug
             .field("gaggle_shadow_merge", gaggle_shadow_merge)
@@ -1860,6 +1872,8 @@ pub(crate) struct GooseDefaults {
     pub no_percentiles_over_time: Option<bool>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
+    /// An optional default for using HTTP/1.1 only.
+    pub http1_only: Option<bool>,
     /// An optional default for the PDF scale factor.
     #[cfg(feature = "pdf-reports")]
     pub pdf_scale: Option<f64>,
@@ -2078,6 +2092,8 @@ pub enum GooseDefault {
     /// An optional default for PDF generation timeout (seconds).
     #[cfg(feature = "pdf-reports")]
     PdfTimeout,
+    /// An optional default for using HTTP/1.1 only.
+    Http1Only,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
@@ -2189,6 +2205,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::DashboardNoAuth`]
 ///  - [`GooseDefault::NoPercentilesOverTime`]
 ///  - [`GooseDefault::AcceptInvalidCerts`]
+///  - [`GooseDefault::Http1Only`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseLogFormat`].
@@ -2316,7 +2333,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::DashboardControl
             | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
-            | GooseDefault::AcceptInvalidCerts => {
+            | GooseDefault::AcceptInvalidCerts
+            | GooseDefault::Http1Only => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -2459,7 +2477,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::DashboardControl
             | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
-            | GooseDefault::AcceptInvalidCerts => {
+            | GooseDefault::AcceptInvalidCerts
+            | GooseDefault::Http1Only => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -2528,6 +2547,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
             GooseDefault::AcceptInvalidCerts => self.defaults.accept_invalid_certs = Some(value),
+            GooseDefault::Http1Only => self.defaults.http1_only = Some(value),
             GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::DropUnreadBodies => self.defaults.drop_unread_bodies = Some(value),
@@ -2680,6 +2700,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
+            | GooseDefault::Http1Only
             => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -2825,6 +2846,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
+            | GooseDefault::Http1Only
             => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -3015,7 +3037,8 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::DashboardControl
             | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
-            | GooseDefault::AcceptInvalidCerts => {
+            | GooseDefault::AcceptInvalidCerts
+            | GooseDefault::Http1Only => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -4338,6 +4361,24 @@ impl GooseConfiguration {
                     value: defaults.accept_invalid_certs,
                     filter: defaults.accept_invalid_certs.is_none(),
                     message: "accept_invalid_certs",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `http1_only`
+        self.http1_only = self
+            .get_value(vec![
+                // Use --http1-only if set.
+                GooseValue {
+                    value: Some(self.http1_only),
+                    filter: !self.http1_only,
+                    message: "http1_only",
+                },
+                // Use GooseDefault if not already set.
+                GooseValue {
+                    value: defaults.http1_only,
+                    filter: defaults.http1_only.is_none(),
+                    message: "http1_only",
                 },
             ])
             .unwrap_or(false);
@@ -6977,6 +7018,7 @@ mod test {
             "--sticky-follow",
             "--drop-unread-bodies",
             "--accept-invalid-certs",
+            "--http1-only",
         ];
         if cfg!(feature = "pdf-reports") {
             args.extend(["--pdf-scale", "1.5", "--pdf-timeout", "120"]);
@@ -7063,6 +7105,7 @@ mod test {
         assert!(c.sticky_follow);
         assert!(c.drop_unread_bodies);
         assert!(c.accept_invalid_certs);
+        assert!(c.http1_only);
     }
 
     /// An option left off the command line keeps its `Default` value.

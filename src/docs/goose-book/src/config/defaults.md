@@ -78,6 +78,7 @@ The following defaults can be configured with a `bool`:
  - follow redirect of base_url: `GooseDefault::StickyFollow`
  - drop response bodies the test left unread, as Goose 0.19 did, instead of reading them to the end: `GooseDefault::DropUnreadBodies`
  - accept invalid TLS certificates: `GooseDefault::AcceptInvalidCerts`
+ - use HTTP/1.1 only, never HTTP/2: `GooseDefault::Http1Only`
  - graph only totals in reports: `GooseDefault::NoGranularData`
  - add graph data to the JSON report: `GooseDefault::ReportGraphData`
  - serve the live web dashboard: `GooseDefault::Dashboard`

@@ -71,9 +71,10 @@ pub(crate) struct WorkerRunSpec {
     pub(crate) sticky_follow: bool,
     pub(crate) drop_unread_bodies: bool,
     pub(crate) accept_invalid_certs: bool,
-    /// Which of the timeout, gzip and certificate options the manager's
-    /// command line gave: they win over the worker's client builder, as on
-    /// one process.
+    pub(crate) http1_only: bool,
+    /// Which of the timeout, gzip, certificate and HTTP/1.1 only options the
+    /// manager's command line gave: they win over the worker's client builder,
+    /// as on one process.
     pub(crate) client_command_line: CommandLineClientOptions,
     pub(crate) no_metrics: bool,
     pub(crate) no_transaction_metrics: bool,
@@ -366,6 +367,7 @@ pub(crate) fn worker_specs(
                 sticky_follow: configuration.sticky_follow,
                 drop_unread_bodies: configuration.drop_unread_bodies,
                 accept_invalid_certs: configuration.accept_invalid_certs,
+                http1_only: configuration.http1_only,
                 client_command_line,
                 no_metrics: configuration.no_metrics,
                 no_transaction_metrics: configuration.no_transaction_metrics,
@@ -427,6 +429,7 @@ impl WorkerRunSpec {
         configuration.sticky_follow = self.sticky_follow;
         configuration.drop_unread_bodies = self.drop_unread_bodies;
         configuration.accept_invalid_certs = self.accept_invalid_certs;
+        configuration.http1_only = self.http1_only;
         configuration.no_metrics = self.no_metrics;
         configuration.no_transaction_metrics = self.no_transaction_metrics;
         configuration.no_scenario_metrics = self.no_scenario_metrics;

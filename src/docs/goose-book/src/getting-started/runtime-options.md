@@ -58,8 +58,9 @@ The options a load test needs first are on [Common Options](common.md). Every ot
 | `--timeout` | [Tips](tips.md#timeouts) |
 | `--no-gzip` | By default requests ask for gzip compressed responses, which Goose decompresses; `--no-gzip` stops asking. |
 | `--sticky-follow` | When a request is redirected to another host, the GooseUser sends its later requests to that host too. |
-| `--drop-unread-bodies` | Drops response bodies a transaction left unread, closing their connections, as Goose 0.19 did; see [Read every response body](tips.md#read-every-response-body). |
+| `--drop-unread-bodies` | Drops response bodies a transaction left unread, closing their HTTP/1.1 connections, as Goose 0.19 did; see [Read every response body](tips.md#read-every-response-body). |
 | `--accept-invalid-certs` | Skips TLS certificate validation, for test servers with self-signed or expired certificates. |
+| `--http1-only` | Offers only HTTP/1.1 over HTTPS, where Goose otherwise offers HTTP/2 and HTTP/1.1; see [Which HTTP version Goose speaks](../requirements.md#which-http-version-goose-speaks). |
 
 `--no-websocket` is not in the help: the WebSocket Controller is off unless `--websocket` turns it on, and a command line from Goose 0.18 that still passes `--no-websocket` runs with a warning. [Upgrading From 0.18](upgrading.md) lists every option that was removed or now behaves differently.
 
