@@ -34,9 +34,9 @@ $ cargo run
      Locking 253 packages to highest Rust 1.99.0 compatible versions
       Adding generic-array v0.14.7 (available: v0.14.9)
  Downloading crates ...
-  Downloaded goose v0.19.1
+  Downloaded goose v0.19.2
       ...
-   Compiling goose v0.19.1
+   Compiling goose v0.19.2
    Compiling loadtest v0.1.0 (/home/you/loadtest)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 27.70s
      Running `target/debug/loadtest`

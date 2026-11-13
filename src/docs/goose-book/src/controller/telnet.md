@@ -13,7 +13,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose> ?
-goose 0.19.1 controller commands:
+goose 0.19.2 controller commands:
 help               this help
 exit               exit controller
 

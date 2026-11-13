@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.19.2-dev
+## 0.19.2 November 13, 2026
 
  - [#826](https://github.com/tag1consulting/goose/pull/826) a request no longer fails with `client error (SendRequest)` when the server closes an idle keep-alive connection just as the request goes out on it: Goose sent each request once and counted the server's idle close as a failure, where a browser sends the request again; Goose now sends a GET, HEAD, PUT, DELETE, OPTIONS or TRACE request once more, on a new connection, when its connection closes or is reset before the response head arrives, and records one request with the time of both attempts; it never sends a POST or PATCH again, as it can't see whether part of the response arrived, unlike a browser, and never sends a timeout or connect error again; a run that sent requests again ends with the info line `N requests were sent again after the server closed a reused connection before responding`
 
