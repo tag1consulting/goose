@@ -2086,14 +2086,14 @@ pub enum GooseDefault {
     NoPercentilesOverTime,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
-    /// An optional default for using HTTP/1.1 only.
-    Http1Only,
     /// An optional default for the PDF scale factor.
     #[cfg(feature = "pdf-reports")]
     PdfScale,
     /// An optional default for PDF generation timeout (seconds).
     #[cfg(feature = "pdf-reports")]
     PdfTimeout,
+    /// An optional default for using HTTP/1.1 only.
+    Http1Only,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
