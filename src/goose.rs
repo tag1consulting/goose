@@ -425,7 +425,7 @@ pub enum TransactionError {
     /// There was an error sending the metrics for a request to the parent thread.
     MetricsFailed {
         /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
-        /// which contains the [`GooseMetric`](../metrics/enum.GooseMetric.html) that wasn't sent.
+        /// which contains the [`GooseMetric`] that wasn't sent.
         source: flume::SendError<GooseMetric>,
     },
     /// There was an error sending debug information to the logger thread.
