@@ -441,9 +441,8 @@ pub fn static_asset_urls(html: &str) -> Vec<(AssetKind, String)> {
     // Compiled once, on first use, and shared by every user.
     static TAG: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?is)<(link|script|img)\b([^>]*)>").unwrap());
-    static ATTRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?is)\s([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap()
-    });
+    static ATTRIBUTE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"(?is)\s([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap());
     let mut assets: Vec<(AssetKind, String)> = Vec::new();
     for found in TAG.captures_iter(html) {
         let mut rel = None;
