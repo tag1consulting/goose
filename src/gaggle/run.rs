@@ -2972,6 +2972,68 @@ mod tests {
             .expect("within 30 seconds");
     }
 
+    /// A stop a running worker reads while a users change's users build is
+    /// applied before any of those users starts, as when they were built on
+    /// its main loop.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_stop_read_during_a_users_build_starts_none_of_its_users() {
+        use crate::gaggle::control::WorkerUsers;
+        use crate::gaggle::proto::Control;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            // A user started by mistake waits, rather than looping at once.
+            attack.scenarios[0].transaction_wait =
+                Some((Duration::from_secs(60), Duration::from_secs(60)));
+            attack.run_shape = crate::run_shape::RunShape::for_configuration(&attack.configuration);
+            if let Some(GaggleRole::Worker(run)) = attack.gaggle.role.as_mut() {
+                run.start_at = Some(tokio::time::Instant::now());
+            }
+            attack.gaggle_worker_idle(&mut run_state).await.unwrap();
+            let send = |id: u64, control: WorkerControl| {
+                let command = control.encode().unwrap();
+                manager.send(0, ToWorker::Control(Control { id, command }));
+            };
+            send(
+                1,
+                WorkerControl::Settings(WorkerSettings {
+                    users: Some(WorkerUsers {
+                        users: vec![(0, 0), (1, 0), (2, 0)],
+                        ramp_ms: 0,
+                    }),
+                    ..WorkerSettings::default()
+                }),
+            );
+            send(2, WorkerControl::Stop);
+            let mut received = 0;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while received < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck { received: true, .. } = event {
+                        received += 1;
+                    }
+                }
+                assert!(Instant::now() < deadline, "the changes were not read");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(attack.user_build.is_some(), "no users build");
+            // The main loop's turns, from the one the users arrive in.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while attack.user_build.is_some() {
+                attack.increase_attack(&mut run_state).await.unwrap();
+                assert!(Instant::now() < deadline, "the users were not built");
+            }
+            attack.gaggle_tick(&mut run_state).await.unwrap();
+            assert_eq!(run_state.active_users, 0, "a user started after the stop");
+            assert_ne!(attack.attack_phase, AttackPhase::Increase);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// A worker that sends chunks that move nothing, of a file never asked
     /// for or empty and not the last, is not kept alive by them, however
     /// often they come: its log is left on it once the idle deadline passes.
