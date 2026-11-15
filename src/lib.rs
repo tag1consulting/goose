@@ -3061,6 +3061,9 @@ impl GooseAttack {
                 match built {
                     Err(_) => return Ok(()),
                     Ok(built) => {
+                        // The step runs from now, as it did when the users
+                        // were built before the change was answered.
+                        self.step_started = Some(time::Instant::now());
                         self.user_build = None;
                         self.weighted_users = built.map_err(|_| {
                             GooseError::Io(io::Error::other("user build thread exited"))
