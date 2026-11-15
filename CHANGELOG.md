@@ -2,7 +2,7 @@
 
 ## 0.19.3-dev
 
- - [#PRNUM](https://github.com/tag1consulting/goose/pull/PRNUM) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages and the Book's analytics check name the new host
+ - [#832](https://github.com/tag1consulting/goose/pull/832) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages and the Book's analytics check name the new host
 
 ## 0.19.2 November 13, 2026
 
