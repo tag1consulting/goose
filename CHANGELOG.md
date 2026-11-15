@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.20.0-dev
- - [#PRNUM](https://github.com/tag1consulting/goose/pull/PRNUM) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages, `llms.txt`, `AGENTS.md` and the Book's analytics check name the new host
+ - [#833](https://github.com/tag1consulting/goose/pull/833) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages, `llms.txt`, `AGENTS.md` and the Book's analytics check name the new host
  - [#829](https://github.com/tag1consulting/goose/pull/829) HTTPS requests now negotiate HTTP/2 with a server that supports it, as browsers do; plain HTTP stays HTTP/1.1
     o **Breaking**: the clients Goose builds, including those from `GooseClientBuilder`, offer HTTP/2 and HTTP/1.1 over HTTPS by default and use HTTP/2 when the server agrees; `--http1-only` (`GooseDefault::Http1Only`, `GooseClientBuilder::http1_only`) keeps HTTP/1.1; a Gaggle manager passes it to its workers
     o **Breaking**: new public field `GooseClientConfig::http1_only` and a new variant `GooseDefault::Http1Only` (a `match` on `GooseDefault` outside Goose needs an arm for it)
