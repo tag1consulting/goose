@@ -1759,9 +1759,9 @@ impl GooseAttack {
                     metrics_hash,
                     &stop_build,
                 );
-                // Gone when a later change replaced this one while it built:
-                // what was built is dropped here, off the main loop. Users
-                // already sent are dropped by whoever holds them last.
+                // When a later change replaced this one while it built, the
+                // receiver is gone and what was built is dropped here, on
+                // this thread, off the main loop.
                 let _ = built_tx.send(users);
             })?;
         Ok(UserBuild { built, stop })
@@ -3909,8 +3909,10 @@ impl GooseAttack {
             // Weight more users if increasing users (hard Err on failure),
             // before anything changes, and build them off the main loop: a
             // Gaggle manager's run on its workers. Users an earlier change
-            // built, or is still building, and did not start never will: a
-            // build still running stops.
+            // built, or is still building, and did not start never will. A
+            // build still running stops, and drops what it built on its own
+            // thread; users it already sent, waiting in its channel or in
+            // weighted_users, are dropped here, on the main loop.
             if new_users > goose_attack_run_state.active_users && !self.is_gaggle_manager() {
                 match self.build_users_off_loop(user_difference) {
                     Ok(build) => self.user_build = Some(build),
@@ -4595,8 +4597,9 @@ fn build_weighted_users(
 }
 
 /// The users of a Controller change, built on a thread off the main loop.
-/// Dropping it stops a build still running, which drops what it built on its
-/// own thread; users the build already sent are dropped with it.
+/// Dropping it stops a build still running, which then drops what it built on
+/// its own thread; users the build already sent are dropped with it, on the
+/// thread that drops it, the main loop.
 struct UserBuild {
     /// The users built, in weighted order with the last to start first, or
     /// the error building one.
