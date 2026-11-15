@@ -3084,6 +3084,12 @@ impl GooseAttack {
                     self.keep_users_after_failed_build(goose_attack_run_state, &error);
                     return Ok(());
                 }
+                // A Gaggle worker first applies the changes it read while they
+                // built, a stop among them, as when they were built on its
+                // main loop: they start from the next turn.
+                if self.is_gaggle_worker() {
+                    return Ok(());
+                }
             }
 
             // Determine if it's time to spawn a GooseUser.
