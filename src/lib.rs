@@ -3059,17 +3059,24 @@ impl GooseAttack {
                 let built =
                     tokio::time::timeout(Duration::from_millis(100), build.built.recv_async())
                         .await;
-                match built {
-                    Err(_) => return Ok(()),
-                    Ok(built) => {
+                let Ok(built) = built else {
+                    return Ok(());
+                };
+                self.user_build = None;
+                let error = match built {
+                    Ok(Ok(users)) => {
                         // The step runs from now, as it did when the users
                         // were built before the change was answered.
                         self.step_started = Some(time::Instant::now());
-                        self.user_build = None;
-                        self.weighted_users = built.map_err(|_| {
-                            GooseError::Io(io::Error::other("user build thread exited"))
-                        })??;
+                        self.weighted_users = users;
+                        None
                     }
+                    Ok(Err(e)) => Some(e.to_string()),
+                    Err(_) => Some("the user build thread exited".to_string()),
+                };
+                if let Some(error) = error {
+                    self.keep_users_after_failed_build(goose_attack_run_state, &error);
+                    return Ok(());
                 }
             }
 
@@ -3205,6 +3212,28 @@ impl GooseAttack {
         }
 
         Ok(())
+    }
+
+    /// The users a Controller change added could not be built, after the
+    /// change was answered: log why and stay at the users running, which the
+    /// rest of the run keeps, as if the change had asked for them. The load
+    /// test goes on.
+    fn keep_users_after_failed_build(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        error: &str,
+    ) {
+        let active = goose_attack_run_state.active_users;
+        error!("[controller]: could not build the users a users change added, staying at {active} users: {error}");
+        // A build is only started by a users change, which runs on a shape.
+        if let Some(mut shape) = self.run_shape.take() {
+            let elapsed = self.step_elapsed() as usize;
+            self.test_plan.steps = shape.retarget(active, elapsed, active, 0);
+            self.run_shape = Some(shape);
+            self.test_plan.current = 0;
+            self.configuration.users = Some(active);
+            self.advance_test_plan(goose_attack_run_state);
+        }
     }
 
     // Maintain the number of active [`GooseUser`](./goose/struct.GooseUser.html) threads in the
