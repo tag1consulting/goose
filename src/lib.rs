@@ -6794,4 +6794,20 @@ mod tests {
         .unwrap();
         assert!(built.is_empty());
     }
+
+    /// The step a users increase starts is timed from when its users are
+    /// built, as when they were built before the answer, so the next step
+    /// starts no earlier for the build.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_users_increase_times_its_step_from_the_build() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
+        let answered = time::Instant::now();
+        increase_to(&mut goose_attack, &mut run_state, 12).await;
+        assert!(
+            goose_attack.step_started.unwrap() > answered,
+            "the step was timed from the answer, before its users were built"
+        );
+    }
 }
