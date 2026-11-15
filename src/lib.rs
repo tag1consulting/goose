@@ -1760,7 +1760,8 @@ impl GooseAttack {
                     &stop_build,
                 );
                 // Gone when a later change replaced this one while it built:
-                // what was built is dropped here, off the main loop.
+                // what was built is dropped here, off the main loop. Users
+                // already sent are dropped by whoever holds them last.
                 let _ = built_tx.send(users);
             })?;
         Ok(UserBuild { built, stop })
@@ -4566,7 +4567,7 @@ fn build_weighted_users(
 
 /// The users of a Controller change, built on a thread off the main loop.
 /// Dropping it stops a build still running, which drops what it built on its
-/// own thread.
+/// own thread; users the build already sent are dropped with it.
 struct UserBuild {
     /// The users built, in the order they start from the end, or the error
     /// building one.
@@ -6251,8 +6252,8 @@ mod tests {
         }
     }
 
-    /// Users weighted after the shared client is built, as a Controller adds them
-    /// to a running load test, reuse that client: it is built once.
+    /// Users weighted after the shared client is built, as a test plan change
+    /// adds them to a running load test, reuse that client: it is built once.
     #[test]
     fn test_shared_client_is_shared_by_users_added_later() {
         let configuration =

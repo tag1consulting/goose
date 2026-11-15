@@ -3655,7 +3655,9 @@ pub(crate) mod tests {
             assert!(control(&mut goose_attack, &mut run_state, "users 6").await);
             let steps = &goose_attack.test_plan.steps;
             assert_eq!(steps[1..], [(6, 200), (6, 60_000), (0, 1_200)]);
-            assert_eq!(goose_attack.weighted_users.len(), 2);
+            // The two users are built off the main loop.
+            let build = goose_attack.user_build.take().unwrap();
+            assert_eq!(build.built.recv_async().await.unwrap().unwrap().len(), 2);
             assert_eq!(goose_attack.test_plan.current, 1);
             assert_eq!(stage(&goose_attack), ("ramp_up", None));
             assert_eq!(goose_attack.current_target_users(), 6);
