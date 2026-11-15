@@ -3207,8 +3207,9 @@ impl GooseAttack {
         {
             self.advance_test_plan(goose_attack_run_state);
         } else {
-            // A stopped user's finished task keeps its memory until its handle
-            // is dropped: release them instead of holding them to the end.
+            // A finished user task's allocation, sized to the user's future,
+            // is freed only when its handle drops: release the handles of
+            // stopped users instead of holding them to the end.
             goose_attack_run_state
                 .users
                 .retain(|user| !user.is_finished());
@@ -6541,8 +6542,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn maintain_releases_finished_user_tasks() {
-        let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+        let configuration = GooseConfiguration::parse_args_default(&["--no-telnet"]).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         // A step held for a minute, so the tick does not move to the next.
