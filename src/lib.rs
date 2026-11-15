@@ -6814,4 +6814,31 @@ mod tests {
             "the step was timed from the answer, before its users were built"
         );
     }
+
+    /// A users increase whose users fail to build, after it was answered,
+    /// logs why and stays at the users running: the load test goes on.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_failed_users_build_keeps_the_users_running() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Increase);
+        let (built_tx, built) = flume::bounded(1);
+        built_tx
+            .send(Err(GooseError::Io(io::Error::other("no client"))))
+            .unwrap();
+        goose_attack.user_build = Some(UserBuild {
+            built,
+            stop: Arc::new(AtomicBool::new(false)),
+        });
+        goose_attack
+            .increase_attack(&mut run_state)
+            .await
+            .expect("a failed build ended the load test");
+        assert!(goose_attack.user_build.is_none());
+        assert_eq!(run_state.active_users, 2);
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Maintain);
+        assert_eq!(goose_attack.current_target_users(), 2);
+        assert_eq!(goose_attack.configuration.users, Some(2));
+    }
 }
