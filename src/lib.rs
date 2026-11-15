@@ -6748,7 +6748,8 @@ mod tests {
         assert_eq!(scenarios.len(), 10);
         assert!(
             scenarios.windows(2).all(|pair| pair[0] != pair[1]),
-            "users left their weighted order: {scenarios:?}"
+            "users left their weighted order: {:?}",
+            scenarios
         );
     }
 
