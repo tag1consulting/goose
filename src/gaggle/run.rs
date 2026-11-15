@@ -233,8 +233,12 @@ pub(crate) struct WorkerRun {
     #[cfg(test)]
     stop_reason_sent: bool,
     /// Runtime changes that came between `StartAt` and the start, applied
-    /// once started, each with its id.
+    /// once started, or while a users change's users build, applied after
+    /// it; each with its id.
     pending_controls: Vec<(u64, WorkerControl)>,
+    /// The users change whose users are building off the main loop: said
+    /// applied once they reach it, as when they were built before it was.
+    applying: Option<u64>,
     /// Whether the whole load test's test plan holds until stopped.
     holds: bool,
 }
@@ -1003,6 +1007,7 @@ impl GooseAttack {
             #[cfg(test)]
             stop_reason_sent: false,
             pending_controls: Vec::new(),
+            applying: None,
         })));
         Ok(true)
     }
@@ -1055,6 +1060,9 @@ impl GooseAttack {
         run.run_folder = None;
         // Moot with the new share, which carries every change: answered,
         // so none stays open on the manager.
+        if let Some(id) = run.applying.take() {
+            run.link.control_ack(id, None);
+        }
         for (id, _) in run.pending_controls.drain(..) {
             run.link.control_ack(id, None);
         }
@@ -1089,7 +1097,9 @@ impl GooseAttack {
             self.attack_phase,
             AttackPhase::Increase | AttackPhase::Maintain | AttackPhase::Decrease
         );
-        if !running && run.start_at.is_some() {
+        // Changes apply in the order they came: after the start, and after
+        // a users change whose users are still building.
+        if (!running && run.start_at.is_some()) || run.applying.is_some() {
             run.pending_controls.push((id, control));
             return Ok(());
         }
@@ -1144,7 +1154,13 @@ impl GooseAttack {
         }
         #[cfg(test)]
         self.report(run.link.id, refused.is_some());
-        run.link.control_ack(id, refused);
+        // A users change that builds users is applied once they reach the
+        // main loop: gaggle_tick says so then.
+        if refused.is_none() && self.user_build.is_some() {
+            run.applying = Some(id);
+        } else {
+            run.link.control_ack(id, refused);
+        }
         Ok(())
     }
 
@@ -1556,9 +1572,22 @@ impl GooseAttack {
                 .test_faults
                 .stop_once(&run.link, &mut run.stop_reason_sent);
         }
-        // Changes that came between StartAt and the start, now applied.
-        if running && !run.pending_controls.is_empty() {
+        // A users change is applied once its users reached the main loop,
+        // or will never build: a stop, or a build that failed.
+        if self.user_build.is_none() {
+            if let Some(id) = run.applying.take() {
+                run.link.control_ack(id, None);
+            }
+        }
+        // Changes that came between StartAt and the start, or while a users
+        // change's users built, now applied, in order: one that builds users
+        // holds those after it back again.
+        if running && run.applying.is_none() && !run.pending_controls.is_empty() {
             for (id, control) in std::mem::take(&mut run.pending_controls) {
+                if run.applying.is_some() {
+                    run.pending_controls.push((id, control));
+                    continue;
+                }
                 self.worker_apply(goose_attack_run_state, run, id, control)
                     .await?;
             }
@@ -2763,6 +2792,7 @@ mod tests {
             skip_reset: false,
             stop_reason_sent: false,
             pending_controls: Vec::new(),
+            applying: None,
             holds: false,
         })));
         (attack, run_state)
