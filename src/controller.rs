@@ -1861,11 +1861,11 @@ const _: () = assert!(MAX_CONTROLLER_MESSAGE == 131_072);
 
 /// Reply to a WebSocket message that is not a json request.
 const INVALID_JSON: &str =
-    "invalid json, see Goose book https://book.goose.rs/controller/websocket.html";
+    "invalid json, see Goose book https://www.goose.rs/controller/websocket.html";
 
 /// Reply to a WebSocket request that is not a command.
 const WS_UNRECOGNIZED: &str =
-    "unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html";
+    "unrecognized command, see Goose book https://www.goose.rs/controller/websocket.html";
 
 impl Transport {
     /// The next line the client sent; `None` once the client has gone,

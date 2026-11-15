@@ -11,9 +11,9 @@ Load testing is a critical step in ensuring your web application can handle real
 
 * Realistic User Behavior Simulation: Goes beyond just sending requests; simulates user behaviors like logging in, filling out forms, and navigating through your application.
 
-* **Live Dashboard:** Opt-in web UI (compile with `--features dashboard`, run with `--dashboard`) streams live metrics (RPS, users, latency charts) over SSE while a test runs. Optional authenticated control lets you Start, Stop, and set target users from the browser—see [Live Dashboard](https://book.goose.rs/controller/dashboard.html) in the Goose Book.
+* **Live Dashboard:** Opt-in web UI (compile with `--features dashboard`, run with `--dashboard`) streams live metrics (RPS, users, latency charts) over SSE while a test runs. Optional authenticated control lets you Start, Stop, and set target users from the browser—see [Live Dashboard](https://www.goose.rs/controller/dashboard.html) in the Goose Book.
 
-* **MCP Controller:** Opt-in Model Context Protocol tools for AI agents (compile with `--features mcp`, run with `--mcp`) serve every Controller command at `http://127.0.0.1:5119/mcp`, so an agent can read a running test's metrics and start, stop and change it; see [MCP Controller](https://book.goose.rs/controller/mcp.html) in the Goose Book (published with 0.20; until then [its source](https://github.com/tag1consulting/goose/blob/main/src/docs/goose-book/src/controller/mcp.md)).
+* **MCP Controller:** Opt-in Model Context Protocol tools for AI agents (compile with `--features mcp`, run with `--mcp`) serve every Controller command at `http://127.0.0.1:5119/mcp`, so an agent can read a running test's metrics and start, stop and change it; see [MCP Controller](https://www.goose.rs/controller/mcp.html) in the Goose Book (published with 0.20; until then [its source](https://github.com/tag1consulting/goose/blob/main/src/docs/goose-book/src/controller/mcp.md)).
 
 * Have you ever been attacked by a goose?
 
@@ -22,9 +22,9 @@ To use Goose, you'll need to write a Rust application using the Goose library. T
 
 You may find the following resources helpful:
 
-* [**The Goose Book**](https://book.goose.rs/) A comprehensive guide to getting started with Goose.
+* [**The Goose Book**](https://www.goose.rs/) A comprehensive guide to getting started with Goose.
 
-* [**Live Dashboard**](https://book.goose.rs/controller/dashboard.html) Observe (and optionally control) a running load test from the browser (`--features dashboard`, `--dashboard`, `--dashboard-control` with a token or [`--dashboard-no-auth`](https://book.goose.rs/controller/dashboard.html#control-without-a-token)).
+* [**Live Dashboard**](https://www.goose.rs/controller/dashboard.html) Observe (and optionally control) a running load test from the browser (`--features dashboard`, `--dashboard`, `--dashboard-control` with a token or [`--dashboard-no-auth`](https://www.goose.rs/controller/dashboard.html#control-without-a-token)).
 
 * [**Developer Documentation**](https://docs.rs/goose/) Detailed API information and tutorials.
 
