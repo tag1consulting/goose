@@ -734,8 +734,9 @@ struct GooseAttackRunState {
     metrics_header_displayed: bool,
     /// When entering the idle phase use this flag to only display a message one time.
     idle_status_displayed: bool,
-    /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
-    /// can be stopped later.
+    /// The task of every [`GooseUser`](./goose/struct.GooseUser.html) not yet seen
+    /// to finish, joined when the load test stops. Each Maintain tick that
+    /// holds the user count releases the tasks that have finished.
     users: Vec<tokio::task::JoinHandle<()>>,
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
@@ -3206,6 +3207,12 @@ impl GooseAttack {
         {
             self.advance_test_plan(goose_attack_run_state);
         } else {
+            // A finished user task's allocation, sized to the user's future,
+            // is freed only when its handle drops: release the handles of
+            // stopped users instead of holding them to the end.
+            goose_attack_run_state
+                .users
+                .retain(|user| !user.is_finished());
             // Subtract the time spent doing other things, running the main parent loop twice
             // per second.
             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
@@ -6529,4 +6536,32 @@ mod tests {
     /// The golden value of [`gaggle_plan`]'s hash: changing it changes every
     /// plan's hash, which the CHANGELOG must say.
     const GAGGLE_PLAN_HASH: u64 = 0xda7d_f883_b1f9_971b;
+
+    /// A Maintain tick releases the tasks of users that have finished, as
+    /// after a decrease, and keeps those of users still running.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn maintain_releases_finished_user_tasks() {
+        let configuration = GooseConfiguration::parse_args_default(&["--no-telnet"]).unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        // A step held for a minute, so the tick does not move to the next.
+        goose_attack.test_plan.steps = vec![(2, 60_000)];
+        goose_attack.test_plan.current = 0;
+        goose_attack.step_started = Some(time::Instant::now());
+
+        let stopped = tokio::spawn(async {});
+        let (_keep_running, running) = tokio::sync::oneshot::channel::<()>();
+        run_state.users.push(stopped);
+        run_state.users.push(tokio::spawn(async move {
+            let _ = running.await;
+        }));
+        while !run_state.users[0].is_finished() {
+            tokio::task::yield_now().await;
+        }
+
+        goose_attack.maintain_attack(&mut run_state).await.unwrap();
+        assert_eq!(run_state.users.len(), 1, "a finished task was held");
+        assert!(!run_state.users[0].is_finished());
+    }
 }
