@@ -8,10 +8,10 @@
 
 
         <!-- Custom HTML head -->
-        <!-- Rybbit page view analytics for the Goose Book: loads only when served from book.goose.rs. -->
+        <!-- Rybbit page view analytics for the Goose Book: loads only when served from www.goose.rs, or from book.goose.rs, which redirects there. -->
         <script>
         (function () {
-            if (location.hostname !== "book.goose.rs") {
+            if (location.hostname !== "www.goose.rs" && location.hostname !== "book.goose.rs") {
                 return;
             }
             var s = document.createElement("script");
