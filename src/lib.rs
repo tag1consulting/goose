@@ -1759,8 +1759,8 @@ impl GooseAttack {
                     metrics_hash,
                     &stop_build,
                 );
-                // Gone when a later change replaced this one: what was built is
-                // dropped here, off the main loop.
+                // Gone when a later change replaced this one while it built:
+                // what was built is dropped here, off the main loop.
                 let _ = built_tx.send(users);
             })?;
         Ok(UserBuild { built, stop })
@@ -1772,11 +1772,11 @@ impl GooseAttack {
         &mut self,
         total_users: usize,
     ) -> Result<Vec<(usize, Arc<str>, url::Url)>, GooseError> {
-        trace!("weight_scenario_users");
+        trace!("weighted_user_params");
 
         let weighted_scenarios = self.user_scenario_order(total_users)?;
 
-        // Allocate a state for each user that will be launched.
+        // Weight a scenario for each user that will be launched.
         info!(
             "[scheduler]: initializing {} user states...",
             self.test_plan.total_users()
@@ -3775,7 +3775,9 @@ impl GooseAttack {
     /// `conflicting_settings` below 2 users while an increase or decrease
     /// time is set, as on the command line. A users ramp's own ramp down is
     /// not a cancel: a new count abandons it and holds until stopped.
-    /// Hard error: `weight_scenario_users` when increasing while running.
+    /// Hard error: weighting the added users, or starting the thread that
+    /// builds them, when increasing while running; an error building them
+    /// ends the run from `increase_attack`.
     pub(crate) fn control_set_users(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -4560,7 +4562,8 @@ fn build_weighted_users(
 }
 
 /// The users of a Controller change, built on a thread off the main loop.
-/// Dropping it stops the build, and what was built is dropped on that thread.
+/// Dropping it stops a build still running, which drops what it built on its
+/// own thread.
 struct UserBuild {
     /// The users built, in the order they start from the end, or the error
     /// building one.
@@ -6728,8 +6731,7 @@ mod tests {
     }
 
     /// A Controller's users increase is answered before the users it adds are
-    /// built: they are built off the main loop, then start as on main, in
-    /// weighted order.
+    /// built: they are built off the main loop, then start in weighted order.
     #[tokio::test]
     #[serial_test::serial]
     async fn a_users_increase_is_answered_before_its_users_are_built() {
