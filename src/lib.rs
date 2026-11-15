@@ -3066,8 +3066,14 @@ impl GooseAttack {
                 let error = match built {
                     Ok(Ok(users)) => {
                         // The step runs from now, as it did when the users
-                        // were built before the change was answered.
+                        // were built before the change was answered, and its
+                        // history entry says so.
                         self.step_started = Some(time::Instant::now());
+                        if let Some(step) = self.metrics.history.last_mut() {
+                            if matches!(step.action, TestPlanStepAction::Increasing) {
+                                step.timestamp = chrono::Utc::now();
+                            }
+                        }
                         self.weighted_users = users;
                         None
                     }
