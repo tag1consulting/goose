@@ -2851,6 +2851,98 @@ mod tests {
             .expect("within 30 seconds");
     }
 
+    /// A running worker says a users change was applied only once the users
+    /// it adds are built and with its main loop, as when they were built
+    /// before it was applied; a change after it waits until then.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_users_change_is_applied_once_its_users_are_built() {
+        use crate::gaggle::control::WorkerUsers;
+        use crate::gaggle::proto::Control;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            attack.run_shape =
+                crate::run_shape::RunShape::for_configuration(&attack.configuration);
+            if let Some(GaggleRole::Worker(run)) = attack.gaggle.role.as_mut() {
+                run.start_at = Some(tokio::time::Instant::now());
+            }
+            attack.gaggle_worker_idle(&mut run_state).await.unwrap();
+            assert_eq!(attack.attack_phase, AttackPhase::Increase);
+            let send = |id: u64, settings: WorkerSettings| {
+                let command = WorkerControl::Settings(settings).encode().unwrap();
+                manager.send(0, ToWorker::Control(Control { id, command }));
+            };
+            send(
+                1,
+                WorkerSettings {
+                    users: Some(WorkerUsers {
+                        users: vec![(0, 0), (1, 0), (2, 0)],
+                        ramp_ms: 0,
+                    }),
+                    ..WorkerSettings::default()
+                },
+            );
+            send(
+                2,
+                WorkerSettings {
+                    increase_rate: Some(Some(2.0)),
+                    ..WorkerSettings::default()
+                },
+            );
+            let mut received = BTreeSet::new();
+            let mut applied = Vec::new();
+            let mut acks = |manager: &Manager| {
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck {
+                        control,
+                        error,
+                        received: was_received,
+                        ..
+                    } = event
+                    {
+                        assert_eq!(error, None, "change {} refused", control);
+                        if was_received {
+                            received.insert(control);
+                        } else {
+                            applied.push(control);
+                        }
+                    }
+                }
+                (received.len(), applied.clone())
+            };
+            // Both changes read, and a few more ticks: the users still build.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut ticks = 0;
+            while acks(&manager).0 < 2 || ticks < 10 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                ticks += 1;
+                assert!(Instant::now() < deadline, "the changes were not read");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(attack.user_build.is_some(), "no users build");
+            assert_eq!(
+                acks(&manager).1,
+                Vec::<u64>::new(),
+                "applied before its users were built"
+            );
+            // The users reach the main loop, as increase_attack takes them.
+            let build = attack.user_build.take().unwrap();
+            attack.weighted_users = build.built.recv_async().await.unwrap().unwrap();
+            assert_eq!(attack.weighted_users.len(), 3);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while acks(&manager).1.len() < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                assert!(Instant::now() < deadline, "the changes were not applied");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(acks(&manager).1, vec![1, 2], "applied out of order");
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// A worker that sends chunks that move nothing, of a file never asked
     /// for or empty and not the last, is not kept alive by them, however
     /// often they come: its log is left on it once the idle deadline passes.
