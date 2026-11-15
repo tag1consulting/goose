@@ -735,8 +735,8 @@ struct GooseAttackRunState {
     /// When entering the idle phase use this flag to only display a message one time.
     idle_status_displayed: bool,
     /// The task of every [`GooseUser`](./goose/struct.GooseUser.html) not yet seen
-    /// to finish, joined when the load test stops. A Maintain tick releases the
-    /// tasks that have finished.
+    /// to finish, joined when the load test stops. Each Maintain tick that
+    /// holds the user count releases the tasks that have finished.
     users: Vec<tokio::task::JoinHandle<()>>,
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
