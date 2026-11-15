@@ -693,4 +693,4 @@ Examples:
 
 Most options can also be set in code with GooseDefault; the command line wins. A
 value that begins with a hyphen goes after =, as in --goose-log=-run.log.
-https://book.goose.rs/getting-started/runtime-options.html
+https://www.goose.rs/getting-started/runtime-options.html

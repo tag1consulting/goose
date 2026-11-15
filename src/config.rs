@@ -86,7 +86,7 @@ const DEFAULT_PDF_TIMEOUT: u64 = 60;
 /// Custom defaults can be programmatically set for most of these options using
 /// [`GooseDefault`] with [`GooseDefaultType::set_default`].
 ///
-/// [Help is generated for all of these options](https://book.goose.rs/getting-started/runtime-options.html)
+/// [Help is generated for all of these options](https://www.goose.rs/getting-started/runtime-options.html)
 /// by passing `-h` (a summary) or `--help` (the full reference) to an application built
 /// with the Goose Library.
 ///
@@ -1077,7 +1077,7 @@ impl std::fmt::Debug for GooseConfiguration {
 }
 
 /// The book page that documents every runtime option.
-const RUNTIME_OPTIONS_URL: &str = "https://book.goose.rs/getting-started/runtime-options.html";
+const RUNTIME_OPTIONS_URL: &str = "https://www.goose.rs/getting-started/runtime-options.html";
 
 /// The help width when neither a terminal nor `COLUMNS` gives one.
 const DEFAULT_HELP_WIDTH: usize = 80;
