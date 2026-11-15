@@ -827,8 +827,9 @@ impl Link {
                 return;
             }
             // Kept to the end of the run, one per user started, so the switch
-            // can stop any user still running. Each keeps its task's memory
-            // after the user stops, where the run state releases its handle.
+            // can stop any user still running. Each holds its task's memory
+            // after the user stops, unlike the run state, which releases its
+            // JoinHandle.
             users.push(user);
         }
     }
