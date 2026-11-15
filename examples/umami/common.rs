@@ -715,6 +715,9 @@ mod tests {
             get_form_value(synthetic, "form_build_id").as_deref(),
             Some("form-abc")
         );
-        assert_eq!(get_form_value(synthetic, "form_token").as_deref(), Some("tok-1"));
+        assert_eq!(
+            get_form_value(synthetic, "form_token").as_deref(),
+            Some("tok-1")
+        );
     }
 }
