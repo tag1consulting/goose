@@ -3034,6 +3034,80 @@ mod tests {
             .expect("within 30 seconds");
     }
 
+    /// Changes a running worker holds behind a users build, then a `Stop`
+    /// from the manager: the stop moots them, so none is refused, which
+    /// would lose the worker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_stop_moots_the_changes_held_behind_a_users_build() {
+        use crate::gaggle::control::WorkerUsers;
+        use crate::gaggle::proto::Control;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            attack.run_shape = crate::run_shape::RunShape::for_configuration(&attack.configuration);
+            if let Some(GaggleRole::Worker(run)) = attack.gaggle.role.as_mut() {
+                run.start_at = Some(tokio::time::Instant::now());
+            }
+            attack.gaggle_worker_idle(&mut run_state).await.unwrap();
+            let send = |id: u64, users: usize| {
+                let command = WorkerControl::Settings(WorkerSettings {
+                    users: Some(WorkerUsers {
+                        users: (0..users).map(|user| (user, 0)).collect(),
+                        ramp_ms: 0,
+                    }),
+                    ..WorkerSettings::default()
+                })
+                .encode()
+                .unwrap();
+                manager.send(0, ToWorker::Control(Control { id, command }));
+            };
+            send(1, 3);
+            send(2, 2);
+            let mut received = 0;
+            let mut applied = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while received < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck { received: true, .. } = event {
+                        received += 1;
+                    }
+                }
+                assert!(Instant::now() < deadline, "the changes were not read");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(attack.user_build.is_some(), "no users build");
+            manager.send(
+                0,
+                ToWorker::Stop(Stop {
+                    reason: "the run ended".to_string(),
+                }),
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while applied.len() < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck {
+                        control,
+                        error,
+                        received: false,
+                        ..
+                    } = event
+                    {
+                        applied.push((control, error));
+                    }
+                }
+                assert!(Instant::now() < deadline, "the changes were not answered");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(applied, vec![(1, None), (2, None)]);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// A worker that sends chunks that move nothing, of a file never asked
     /// for or empty and not the last, is not kept alive by them, however
     /// often they come: its log is left on it once the idle deadline passes.
