@@ -1,5 +1,7 @@
 mod admin;
 mod common;
+#[cfg(test)]
+mod reference;
 mod english;
 mod spanish;
 

@@ -649,4 +649,55 @@ mod tests {
                 .any(|url| url.starts_with("/sites/default/files/styles/")));
         }
     }
+
+    /// Saved Umami pages, each run through the current functions and the reference ones.
+    const PAGES: [(&str, &str); 2] = [
+        ("front-aggregated", AGGREGATED),
+        ("front-unaggregated", UNAGGREGATED),
+    ];
+
+    #[test]
+    fn asset_urls_match_the_reference() {
+        for (page, html) in PAGES {
+            let expected = crate::reference::static_asset_urls(html);
+            assert!(!expected.is_empty(), "{page}");
+            // Twice, so the second call runs on the regexes the first one compiled.
+            assert_eq!(static_asset_urls(html), expected, "{page}");
+            assert_eq!(static_asset_urls(html), expected, "{page}");
+        }
+    }
+
+    #[test]
+    fn entity_decoding_matches_the_reference() {
+        let mut values: Vec<&str> = PAGES.iter().map(|(_, html)| *html).collect();
+        values.extend([
+            "/a.css?delta=0&amp;language=en&#38;theme=umami&#x26;x=&lt;&gt;&quot;&apos;",
+            "a&bogus;b &#xD800; &#99999999; &#X41; &#; &amp &AMP;",
+            "",
+        ]);
+        for value in values {
+            let expected = crate::reference::decode_entities(value);
+            assert_eq!(decode_entities(value), expected);
+            assert_eq!(decode_entities(value), expected);
+        }
+    }
+
+    #[test]
+    fn form_values_match_the_reference() {
+        let synthetic = r#"<input name="form_build_id" value="form-abc"><input name="form_token" value='tok-1'>"#;
+        let mut pages = PAGES.to_vec();
+        pages.push(("synthetic", synthetic));
+        for (page, html) in pages {
+            for name in ["form_build_id", "form_token", "form_id", "op", "missing"] {
+                let expected = crate::reference::get_form_value(html, name);
+                assert_eq!(get_form_value(html, name), expected, "{page} {name}");
+                assert_eq!(get_form_value(html, name), expected, "{page} {name}");
+            }
+        }
+        assert_eq!(
+            get_form_value(synthetic, "form_build_id").as_deref(),
+            Some("form-abc")
+        );
+        assert_eq!(get_form_value(synthetic, "form_token").as_deref(), Some("tok-1"));
+    }
 }
