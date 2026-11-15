@@ -649,17 +649,24 @@ mod tests {
         }
     }
 
-    /// Saved Umami pages, each run through the current functions and the reference ones.
-    const PAGES: [(&str, &str); 2] = [
+    /// Saved Umami pages, each run through the current functions and the reference ones:
+    /// the two front pages above, a recipe, an article and the log in page as an
+    /// anonymous user sees them, and the form of an article's edit page as an admin
+    /// sees it, its form_build_id and form_token values replaced.
+    const PAGES: [(&str, &str); 6] = [
         ("front-aggregated", AGGREGATED),
         ("front-unaggregated", UNAGGREGATED),
+        ("recipe", include_str!("fixtures/recipe.html")),
+        ("article", include_str!("fixtures/article.html")),
+        ("login", include_str!("fixtures/login.html")),
+        ("edit-form", include_str!("fixtures/edit-form.html")),
     ];
 
     #[test]
     fn asset_urls_match_the_reference() {
         for (page, html) in PAGES {
             let expected = crate::reference::static_asset_urls(html);
-            assert!(!expected.is_empty(), "{page}");
+            assert!(!expected.is_empty(), "{}", page);
             // Twice, so the second call runs on the regexes the first one compiled.
             assert_eq!(static_asset_urls(html), expected, "{page}");
             assert_eq!(static_asset_urls(html), expected, "{page}");
@@ -693,6 +700,17 @@ mod tests {
                 assert_eq!(get_form_value(html, name), expected, "{page} {name}");
             }
         }
+        // The values the admin user posts are found on the real pages.
+        let edit = PAGES[5].1;
+        assert_eq!(
+            get_form_value(edit, "form_build_id").as_deref(),
+            Some("form-fixture-build-id-0123456789")
+        );
+        assert_eq!(
+            get_form_value(edit, "form_token").as_deref(),
+            Some("fixture-form-token-0123456789")
+        );
+        assert!(get_form_value(PAGES[4].1, "form_build_id").is_some());
         assert_eq!(
             get_form_value(synthetic, "form_build_id").as_deref(),
             Some("form-abc")
