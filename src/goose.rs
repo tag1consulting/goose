@@ -3799,7 +3799,7 @@ impl GooseUser {
     ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store);
     ///  - Default headers and the user agent set on the builder are sent with every request but
     ///    are not recorded in Goose's request, debug or error logs, see the
-    ///    [request log](https://book.goose.rs/logging/requests.html) page of the Goose Book.
+    ///    [request log](https://www.goose.rs/logging/requests.html) page of the Goose Book.
     ///
     /// In the following example, the Goose client is configured with a different user agent,
     /// sets a default header on every request, stores cookies, supports gzip compression, and
