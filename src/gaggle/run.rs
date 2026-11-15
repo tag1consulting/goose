@@ -2892,8 +2892,7 @@ mod tests {
         let test = async {
             let manager = test_manager(1, Duration::from_secs(30)).await;
             let (mut attack, mut run_state) = idle_worker(&manager).await;
-            attack.run_shape =
-                crate::run_shape::RunShape::for_configuration(&attack.configuration);
+            attack.run_shape = crate::run_shape::RunShape::for_configuration(&attack.configuration);
             if let Some(GaggleRole::Worker(run)) = attack.gaggle.role.as_mut() {
                 run.start_at = Some(tokio::time::Instant::now());
             }
