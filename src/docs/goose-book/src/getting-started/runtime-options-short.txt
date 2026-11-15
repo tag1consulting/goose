@@ -100,4 +100,4 @@ Examples:
   loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html
 
 Run with --help for details, defaults and examples.
-https://book.goose.rs/getting-started/runtime-options.html
+https://www.goose.rs/getting-started/runtime-options.html
