@@ -1588,6 +1588,12 @@ impl GooseAttack {
                     run.pending_controls.push((id, control));
                     continue;
                 }
+                // A stop read after it moots a change held behind a build,
+                // as a new share moots every change.
+                if goose_attack_run_state.stopping {
+                    run.link.control_ack(id, None);
+                    continue;
+                }
                 self.worker_apply(goose_attack_run_state, run, id, control)
                     .await?;
             }
