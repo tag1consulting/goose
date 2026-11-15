@@ -27,7 +27,7 @@ There are four ways to watch or change a load test while it runs: the Live Dashb
 
 The dashboard is read-only unless control is turned on with `--dashboard-control` and a token or `--dashboard-no-auth`; see [Turning it on](dashboard.md#turning-it-on). It needs Goose built with the `dashboard` feature.
 
-A `users` change that adds users to a running load test is answered at once. Goose builds the new users' clients off its main loop, which goes on answering Controllers and serving the users already running, and starts the users once they are built. A later change stops a build still running, and a decrease drops users built and not yet started. If building a client fails, the change has already been answered `users configured`, and the load test ends with that error.
+A `users` change that adds users to a running load test is answered at once. Goose builds the new users' clients off its main loop, which goes on answering Controllers and serving the users already running, and starts the users once they are built. A later `users` or test plan change, or a stop, stops a build still running, and a decrease drops users built and not yet started. If building a client fails, the change has already been answered `users configured`, and the load test ends with that error.
 
 ## The telnet and WebSocket Controllers
 
