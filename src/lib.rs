@@ -3582,7 +3582,8 @@ impl GooseAttack {
     // - Hard: Result::Err(GooseError) (weighting on a users increase, or
     //   weight_scenario_users on a test plan increase; reset_run_state in start
     //   finish; cancel_attack). An error building a users increase's users off
-    //   the main loop ends the run from increase_attack.
+    //   the main loop is logged by increase_attack, which stays at the users
+    //   running.
     // `GooseAttack::control` replies with the outcome, or `internal` on a hard
     // error before returning it, so every caller still waiting gets an answer.
     // ========================================================================
@@ -3816,7 +3817,7 @@ impl GooseAttack {
     /// not a cancel: a new count abandons it and holds until stopped.
     /// Hard error: weighting the added users, or starting the thread that
     /// builds them, when increasing while running; an error building them
-    /// ends the run from `increase_attack`.
+    /// is logged by `increase_attack`, which stays at the users running.
     pub(crate) fn control_set_users(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
