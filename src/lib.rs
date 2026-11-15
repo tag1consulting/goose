@@ -6873,4 +6873,27 @@ mod tests {
         assert_eq!(goose_attack.current_target_users(), 2);
         assert_eq!(goose_attack.configuration.users, Some(2));
     }
+
+    /// The history entry of the step a users increase starts is stamped when
+    /// its users are built, as when they were built before the answer, so
+    /// every report times the step from its first user.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_users_increase_stamps_its_step_from_the_build() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
+        let answered = chrono::Utc::now();
+        increase_to(&mut goose_attack, &mut run_state, 12).await;
+        let step = goose_attack
+            .metrics
+            .history
+            .iter()
+            .rev()
+            .find(|step| matches!(step.action, TestPlanStepAction::Increasing))
+            .unwrap();
+        assert!(
+            step.timestamp > answered,
+            "the step was stamped at the answer, before its users were built"
+        );
+    }
 }
