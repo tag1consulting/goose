@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.20.0-dev
+ - [#PR](https://github.com/tag1consulting/goose/pull/PR) a Controller's `users` change that adds users to a running load test is answered at once: the new users' clients are built off the main loop, which goes on answering Controllers and serving the users already running, and the users start once built, at the times they started before; a later change stops a build still running, and a decrease drops users built and not yet started; an error building a client now ends the load test after the change was answered, where the answer used to be `internal`
  - [#838](https://github.com/tag1consulting/goose/pull/838) every Goose Book page names its canonical URL under `https://www.goose.rs/` (mdBook `canonical-site-url`, built from mdBook commit `e18773a9` until a release has it), and the Book ships a `robots.txt`
  - [#834](https://github.com/tag1consulting/goose/pull/834) the memory of each stopped user's task is freed while the user count holds, checked twice a second, instead of at the end of the load test; a Gaggle worker still keeps it to the end
  - [#833](https://github.com/tag1consulting/goose/pull/833) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages, `llms.txt`, `AGENTS.md` and the Book's analytics check name the new host
