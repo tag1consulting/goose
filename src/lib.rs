@@ -4569,8 +4569,8 @@ fn build_weighted_users(
 /// Dropping it stops a build still running, which drops what it built on its
 /// own thread; users the build already sent are dropped with it.
 struct UserBuild {
-    /// The users built, in the order they start from the end, or the error
-    /// building one.
+    /// The users built, in weighted order with the last to start first, or
+    /// the error building one.
     built: flume::Receiver<Result<Vec<GooseUser>, GooseError>>,
     /// Set to stop building.
     stop: Arc<AtomicBool>,
