@@ -3055,8 +3055,9 @@ impl GooseAttack {
             // main loop: until then the loop goes on, a tenth of a second at a
             // time, answering Controllers and serving the users running.
             if let Some(build) = &self.user_build {
-                let built = tokio::time::timeout(Duration::from_millis(100), build.built.recv_async())
-                    .await;
+                let built =
+                    tokio::time::timeout(Duration::from_millis(100), build.built.recv_async())
+                        .await;
                 match built {
                     Err(_) => return Ok(()),
                     Ok(built) => {
