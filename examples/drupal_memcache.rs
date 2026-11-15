@@ -26,6 +26,16 @@ use goose::prelude::*;
 
 use rand::Rng;
 use regex::Regex;
+use std::sync::LazyLock;
+
+// Each regex is compiled once, on first use, and shared by every user.
+static SRC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"src="(.*?)""#).unwrap());
+static FORM_BUILD_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap());
+static FORM_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"name="form_token" value=['"](.*?)['"]"#).unwrap());
+static FORM_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"name="form_id" value=['"](.*?)['"]"#).unwrap());
 
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
@@ -94,10 +104,9 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
             let headers = &response.headers().clone();
             match response.text().await {
                 Ok(t) => {
-                    let re = Regex::new(r#"src="(.*?)""#).unwrap();
                     // Collect copy of URLs to run them async
                     let mut urls = Vec::new();
-                    for url in re.captures_iter(&t) {
+                    for url in SRC.captures_iter(&t) {
                         if url[1].contains("/misc") || url[1].contains("/themes") {
                             urls.push(url[1].to_string());
                         }
@@ -172,8 +181,7 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> TransactionResult {
             let headers = &response.headers().clone();
             match response.text().await {
                 Ok(html) => {
-                    let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
-                    let form_build_id = match re.captures(&html) {
+                    let form_build_id = match FORM_BUILD_ID.captures(&html) {
                         Some(f) => f,
                         None => {
                             // This will automatically get written to the error log if enabled, and will
@@ -243,8 +251,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
             match response.text().await {
                 Ok(html) => {
                     // Extract the form_build_id from the user login form.
-                    let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
-                    let form_build_id = match re.captures(&html) {
+                    let form_build_id = match FORM_BUILD_ID.captures(&html) {
                         Some(f) => f,
                         None => {
                             // This will automatically get written to the error log if enabled, and will
@@ -258,8 +265,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                         }
                     };
 
-                    let re = Regex::new(r#"name="form_token" value=['"](.*?)['"]"#).unwrap();
-                    let form_token = match re.captures(&html) {
+                    let form_token = match FORM_TOKEN.captures(&html) {
                         Some(f) => f,
                         None => {
                             // This will automatically get written to the error log if enabled, and will
@@ -273,8 +279,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                         }
                     };
 
-                    let re = Regex::new(r#"name="form_id" value=['"](.*?)['"]"#).unwrap();
-                    let form_id = match re.captures(&html) {
+                    let form_id = match FORM_ID.captures(&html) {
                         Some(f) => f,
                         None => {
                             // This will automatically get written to the error log if enabled, and will
