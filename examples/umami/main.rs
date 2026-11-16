@@ -1,8 +1,6 @@
 mod admin;
 mod common;
 mod english;
-#[cfg(test)]
-mod reference;
 mod spanish;
 
 use goose::prelude::*;

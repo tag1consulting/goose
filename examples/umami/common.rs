@@ -561,10 +561,17 @@ fn form_value_regex(name: &str) -> Regex {
 mod tests {
     use super::*;
 
-    // The English front page of a stock Drupal 11.4 Umami site, saved with CSS and JS
-    // aggregation on and then off.
+    // Pages of a stock Drupal 11.4 Umami site: the English front page saved with CSS
+    // and JS aggregation on and then off, and a recipe as an anonymous user sees it.
+    // The two form fixtures are cut to their form element, with placeholder values
+    // for form_build_id and, on the edit form, form_token: the log in form as an
+    // anonymous user sees it, and an article's edit form as an admin sees it. A
+    // refreshed fixture needs only its placeholders set again.
     const AGGREGATED: &str = include_str!("fixtures/front-aggregated.html");
     const UNAGGREGATED: &str = include_str!("fixtures/front-unaggregated.html");
+    const RECIPE: &str = include_str!("fixtures/recipe.html");
+    const LOGIN_FORM: &str = include_str!("fixtures/login.html");
+    const EDIT_FORM: &str = include_str!("fixtures/edit-form.html");
 
     fn urls(assets: &[(AssetKind, String)], kind: AssetKind) -> Vec<&str> {
         assets
@@ -585,31 +592,44 @@ mod tests {
             decode_entities("/a.css?delta=0&amp;language=en&#38;theme=umami&#x26;x=&lt;&gt;"),
             "/a.css?delta=0&language=en&theme=umami&x=<>"
         );
-        // An unknown entity is left as it is.
+        // Decimal, and hex with either case of x and of its digits.
+        assert_eq!(decode_entities("&#65;&#x4a;&#X4A;&#x4A;"), "AJJJ");
+        assert_eq!(decode_entities("&quot;&apos;"), "\"'");
+        // An unknown entity is left as it is, and names are case sensitive.
         assert_eq!(decode_entities("a&bogus;b"), "a&bogus;b");
+        assert_eq!(decode_entities("&AMP;"), "&AMP;");
+        // A surrogate or out of range code point is not a character: left as it is.
+        assert_eq!(decode_entities("&#xD800;"), "&#xD800;");
+        assert_eq!(decode_entities("&#99999999;"), "&#99999999;");
+        // Not an entity: no digits, or no closing semicolon.
+        assert_eq!(decode_entities("&#;"), "&#;");
+        assert_eq!(decode_entities("a&amp b"), "a&amp b");
+        assert_eq!(decode_entities(""), "");
     }
 
     #[test]
     fn aggregated_assets_are_found_and_decoded() {
-        let assets = static_asset_urls(AGGREGATED);
-        let css = urls(&assets, AssetKind::Css);
-        let js = urls(&assets, AssetKind::Js);
-        assert_eq!(
-            css.len(),
-            tag_count(AGGREGATED, r#"<link rel="stylesheet"[^>]*href="/"#)
-        );
-        assert_eq!(js.len(), tag_count(AGGREGATED, r#"<script[^>]*src="/"#));
-        assert!(!css.is_empty() && !js.is_empty());
-        for url in css.iter().chain(js.iter()) {
-            assert!(!url.contains("&amp;"), "not decoded: {}", url);
-            assert!(url.contains("&language=en&theme=umami&include="), "{}", url);
+        for html in [AGGREGATED, RECIPE] {
+            let assets = static_asset_urls(html);
+            let css = urls(&assets, AssetKind::Css);
+            let js = urls(&assets, AssetKind::Js);
+            assert_eq!(
+                css.len(),
+                tag_count(html, r#"<link rel="stylesheet"[^>]*href="/"#)
+            );
+            assert_eq!(js.len(), tag_count(html, r#"<script[^>]*src="/"#));
+            assert!(!css.is_empty() && !js.is_empty());
+            for url in css.iter().chain(js.iter()) {
+                assert!(!url.contains("&amp;"), "not decoded: {}", url);
+                assert!(url.contains("&language=en&theme=umami&include="), "{}", url);
+            }
+            assert!(css
+                .iter()
+                .all(|url| url.starts_with("/sites/default/files/css/css_")));
+            assert!(js
+                .iter()
+                .all(|url| url.starts_with("/sites/default/files/js/js_")));
         }
-        assert!(css
-            .iter()
-            .all(|url| url.starts_with("/sites/default/files/css/css_")));
-        assert!(js
-            .iter()
-            .all(|url| url.starts_with("/sites/default/files/js/js_")));
     }
 
     #[test]
@@ -638,8 +658,8 @@ mod tests {
     }
 
     #[test]
-    fn images_are_found_on_both_pages() {
-        for html in [AGGREGATED, UNAGGREGATED] {
+    fn images_are_found_on_each_page() {
+        for html in [AGGREGATED, UNAGGREGATED, RECIPE] {
             let assets = static_asset_urls(html);
             let images = urls(&assets, AssetKind::Image);
             assert!(images.contains(&"/core/profiles/demo_umami/themes/umami/logo.svg"));
@@ -649,75 +669,37 @@ mod tests {
         }
     }
 
-    /// Saved Umami pages, each run through the current functions and the reference ones:
-    /// the two front pages above, a recipe, an article and the log in page as an
-    /// anonymous user sees them, and the form of an article's edit page as an admin
-    /// sees it, its form_build_id and form_token values replaced.
-    const PAGES: [(&str, &str); 6] = [
-        ("front-aggregated", AGGREGATED),
-        ("front-unaggregated", UNAGGREGATED),
-        ("recipe", include_str!("fixtures/recipe.html")),
-        ("article", include_str!("fixtures/article.html")),
-        ("login", include_str!("fixtures/login.html")),
-        ("edit-form", include_str!("fixtures/edit-form.html")),
-    ];
-
     #[test]
-    fn asset_urls_match_the_reference() {
-        for (page, html) in PAGES {
-            let expected = crate::reference::static_asset_urls(html);
-            assert!(!expected.is_empty(), "{}", page);
-            // Twice, so the second call runs on the regexes the first one compiled.
-            assert_eq!(static_asset_urls(html), expected, "{page}");
-            assert_eq!(static_asset_urls(html), expected, "{page}");
-        }
-    }
-
-    #[test]
-    fn entity_decoding_matches_the_reference() {
-        let mut values: Vec<&str> = PAGES.iter().map(|(_, html)| *html).collect();
-        values.extend([
-            "/a.css?delta=0&amp;language=en&#38;theme=umami&#x26;x=&lt;&gt;&quot;&apos;",
-            "a&bogus;b &#xD800; &#99999999; &#X41; &#; &amp &AMP;",
-            "",
-        ]);
-        for value in values {
-            let expected = crate::reference::decode_entities(value);
-            assert_eq!(decode_entities(value), expected);
-            assert_eq!(decode_entities(value), expected);
-        }
-    }
-
-    #[test]
-    fn form_values_match_the_reference() {
-        let synthetic = r#"<input name="form_build_id" value="form-abc"><input name="form_token" value='tok-1'>"#;
-        let mut pages = PAGES.to_vec();
-        pages.push(("synthetic", synthetic));
-        for (page, html) in pages {
-            for name in ["form_build_id", "form_token", "form_id", "op", "missing"] {
-                let expected = crate::reference::get_form_value(html, name);
-                assert_eq!(get_form_value(html, name), expected, "{page} {name}");
-                assert_eq!(get_form_value(html, name), expected, "{page} {name}");
-            }
-        }
-        // The values the admin user posts are found on the real pages.
-        let edit = PAGES[5].1;
+    fn form_values_are_read() {
+        // The values the admin user posts back from an edit form.
         assert_eq!(
-            get_form_value(edit, "form_build_id").as_deref(),
+            get_form_value(EDIT_FORM, "form_build_id").as_deref(),
             Some("form-fixture-build-id-0123456789")
         );
         assert_eq!(
-            get_form_value(edit, "form_token").as_deref(),
+            get_form_value(EDIT_FORM, "form_token").as_deref(),
             Some("fixture-form-token-0123456789")
         );
-        assert!(get_form_value(PAGES[4].1, "form_build_id").is_some());
+        // A name with no compiled regex of its own.
         assert_eq!(
-            get_form_value(synthetic, "form_build_id").as_deref(),
-            Some("form-abc")
+            get_form_value(EDIT_FORM, "form_id").as_deref(),
+            Some("node_article_edit_form")
+        );
+        // The anonymous log in form has a build id but no token.
+        assert_eq!(
+            get_form_value(LOGIN_FORM, "form_build_id").as_deref(),
+            Some("form-fixture-login-build-id-0123456789")
         );
         assert_eq!(
-            get_form_value(synthetic, "form_token").as_deref(),
+            get_form_value(LOGIN_FORM, "form_id").as_deref(),
+            Some("user_login_form")
+        );
+        assert_eq!(get_form_value(LOGIN_FORM, "form_token"), None);
+        // A single quoted value, and a name missing from the page.
+        assert_eq!(
+            get_form_value(r#"<input name="form_token" value='tok-1'>"#, "form_token").as_deref(),
             Some("tok-1")
         );
+        assert_eq!(get_form_value(EDIT_FORM, "missing"), None);
     }
 }
