@@ -261,7 +261,7 @@ curl -H "Authorization: Bearer SECRET" http://host:5118/api/v1/snapshot
 curl "http://host:5118/api/v1/snapshot?token=SECRET"
 ```
 
-`GET /api/v1/snapshot` returns **503** with an empty body when no snapshot arrives within five seconds, which happens while the main loop (the Goose task that runs the load test's phases) or the metrics processor is busy (for example building the users of a large `users` change), or when the dashboard is shutting down. Retry after a short wait.
+`GET /api/v1/snapshot` returns **503** with an empty body when no snapshot arrives within five seconds, which happens while the main loop (the Goose task that runs the load test's phases) or the metrics processor is busy (for example building the users of a large test plan change), or when the dashboard is shutting down. Retry after a short wait.
 
 For **control**, the server accepts **`Authorization: Bearer` only** (query `?token=` is rejected on control routes):
 
