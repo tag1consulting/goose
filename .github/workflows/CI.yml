@@ -75,22 +75,39 @@ jobs:
     - name: Client tests (jsdom)
       run: npm test
 
-  # The Goose Book. mdBook is pinned to 0.5.4, the newest 0.5 release (2026-07-06), the version
-  # the Book is written against: 0.5 refuses book.toml fields 0.4 took, such as `multilingual`.
-  # mdBook has no setting that turns warnings into errors, so the step fails on any WARN or ERROR
-  # line in its log.
+  # The Goose Book. mdBook is pinned to commit e18773a967eb7f3f1392c831cb2caf9af9bdf5a5 on its
+  # main branch, built from source, in place of the 0.5.4 release: that commit merged
+  # rust-lang/mdBook PR 2706, the `canonical-site-url` setting book.toml uses to give every page a
+  # <link rel="canonical">, and no release has it yet (0.5.4, of 2026-07-06, is the newest). The
+  # commit still calls itself 0.5.4, so `mdbook --version` prints `mdbook v0.5.4`. When a release
+  # contains the commit (`git tag --contains e18773a967eb7f3f1392c831cb2caf9af9bdf5a5` in a clone of
+  # rust-lang/mdBook), move to that release's tarball at its exact version and drop the source
+  # build and its cache. mdBook has no setting that turns warnings into errors, so the step fails
+  # on any WARN or ERROR line in its log.
   book:
     name: build the Goose Book (mdBook)
     runs-on: ubuntu-latest
+    env:
+      MDBOOK_REV: e18773a967eb7f3f1392c831cb2caf9af9bdf5a5
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
 
-    - name: Install mdBook 0.5.4
+    - name: Cache mdBook built at the pinned commit
+      id: mdbook-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/mdbook
+        key: mdbook-${{ runner.os }}-${{ env.MDBOOK_REV }}
+
+    - name: Build mdBook at the pinned commit
+      if: steps.mdbook-cache.outputs.cache-hit != 'true'
+      run: cargo install --git https://github.com/rust-lang/mdBook --rev "$MDBOOK_REV" --locked mdbook
+
+    - name: Show the mdBook build
       run: |
-        curl -sSfL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
-          | sudo tar -xz -C /usr/local/bin mdbook
+        echo "mdBook commit $MDBOOK_REV"
         mdbook --version
 
     - name: 🔎 Build the Book with no warnings
