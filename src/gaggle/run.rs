@@ -3048,7 +3048,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[serial_test::serial]
     async fn a_stop_moots_the_changes_held_behind_a_users_build() {
-        assert_eq!(held_changes_after_a_stop(false).await, [(1, None), (2, None)]);
+        assert_eq!(
+            held_changes_after_a_stop(false).await,
+            [(1, None), (2, None)]
+        );
     }
 
     /// As above, on a worker the stop takes to Idle before its next tick, as
@@ -3056,7 +3059,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[serial_test::serial]
     async fn a_stop_to_idle_answers_the_changes_held_behind_a_users_build() {
-        assert_eq!(held_changes_after_a_stop(true).await, [(1, None), (2, None)]);
+        assert_eq!(
+            held_changes_after_a_stop(true).await,
+            [(1, None), (2, None)]
+        );
     }
 
     /// Two users changes a running worker holds behind the first one's
