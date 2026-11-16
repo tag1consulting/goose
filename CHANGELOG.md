@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.20.0-dev
+ - [#838](https://github.com/tag1consulting/goose/pull/838) every Goose Book page names its canonical URL under `https://www.goose.rs/` (mdBook `canonical-site-url`, built from mdBook commit `e18773a9` until a release has it), and the Book ships a `robots.txt`
  - [#834](https://github.com/tag1consulting/goose/pull/834) the memory of each stopped user's task is freed while the user count holds, checked twice a second, instead of at the end of the load test; a Gaggle worker still keeps it to the end
  - [#833](https://github.com/tag1consulting/goose/pull/833) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages, `llms.txt`, `AGENTS.md` and the Book's analytics check name the new host
  - [#829](https://github.com/tag1consulting/goose/pull/829) HTTPS requests now negotiate HTTP/2 with a server that supports it, as browsers do; plain HTTP stays HTTP/1.1
