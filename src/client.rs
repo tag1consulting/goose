@@ -100,6 +100,55 @@
 //! }
 //! ```
 //!
+//! ### A Client of Your Own
+//!
+//! A transaction can build a `reqwest::ClientBuilder` itself and pass it to
+//! [`GooseUser::set_client_builder`](crate::goose::GooseUser::set_client_builder).
+//! Goose builds that user's client from it as it is, without the shared
+//! certificate verifier or any of the settings above, so it can use HTTP/2 or
+//! native TLS when the load test turns on reqwest's `http2` or `native-tls`
+//! feature. The Goose Book's "TLS And
+//! Certificates" page shows this same example; keep the two the same.
+//! ```rust,no_run
+//! use goose::prelude::*;
+//! use std::time::Duration;
+//!
+//! # #[cfg(feature = "cookies")]
+//! #[tokio::main]
+//! async fn main() -> Result<(), GooseError> {
+//!     GooseAttack::initialize()?
+//!         .register_scenario(
+//!             scenario!("WebsiteUser")
+//!                 .register_transaction(transaction!(setup_client).set_on_start())
+//!                 .register_transaction(transaction!(load_homepage)),
+//!         )
+//!         .execute()
+//!         .await?;
+//!
+//!     Ok(())
+//! }
+//!
+//! # #[cfg(feature = "cookies")]
+//! async fn setup_client(user: &mut GooseUser) -> TransactionResult {
+//!     // Goose's defaults don't apply to this client: set the ones you need.
+//!     let builder = reqwest::Client::builder()
+//!         .user_agent("my-loadtest/1.0")
+//!         .timeout(Duration::from_secs(60))
+//!         .gzip(true)
+//!         .cookie_store(true);
+//!     user.set_client_builder(builder).await?;
+//!     Ok(())
+//! }
+//!
+//! # #[cfg(feature = "cookies")]
+//! async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
+//!     let _ = user.get("/").await?.discard_body().await;
+//!     Ok(())
+//! }
+//! # #[cfg(not(feature = "cookies"))]
+//! # fn main() {}
+//! ```
+//!
 //! ## Type Safety Examples
 //!
 //! ```rust
