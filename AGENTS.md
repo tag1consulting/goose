@@ -79,7 +79,8 @@ TZ="std +5" cargo test --verbose --all-features graph
 cargo test --verbose --features pdf-reports --test pdf_reports
 cargo test --verbose --features pdf-reports --test pdf_chrome -- --include-ignored
 
-# The Book, with mdBook 0.5.4 (cargo install mdbook --version 0.5.4 --locked);
+# The Book, with mdBook built at the commit CI pins (no release has canonical-site-url yet):
+# cargo install --git https://github.com/rust-lang/mdBook --rev e18773a967eb7f3f1392c831cb2caf9af9bdf5a5 --locked mdbook
 # CI fails on any WARN or ERROR line in the log
 mdbook build src/docs/goose-book
 

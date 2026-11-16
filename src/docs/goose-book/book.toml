@@ -13,3 +13,4 @@ additional-css = ["theme/custom.css"]
 default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/tag1consulting/goose"
+canonical-site-url = "https://www.goose.rs/"
