@@ -50,6 +50,7 @@
     - [Scheduling Scenarios And Transactions](config/scheduler.md)
     - [Proxy](config/proxy.md)
     - [Cookies](config/cookie.md)
+    - [TLS And Certificates](config/tls.md)
 
 - [Examples](example/overview.md)
     - [Simple](example/simple.md)

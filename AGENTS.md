@@ -47,6 +47,7 @@ The crate is edition 2018. Its features:
 | `gaggle` | Distributed load tests: `--manager` and `--worker`. |
 | `pdf-reports` | PDF reports through headless Chrome; Goose uses an installed Chrome or Chromium, or downloads Chrome for Testing. |
 | `rustls-tls` | rustls for `tokio-tungstenite`. reqwest already uses rustls. |
+| `native-tls` | The clients Goose builds use reqwest's native TLS (OpenSSL on Linux) in place of rustls and the shared certificate verifier; costs memory per user. |
 
 CI (`.github/workflows/CI.yml`) runs these on every pull request against `main` or a `release-*` branch. Run the ones your change touches before you push.
 
@@ -55,7 +56,7 @@ CI (`.github/workflows/CI.yml`) runs these on every pull request against `main` 
 cargo fmt -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Build and test, once per feature set: "" (none), cookies, dashboard, mcp, gaggle, rustls-tls
+# Build and test, once per feature set: "" (none), cookies, dashboard, mcp, gaggle, rustls-tls, native-tls
 cargo build --verbose --no-default-features --features "<feature>"
 cargo test --verbose --no-default-features --features "<feature>"
 # With no features, the same two commands without --features.

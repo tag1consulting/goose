@@ -102,6 +102,53 @@
 //! }
 //! ```
 //!
+//! ### A Client of Your Own
+//!
+//! A transaction can build a `reqwest::ClientBuilder` itself and pass it to
+//! [`GooseUser::set_client_builder`](crate::goose::GooseUser::set_client_builder).
+//! Goose builds that user's client from it as it is, without the shared
+//! certificate verifier or any of the settings above. The Goose Book's "TLS And
+//! Certificates" page shows this same example; keep the two the same.
+//! ```rust,no_run
+//! use goose::prelude::*;
+//! use std::time::Duration;
+//!
+//! # #[cfg(feature = "cookies")]
+//! #[tokio::main]
+//! async fn main() -> Result<(), GooseError> {
+//!     GooseAttack::initialize()?
+//!         .register_scenario(
+//!             scenario!("WebsiteUser")
+//!                 .register_transaction(transaction!(setup_client).set_on_start())
+//!                 .register_transaction(transaction!(load_homepage)),
+//!         )
+//!         .execute()
+//!         .await?;
+//!
+//!     Ok(())
+//! }
+//!
+//! # #[cfg(feature = "cookies")]
+//! async fn setup_client(user: &mut GooseUser) -> TransactionResult {
+//!     // Goose's defaults don't apply to this client: set the ones you need.
+//!     let builder = reqwest::Client::builder()
+//!         .user_agent("my-loadtest/1.0")
+//!         .timeout(Duration::from_secs(60))
+//!         .gzip(true)
+//!         .cookie_store(true);
+//!     user.set_client_builder(builder).await?;
+//!     Ok(())
+//! }
+//!
+//! # #[cfg(feature = "cookies")]
+//! async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
+//!     let _ = user.get("/").await?.discard_body().await;
+//!     Ok(())
+//! }
+//! # #[cfg(not(feature = "cookies"))]
+//! # fn main() {}
+//! ```
+//!
 //! ## Type Safety Examples
 //!
 //! ```rust
@@ -538,8 +585,13 @@ thread_local! {
 /// The shared TLS setup for a client built with `config`. `None` when `config`
 /// accepts invalid certificates, as that client checks none and reqwest reads no
 /// root certificates for it. Also `None` when building the shared setup failed.
+///
+/// Always `None` with Goose's `native-tls` feature, so every client takes reqwest's
+/// own TLS path, which that feature makes native TLS. Goose cannot see whether a
+/// load test turned on reqwest's `native-tls` feature directly, so without Goose's
+/// feature the clients that check certificates stay on rustls.
 fn shared_tls(config: &GooseClientConfig) -> Option<&'static SharedTls> {
-    if config.accept_invalid_certs {
+    if cfg!(feature = "native-tls") || config.accept_invalid_certs {
         return None;
     }
     SHARED_TLS
@@ -554,7 +606,8 @@ fn shared_tls(config: &GooseClientConfig) -> Option<&'static SharedTls> {
 /// A reqwest client builder with the settings common to clients with and without
 /// cookies, and a TLS config from `shared` when there is one. That config makes
 /// reqwest use rustls for the client even when a load test turns on reqwest's
-/// `native-tls` feature.
+/// `native-tls` feature; [`shared_tls`] gives none with Goose's `native-tls`
+/// feature.
 ///
 /// Over HTTPS the client offers HTTP/2 and HTTP/1.1 and the server chooses, or
 /// with `http1_only` it offers HTTP/1.1 only. Plain HTTP is HTTP/1.1.
@@ -704,6 +757,7 @@ mod tests {
 
     /// Every path that builds a user's client, and the shared client, builds it over
     /// the one verifier, which is built once in the process (the build count).
+    #[cfg(not(feature = "native-tls"))]
     #[test]
     fn user_clients_share_one_tls_verifier() {
         let clients = || SHARED_TLS_CLIENTS.with(|clients| clients.get());
@@ -773,6 +827,7 @@ mod tests {
     /// error as by a client reqwest builds itself, and accepted by both when
     /// certificates are not checked. `tests/tls_roots.rs` checks that both trust a
     /// CA the system does.
+    #[cfg(not(feature = "native-tls"))]
     #[tokio::test]
     async fn user_clients_refuse_what_reqwest_refuses() {
         fn error_chain(error: &reqwest::Error) -> Vec<String> {
@@ -812,6 +867,134 @@ mod tests {
         for client in [&goose, &reqwest] {
             let body = client.get(&url).send().await.unwrap().text().await.unwrap();
             assert_eq!(body, "ok");
+        }
+    }
+
+    /// The test CA, `tests/fixtures/tls/ca.pem`, for a client on reqwest's own TLS
+    /// path.
+    #[cfg(all(feature = "native-tls", not(target_vendor = "apple")))]
+    fn test_ca_certificate() -> reqwest::Certificate {
+        reqwest::Certificate::from_pem(include_bytes!("../tests/fixtures/tls/ca.pem")).unwrap()
+    }
+
+    /// With the `native-tls` feature, no path that builds a user's client, nor the
+    /// shared client, builds it over the shared verifier, and the verifier is never
+    /// built.
+    #[cfg(feature = "native-tls")]
+    #[test]
+    fn native_tls_clients_skip_the_shared_verifier() {
+        let clients = || SHARED_TLS_CLIENTS.with(|clients| clients.get());
+        let configuration =
+            crate::GooseConfiguration::parse_args_default(&Vec::<&str>::new()).unwrap();
+        let before = clients();
+
+        // A load test that set a client builder with cookies.
+        GooseClientBuilder::new()
+            .build_strategy()
+            .user_client()
+            .unwrap();
+        // A user created without a client, as in a load test with no client builder.
+        crate::goose::GooseUser::new(
+            0,
+            Arc::from(""),
+            url::Url::parse("http://localhost/").unwrap(),
+            &configuration,
+            0,
+            None,
+        )
+        .unwrap();
+        // The client shared by every user when cookies are off.
+        GooseClientBuilder::new()
+            .without_cookies()
+            .build_strategy()
+            .unwrap();
+
+        assert_eq!(clients() - before, 0);
+        assert_eq!(
+            SHARED_TLS_BUILDS.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    /// With the `native-tls` feature, a client that checks certificates is built
+    /// without the shared config, so it trusts a root certificate added to its
+    /// builder, which a client over the shared config ignores, and completes a
+    /// request. Not on Apple platforms, whose TLS library refuses the test
+    /// certificate's 100 year validity period.
+    #[cfg(all(feature = "native-tls", not(target_vendor = "apple")))]
+    #[tokio::test]
+    async fn native_tls_client_checks_certificates_without_the_shared_config() {
+        let clients = || SHARED_TLS_CLIENTS.with(|clients| clients.get());
+        let (url, _handshakes) = tls_server();
+        let config = GooseClientConfig::default();
+        assert!(!config.accept_invalid_certs);
+
+        let before = clients();
+        let client = client_builder(&config, shared_tls(&config))
+            .add_root_certificate(test_ca_certificate())
+            .build()
+            .unwrap();
+        assert_eq!(clients() - before, 0, "built over the shared config");
+        let body = client.get(&url).send().await.unwrap().text().await.unwrap();
+        assert_eq!(body, "ok");
+    }
+
+    /// With the `native-tls` feature, a client Goose builds refuses a certificate
+    /// from a CA the system does not trust with the same error as a client reqwest
+    /// builds itself, native TLS's, not the shared rustls verifier's.
+    #[cfg(feature = "native-tls")]
+    #[tokio::test]
+    async fn native_tls_client_refuses_what_reqwest_refuses() {
+        fn error_chain(error: &reqwest::Error) -> Vec<String> {
+            let mut chain = vec![error.to_string()];
+            let mut source = std::error::Error::source(error);
+            while let Some(error) = source {
+                chain.push(error.to_string());
+                source = error.source();
+            }
+            chain
+        }
+        let (url, _handshakes) = tls_server();
+        let config = GooseClientConfig::default();
+        let goose = create_reqwest_client_with_cookies(&config).unwrap();
+        let reqwest = Client::builder().build().unwrap();
+        let goose_error = error_chain(&goose.get(&url).send().await.unwrap_err());
+        let reqwest_error = error_chain(&reqwest.get(&url).send().await.unwrap_err());
+        assert!(
+            !goose_error.iter().any(|e| e.contains("UnknownIssuer")),
+            "{:?}",
+            goose_error
+        );
+        assert_eq!(goose_error, reqwest_error);
+    }
+
+    /// With the `native-tls` feature, a client that checks certificates still
+    /// negotiates HTTP/2 when the server offers it, and HTTP/1.1 with `http1_only`.
+    /// Not on Apple platforms, as above.
+    #[cfg(all(feature = "native-tls", not(target_vendor = "apple")))]
+    #[tokio::test]
+    async fn native_tls_clients_negotiate_http2_unless_http1_only() {
+        let (url, protocols) = alpn_server(Offer::Http2AndHttp1, None);
+        for http1_only in [false, true] {
+            let config = GooseClientConfig {
+                http1_only,
+                ..GooseClientConfig::default()
+            };
+            let client = client_builder(&config, shared_tls(&config))
+                .add_root_certificate(test_ca_certificate())
+                .build()
+                .unwrap();
+            let response = client.get(&url).send().await.unwrap();
+            let version = response.version();
+            assert_eq!(response.text().await.unwrap(), "ok");
+            let negotiated = protocols.recv_timeout(Duration::from_secs(10)).unwrap();
+            let (expected, expected_version) = if http1_only {
+                ("http/1.1", reqwest::Version::HTTP_11)
+            } else {
+                ("h2", reqwest::Version::HTTP_2)
+            };
+            assert_eq!(negotiated, expected, "http1_only {http1_only}");
+            assert_eq!(version, expected_version, "http1_only {http1_only}");
         }
     }
 

@@ -10,9 +10,7 @@
 
 ## TLS
 
-Goose makes requests with [Reqwest](https://docs.rs/reqwest) 0.13, whose default TLS backend is [rustls](https://docs.rs/rustls), so a load test needs no OpenSSL. The clients Goose builds check certificates with [`rustls-platform-verifier`](https://docs.rs/rustls-platform-verifier), which uses the operating system's certificate store, so they trust a CA you have added to the system. They check certificates unless you accept invalid ones with `--accept-invalid-certs`, `GooseDefault::AcceptInvalidCerts` or `accept_invalid_certs(true)` on a `GooseClientBuilder`. Accept invalid certificates only for a test server with a self signed or expired certificate. The clients Goose builds use rustls whenever they check certificates, even when a dependency turns on Reqwest's `native-tls` feature; with that feature on, those that accept invalid certificates use native TLS.
-
-Goose builds the certificate verifier once per process, with the first of its clients set to check certificates, even when the target is plain HTTP and no certificate is ever checked. At that moment, Goose takes the process default rustls crypto provider, or aws-lc-rs if there is none. If you install a provider, do it at the start of `main`, before any Goose call. On Linux, the verifier also reads the system's root certificates at that moment, so restart the load test process to trust a CA added later.
+Goose makes requests with [Reqwest](https://docs.rs/reqwest) 0.13, whose default TLS backend is [rustls](https://docs.rs/rustls), so a load test needs no OpenSSL. The clients Goose builds trust the CAs the operating system trusts, and check certificates unless you accept invalid ones with `--accept-invalid-certs`. Goose's `native-tls` feature makes them use the platform's TLS library instead, at a cost in memory per user. [TLS And Certificates](config/tls.md) explains how Goose builds its clients, what they trust, and when it reads the system's root certificates.
 
 Goose before 0.19 used Reqwest 0.12 and native TLS by default, with rustls through the `rustls-tls` feature. In 0.19 the `rustls-tls` feature still exists, so a `Cargo.toml` that enables it keeps building, but the feature does not change which TLS library HTTP requests use.
 
@@ -35,6 +33,7 @@ Goose has these Cargo features:
 | `cookies` | on | Each `GooseUser` keeps its own cookies; see [Cookies](./config/cookie.html). Build with `default-features = false` to leave it out. |
 | `dashboard` | off | The [live web dashboard](./controller/dashboard.html), served with `--dashboard`. |
 | `pdf-reports` | off | PDF reports, written with a `.pdf` `--report-file`. |
+| `native-tls` | off | The clients Goose builds use the platform's TLS library in place of rustls; see [Native TLS](./config/tls.html#native-tls). |
 | `rustls-tls` | off | Kept so that older `Cargo.toml` files build; see [TLS](#tls). |
 
 For example, to build a load test with the dashboard:
