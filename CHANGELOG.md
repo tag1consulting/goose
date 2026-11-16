@@ -2,6 +2,7 @@
 
 ## 0.19.3-dev
 
+ - [#837](https://github.com/tag1consulting/goose/pull/837) every Goose Book page names its canonical URL under `https://www.goose.rs/` (mdBook `canonical-site-url`, built from mdBook commit `e18773a9` until a release has it), and the Book ships a `robots.txt`
  - [#832](https://github.com/tag1consulting/goose/pull/832) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages and the Book's analytics check name the new host
 
 ## 0.19.2 November 13, 2026
