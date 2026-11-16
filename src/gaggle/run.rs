@@ -3046,6 +3046,21 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[serial_test::serial]
     async fn a_stop_moots_the_changes_held_behind_a_users_build() {
+        assert_eq!(held_changes_after_a_stop(false).await, [(1, None), (2, None)]);
+    }
+
+    /// As above, on a worker the stop takes to Idle before its next tick, as
+    /// one with no users running: the held changes are answered all the same.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_stop_to_idle_answers_the_changes_held_behind_a_users_build() {
+        assert_eq!(held_changes_after_a_stop(true).await, [(1, None), (2, None)]);
+    }
+
+    /// Two users changes a running worker holds behind the first one's
+    /// build, then a `Stop` from the manager, with the worker at Idle before
+    /// its next tick if `idle`: the answers to the changes, in order.
+    async fn held_changes_after_a_stop(idle: bool) -> Vec<(u64, Option<String>)> {
         use crate::gaggle::control::WorkerUsers;
         use crate::gaggle::proto::Control;
         let test = async {
@@ -3090,6 +3105,15 @@ mod tests {
                     reason: "the run ended".to_string(),
                 }),
             );
+            if idle {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !run_state.stopping {
+                    attack.gaggle_tick(&mut run_state).await.unwrap();
+                    assert!(Instant::now() < deadline, "the stop was not read");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+            }
             let deadline = Instant::now() + Duration::from_secs(10);
             while applied.len() < 2 {
                 attack.gaggle_tick(&mut run_state).await.unwrap();
@@ -3107,11 +3131,11 @@ mod tests {
                 assert!(Instant::now() < deadline, "the changes were not answered");
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
-            assert_eq!(applied, vec![(1, None), (2, None)]);
+            applied
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
-            .expect("within 30 seconds");
+            .expect("within 30 seconds")
     }
 
     /// A worker that sends chunks that move nothing, of a file never asked
