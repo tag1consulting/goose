@@ -50,8 +50,8 @@ pub(crate) struct TestFaults {
     /// Make the final delta larger than a message may be.
     pub(crate) oversize_final: bool,
     /// Take this long to apply the first users change of a running load
-    /// test, after reading it: its main loop waits, as one building many
-    /// users does.
+    /// test, after reading it: its main loop waits, as one building a test
+    /// plan's many users does.
     pub(crate) slow_apply: Option<Duration>,
     /// Say a change made while the manager is idle was applied this long
     /// after reading it, as a busy main loop would.
