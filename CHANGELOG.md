@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.20.0-dev
+ - [#839](https://github.com/tag1consulting/goose/pull/839) new `native-tls` feature: every client Goose builds uses Reqwest's native TLS (OpenSSL on Linux) in place of rustls and the shared certificate verifier, and still offers HTTP/2 over HTTPS unless `--http1-only`; native TLS builds a certificate store per client, so memory and start up time grow with users (0.18.1 measured about 700 KiB per user); turning on `reqwest/native-tls` in a load test's own `Cargo.toml` still gives rustls, as Goose cannot see a dependency's features, so turn on `goose/native-tls` instead; the Goose Book has a new page, TLS And Certificates, on how Goose builds its TLS clients
  - [#838](https://github.com/tag1consulting/goose/pull/838) every Goose Book page names its canonical URL under `https://www.goose.rs/` (mdBook `canonical-site-url`, built from mdBook commit `e18773a9` until a release has it), and the Book ships a `robots.txt`
  - [#834](https://github.com/tag1consulting/goose/pull/834) the memory of each stopped user's task is freed while the user count holds, checked twice a second, instead of at the end of the load test; a Gaggle worker still keeps it to the end
  - [#833](https://github.com/tag1consulting/goose/pull/833) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages, `llms.txt`, `AGENTS.md` and the Book's analytics check name the new host
