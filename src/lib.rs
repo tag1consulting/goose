@@ -67,6 +67,7 @@ pub mod util;
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{self, Duration};
 use std::{fmt, io};
@@ -845,6 +846,9 @@ pub struct GooseAttack {
     scenario_machine_names: HashSet<String>,
     /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
+    /// The users of a Controller change, being built off the main loop, which
+    /// become `weighted_users` once built.
+    user_build: Option<UserBuild>,
     /// The global ordinal of this process's first user: 0, unless it runs a
     /// share of a Gaggle's users. User indexes, the users each scenario
     /// counts and coordinated omission events all count from it.
@@ -988,6 +992,7 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            user_build: None,
             #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
@@ -1045,6 +1050,7 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            user_build: None,
             #[cfg(feature = "gaggle")]
             user_offset: 0,
             #[cfg(feature = "gaggle")]
@@ -1721,11 +1727,57 @@ impl GooseAttack {
 
     /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
     fn weight_scenario_users(&mut self, total_users: usize) -> Result<Vec<GooseUser>, GooseError> {
-        trace!("weight_scenario_users");
+        let user_params = self.weighted_user_params(total_users)?;
+        build_weighted_users(
+            &user_params,
+            &self.configuration,
+            &self.client_strategy,
+            self.metrics.hash,
+            &AtomicBool::new(false),
+        )
+    }
+
+    /// As [`weight_scenario_users`](Self::weight_scenario_users), but the users
+    /// are built on a thread of their own, so the main loop goes on answering
+    /// Controllers and serving the users running while they build. Weighting
+    /// errors are returned at once; a build error comes from the build.
+    fn build_users_off_loop(&mut self, total_users: usize) -> Result<UserBuild, GooseError> {
+        let user_params = self.weighted_user_params(total_users)?;
+        let configuration = self.configuration.clone();
+        let client_strategy = self.client_strategy.clone();
+        let metrics_hash = self.metrics.hash;
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_build = stop.clone();
+        let (built_tx, built) = flume::bounded(1);
+        std::thread::Builder::new()
+            .name("goose-user-build".to_string())
+            .spawn(move || {
+                let users = build_weighted_users(
+                    &user_params,
+                    &configuration,
+                    &client_strategy,
+                    metrics_hash,
+                    &stop_build,
+                );
+                // When a later change replaced this one while it built, the
+                // receiver is gone and what was built is dropped here, on
+                // this thread, off the main loop.
+                let _ = built_tx.send(users);
+            })?;
+        Ok(UserBuild { built, stop })
+    }
+
+    /// Which scenario and base URL each of the next `total_users` users has,
+    /// in the order they are built.
+    fn weighted_user_params(
+        &mut self,
+        total_users: usize,
+    ) -> Result<Vec<(usize, Arc<str>, url::Url)>, GooseError> {
+        trace!("weighted_user_params");
 
         let weighted_scenarios = self.user_scenario_order(total_users)?;
 
-        // Allocate a state for each user that will be launched.
+        // Weight a scenario for each user that will be launched.
         info!(
             "[scheduler]: initializing {} user states...",
             self.test_plan.total_users()
@@ -1749,65 +1801,7 @@ impl GooseAttack {
                 base_url,
             ));
         }
-
-        // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client unless the load test set one client for all
-        // users. Chunks are collected back in order to preserve the scenario
-        // assignment sequence.
-        let configuration = &self.configuration;
-        let client_strategy = &self.client_strategy;
-        let metrics_hash = self.metrics.hash;
-        let num_cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        let chunk_size = total_users.div_ceil(num_cpus).max(1);
-
-        let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(num_cpus);
-            for (chunk_idx, chunk) in user_params.chunks(chunk_size).enumerate() {
-                let base = chunk_idx * chunk_size;
-                handles.push(s.spawn(move || {
-                    let mut users = Vec::with_capacity(chunk.len());
-                    for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
-                        debug!("creating user state: {} ({})", base + i, scenarios_index);
-                        // With no client builder, GooseUser::new builds the client.
-                        let reqwest_client = client_strategy
-                            .as_ref()
-                            .map(client::ClientStrategy::user_client)
-                            .transpose()?;
-                        users.push(GooseUser::new(
-                            *scenarios_index,
-                            machine_name.clone(),
-                            base_url.clone(),
-                            configuration,
-                            metrics_hash,
-                            reqwest_client,
-                        )?);
-                    }
-                    Ok::<Vec<GooseUser>, GooseError>(users)
-                }));
-            }
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join().unwrap_or_else(|_| {
-                        Err(GooseError::Io(io::Error::other(
-                            "user initialization thread panicked",
-                        )))
-                    })
-                })
-                .collect()
-        });
-
-        let mut weighted_users = Vec::with_capacity(total_users);
-        for result in results {
-            weighted_users.extend(result?);
-        }
-        debug!(
-            "[scheduler]: created {} weighted_users",
-            weighted_users.len()
-        );
-        Ok(weighted_users)
+        Ok(user_params)
     }
 
     // Change from one attack_phase to another.
@@ -3058,6 +3052,46 @@ impl GooseAttack {
                 return Ok(());
             }
 
+            // A Controller change's users start once they are built, off the
+            // main loop: until then the loop goes on, a tenth of a second at a
+            // time, answering Controllers and serving the users running.
+            if let Some(build) = &self.user_build {
+                let built =
+                    tokio::time::timeout(Duration::from_millis(100), build.built.recv_async())
+                        .await;
+                let Ok(built) = built else {
+                    return Ok(());
+                };
+                self.user_build = None;
+                let error = match built {
+                    Ok(Ok(users)) => {
+                        // The step runs from now, as it did when the users
+                        // were built before the change was answered, and its
+                        // history entry says so.
+                        self.step_started = Some(time::Instant::now());
+                        if let Some(step) = self.metrics.history.last_mut() {
+                            if matches!(step.action, TestPlanStepAction::Increasing) {
+                                step.timestamp = chrono::Utc::now();
+                            }
+                        }
+                        self.weighted_users = users;
+                        None
+                    }
+                    Ok(Err(e)) => Some(e.to_string()),
+                    Err(_) => Some("the user build thread exited".to_string()),
+                };
+                if let Some(error) = error {
+                    self.keep_users_after_failed_build(goose_attack_run_state, &error);
+                    return Ok(());
+                }
+                // A Gaggle worker first applies the changes it read while they
+                // built, a stop among them, as when they were built on its
+                // main loop: they start from the next turn.
+                if self.is_gaggle_worker() {
+                    return Ok(());
+                }
+            }
+
             // Determine if it's time to spawn a GooseUser.
             if goose_attack_run_state.adjust_due() {
                 let mut thread_user = self
@@ -3190,6 +3224,28 @@ impl GooseAttack {
         }
 
         Ok(())
+    }
+
+    /// The users a Controller change added could not be built, after the
+    /// change was answered: log why and stay at the users running, which the
+    /// rest of the run keeps, as if the change had asked for them. The load
+    /// test goes on.
+    fn keep_users_after_failed_build(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        error: &str,
+    ) {
+        let active = goose_attack_run_state.active_users;
+        error!("[controller]: could not build the users a users change added, staying at {active} users: {error}");
+        // A build is only started by a users change, which runs on a shape.
+        if let Some(mut shape) = self.run_shape.take() {
+            let elapsed = self.step_elapsed() as usize;
+            self.test_plan.steps = shape.retarget(active, elapsed, active, 0);
+            self.run_shape = Some(shape);
+            self.test_plan.current = 0;
+            self.configuration.users = Some(active);
+            self.advance_test_plan(goose_attack_run_state);
+        }
     }
 
     // Maintain the number of active [`GooseUser`](./goose/struct.GooseUser.html) threads in the
@@ -3529,8 +3585,11 @@ impl GooseAttack {
     //
     // Soft vs hard errors:
     // - Soft: expected rejections → ControlOutcome { ok: false, error: Some(...) }
-    // - Hard: Result::Err(GooseError) (weight_scenario_users on a users or test
-    //   plan increase; reset_run_state in start finish; cancel_attack).
+    // - Hard: Result::Err(GooseError) (weighting on a users increase, or
+    //   weight_scenario_users on a test plan increase; reset_run_state in start
+    //   finish; cancel_attack). An error building a users increase's users off
+    //   the main loop is logged by increase_attack, which stays at the users
+    //   running.
     // `GooseAttack::control` replies with the outcome, or `internal` on a hard
     // error before returning it, so every caller still waiting gets an answer.
     // ========================================================================
@@ -3762,7 +3821,9 @@ impl GooseAttack {
     /// `conflicting_settings` below 2 users while an increase or decrease
     /// time is set, as on the command line. A users ramp's own ramp down is
     /// not a cancel: a new count abandons it and holds until stopped.
-    /// Hard error: `weight_scenario_users` when increasing while running.
+    /// Hard error: weighting the added users, or starting the thread that
+    /// builds them, when increasing while running; an error building them
+    /// is logged by `increase_attack`, which stays at the users running.
     pub(crate) fn control_set_users(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3858,18 +3919,25 @@ impl GooseAttack {
                 self.users_ramp_ms(goose_attack_run_state.active_users, new_users)
             });
 
-            // Allocate more users if increasing users (hard Err on failure),
-            // before anything changes: a Gaggle manager's run on its workers.
+            // Weight more users if increasing users (hard Err on failure),
+            // before anything changes, and build them off the main loop: a
+            // Gaggle manager's run on its workers. Users an earlier change
+            // built, or is still building, and did not start never will. A
+            // build still running stops, and drops what it built on its own
+            // thread; users it already sent, waiting in its channel or in
+            // weighted_users, are dropped here, on the main loop.
             if new_users > goose_attack_run_state.active_users && !self.is_gaggle_manager() {
-                let weighted = self.weight_scenario_users(user_difference);
-                match weighted {
-                    Ok(weighted) => self.weighted_users = weighted,
+                match self.build_users_off_loop(user_difference) {
+                    Ok(build) => self.user_build = Some(build),
                     Err(e) => {
                         self.run_shape = Some(shape);
                         return Err(e);
                     }
                 }
+            } else {
+                self.user_build = None;
             }
+            self.weighted_users = Vec::new();
 
             // The rest of the run, generated again from its shape: a ramp to
             // the new count, then the hold and ramp down still ahead.
@@ -3913,6 +3981,8 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         self.run_shape = None;
         self.test_plan = test_plan;
+        // The users a Controller change is building are not this plan's.
+        self.user_build = None;
         // Reallocate users: a Gaggle manager's run on its workers.
         if !self.is_gaggle_manager() {
             self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
@@ -3951,6 +4021,9 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        // No user still building will start.
+        self.user_build = None;
+
         if goose_attack_run_state.active_users == 0 {
             // A stop or Ctrl-C in the tick of its start, or a second shutdown from Idle:
             // a plan maintaining 0 users would never end.
@@ -4464,6 +4537,93 @@ impl GooseAttack {
         }
 
         Ok(())
+    }
+}
+
+/// Build a [`GooseUser`] for each of `user_params`, in parallel across
+/// available CPUs. Each user gets its own reqwest client unless the load test
+/// set one client for all users. Chunks are collected back in order to
+/// preserve the scenario assignment sequence. Once `stop` is set, no more users
+/// are built.
+fn build_weighted_users(
+    user_params: &[(usize, Arc<str>, url::Url)],
+    configuration: &GooseConfiguration,
+    client_strategy: &Option<client::ClientStrategy>,
+    metrics_hash: u64,
+    stop: &AtomicBool,
+) -> Result<Vec<GooseUser>, GooseError> {
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let total_users = user_params.len();
+    let chunk_size = total_users.div_ceil(num_cpus).max(1);
+
+    let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(num_cpus);
+        for (chunk_idx, chunk) in user_params.chunks(chunk_size).enumerate() {
+            let base = chunk_idx * chunk_size;
+            handles.push(s.spawn(move || {
+                let mut users = Vec::with_capacity(chunk.len());
+                for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    debug!("creating user state: {} ({})", base + i, scenarios_index);
+                    // With no client builder, GooseUser::new builds the client.
+                    let reqwest_client = client_strategy
+                        .as_ref()
+                        .map(client::ClientStrategy::user_client)
+                        .transpose()?;
+                    users.push(GooseUser::new(
+                        *scenarios_index,
+                        machine_name.clone(),
+                        base_url.clone(),
+                        configuration,
+                        metrics_hash,
+                        reqwest_client,
+                    )?);
+                }
+                Ok::<Vec<GooseUser>, GooseError>(users)
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    Err(GooseError::Io(io::Error::other(
+                        "user initialization thread panicked",
+                    )))
+                })
+            })
+            .collect()
+    });
+
+    let mut weighted_users = Vec::with_capacity(total_users);
+    for result in results {
+        weighted_users.extend(result?);
+    }
+    debug!(
+        "[scheduler]: created {} weighted_users",
+        weighted_users.len()
+    );
+    Ok(weighted_users)
+}
+
+/// The users of a Controller change, built on a thread off the main loop.
+/// Dropping it stops a build still running, which then drops what it built on
+/// its own thread; users the build already sent are dropped with it, on the
+/// thread that drops it, the main loop.
+struct UserBuild {
+    /// The users built, in weighted order with the last to start first, or
+    /// the error building one.
+    built: flume::Receiver<Result<Vec<GooseUser>, GooseError>>,
+    /// Set to stop building.
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for UserBuild {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -6137,8 +6297,8 @@ mod tests {
         }
     }
 
-    /// Users weighted after the shared client is built, as a Controller adds them
-    /// to a running load test, reuse that client: it is built once.
+    /// Users weighted after the shared client is built, as a test plan change
+    /// adds them to a running load test, reuse that client: it is built once.
     #[test]
     fn test_shared_client_is_shared_by_users_added_later() {
         let configuration =
@@ -6563,5 +6723,190 @@ mod tests {
         goose_attack.maintain_attack(&mut run_state).await.unwrap();
         assert_eq!(run_state.users.len(), 1, "a finished task was held");
         assert!(!run_state.users[0].is_finished());
+    }
+
+    /// A load test running `active` users of two scenarios, ramped by
+    /// `--users` so a Controller can change them, whose users wait a minute
+    /// between transactions that do nothing.
+    async fn users_ramp_attack(active: usize) -> (GooseAttack, GooseAttackRunState) {
+        let users = active.to_string();
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--quiet",
+            "--host",
+            "http://127.0.0.1",
+            "--users",
+            &users,
+            "--increase-rate",
+            "1000",
+        ])
+        .unwrap();
+        let idle = |name| {
+            scenario!(name)
+                .set_wait_time(Duration::from_secs(60), Duration::from_secs(60))
+                .unwrap()
+                .register_transaction(transaction!(noop_transaction))
+        };
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(idle("A"))
+            .register_scenario(idle("B"));
+        let defaults = goose_attack.defaults.clone();
+        goose_attack.configuration.configure(&defaults).unwrap();
+        goose_attack
+            .build_client_strategy(client::CommandLineClientOptions::default())
+            .unwrap();
+        goose_attack.test_plan = TestPlan::build(&goose_attack.configuration).unwrap();
+        goose_attack.prepare_load_test().unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        controller::tests::run_users_ramp(&mut goose_attack, &mut run_state, active);
+        (goose_attack, run_state)
+    }
+
+    /// Run the increase until `users` run.
+    async fn increase_to(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        users: usize,
+    ) {
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while run_state.active_users < users {
+                goose_attack.increase_attack(run_state).await.unwrap();
+            }
+        })
+        .await
+        .expect("the users did not start within 20 seconds");
+    }
+
+    /// A Controller's users increase is answered before the users it adds are
+    /// built: they are built off the main loop, then start in weighted order.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_users_increase_is_answered_before_its_users_are_built() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
+        assert!(
+            goose_attack.weighted_users.is_empty(),
+            "the main loop built the users before it answered"
+        );
+        increase_to(&mut goose_attack, &mut run_state, 12).await;
+        let scenarios: Vec<usize> = run_state
+            .running_users
+            .iter()
+            .map(|&(scenario, _)| scenario)
+            .collect();
+        assert_eq!(scenarios.len(), 10);
+        assert!(
+            scenarios.windows(2).all(|pair| pair[0] != pair[1]),
+            "users left their weighted order: {:?}",
+            scenarios
+        );
+    }
+
+    /// A Controller decrease drops the users an increase built and did not
+    /// start: none of them will start.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_users_decrease_drops_the_users_built_and_not_started() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(10).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 20").await);
+        increase_to(&mut goose_attack, &mut run_state, 12).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 5").await);
+        assert!(
+            goose_attack.weighted_users.is_empty(),
+            "{} users built and never to start were held",
+            goose_attack.weighted_users.len()
+        );
+    }
+
+    /// A change that replaces one whose users are still building stops that
+    /// build, and a stopped build builds no more users.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_superseded_users_build_stops() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(10).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 20").await);
+        let stop = goose_attack.user_build.as_ref().unwrap().stop.clone();
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 5").await);
+        assert!(goose_attack.user_build.is_none());
+        assert!(stop.load(Ordering::Relaxed));
+
+        let user_params = goose_attack.weighted_user_params(100).unwrap();
+        let built = build_weighted_users(
+            &user_params,
+            &goose_attack.configuration,
+            &goose_attack.client_strategy,
+            goose_attack.metrics.hash,
+            &stop,
+        )
+        .unwrap();
+        assert!(built.is_empty());
+    }
+
+    /// The step a users increase starts is timed from when its users are
+    /// built, as when they were built before the answer, so the next step
+    /// starts no earlier for the build.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_users_increase_times_its_step_from_the_build() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
+        let answered = time::Instant::now();
+        increase_to(&mut goose_attack, &mut run_state, 12).await;
+        assert!(
+            goose_attack.step_started.unwrap() > answered,
+            "the step was timed from the answer, before its users were built"
+        );
+    }
+
+    /// A users increase whose users fail to build, after it was answered,
+    /// logs why and stays at the users running: the load test goes on.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_failed_users_build_keeps_the_users_running() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Increase);
+        let (built_tx, built) = flume::bounded(1);
+        built_tx
+            .send(Err(GooseError::Io(io::Error::other("no client"))))
+            .unwrap();
+        goose_attack.user_build = Some(UserBuild {
+            built,
+            stop: Arc::new(AtomicBool::new(false)),
+        });
+        goose_attack
+            .increase_attack(&mut run_state)
+            .await
+            .expect("a failed build ended the load test");
+        assert!(goose_attack.user_build.is_none());
+        assert_eq!(run_state.active_users, 2);
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Maintain);
+        assert_eq!(goose_attack.current_target_users(), 2);
+        assert_eq!(goose_attack.configuration.users, Some(2));
+    }
+
+    /// The history entry of the step a users increase starts is stamped when
+    /// its users are built, as when they were built before the answer, so
+    /// every report times the step from its first user.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_users_increase_stamps_its_step_from_the_build() {
+        let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
+        assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
+        let answered = chrono::Utc::now();
+        increase_to(&mut goose_attack, &mut run_state, 12).await;
+        let step = goose_attack
+            .metrics
+            .history
+            .iter()
+            .rev()
+            .find(|step| matches!(step.action, TestPlanStepAction::Increasing))
+            .unwrap();
+        assert!(
+            step.timestamp > answered,
+            "the step was stamped at the answer, before its users were built"
+        );
     }
 }

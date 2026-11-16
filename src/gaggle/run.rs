@@ -233,8 +233,12 @@ pub(crate) struct WorkerRun {
     #[cfg(test)]
     stop_reason_sent: bool,
     /// Runtime changes that came between `StartAt` and the start, applied
-    /// once started, each with its id.
+    /// once started, or while a users change's users build, applied after
+    /// it; each with its id. A stop answers them without applying them.
     pending_controls: Vec<(u64, WorkerControl)>,
+    /// The users change whose users are building off the main loop: said
+    /// applied once they reach it, as when they were built before it was.
+    applying: Option<u64>,
     /// Whether the whole load test's test plan holds until stopped.
     holds: bool,
 }
@@ -1003,6 +1007,7 @@ impl GooseAttack {
             #[cfg(test)]
             stop_reason_sent: false,
             pending_controls: Vec::new(),
+            applying: None,
         })));
         Ok(true)
     }
@@ -1055,6 +1060,9 @@ impl GooseAttack {
         run.run_folder = None;
         // Moot with the new share, which carries every change: answered,
         // so none stays open on the manager.
+        if let Some(id) = run.applying.take() {
+            run.link.control_ack(id, None);
+        }
         for (id, _) in run.pending_controls.drain(..) {
             run.link.control_ack(id, None);
         }
@@ -1068,7 +1076,7 @@ impl GooseAttack {
     /// makes, and a refusal, which the manager never expects, is answered
     /// with why. An idle worker answers at once, as the share its next
     /// `Prepare` carries holds every change; one about to start applies it
-    /// once started.
+    /// once started, and one whose users build applies it after them.
     async fn worker_control(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -1089,7 +1097,9 @@ impl GooseAttack {
             self.attack_phase,
             AttackPhase::Increase | AttackPhase::Maintain | AttackPhase::Decrease
         );
-        if !running && run.start_at.is_some() {
+        // Changes apply in the order they came: after the start, and after
+        // a users change whose users are still building.
+        if (!running && run.start_at.is_some()) || run.applying.is_some() {
             run.pending_controls.push((id, control));
             return Ok(());
         }
@@ -1144,7 +1154,13 @@ impl GooseAttack {
         }
         #[cfg(test)]
         self.report(run.link.id, refused.is_some());
-        run.link.control_ack(id, refused);
+        // A users change that builds users is applied once they reach the
+        // main loop: gaggle_tick says so then.
+        if refused.is_none() && self.user_build.is_some() {
+            run.applying = Some(id);
+        } else {
+            run.link.control_ack(id, refused);
+        }
         Ok(())
     }
 
@@ -1556,9 +1572,30 @@ impl GooseAttack {
                 .test_faults
                 .stop_once(&run.link, &mut run.stop_reason_sent);
         }
-        // Changes that came between StartAt and the start, now applied.
-        if running && !run.pending_controls.is_empty() {
+        // A users change is applied once its users reached the main loop,
+        // or will never build: a stop, or a build that failed.
+        if self.user_build.is_none() {
+            if let Some(id) = run.applying.take() {
+                run.link.control_ack(id, None);
+            }
+        }
+        // Changes that came between StartAt and the start, or while a users
+        // change's users built, now applied, in order, once worker_control
+        // would no longer hold them: one that builds users holds those after
+        // it back again. A worker a stop took to Idle answers them at once.
+        let held = !running && run.start_at.is_some();
+        if !held && run.applying.is_none() && !run.pending_controls.is_empty() {
             for (id, control) in std::mem::take(&mut run.pending_controls) {
+                if run.applying.is_some() {
+                    run.pending_controls.push((id, control));
+                    continue;
+                }
+                // A stop read after it moots a change held behind a build,
+                // as a new share moots every change.
+                if goose_attack_run_state.stopping {
+                    run.link.control_ack(id, None);
+                    continue;
+                }
                 self.worker_apply(goose_attack_run_state, run, id, control)
                     .await?;
             }
@@ -2763,6 +2800,7 @@ mod tests {
             skip_reset: false,
             stop_reason_sent: false,
             pending_controls: Vec::new(),
+            applying: None,
             holds: false,
         })));
         (attack, run_state)
@@ -2849,6 +2887,263 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
             .expect("within 30 seconds");
+    }
+
+    /// A running worker says a users change was applied only once the users
+    /// it adds are built and with its main loop, as when they were built
+    /// before it was applied; a change after it waits until then.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_users_change_is_applied_once_its_users_are_built() {
+        use crate::gaggle::control::WorkerUsers;
+        use crate::gaggle::proto::Control;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            attack.run_shape = crate::run_shape::RunShape::for_configuration(&attack.configuration);
+            if let Some(GaggleRole::Worker(run)) = attack.gaggle.role.as_mut() {
+                run.start_at = Some(tokio::time::Instant::now());
+            }
+            attack.gaggle_worker_idle(&mut run_state).await.unwrap();
+            assert_eq!(attack.attack_phase, AttackPhase::Increase);
+            let send = |id: u64, settings: WorkerSettings| {
+                let command = WorkerControl::Settings(settings).encode().unwrap();
+                manager.send(0, ToWorker::Control(Control { id, command }));
+            };
+            send(
+                1,
+                WorkerSettings {
+                    users: Some(WorkerUsers {
+                        users: vec![(0, 0), (1, 0), (2, 0)],
+                        ramp_ms: 0,
+                    }),
+                    ..WorkerSettings::default()
+                },
+            );
+            send(
+                2,
+                WorkerSettings {
+                    increase_rate: Some(Some(2.0)),
+                    ..WorkerSettings::default()
+                },
+            );
+            let mut received = BTreeSet::new();
+            let mut applied = Vec::new();
+            let mut acks = |manager: &Manager| {
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck {
+                        control,
+                        error,
+                        received: was_received,
+                        ..
+                    } = event
+                    {
+                        assert_eq!(error, None, "change {} refused", control);
+                        if was_received {
+                            received.insert(control);
+                        } else {
+                            applied.push(control);
+                        }
+                    }
+                }
+                (received.len(), applied.clone())
+            };
+            // Both changes read, and a few more ticks: the users still build.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut ticks = 0;
+            while acks(&manager).0 < 2 || ticks < 10 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                ticks += 1;
+                assert!(Instant::now() < deadline, "the changes were not read");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(attack.user_build.is_some(), "no users build");
+            assert_eq!(
+                acks(&manager).1,
+                Vec::<u64>::new(),
+                "applied before its users were built"
+            );
+            // The users reach the main loop, as increase_attack takes them.
+            let build = attack.user_build.take().unwrap();
+            attack.weighted_users = build.built.recv_async().await.unwrap().unwrap();
+            assert_eq!(attack.weighted_users.len(), 3);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while acks(&manager).1.len() < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                assert!(Instant::now() < deadline, "the changes were not applied");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(acks(&manager).1, vec![1, 2], "applied out of order");
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// A stop a running worker reads while a users change's users build is
+    /// applied before any of those users starts, as when they were built on
+    /// its main loop.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_stop_read_during_a_users_build_starts_none_of_its_users() {
+        use crate::gaggle::control::WorkerUsers;
+        use crate::gaggle::proto::Control;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            // A user started by mistake waits, rather than looping at once.
+            attack.scenarios[0].transaction_wait =
+                Some((Duration::from_secs(60), Duration::from_secs(60)));
+            attack.run_shape = crate::run_shape::RunShape::for_configuration(&attack.configuration);
+            if let Some(GaggleRole::Worker(run)) = attack.gaggle.role.as_mut() {
+                run.start_at = Some(tokio::time::Instant::now());
+            }
+            attack.gaggle_worker_idle(&mut run_state).await.unwrap();
+            let send = |id: u64, control: WorkerControl| {
+                let command = control.encode().unwrap();
+                manager.send(0, ToWorker::Control(Control { id, command }));
+            };
+            send(
+                1,
+                WorkerControl::Settings(WorkerSettings {
+                    users: Some(WorkerUsers {
+                        users: vec![(0, 0), (1, 0), (2, 0)],
+                        ramp_ms: 0,
+                    }),
+                    ..WorkerSettings::default()
+                }),
+            );
+            send(2, WorkerControl::Stop);
+            let mut received = 0;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while received < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck { received: true, .. } = event {
+                        received += 1;
+                    }
+                }
+                assert!(Instant::now() < deadline, "the changes were not read");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(attack.user_build.is_some(), "no users build");
+            // The main loop's turns, from the one the users arrive in.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while attack.user_build.is_some() {
+                attack.increase_attack(&mut run_state).await.unwrap();
+                assert!(Instant::now() < deadline, "the users were not built");
+            }
+            attack.gaggle_tick(&mut run_state).await.unwrap();
+            assert_eq!(run_state.active_users, 0, "a user started after the stop");
+            assert_ne!(attack.attack_phase, AttackPhase::Increase);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// Changes a running worker holds behind a users build, then a `Stop`
+    /// from the manager: the stop moots them, so none is refused, which
+    /// would lose the worker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_stop_moots_the_changes_held_behind_a_users_build() {
+        assert_eq!(
+            held_changes_after_a_stop(false).await,
+            [(1, None), (2, None)]
+        );
+    }
+
+    /// As above, on a worker the stop takes to Idle before its next tick, as
+    /// one with no users running: the held changes are answered all the same.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn a_stop_to_idle_answers_the_changes_held_behind_a_users_build() {
+        assert_eq!(
+            held_changes_after_a_stop(true).await,
+            [(1, None), (2, None)]
+        );
+    }
+
+    /// Two users changes a running worker holds behind the first one's
+    /// build, then a `Stop` from the manager, with the worker at Idle before
+    /// its next tick if `idle`: the answers to the changes, in order.
+    async fn held_changes_after_a_stop(idle: bool) -> Vec<(u64, Option<String>)> {
+        use crate::gaggle::control::WorkerUsers;
+        use crate::gaggle::proto::Control;
+        let test = async {
+            let manager = test_manager(1, Duration::from_secs(30)).await;
+            let (mut attack, mut run_state) = idle_worker(&manager).await;
+            attack.run_shape = crate::run_shape::RunShape::for_configuration(&attack.configuration);
+            if let Some(GaggleRole::Worker(run)) = attack.gaggle.role.as_mut() {
+                run.start_at = Some(tokio::time::Instant::now());
+            }
+            attack.gaggle_worker_idle(&mut run_state).await.unwrap();
+            let send = |id: u64, users: usize| {
+                let command = WorkerControl::Settings(WorkerSettings {
+                    users: Some(WorkerUsers {
+                        users: (0..users).map(|user| (user, 0)).collect(),
+                        ramp_ms: 0,
+                    }),
+                    ..WorkerSettings::default()
+                })
+                .encode()
+                .unwrap();
+                manager.send(0, ToWorker::Control(Control { id, command }));
+            };
+            send(1, 3);
+            send(2, 2);
+            let mut received = 0;
+            let mut applied = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while received < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck { received: true, .. } = event {
+                        received += 1;
+                    }
+                }
+                assert!(Instant::now() < deadline, "the changes were not read");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(attack.user_build.is_some(), "no users build");
+            manager.send(
+                0,
+                ToWorker::Stop(Stop {
+                    reason: "the run ended".to_string(),
+                }),
+            );
+            if idle {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !run_state.stopping {
+                    attack.gaggle_tick(&mut run_state).await.unwrap();
+                    assert!(Instant::now() < deadline, "the stop was not read");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+            }
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while applied.len() < 2 {
+                attack.gaggle_tick(&mut run_state).await.unwrap();
+                while let Some(event) = manager.try_event() {
+                    if let Event::ControlAck {
+                        control,
+                        error,
+                        received: false,
+                        ..
+                    } = event
+                    {
+                        applied.push((control, error));
+                    }
+                }
+                assert!(Instant::now() < deadline, "the changes were not answered");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            applied
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds")
     }
 
     /// A worker that sends chunks that move nothing, of a file never asked
