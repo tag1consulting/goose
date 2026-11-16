@@ -2,6 +2,7 @@
 
 ## 0.19.3-dev
 
+ - [#840](https://github.com/tag1consulting/goose/pull/840) the Goose Book has a new page, TLS And Certificates, on how Goose 0.19.2 builds its TLS clients (one shared certificate verifier, a TLS config and session store per client, root certificates read once per process on Linux, HTTP/1.1 over rustls even with Reqwest's `http2` or `native-tls` on) and how to get HTTP/2 or native TLS by passing your own `reqwest::ClientBuilder` to `GooseUser::set_client_builder`
  - [#837](https://github.com/tag1consulting/goose/pull/837) every Goose Book page names its canonical URL under `https://www.goose.rs/` (mdBook `canonical-site-url`, built from mdBook commit `e18773a9` until a release has it), and the Book ships a `robots.txt`
  - [#832](https://github.com/tag1consulting/goose/pull/832) the Goose Book moves to `https://www.goose.rs/`; old `book.goose.rs` links redirect to the same page there; the crate's `documentation` link, `--help`, the WebSocket Controller's error messages and the Book's analytics check name the new host
 

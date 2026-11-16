@@ -87,7 +87,7 @@ To leave cookie support out of the build, turn off Goose's default features:
 goose = { version = "^0.19", default-features = false }
 ```
 
-Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off. They include `http2`, which lets a client you build yourself, or a Goose client that accepts invalid certificates, use HTTP/2 over HTTPS. To get HTTP/2 on purpose, see [TLS](../requirements.html#tls).
+Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off. They include `http2`, which lets a client you build yourself, or a Goose client that accepts invalid certificates, use HTTP/2 over HTTPS. To get HTTP/2 on purpose, see [HTTP/2 or native TLS](tls.md#http2-or-native-tls).
 
 ## The Type-Safe Client Builder
 
