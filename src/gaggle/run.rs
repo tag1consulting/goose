@@ -234,7 +234,7 @@ pub(crate) struct WorkerRun {
     stop_reason_sent: bool,
     /// Runtime changes that came between `StartAt` and the start, applied
     /// once started, or while a users change's users build, applied after
-    /// it; each with its id.
+    /// it; each with its id. A stop answers them without applying them.
     pending_controls: Vec<(u64, WorkerControl)>,
     /// The users change whose users are building off the main loop: said
     /// applied once they reach it, as when they were built before it was.
@@ -1076,7 +1076,7 @@ impl GooseAttack {
     /// makes, and a refusal, which the manager never expects, is answered
     /// with why. An idle worker answers at once, as the share its next
     /// `Prepare` carries holds every change; one about to start applies it
-    /// once started.
+    /// once started, and one whose users build applies it after them.
     async fn worker_control(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
