@@ -28,10 +28,16 @@ clap = { version = "4.5", default-features = false, features = [
 ] }
 ctrlc = "3"
 downcast-rs = "2.0"
+# Gzip for reports and logs, and for gzip response bodies, which Goose decodes
+# only when the load test reads them (src/goose/gzip.rs).
 flate2 = "1.1.10"
 flume = "0.12"
 futures = "0.3"
 http = "1.1"
+# Already in the tree through reqwest and hyper: the manager checks the size of a
+# worker's first message as it arrives, and a gzip body that fails to decode
+# becomes the reqwest error reqwest's own decoding gave.
+http-body = "1"
 itertools = "0.14"
 lazy_static = "1.4"
 log = "0.4"
@@ -89,10 +95,8 @@ prost = { version = "0.14", optional = true }
 tokio-stream = { version = "0.1", optional = true, features = ["net"] }
 tonic = { version = "0.14", optional = true, default-features = false, features = ["codegen", "router", "transport"] }
 tonic-prost = { version = "0.14", optional = true }
-# Both already in the tree, through tonic and tokio-tungstenite: the manager
-# checks the size of a worker's first message as it arrives (http-body), and
-# compares tokens as fixed length digests (sha1).
-http-body = { version = "1", optional = true }
+# Already in the tree, through tokio-tungstenite: the manager compares tokens as
+# fixed length digests.
 sha1 = { version = "0.10", optional = true }
 
 [features]
@@ -110,7 +114,7 @@ dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 # for AI agents. Opt-in, and off at run time until --mcp.
 mcp = ["dep:rmcp", "axum", "hyper", "hyper-util"]
 # Distributed load tests (Gaggle): a manager and workers, over gRPC.
-gaggle = ["dep:http-body", "dep:libc", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
+gaggle = ["dep:libc", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 
 [dev-dependencies]
 httpmock = "0.8"

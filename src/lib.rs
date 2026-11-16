@@ -914,6 +914,9 @@ pub struct GooseAttack {
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
+    /// Whether `client_strategy`'s clients were built with gzip on, so their users ask
+    /// for gzip and decompress a body the test reads.
+    client_gzip: bool,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -1015,6 +1018,7 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
+            client_gzip: true,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -1072,6 +1076,7 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
+            client_gzip: true,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -1478,6 +1483,7 @@ impl GooseAttack {
         self.client_strategy = match &self.client_builder {
             Some(builder) => {
                 let config = builder.resolve(command_line_client_options, &self.configuration);
+                self.client_gzip = config.gzip;
                 #[cfg(all(test, feature = "gaggle"))]
                 if let Some(report) = self.gaggle.client_report.take() {
                     let _ = report.send(config.clone());
@@ -1756,6 +1762,7 @@ impl GooseAttack {
         // assignment sequence.
         let configuration = &self.configuration;
         let client_strategy = &self.client_strategy;
+        let client_gzip = self.client_gzip;
         let metrics_hash = self.metrics.hash;
         let num_cpus = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -1771,17 +1778,17 @@ impl GooseAttack {
                     for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
                         debug!("creating user state: {} ({})", base + i, scenarios_index);
                         // With no client builder, GooseUser::new builds the client.
-                        let reqwest_client = client_strategy
+                        let goose_client = client_strategy
                             .as_ref()
-                            .map(client::ClientStrategy::user_client)
+                            .map(|strategy| strategy.goose_client(client_gzip))
                             .transpose()?;
-                        users.push(GooseUser::new(
+                        users.push(GooseUser::new_with_goose_client(
                             *scenarios_index,
                             machine_name.clone(),
                             base_url.clone(),
                             configuration,
                             metrics_hash,
-                            reqwest_client,
+                            goose_client,
                         )?);
                     }
                     Ok::<Vec<GooseUser>, GooseError>(users)
@@ -2759,7 +2766,7 @@ impl GooseAttack {
                 &self.configuration,
                 self.client_strategy
                     .as_ref()
-                    .map(client::ClientStrategy::user_client)
+                    .map(|strategy| strategy.goose_client(self.client_gzip))
                     .transpose()?,
             )?;
             let function = &t.function;
@@ -2786,7 +2793,7 @@ impl GooseAttack {
                 &self.configuration,
                 self.client_strategy
                     .as_ref()
-                    .map(client::ClientStrategy::user_client)
+                    .map(|strategy| strategy.goose_client(self.client_gzip))
                     .transpose()?,
             )?;
             let function = &t.function;
