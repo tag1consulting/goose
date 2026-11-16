@@ -1580,9 +1580,11 @@ impl GooseAttack {
             }
         }
         // Changes that came between StartAt and the start, or while a users
-        // change's users built, now applied, in order: one that builds users
-        // holds those after it back again.
-        if running && run.applying.is_none() && !run.pending_controls.is_empty() {
+        // change's users built, now applied, in order, once worker_control
+        // would no longer hold them: one that builds users holds those after
+        // it back again. A worker a stop took to Idle answers them at once.
+        let held = !running && run.start_at.is_some();
+        if !held && run.applying.is_none() && !run.pending_controls.is_empty() {
             for (id, control) in std::mem::take(&mut run.pending_controls) {
                 if run.applying.is_some() {
                     run.pending_controls.push((id, control));
