@@ -29,7 +29,7 @@
         <link rel="shortcut icon" href="favicon-0c69a905.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
         <link rel="stylesheet" href="css/general-e96d0476.css">
-        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/chrome-41f20a4d.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -49,10 +49,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-83d2cc16.js";
+            window.path_to_searchindex_js = "searchindex-6b44be37.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b1be2d52.js"></script>
+        <script src="toc-ac509b99.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -140,11 +140,11 @@
                         </button>
                         <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
                             <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">ayu</button></li>
                         </ul>
                         <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
                             <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
@@ -401,11 +401,8 @@
 </li>
 </ul>
 <h2 id="tls"><a class="header" href="#tls">TLS</a></h2>
-<p>Goose makes requests with <a href="https://docs.rs/reqwest">Reqwest</a> 0.13, whose default TLS backend is <a href="https://docs.rs/rustls">rustls</a>, so a load test needs no OpenSSL. The clients Goose builds check certificates with <a href="https://docs.rs/rustls-platform-verifier"><code>rustls-platform-verifier</code></a>, which uses the operating system’s certificate store, so they trust a CA you have added to the system. They check certificates unless you accept invalid ones with <code>--accept-invalid-certs</code>, <code>GooseDefault::AcceptInvalidCerts</code> or <code>accept_invalid_certs(true)</code> on a <code>GooseClientBuilder</code>. Accept invalid certificates only for a test server with a self signed or expired certificate.</p>
-<p>Goose builds the certificate verifier once per process, with the first of its clients set to check certificates, even when the target is plain HTTP and no certificate is ever checked. At that moment, Goose takes the process default rustls crypto provider, or aws-lc-rs if there is none. If you install a provider, do it at the start of <code>main</code>, before any Goose call. On Linux, the verifier also reads the system’s root certificates at that moment, so restart the load test process to trust a CA added later.</p>
+<p>Goose makes requests with <a href="https://docs.rs/reqwest">Reqwest</a> 0.13, whose default TLS backend is <a href="https://docs.rs/rustls">rustls</a>, so a load test needs no OpenSSL. The clients Goose builds trust the CAs the operating system trusts, and check certificates unless you accept invalid ones with <code>--accept-invalid-certs</code>. Since 0.19.2 the clients Goose builds that check certificates use HTTP/1.1 over rustls, even when Reqwest’s <code>http2</code> or <code>native-tls</code> feature is on. <a href="#tls-and-certificates">TLS And Certificates</a> explains how Goose builds its clients, what they trust, when it reads the system’s root certificates, and how to use HTTP/2 or native TLS.</p>
 <p>Goose before 0.19 used Reqwest 0.12 and native TLS by default, with rustls through the <code>rustls-tls</code> feature. In 0.19 the <code>rustls-tls</code> feature still exists, so a <code>Cargo.toml</code> that enables it keeps building, but the feature does not change which TLS library HTTP requests use.</p>
-<p>Goose does not enable Reqwest’s <code>http2</code> feature, but any <code>reqwest</code> 0.13 dependency with default features turns it on, including one that another crate pulls in. <code>cargo tree -e features -i reqwest@0.13</code> shows whether it is on. Since 0.19.2, the clients Goose builds, including those from <code>GooseClientBuilder</code>, use HTTP/1.1 over rustls whenever they check certificates, even if <code>http2</code> or Reqwest’s <code>native-tls</code> feature is on. Before 0.19.2, these clients used HTTP/2 with an HTTPS server that offered it when <code>http2</code> was on, and native TLS when <code>native-tls</code> was on. Clients from <code>GooseUser::set_client_builder</code>, and the clients Goose builds that accept invalid certificates, can use HTTP/2 when <code>http2</code> is on and native TLS when <code>native-tls</code> is on.</p>
-<p>To keep HTTP/2 or native TLS with certificate checks, pass a <code>reqwest::ClientBuilder</code> to <code>GooseUser::set_client_builder</code>, as <a href="#a-client-without-cookies">A Client Without Cookies</a> shows. The <code>reqwest</code> dependency line in that section turns default features off, so add <code>features = ["http2"]</code> or <code>features = ["native-tls"]</code> to it. A client from your <code>ClientBuilder</code> replaces Goose’s defaults for that user, so set the ones you need on your builder, such as the timeout, or <code>.cookie_store(true)</code> for cookies. On Linux, each such client over rustls reads the system’s root certificates when Reqwest builds it, so it is slower to build than the clients Goose builds.</p>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <p>Goose has these Cargo features:</p>
 <div class="table-wrapper">
@@ -994,7 +991,7 @@ Examples:
   loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html
 
 Run with --help for details, defaults and examples.
-https://book.goose.rs/getting-started/runtime-options.html
+https://www.goose.rs/getting-started/runtime-options.html
 </code></pre>
 <p>Help wraps to the terminal’s width, up to 120 columns. When the output is not a terminal, it wraps to <code>COLUMNS</code> if that is set, also up to 120, and to 80 columns otherwise. Both outputs on this page are the help at 80 columns.</p>
 <h2 id="where-each-option-is-explained"><a class="header" href="#where-each-option-is-explained">Where each option is explained</a></h2>
@@ -1749,7 +1746,7 @@ Examples:
 
 Most options can also be set in code with GooseDefault; the command line wins. A
 value that begins with a hyphen goes after =, as in --goose-log=-run.log.
-https://book.goose.rs/getting-started/runtime-options.html
+https://www.goose.rs/getting-started/runtime-options.html
 </code></pre>
 <p>The developer documentation describes <a href="https://docs.rs/goose/*/goose/config/struct.GooseConfiguration.html"><code>GooseConfiguration</code></a>, the structure that holds these options.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -4100,9 +4097,9 @@ goose&gt; Connection closed by foreign host.
 <p>For example, from a load test built with the <code>pdf-reports</code> feature, so its configuration includes <code>pdf_scale</code> and <code>pdf_timeout</code>, which a build without that feature leaves out:</p>
 <pre><code class="language-bash">% websocat ws://127.0.0.1:5117
 foo
-{"response":"invalid json, see Goose book https://book.goose.rs/controller/websocket.html","success":false}
+{"response":"invalid json, see Goose book https://www.goose.rs/controller/websocket.html","success":false}
 {"request":"foo"}
-{"response":"unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html","success":false}
+{"response":"unrecognized command, see Goose book https://www.goose.rs/controller/websocket.html","success":false}
 {"request":"config"}
 {"response":"{\"host\":null,\"users\":10,\"increase_rate\":null,\"increase_time\":null,\"run_time\":null,\"decrease_rate\":null,\"decrease_time\":null,\"iterations\":null,\"test_plan\":null,\"scenarios\":null,\"throttle_requests\":null,\"version\":false,\"list\":false,\"scenarios_list\":false,\"verbose\":0,\"quiet\":0,\"goose_log\":null,\"log_level\":0,\"running_metrics\":null,\"no_print_metrics\":false,\"no_error_summary\":false,\"report_file\":[],\"output_dir\":null,\"compress\":null,\"notes\":null,\"report_graph_data\":false,\"render_report\":null,\"baseline_file\":null,\"no_granular_report\":false,\"pdf_print_html\":null,\"pdf_scale\":0.8,\"pdf_timeout\":60,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_transaction_metrics\":false,\"no_scenario_metrics\":false,\"no_status_codes\":false,\"co_mitigation\":\"Disabled\",\"threshold\":[],\"no_threshold_abort\":false,\"threshold_abort_delay\":null,\"request_log\":null,\"request_format\":\"Json\",\"request_body\":false,\"transaction_log\":null,\"transaction_format\":\"Json\",\"scenario_log\":null,\"scenario_format\":\"Json\",\"error_log\":null,\"error_format\":\"Json\",\"debug_log\":null,\"debug_format\":\"Json\",\"no_debug_body\":false,\"dashboard\":false,\"dashboard_host\":null,\"dashboard_port\":null,\"dashboard_auth_token\":null,\"dashboard_control\":false,\"dashboard_no_auth\":false,\"dashboard_max_clients\":null,\"no_percentiles_over_time\":false,\"no_autostart\":true,\"no_telnet\":false,\"telnet_host\":\"127.0.0.1\",\"telnet_port\":5116,\"websocket\":true,\"no_websocket\":false,\"websocket_host\":\"127.0.0.1\",\"websocket_port\":5117,\"timeout\":null,\"no_gzip\":false,\"sticky_follow\":false,\"accept_invalid_certs\":false}","success":true}
 {"request":"stop"}
@@ -5378,7 +5375,7 @@ async fn api_call(user: &amp;mut GooseUser) -&gt; TransactionResult {
 <pre><code class="language-toml">[dependencies]
 goose = { version = "^0.19", default-features = false }
 </code></pre>
-<p>Reqwest is then built without its <code>cookies</code> feature, unless another dependency turns it on, and no user’s client keeps cookies. <code>ClientBuilder::cookie_store</code> and <code>cookie_provider</code> only exist with Reqwest’s <code>cookies</code> feature, so a load test that calls them needs it, for example through its own <code>reqwest = { version = "0.13", default-features = false, features = ["cookies"] }</code> dependency. Leave Reqwest’s default features off. They include <code>http2</code>, which lets a client you build yourself, or a Goose client that accepts invalid certificates, use HTTP/2 over HTTPS. To get HTTP/2 on purpose, see <a href="#tls">TLS</a>.</p>
+<p>Reqwest is then built without its <code>cookies</code> feature, unless another dependency turns it on, and no user’s client keeps cookies. <code>ClientBuilder::cookie_store</code> and <code>cookie_provider</code> only exist with Reqwest’s <code>cookies</code> feature, so a load test that calls them needs it, for example through its own <code>reqwest = { version = "0.13", default-features = false, features = ["cookies"] }</code> dependency. Leave Reqwest’s default features off. They include <code>http2</code>, which lets a client you build yourself, or a Goose client that accepts invalid certificates, use HTTP/2 over HTTPS. To get HTTP/2 on purpose, see <a href="#http2-or-native-tls">HTTP/2 or native TLS</a>.</p>
 <h2 id="the-type-safe-client-builder"><a class="header" href="#the-type-safe-client-builder">The Type-Safe Client Builder</a></h2>
 <p>The <code>goose::client</code> module, which is not part of the prelude, has a <a href="https://docs.rs/goose/*/goose/client/struct.GooseClientBuilder.html"><code>GooseClientBuilder</code></a> that records its cookie choice in its type: it starts in the <code>CookiesEnabled</code> state, <code>without_cookies()</code> moves it to <code>CookiesDisabled</code> and <code>with_cookies()</code> moves it back. <code>timeout</code>, <code>user_agent</code>, <code>gzip</code> and <code>accept_invalid_certs</code> are available in both states. <a href="https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_client_builder_with_cookies"><code>GooseAttack::set_client_builder_with_cookies</code></a> takes a <code>CookiesEnabled</code> builder and <a href="https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_client_builder_without_cookies"><code>set_client_builder_without_cookies</code></a> a <code>CookiesDisabled</code> one, and both return a <code>Result</code>:</p>
 <pre class="playground"><code class="language-rust edition2018">use goose::client::GooseClientBuilder;
@@ -5444,6 +5441,57 @@ fn main() -&gt; Result&lt;(), GooseError&gt; {
     let _user = GooseUser::new(0, Arc::from("websiteuser"), base_url, &amp;configuration, 0, None)?;
     Ok(())
 }</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="tls-and-certificates"><a class="header" href="#tls-and-certificates">TLS And Certificates</a></h1>
+<p>This page describes Goose 0.19.2 and later 0.19 releases.</p>
+<h2 id="how-goose-builds-its-clients"><a class="header" href="#how-goose-builds-its-clients">How Goose builds its clients</a></h2>
+<p>Every user has its own <code>reqwest::Client</code>, unless the load test calls <code>set_client_builder_without_cookies</code>, which gives every user one shared client; see <a href="#cookies">Cookies</a>.</p>
+<p>A client that checks certificates, which is every client unless you pass <code>--accept-invalid-certs</code>, uses rustls. All of them share one certificate verifier, which Goose builds with the first of them, even when the target is plain HTTP. Each client still gets its own rustls <code>ClientConfig</code>, with its own TLS session resumption store, so no user resumes another user’s TLS session.</p>
+<p>The verifier is <a href="https://docs.rs/rustls-platform-verifier"><code>rustls-platform-verifier</code></a>, so the clients trust the CAs the operating system trusts. On Linux it reads the system’s root certificates once per process, when it is built, so a CA added to the system while a test runs is not seen: restart the load test to trust it. When Goose builds the verifier it also takes the process default rustls crypto provider, or aws-lc-rs if there is none, so install a provider of your own at the start of <code>main</code>, before any Goose call.</p>
+<p>These clients use rustls and HTTP/1.1 even if the load test, or any crate it depends on, turns on Reqwest’s <code>http2</code> or <code>native-tls</code> feature. Any <code>reqwest</code> 0.13 dependency with default features turns on <code>http2</code>; <code>cargo tree -e features -i reqwest@0.13</code> shows which features are on. Before 0.19.2 these clients used HTTP/2 with an HTTPS server that offered it when <code>http2</code> was on, and native TLS when <code>native-tls</code> was on.</p>
+<p>With <code>--accept-invalid-certs</code> (<code>GooseDefault::AcceptInvalidCerts</code>, or <code>accept_invalid_certs(true)</code> on a <code>GooseClientBuilder</code>), the client checks no certificate and Goose leaves its TLS to Reqwest, which builds it the way it would for any client: with native TLS when Reqwest’s <code>native-tls</code> feature is on, and HTTP/2 over HTTPS when its <code>http2</code> feature is on. Use it only for a test server with a self signed or expired certificate.</p>
+<h2 id="http2-or-native-tls"><a class="header" href="#http2-or-native-tls">HTTP/2 or native TLS</a></h2>
+<p>A load test that needs HTTP/2, or the platform’s TLS library (OpenSSL on Linux, Security.framework on macOS, SChannel on Windows), with certificates checked, builds its own <code>reqwest::ClientBuilder</code> and passes it to <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder"><code>GooseUser::set_client_builder</code></a>, usually in a transaction run once with <code>set_on_start()</code>. Goose builds that user’s client from your builder as it is, so it does not use the shared verifier, and Reqwest picks its TLS library and HTTP versions from the features on. Goose does not re-export Reqwest, so add it to the load test’s <code>Cargo.toml</code> with the features you need:</p>
+<pre><code class="language-toml">[dependencies]
+goose = "^0.19.2"
+reqwest = { version = "0.13", default-features = false, features = ["http2", "native-tls"] }
+tokio = "^1"
+</code></pre>
+<p><code>http2</code> lets the client offer HTTP/2 and HTTP/1.1 over HTTPS, and the server chooses. <code>native-tls</code> makes Reqwest use the platform’s TLS library for every client it builds itself.</p>
+<pre class="playground"><code class="language-rust edition2018">use goose::prelude::*;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), GooseError&gt; {
+    GooseAttack::initialize()?
+        .register_scenario(
+            scenario!("WebsiteUser")
+                .register_transaction(transaction!(setup_client).set_on_start())
+                .register_transaction(transaction!(load_homepage)),
+        )
+        .execute()
+        .await?;
+
+    Ok(())
+}
+
+async fn setup_client(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    // Goose's defaults don't apply to this client: set the ones you need.
+    let builder = reqwest::Client::builder()
+        .user_agent("my-loadtest/1.0")
+        .timeout(Duration::from_secs(60))
+        .gzip(true)
+        .cookie_store(true);
+    user.set_client_builder(builder).await?;
+    Ok(())
+}
+
+async fn load_homepage(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let _ = user.get("/").await?.discard_body().await;
+    Ok(())
+}</code></pre>
+<p>The client replaces all of Goose’s defaults for that user: <code>--timeout</code>, <code>--no-gzip</code> and <code>--accept-invalid-certs</code> don’t apply to it, and it keeps cookies only with <code>.cookie_store(true)</code>, which needs Reqwest’s <code>cookies</code> feature; Goose’s default <code>cookies</code> feature turns it on.</p>
+<p>Native TLS builds a certificate store for every client, so memory and start up time grow with the number of users: Goose 0.18.1, which used native TLS, measured about 700 KiB per user. Over rustls on Linux, Reqwest reads the system’s root certificates for each client you build this way, so it is slower to build than the clients Goose builds.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="examples-2"><a class="header" href="#examples-2">Examples</a></h1>
 <p>Goose ships eight example load tests. Each entry below says what the example demonstrates and what it needs, and, except for Drupal Memcache, shows a piece of a real run; select the picture to open the example’s page. Simple is the smallest place to start, and Umami is the closest to a real site.</p>
@@ -7196,7 +7244,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-609e4cb8.js"></script>
+        <script src="book-79d04f96.js"></script>
 
         <!-- Custom JS scripts -->
 

@@ -4,6 +4,7 @@
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
         <title>Requirements - The Goose Book</title>
+        <link rel="canonical" href="https://www.goose.rs/requirements.html">
 
 
         <!-- Custom HTML head -->
@@ -28,7 +29,7 @@
         <link rel="shortcut icon" href="favicon-0c69a905.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
         <link rel="stylesheet" href="css/general-e96d0476.css">
-        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/chrome-41f20a4d.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -48,10 +49,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-83d2cc16.js";
+            window.path_to_searchindex_js = "searchindex-6b44be37.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b1be2d52.js"></script>
+        <script src="toc-ac509b99.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -139,11 +140,11 @@
                         </button>
                         <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
                             <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">ayu</button></li>
                         </ul>
                         <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
                             <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
@@ -206,11 +207,8 @@
 </li>
 </ul>
 <h2 id="tls"><a class="header" href="#tls">TLS</a></h2>
-<p>Goose makes requests with <a href="https://docs.rs/reqwest">Reqwest</a> 0.13, whose default TLS backend is <a href="https://docs.rs/rustls">rustls</a>, so a load test needs no OpenSSL. The clients Goose builds check certificates with <a href="https://docs.rs/rustls-platform-verifier"><code>rustls-platform-verifier</code></a>, which uses the operating system’s certificate store, so they trust a CA you have added to the system. They check certificates unless you accept invalid ones with <code>--accept-invalid-certs</code>, <code>GooseDefault::AcceptInvalidCerts</code> or <code>accept_invalid_certs(true)</code> on a <code>GooseClientBuilder</code>. Accept invalid certificates only for a test server with a self signed or expired certificate.</p>
-<p>Goose builds the certificate verifier once per process, with the first of its clients set to check certificates, even when the target is plain HTTP and no certificate is ever checked. At that moment, Goose takes the process default rustls crypto provider, or aws-lc-rs if there is none. If you install a provider, do it at the start of <code>main</code>, before any Goose call. On Linux, the verifier also reads the system’s root certificates at that moment, so restart the load test process to trust a CA added later.</p>
+<p>Goose makes requests with <a href="https://docs.rs/reqwest">Reqwest</a> 0.13, whose default TLS backend is <a href="https://docs.rs/rustls">rustls</a>, so a load test needs no OpenSSL. The clients Goose builds trust the CAs the operating system trusts, and check certificates unless you accept invalid ones with <code>--accept-invalid-certs</code>. Since 0.19.2 the clients Goose builds that check certificates use HTTP/1.1 over rustls, even when Reqwest’s <code>http2</code> or <code>native-tls</code> feature is on. <a href="config/tls.html">TLS And Certificates</a> explains how Goose builds its clients, what they trust, when it reads the system’s root certificates, and how to use HTTP/2 or native TLS.</p>
 <p>Goose before 0.19 used Reqwest 0.12 and native TLS by default, with rustls through the <code>rustls-tls</code> feature. In 0.19 the <code>rustls-tls</code> feature still exists, so a <code>Cargo.toml</code> that enables it keeps building, but the feature does not change which TLS library HTTP requests use.</p>
-<p>Goose does not enable Reqwest’s <code>http2</code> feature, but any <code>reqwest</code> 0.13 dependency with default features turns it on, including one that another crate pulls in. <code>cargo tree -e features -i reqwest@0.13</code> shows whether it is on. Since 0.19.2, the clients Goose builds, including those from <code>GooseClientBuilder</code>, use HTTP/1.1 over rustls whenever they check certificates, even if <code>http2</code> or Reqwest’s <code>native-tls</code> feature is on. Before 0.19.2, these clients used HTTP/2 with an HTTPS server that offered it when <code>http2</code> was on, and native TLS when <code>native-tls</code> was on. Clients from <code>GooseUser::set_client_builder</code>, and the clients Goose builds that accept invalid certificates, can use HTTP/2 when <code>http2</code> is on and native TLS when <code>native-tls</code> is on.</p>
-<p>To keep HTTP/2 or native TLS with certificate checks, pass a <code>reqwest::ClientBuilder</code> to <code>GooseUser::set_client_builder</code>, as <a href="./config/cookie.html#a-client-without-cookies">A Client Without Cookies</a> shows. The <code>reqwest</code> dependency line in that section turns default features off, so add <code>features = ["http2"]</code> or <code>features = ["native-tls"]</code> to it. A client from your <code>ClientBuilder</code> replaces Goose’s defaults for that user, so set the ones you need on your builder, such as the timeout, or <code>.cookie_store(true)</code> for cookies. On Linux, each such client over rustls reads the system’s root certificates when Reqwest builds it, so it is slower to build than the clients Goose builds.</p>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <p>Goose has these Cargo features:</p>
 <div class="table-wrapper">
@@ -282,7 +280,7 @@ goose = { version = "^0.19", features = ["dashboard"] }
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-609e4cb8.js"></script>
+        <script src="book-79d04f96.js"></script>
 
         <!-- Custom JS scripts -->
 
