@@ -34,9 +34,9 @@ use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use tokio_tungstenite::WebSocketStream;
 
 /// Most users any front end can set: `users`, a test plan's total, and the
-/// dashboard's users control. One command allocates the added users on the
-/// main loop, so a larger value can exhaust memory or overflow the user
-/// arithmetic.
+/// dashboard's users control. One command builds every added user, with
+/// its client, at once, so a larger value can exhaust memory or overflow the
+/// user arithmetic.
 pub(crate) const MAX_CONTROL_USERS: usize = 100_000;
 
 /// Refusal for a user count outside 1 to [`MAX_CONTROL_USERS`].
@@ -46,7 +46,7 @@ pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 a
 ///
 /// On a timeout the client is told so, and the parent skips the command if
 /// it is still queued. If the parent had already started applying it (a
-/// large users change), it can still apply after the timeout, so clients
+/// large test plan change), it can still apply after the timeout, so clients
 /// must check the phase and users before retrying.
 ///
 /// 15s allows non-trivial `weight_scenario_users` work; Start still replies
@@ -3655,7 +3655,9 @@ pub(crate) mod tests {
             assert!(control(&mut goose_attack, &mut run_state, "users 6").await);
             let steps = &goose_attack.test_plan.steps;
             assert_eq!(steps[1..], [(6, 200), (6, 60_000), (0, 1_200)]);
-            assert_eq!(goose_attack.weighted_users.len(), 2);
+            // The two users are built off the main loop.
+            let build = goose_attack.user_build.take().unwrap();
+            assert_eq!(build.built.recv_async().await.unwrap().unwrap().len(), 2);
             assert_eq!(goose_attack.test_plan.current, 1);
             assert_eq!(stage(&goose_attack), ("ramp_up", None));
             assert_eq!(goose_attack.current_target_users(), 6);
