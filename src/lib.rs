@@ -918,9 +918,6 @@ pub struct GooseAttack {
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
     client_strategy: Option<client::ClientStrategy>,
-    /// Whether `client_strategy`'s clients were built with gzip on, so their users ask
-    /// for gzip and decompress a body the test reads.
-    client_gzip: bool,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -1023,7 +1020,6 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
-            client_gzip: true,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -1082,7 +1078,6 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             client_builder: None,
             client_strategy: None,
-            client_gzip: true,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -1489,7 +1484,8 @@ impl GooseAttack {
         self.client_strategy = match &self.client_builder {
             Some(builder) => {
                 let config = builder.resolve(command_line_client_options, &self.configuration);
-                self.client_gzip = config.gzip;
+                // Users ask for gzip as the builder resolved it: see GooseUser::gzip.
+                self.configuration.no_gzip = !config.gzip;
                 #[cfg(all(test, feature = "gaggle"))]
                 if let Some(report) = self.gaggle.client_report.take() {
                     let _ = report.send(config.clone());
@@ -1738,7 +1734,6 @@ impl GooseAttack {
             &user_params,
             &self.configuration,
             &self.client_strategy,
-            self.client_gzip,
             self.metrics.hash,
             &AtomicBool::new(false),
         )
@@ -1752,7 +1747,6 @@ impl GooseAttack {
         let user_params = self.weighted_user_params(total_users)?;
         let configuration = self.configuration.clone();
         let client_strategy = self.client_strategy.clone();
-        let client_gzip = self.client_gzip;
         let metrics_hash = self.metrics.hash;
         let stop = Arc::new(AtomicBool::new(false));
         let stop_build = stop.clone();
@@ -1764,7 +1758,6 @@ impl GooseAttack {
                     &user_params,
                     &configuration,
                     &client_strategy,
-                    client_gzip,
                     metrics_hash,
                     &stop_build,
                 );
@@ -2762,7 +2755,7 @@ impl GooseAttack {
                 &self.configuration,
                 self.client_strategy
                     .as_ref()
-                    .map(|strategy| strategy.goose_client(self.client_gzip))
+                    .map(client::ClientStrategy::user_client)
                     .transpose()?,
             )?;
             let function = &t.function;
@@ -2789,7 +2782,7 @@ impl GooseAttack {
                 &self.configuration,
                 self.client_strategy
                     .as_ref()
-                    .map(|strategy| strategy.goose_client(self.client_gzip))
+                    .map(client::ClientStrategy::user_client)
                     .transpose()?,
             )?;
             let function = &t.function;
@@ -4553,13 +4546,11 @@ impl GooseAttack {
 /// available CPUs. Each user gets its own reqwest client unless the load test
 /// set one client for all users. Chunks are collected back in order to
 /// preserve the scenario assignment sequence. Once `stop` is set, no more users
-/// are built. `client_gzip` is whether `client_strategy`'s clients were built
-/// with gzip on, so their users ask for gzip and decompress a body the test reads.
+/// are built.
 fn build_weighted_users(
     user_params: &[(usize, Arc<str>, url::Url)],
     configuration: &GooseConfiguration,
     client_strategy: &Option<client::ClientStrategy>,
-    client_gzip: bool,
     metrics_hash: u64,
     stop: &AtomicBool,
 ) -> Result<Vec<GooseUser>, GooseError> {
@@ -4581,18 +4572,21 @@ fn build_weighted_users(
                     }
                     debug!("creating user state: {} ({})", base + i, scenarios_index);
                     // With no client builder, GooseUser::new builds the client.
-                    let goose_client = client_strategy
+                    let reqwest_client = client_strategy
                         .as_ref()
-                        .map(|strategy| strategy.goose_client(client_gzip))
+                        .map(client::ClientStrategy::user_client)
                         .transpose()?;
-                    users.push(GooseUser::new_with_goose_client(
+                    let mut user = GooseUser::new(
                         *scenarios_index,
                         machine_name.clone(),
                         base_url.clone(),
                         configuration,
                         metrics_hash,
-                        goose_client,
-                    )?);
+                        reqwest_client,
+                    )?;
+                    // A client from the client builder leaves gzip to Goose too.
+                    user.gzip = !configuration.no_gzip;
+                    users.push(user);
                 }
                 Ok::<Vec<GooseUser>, GooseError>(users)
             }));
@@ -6848,7 +6842,6 @@ mod tests {
             &user_params,
             &goose_attack.configuration,
             &goose_attack.client_strategy,
-            goose_attack.client_gzip,
             goose_attack.metrics.hash,
             &stop,
         )

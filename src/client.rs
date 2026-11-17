@@ -323,13 +323,6 @@ pub enum ClientStrategy {
 
 impl ClientStrategy {
     /// A client for one user: a new one for `Individual`, or a clone of the shared
-    /// client, which shares its connection pool, for `Shared`. Paired with `gzip`,
-    /// the gzip setting the strategy's clients were built with.
-    pub(crate) fn goose_client(&self, gzip: bool) -> Result<(Client, bool), reqwest::Error> {
-        self.user_client().map(|client| (client, gzip))
-    }
-
-    /// A client for one user: a new one for `Individual`, or a clone of the shared
     /// client, which shares its connection pool, for `Shared`.
     pub(crate) fn user_client(&self) -> Result<Client, reqwest::Error> {
         match self {
@@ -568,9 +561,8 @@ fn shared_tls(config: &GooseClientConfig) -> Option<&'static SharedTls> {
 fn client_builder(config: &GooseClientConfig, shared: Option<&SharedTls>) -> ClientBuilder {
     let mut builder = Client::builder()
         .user_agent(&config.user_agent)
-        // Goose asks for gzip itself and decompresses a body only when the load test
-        // reads it, in GooseHttpResponse: a body read only to be thrown away is never
-        // decompressed. `config.gzip` decides whether GooseUser asks for gzip.
+        // Goose asks for gzip itself and decompresses a body only when the test
+        // reads it (GooseHttpResponse); `config.gzip` decides whether it asks.
         .gzip(false)
         .danger_accept_invalid_certs(config.accept_invalid_certs);
 

@@ -318,7 +318,6 @@ use crate::metrics::{
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
 mod gzip;
-use gzip::GzipBody;
 
 /// Atomically decrement `counter` by one, saturating at zero.
 ///
@@ -900,15 +899,12 @@ impl GooseResponse {
     /// this method is called, so reading the body does not change the request's
     /// recorded time. The time spent reading it counts toward the times of the
     /// transaction and scenario that read it, which cover the whole transaction
-    /// function. A gzip compressed body is read as it came over the wire and never
-    /// decompressed: Goose decompresses a body only when the test reads it (see
-    /// [`GooseHttpResponse`]).
+    /// function. The body is read as it came over the wire: a gzip body is never
+    /// decompressed.
     ///
-    /// Returns the number of body bytes read as they came over the wire, so the
-    /// compressed size of a gzip body, or the error that ended the read. Before Goose
-    /// 0.20 this was the size after decompression. If Goose got no response, as when
-    /// the connection failed or timed out, there is no body to read and that error is
-    /// returned.
+    /// Returns the number of body bytes read over the wire, so the compressed size of a
+    /// gzip body, or the error that ended the read. If Goose got no response, as when the
+    /// connection failed or timed out, there is no body to read and that error is returned.
     ///
     /// # Example
     /// ```rust
@@ -957,7 +953,7 @@ struct UnreadSlot {
 pub(crate) struct UnreadBodyTotals {
     /// Bodies read to the end, or until an error ended the read.
     pub(crate) bodies: AtomicU64,
-    /// Body bytes read, as they came over the wire: a gzip body is never decompressed.
+    /// Body bytes read over the wire: a gzip body is never decompressed.
     pub(crate) bytes: AtomicU64,
     /// Reads an error ended.
     pub(crate) errors: AtomicU64,
@@ -978,26 +974,19 @@ pub(crate) struct UnreadBodyTotals {
 /// scenario that dropped it, as [`GooseResponse::discard_body`]'s does.
 ///
 /// It dereferences to [`reqwest::Response`] for the methods that borrow it
-/// (`status`, `headers`, `url`, `error_for_status_ref` and the rest), and has its own
-/// `bytes`, `text`, `json`, `chunk`, `content_length` and `error_for_status`, which
-/// behave as `reqwest::Response`'s do. Use [`into_inner`](GooseHttpResponse::into_inner)
-/// for anything else: a body taken that way is the caller's, and Goose never reads it.
-/// `--drop-unread-bodies` (or
+/// (`status`, `headers`, `url`, `content_length`, `error_for_status_ref` and the
+/// rest), and has its own `bytes`, `text`, `json`, `chunk` and `error_for_status`,
+/// which behave as `reqwest::Response`'s do. Use
+/// [`into_inner`](GooseHttpResponse::into_inner) for anything else: a body taken that
+/// way is the caller's, and Goose never reads it. `--drop-unread-bodies` (or
 /// [`GooseDefault::DropUnreadBodies`](../config/enum.GooseDefault.html#variant.DropUnreadBodies))
 /// turns the reading off for a whole run.
 ///
 /// # Gzip
 ///
-/// With gzip on, as it is unless `--no-gzip` (or
-/// [`GooseDefault::NoGzip`](../config/enum.GooseDefault.html#variant.NoGzip)) is given,
-/// Goose asks for gzip with `Accept-Encoding: gzip` and decompresses a gzip body only
-/// when the test reads it: `bytes`, `text`, `json` and `chunk` return it decompressed,
-/// as reqwest's own gzip decoding did, and `headers` and `content_length` describe
-/// it as reqwest did, without `Content-Encoding` or `Content-Length`. A body read
-/// only to be thrown away, by [`GooseResponse::discard_body`] or because the test
-/// dropped it unread, is never decompressed, which saves the CPU time decompressing
-/// it would take. A client set with
-/// [`GooseUser::set_client_builder`] decodes, or not, as its own builder says.
+/// Unless `--no-gzip` is given, Goose asks for gzip, and `bytes`, `text`, `json` and
+/// `chunk` decompress a gzip body. A body thrown away, by [`GooseResponse::discard_body`]
+/// or dropped unread, is never decompressed. Headers describe the body on the wire.
 ///
 /// # Example
 /// ```rust
@@ -1025,13 +1014,14 @@ pub struct GooseHttpResponse {
     unread: Option<UnreadSlot>,
     /// The body was read to its end, or an error ended it: nothing is left to read.
     body_done: bool,
-    /// Set for a gzip body Goose decompresses as the test reads it.
-    gzip: Option<Box<GzipBody>>,
+    /// The body is gzip and the test's reads decompress it.
+    gzip: bool,
+    /// Decompresses a gzip body read with `chunk`, made at its first chunk.
+    decoder: Option<Box<gzip::ChunkDecoder>>,
 }
 
 impl GooseHttpResponse {
-    /// A response whose unread body is handed to `bodies` under `name`. With `gzip`,
-    /// a gzip body is decompressed as the test reads it.
+    /// A response whose unread body is handed to `bodies` under `name`.
     pub(crate) fn tracked(
         response: Response,
         bodies: &UnreadBodies,
@@ -1046,28 +1036,23 @@ impl GooseHttpResponse {
         response
     }
 
-    /// A response whose body is dropped if it is dropped unread. With `gzip`, a gzip
-    /// body is decompressed as the test reads it.
-    pub(crate) fn untracked(mut response: Response, gzip: bool) -> Self {
-        let gzip = if gzip {
-            GzipBody::take_from(&mut response)
-        } else {
-            None
-        };
+    /// A response whose body is dropped if it is dropped unread. With `gzip`, the
+    /// test's reads decompress a gzip body.
+    pub(crate) fn untracked(response: Response, gzip: bool) -> Self {
         GooseHttpResponse {
+            gzip: gzip && gzip::is_gzip(&response),
             response: Some(response),
             unread: None,
             body_done: false,
-            gzip,
+            decoder: None,
         }
     }
 
-    /// Takes the response out, so that dropping `self` hands nothing to its user,
-    /// with the state to decompress its body if it is gzip.
-    fn take(mut self) -> (Response, Option<Box<GzipBody>>) {
+    /// Takes the response out, so that dropping `self` hands nothing to its user.
+    fn take(mut self) -> Response {
         self.unread = None;
         match self.response.take() {
-            Some(response) => (response, self.gzip.take()),
+            Some(response) => response,
             // Only a method that consumes `self` takes the response, so it is there.
             None => unreachable!("GooseHttpResponse used after its response was taken"),
         }
@@ -1079,113 +1064,68 @@ impl GooseHttpResponse {
     /// Use it for a response that never ends, such as a stream of server sent events,
     /// which Goose would otherwise read until the client's timeout.
     ///
-    /// The body is as it came over the wire: since Goose 0.20, a gzip body is not
-    /// decompressed, and the response's headers keep `Content-Encoding: gzip` and
-    /// `Content-Length`. Read the body through `bytes`, `text`, `json` or `chunk` on
-    /// the `GooseHttpResponse` to have Goose decompress it. A caller that takes the
-    /// `reqwest::Response` and wants its body decompressed, as Goose 0.19 gave it,
-    /// adds two lines, with [flate2](https://docs.rs/flate2) as a dependency of the
-    /// load test:
-    ///
-    /// ```rust
-    /// use std::io::Read;
-    ///
-    /// # async fn read(goose: goose::goose::GooseResponse) -> Result<(), Box<dyn std::error::Error>> {
-    /// let response = goose.response?.into_inner();
-    /// // Added: is the body gzip?
-    /// let gzip = response.headers().get("content-encoding").is_some_and(|value| value == "gzip");
-    /// let mut body = response.bytes().await?.to_vec();
-    /// // Added: decompress it.
-    /// if gzip { let mut decoded = Vec::new(); flate2::read::MultiGzDecoder::new(&body[..]).read_to_end(&mut decoded)?; body = decoded; }
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// After [`chunk`](Self::chunk) has read part of a gzip body, the rest of the
-    /// body, read from the returned response, is the rest of the compressed stream.
+    /// The response is as it came over the wire: a gzip body is still compressed, as
+    /// its `Content-Encoding` header says.
     pub fn into_inner(self) -> Response {
-        let (mut response, gzip) = self.take();
-        if let Some(gzip) = gzip {
-            gzip.restore(&mut response);
-        }
-        response
+        self.take()
     }
 
     /// Reads the full body as bytes, as
     /// [`reqwest::Response::bytes`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.bytes),
-    /// decompressing a gzip body.
-    pub async fn bytes(self) -> reqwest::Result<bytes::Bytes> {
-        match self.take() {
-            (mut response, Some(mut gzip)) => gzip.read_to_end(&mut response).await,
-            (response, None) => response.bytes().await,
+    /// decompressing a gzip body; after `chunk`, read the rest with `chunk`.
+    pub async fn bytes(self) -> Result<bytes::Bytes, TransactionError> {
+        if !self.gzip {
+            return Ok(self.take().bytes().await?);
         }
+        gzip::decode(&self.take().bytes().await?)
     }
 
     /// Reads the full body as text, as
-    /// [`reqwest::Response::text`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.text),
-    /// decompressing a gzip body.
-    pub async fn text(self) -> reqwest::Result<String> {
-        match self.take() {
-            (mut response, Some(mut gzip)) => {
-                let body = gzip.read_to_end(&mut response).await?;
-                gzip::with_body(&response, body).text().await
-            }
-            (response, None) => response.text().await,
-        }
+    /// [`reqwest::Response::text`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.text)
+    /// does without reqwest's `charset` feature: UTF-8, with invalid sequences
+    /// replaced. A gzip body is decompressed.
+    pub async fn text(self) -> Result<String, TransactionError> {
+        Ok(String::from_utf8_lossy(&self.bytes().await?).into_owned())
     }
 
     /// Reads the full body as JSON, as
     /// [`reqwest::Response::json`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.json),
     /// decompressing a gzip body.
-    pub async fn json<T: serde::de::DeserializeOwned>(self) -> reqwest::Result<T> {
-        match self.take() {
-            (mut response, Some(mut gzip)) => {
-                let body = gzip.read_to_end(&mut response).await?;
-                gzip::with_body(&response, body).json().await
-            }
-            (response, None) => response.json().await,
-        }
+    pub async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T, TransactionError> {
+        serde_json::from_slice(&self.bytes().await?).map_err(|error| {
+            TransactionError::Custom(format!("error decoding response body: {error}"))
+        })
     }
 
     /// Reads the next chunk of the body, as
     /// [`reqwest::Response::chunk`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.chunk),
     /// decompressing a gzip body. A body read this way and then dropped has only its
     /// remaining chunks read by Goose, which does not decompress them.
-    pub async fn chunk(&mut self) -> reqwest::Result<Option<bytes::Bytes>> {
-        let chunk = match (self.response.as_mut(), self.gzip.as_mut()) {
-            (Some(response), Some(gzip)) => gzip.chunk(response).await,
-            (Some(response), None) => response.chunk().await,
-            (None, _) => unreachable!("GooseHttpResponse used after its response was taken"),
+    pub async fn chunk(&mut self) -> Result<Option<bytes::Bytes>, TransactionError> {
+        loop {
+            let raw = self.wire_chunk().await?;
+            if !self.gzip {
+                return Ok(raw);
+            }
+            let decoded = gzip::decode_chunk(&mut self.decoder, raw.as_deref())?;
+            // Some chunks, such as one holding only a gzip header, decode to nothing.
+            if decoded.is_some() || raw.is_none() {
+                return Ok(decoded);
+            }
+        }
+    }
+
+    /// Reads the next chunk of the body as it came over the wire.
+    async fn wire_chunk(&mut self) -> reqwest::Result<Option<bytes::Bytes>> {
+        let chunk = match self.response.as_mut() {
+            Some(response) => response.chunk().await,
+            None => unreachable!("GooseHttpResponse used after its response was taken"),
         };
         // At the end of the body, or past an error, nothing is left to read.
         if !matches!(chunk, Ok(Some(_))) {
             self.body_done = true;
         }
         chunk
-    }
-
-    /// Reads the next chunk of the body as it came over the wire, never decompressed.
-    async fn wire_chunk(&mut self) -> reqwest::Result<Option<bytes::Bytes>> {
-        let chunk = match self.response.as_mut() {
-            Some(response) => response.chunk().await,
-            None => unreachable!("GooseHttpResponse used after its response was taken"),
-        };
-        if !matches!(chunk, Ok(Some(_))) {
-            self.body_done = true;
-        }
-        chunk
-    }
-
-    /// The length of the body, as
-    /// [`reqwest::Response::content_length`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.content_length):
-    /// `None` for a gzip body Goose decompresses, whose length is not known until it
-    /// is read, as reqwest's own gzip decoding gave.
-    pub fn content_length(&self) -> Option<u64> {
-        if self.gzip.is_some() {
-            None
-        } else {
-            std::ops::Deref::deref(self).content_length()
-        }
     }
 
     /// Returns an error if the status is a client or server error, as
@@ -1198,8 +1138,8 @@ impl GooseHttpResponse {
     }
 }
 
-/// A response built outside [`GooseUser::request`]: dropping its body unread drops it.
-/// Its body is returned as the response has it: Goose does not decompress it.
+/// A response built outside [`GooseUser::request`]: dropping its body unread drops it,
+/// and its body is read as it is, never decompressed.
 impl From<Response> for GooseHttpResponse {
     fn from(response: Response) -> Self {
         GooseHttpResponse::untracked(response, false)
@@ -1235,8 +1175,7 @@ impl Drop for GooseHttpResponse {
             return;
         }
         if let (Some(response), Some(slot)) = (self.response.take(), self.unread.take()) {
-            // A body known to be empty, as a HEAD's or a 204's, has nothing to read. A gzip
-            // body is read as it came over the wire, so its length is known as any other's.
+            // A body known to be empty, as a HEAD's or a 204's, has nothing to read.
             if response.content_length() == Some(0) {
                 return;
             }
@@ -1390,14 +1329,9 @@ pub struct GooseUser {
     /// Current transaction name, if set.
     pub(crate) transaction_name: Option<TransactionName>,
     /// Client used to make requests, managing sessions and cookies.
-    ///
-    /// A client Goose built does not decompress gzip itself: Goose asks for gzip and
-    /// decompresses a body only when the test reads it through
-    /// [`GooseHttpResponse`]. A request sent through this client directly, not
-    /// through [`GooseUser::request`] or its helpers, asks for no compression.
     pub client: Client,
-    /// Goose built [`client`](Self::client) with gzip on: [`GooseUser::request`] asks
-    /// for gzip and a gzip body is decompressed as the test reads it.
+    /// Goose asks for gzip and decompresses a gzip body the test reads: not with
+    /// `--no-gzip`, or a client set or given by the test.
     pub(crate) gzip: bool,
     /// The base URL to prepend to all relative paths.
     pub base_url: Url,
@@ -1549,18 +1483,14 @@ impl GooseUser {
     ) -> Result<Self, GooseError> {
         trace!("new GooseUser");
 
-        // A client given here decodes, or not, as it was built to; one Goose builds
-        // leaves gzip to GooseHttpResponse. Goose sets `gzip` itself on a client it
-        // built from a client builder (see GooseAttack::set_client_builder_with_cookies).
-        let (client, gzip) = match reqwest_client {
-            Some(c) => (c, false),
+        // A client given here handles gzip as it was built to.
+        let gzip = reqwest_client.is_none() && !configuration.no_gzip;
+        let client = match reqwest_client {
+            Some(c) => c,
             // Use the new unified client creation function for consistency
             None => {
                 let config = crate::client::GooseClientConfig::from(configuration);
-                (
-                    crate::client::create_reqwest_client_with_cookies(&config)?,
-                    config.gzip,
-                )
+                crate::client::create_reqwest_client_with_cookies(&config)?
             }
         };
 
@@ -1614,52 +1544,17 @@ impl GooseUser {
         Self::single_with_client(base_url, configuration, None)
     }
 
-    /// [`Self::new`], with `goose_client` as its client when given: a client Goose
-    /// built from a client builder set on the
-    /// [`GooseAttack`](../struct.GooseAttack.html), and whether it was built with
-    /// gzip on, so Goose asks for gzip and decompresses a body the test reads.
-    pub(crate) fn new_with_goose_client(
-        scenarios_index: usize,
-        scenario_name: Arc<str>,
-        base_url: Url,
-        configuration: &GooseConfiguration,
-        load_test_hash: u64,
-        goose_client: Option<(Client, bool)>,
-    ) -> Result<Self, GooseError> {
-        let (client, gzip) = match goose_client {
-            Some((client, gzip)) => (Some(client), Some(gzip)),
-            None => (None, None),
-        };
-        let mut user = GooseUser::new(
-            scenarios_index,
-            scenario_name,
-            base_url,
-            configuration,
-            load_test_hash,
-            client,
-        )?;
-        if let Some(gzip) = gzip {
-            user.gzip = gzip;
-        }
-        Ok(user)
-    }
-
-    /// [`Self::single`], with `goose_client` as its client when given, as a
-    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives;
-    /// see [`Self::new_with_goose_client`].
+    /// [`Self::single`], with `reqwest_client` as its client when given, as a
+    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives.
     pub(crate) fn single_with_client(
         base_url: Url,
         configuration: &GooseConfiguration,
-        goose_client: Option<(Client, bool)>,
+        reqwest_client: Option<Client>,
     ) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new_with_goose_client(
-            0,
-            Arc::from(""),
-            base_url,
-            configuration,
-            0,
-            goose_client,
-        )?;
+        let mut single_user =
+            GooseUser::new(0, Arc::from(""), base_url, configuration, 0, reqwest_client)?;
+        // A client from the client builder leaves gzip to Goose too.
+        single_user.gzip = !configuration.no_gzip;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -2492,18 +2387,11 @@ impl GooseUser {
             self.weighted_users_index,
         );
 
-        // Ask for gzip, as reqwest did when it decoded gzip itself, unless the test set
-        // its own Accept-Encoding. After the headers are copied for the logs, which
-        // never showed the Accept-Encoding reqwest added.
-        if self.gzip
-            && !built_request
-                .headers()
-                .contains_key(header::ACCEPT_ENCODING)
-        {
-            built_request.headers_mut().insert(
-                header::ACCEPT_ENCODING,
-                header::HeaderValue::from_static("gzip"),
-            );
+        // Ask for gzip unless the test set its own Accept-Encoding; after the headers
+        // are copied for the logs, which never showed the header reqwest added.
+        if self.gzip {
+            let headers = built_request.headers_mut().entry(header::ACCEPT_ENCODING);
+            headers.or_insert(header::HeaderValue::from_static("gzip"));
         }
 
         // Keep a copy of an idempotent request, to send it once more if the server
@@ -3934,8 +3822,8 @@ impl GooseUser {
     ///    generally necessary if you aim to simulate logged in users;
     ///  - turns reqwest's own
     ///    [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip)
-    ///    decoding off: unless `--no-gzip` is given, Goose asks for gzip on each request
-    ///    and decompresses a body only when the test reads it (see [`GooseHttpResponse`]);
+    ///    decoding off: unless `--no-gzip` is given, Goose asks for gzip and decompresses a
+    ///    body only when the test reads it (see [`GooseHttpResponse`]);
     ///  - sets a 60 second [`timeout`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.timeout) all
     ///    on all requests.
     ///
@@ -3949,7 +3837,6 @@ impl GooseUser {
     ///
     /// let mut builder = Client::builder()
     ///   .user_agent(APP_USER_AGENT)
-    ///   // Goose asks for gzip and decompresses a body the test reads itself.
     ///   .gzip(false)
     ///   .timeout(Duration::from_secs(60));
     ///
@@ -3983,10 +3870,8 @@ impl GooseUser {
     ///    defaults. For example, if you want Goose clients to store cookies, you will have to
     ///    include
     ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store);
-    ///  - A client set here decompresses gzip, or not, as its builder says: Goose does not
-    ///    ask for gzip on its requests or decompress their bodies, so with
-    ///    [`gzip(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip)
-    ///    every gzip body is decompressed as it arrives, also one the test throws away;
+    ///  - A client set here handles gzip as its builder says: Goose neither asks for gzip
+    ///    nor decompresses bodies for it;
     ///  - Default headers and the user agent set on the builder are sent with every request but
     ///    are not recorded in Goose's request, debug or error logs, see the
     ///    [request log](https://www.goose.rs/logging/requests.html) page of the Goose Book.
@@ -4101,7 +3986,6 @@ impl GooseUser {
         builder: ClientBuilder,
     ) -> Result<(), TransactionError> {
         self.client = builder.build()?;
-        // The builder decides whether the client decodes gzip, and asks for it.
         self.gzip = false;
 
         Ok(())
