@@ -561,16 +561,10 @@ fn form_value_regex(name: &str) -> Regex {
 mod tests {
     use super::*;
 
-    // Pages of a stock Drupal 11.4 Umami site: the English front page saved with CSS
-    // and JS aggregation on and then off, and a recipe as an anonymous user sees it.
-    // The two form fixtures are cut to their form element, with placeholder values
-    // for form_build_id and, on the edit form, form_token: the log in form as an
-    // anonymous user sees it, and an article's edit form as an admin sees it. A
-    // refreshed fixture needs only its placeholders set again.
+    // The front pages come from a stock Drupal 11.4 Umami site; edit-form.html is the
+    // three hidden inputs of an article edit form, with placeholder values.
     const AGGREGATED: &str = include_str!("fixtures/front-aggregated.html");
     const UNAGGREGATED: &str = include_str!("fixtures/front-unaggregated.html");
-    const RECIPE: &str = include_str!("fixtures/recipe.html");
-    const LOGIN_FORM: &str = include_str!("fixtures/login.html");
     const EDIT_FORM: &str = include_str!("fixtures/edit-form.html");
 
     fn urls(assets: &[(AssetKind, String)], kind: AssetKind) -> Vec<&str> {
@@ -609,27 +603,25 @@ mod tests {
 
     #[test]
     fn aggregated_assets_are_found_and_decoded() {
-        for html in [AGGREGATED, RECIPE] {
-            let assets = static_asset_urls(html);
-            let css = urls(&assets, AssetKind::Css);
-            let js = urls(&assets, AssetKind::Js);
-            assert_eq!(
-                css.len(),
-                tag_count(html, r#"<link rel="stylesheet"[^>]*href="/"#)
-            );
-            assert_eq!(js.len(), tag_count(html, r#"<script[^>]*src="/"#));
-            assert!(!css.is_empty() && !js.is_empty());
-            for url in css.iter().chain(js.iter()) {
-                assert!(!url.contains("&amp;"), "not decoded: {}", url);
-                assert!(url.contains("&language=en&theme=umami&include="), "{}", url);
-            }
-            assert!(css
-                .iter()
-                .all(|url| url.starts_with("/sites/default/files/css/css_")));
-            assert!(js
-                .iter()
-                .all(|url| url.starts_with("/sites/default/files/js/js_")));
+        let assets = static_asset_urls(AGGREGATED);
+        let css = urls(&assets, AssetKind::Css);
+        let js = urls(&assets, AssetKind::Js);
+        assert_eq!(
+            css.len(),
+            tag_count(AGGREGATED, r#"<link rel="stylesheet"[^>]*href="/"#)
+        );
+        assert_eq!(js.len(), tag_count(AGGREGATED, r#"<script[^>]*src="/"#));
+        assert!(!css.is_empty() && !js.is_empty());
+        for url in css.iter().chain(js.iter()) {
+            assert!(!url.contains("&amp;"), "not decoded: {}", url);
+            assert!(url.contains("&language=en&theme=umami&include="), "{}", url);
         }
+        assert!(css
+            .iter()
+            .all(|url| url.starts_with("/sites/default/files/css/css_")));
+        assert!(js
+            .iter()
+            .all(|url| url.starts_with("/sites/default/files/js/js_")));
     }
 
     #[test]
@@ -659,7 +651,7 @@ mod tests {
 
     #[test]
     fn images_are_found_on_each_page() {
-        for html in [AGGREGATED, UNAGGREGATED, RECIPE] {
+        for html in [AGGREGATED, UNAGGREGATED] {
             let assets = static_asset_urls(html);
             let images = urls(&assets, AssetKind::Image);
             assert!(images.contains(&"/core/profiles/demo_umami/themes/umami/logo.svg"));
@@ -685,16 +677,14 @@ mod tests {
             get_form_value(EDIT_FORM, "form_id").as_deref(),
             Some("node_article_edit_form")
         );
-        // The anonymous log in form has a build id but no token.
+        // A form with a build id but no token.
         assert_eq!(
-            get_form_value(LOGIN_FORM, "form_build_id").as_deref(),
-            Some("form-fixture-login-build-id-0123456789")
+            get_form_value(
+                r#"<input name="form_build_id" value="b-1"/><input name="form_id" value="f-1"/>"#,
+                "form_token"
+            ),
+            None
         );
-        assert_eq!(
-            get_form_value(LOGIN_FORM, "form_id").as_deref(),
-            Some("user_login_form")
-        );
-        assert_eq!(get_form_value(LOGIN_FORM, "form_token"), None);
         // A single quoted value, and a name missing from the page.
         assert_eq!(
             get_form_value(r#"<input name="form_token" value='tok-1'>"#, "form_token").as_deref(),

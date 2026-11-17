@@ -48,7 +48,7 @@ The load test is split into the following files:
  - `english.rs`: This file contains all transaction functions loading pages in English;
  - `spanish.rs`: This file contains all transaction functions loading pages in Spanish;
  - `admin.rs`: This file contains all transaction functions specific to simulating an admin user;
- - `fixtures/`: pages of a stock Drupal 11.4 Umami site, for the tests: the English front page saved with CSS and JS aggregation on and with it off, a recipe as an anonymous user sees it, and two forms cut to their form element, with placeholder values: the log in form as an anonymous user sees it, and the form of an article's edit page as an admin sees it.
+ - `fixtures/`: for the tests, the English front page of a stock Drupal 11.4 Umami site, saved with CSS and JS aggregation on and with it off, and `edit-form.html`, the three hidden inputs of an article edit form, with placeholder values.
 
 ## Load Test Features
 
