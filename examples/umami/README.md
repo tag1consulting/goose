@@ -44,11 +44,11 @@ Goose resets its metrics once all users have started (unless `--no-reset-metrics
 
 The load test is split into the following files:
  - `main.rs`: This file contains the main() function and defines the actual load test;
- - `common.rs`: This file contains helper functions used by the transaction functions, the lists of the site's nodes and terms, and the tests of its asset parsing;
+ - `common.rs`: This file contains helper functions used by the transaction functions, the lists of the site's nodes and terms, and the tests of its asset parsing, entity decoding and form value parsing;
  - `english.rs`: This file contains all transaction functions loading pages in English;
  - `spanish.rs`: This file contains all transaction functions loading pages in Spanish;
  - `admin.rs`: This file contains all transaction functions specific to simulating an admin user;
- - `fixtures/`: the English front page of a stock Drupal 11.4 Umami site, saved with CSS and JS aggregation on and with it off, for the tests.
+ - `fixtures/`: for the tests, the English front page of a stock Drupal 11.4 Umami site, saved with CSS and JS aggregation on and with it off, and `edit-form.html`, the three hidden inputs of an article edit form, with placeholder values.
 
 ## Load Test Features
 
