@@ -163,3 +163,9 @@ harness = false
 name = "umami"
 path = "examples/umami/main.rs"
 test = true
+
+# `.cookie_store(true)` needs Reqwest's `cookies` feature, which Goose's
+# `cookies` feature turns on.
+[[example]]
+name = "custom_client"
+required-features = ["cookies"]

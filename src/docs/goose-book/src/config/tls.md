@@ -34,39 +34,10 @@ Turning on Reqwest's `native-tls` feature in your own `Cargo.toml`, with `reqwes
 For anything Goose's client settings do not cover, such as a client certificate or a CA you trust only in this test, build a `reqwest::ClientBuilder` and pass it to [`GooseUser::set_client_builder`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder), usually in a transaction run once with `set_on_start()`. Goose builds that user's client from your builder as it is: no shared verifier, no `--http1-only`, `--timeout` or `--no-gzip`, and no cookies unless you ask for them. Over rustls on Linux, Reqwest reads the system's root certificates for each such client, so it is slower to build than the clients Goose builds.
 
 ```rust
-use goose::prelude::*;
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() -> Result<(), GooseError> {
-    GooseAttack::initialize()?
-        .register_scenario(
-            scenario!("WebsiteUser")
-                .register_transaction(transaction!(setup_client).set_on_start())
-                .register_transaction(transaction!(load_homepage)),
-        )
-        .execute()
-        .await?;
-
-    Ok(())
-}
-
-async fn setup_client(user: &mut GooseUser) -> TransactionResult {
-    // Goose's defaults don't apply to this client: set the ones you need.
-    let builder = reqwest::Client::builder()
-        .user_agent("my-loadtest/1.0")
-        .timeout(Duration::from_secs(60))
-        .gzip(true)
-        .cookie_store(true);
-    user.set_client_builder(builder).await?;
-    Ok(())
-}
-
-async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
-    let _ = user.get("/").await?.discard_body().await;
-    Ok(())
-}
+{{#include ../../../../../examples/custom_client.rs}}
 ```
+
+This is [`examples/custom_client.rs`](https://github.com/tag1consulting/goose/blob/main/examples/custom_client.rs); run it with `cargo run --example custom_client -- --host https://example.com/ --users 1 --run-time 10s`.
 
 The load test needs its own `reqwest` dependency, as Goose does not re-export Reqwest. `.cookie_store(true)` needs Reqwest's `cookies` feature, which Goose's default `cookies` feature turns on.
 
