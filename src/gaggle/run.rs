@@ -165,7 +165,7 @@ pub(super) struct WorkerEntry {
     /// When it said its users stopped: its final metrics follow.
     users_stopped: Option<Instant>,
     pub(super) stopped: Option<Reason>,
-    pub(super) lost: Option<(chrono::DateTime<chrono::Utc>, String)>,
+    pub(super) lost: Option<(jiff::Timestamp, String)>,
     /// It stopped as told and then went away: not lost, but nothing more,
     /// its logs among them, will come from it.
     pub(super) gone: bool,
@@ -254,7 +254,7 @@ impl WorkerEntry {
             self.gone = true;
             return false;
         }
-        self.lost = Some((chrono::Utc::now(), why));
+        self.lost = Some((jiff::Timestamp::now(), why));
         true
     }
 
@@ -771,7 +771,7 @@ impl GooseAttack {
         }
         info!(
             "gaggle: starting at {}",
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+            jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.6fZ")
         );
         Ok(())
     }
@@ -1253,7 +1253,7 @@ impl GooseAttack {
         }
         info!(
             "gaggle: starting at {}, {} us after the start instant the manager gave",
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+            jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.6fZ"),
             late.as_micros()
         );
         self.reset_run_state(goose_attack_run_state).await?;
@@ -2547,7 +2547,7 @@ mod tests {
         let workers = vec![
             stopped(0, "clean"),
             WorkerEntry {
-                lost: Some((chrono::Utc::now(), "went quiet".to_string())),
+                lost: Some((jiff::Timestamp::now(), "went quiet".to_string())),
                 ..stopped(1, "lost")
             },
             WorkerEntry {

@@ -2724,13 +2724,12 @@ mod tests {
         AggregateMetrics, Percentiles, SeriesWindow, SnapshotFlags,
     };
     use crate::serve::{HEADER_READ_TIMEOUT, SERVER_DRAIN_TIMEOUT};
-    use chrono::Utc;
     use std::time::Instant;
 
     fn dummy_snapshot(seq: u64) -> DashboardSnapshot {
         DashboardSnapshot {
             version: 1,
-            generated_at: Utc::now(),
+            generated_at: jiff::Timestamp::now(),
             goose_version: "test".into(),
             phase: "maintain".into(),
             stopping: false,

@@ -98,7 +98,7 @@ pub(super) fn scratch(name: &str) -> Scratch {
     let folder = std::env::temp_dir().join(format!(
         "goose-gaggle-{name}-{}-{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_micros()
+        jiff::Timestamp::now().as_microsecond()
     ));
     std::fs::create_dir_all(&folder).unwrap();
     Scratch(folder)
