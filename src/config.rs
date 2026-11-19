@@ -927,7 +927,8 @@ pub struct GooseConfiguration {
     pub timeout: Option<String>,
     /// Don't send Accept-Encoding: gzip
     ///
-    /// By default, requests ask for gzip compressed responses, which Goose decompresses.
+    /// By default, requests ask for gzip compressed responses, which Goose decompresses
+    /// only when the load test reads them.
     ///
     /// Set in code with GooseDefault::NoGzip.
     #[arg(help_heading = "HTTP client", long)]

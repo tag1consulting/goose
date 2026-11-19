@@ -719,7 +719,7 @@ HTTP client:
           Don't send Accept-Encoding: gzip
 
           By default, requests ask for gzip compressed responses, which Goose
-          decompresses.
+          decompresses only when the load test reads them.
 
           Set in code with GooseDefault::NoGzip.
 
