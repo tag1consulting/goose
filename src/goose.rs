@@ -1775,16 +1775,29 @@ impl GooseUser {
     ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default host
     ///     defined for the current load test)
     pub fn build_url(&self, path: &str) -> Result<String, Box<TransactionError>> {
+        // Counted in tests, which check that a request never builds its URL as a string.
+        #[cfg(test)]
+        tests::BUILD_URL_CALLS.with(|n| n.set(n.get() + 1));
         // If URL includes a host, simply use it.
-        if let Ok(parsed_path) = Url::parse(path) {
-            if let Some(_host) = parsed_path.host() {
-                return Ok(path.to_string());
-            }
+        if let Some(_absolute) = absolute_url(path) {
+            return Ok(path.to_string());
         }
 
         // Otherwise use the `base_url`.
         match self.base_url.join(path) {
-            Ok(u) => Ok(u.to_string()),
+            Ok(u) => Ok(u.into()),
+            Err(e) => Err(Box::new(e.into())),
+        }
+    }
+
+    /// The URL a request for `path` goes to, as [`GooseUser::build_url`] builds it, but
+    /// as the parsed [`Url`] reqwest takes, so reqwest does not parse it again.
+    fn request_url(&self, path: &str) -> Result<Url, Box<TransactionError>> {
+        if let Some(absolute) = absolute_url(path) {
+            return Ok(absolute);
+        }
+        match self.base_url.join(path) {
+            Ok(u) => Ok(u),
             Err(e) => Err(Box::new(e.into())),
         }
     }
@@ -1900,7 +1913,7 @@ impl GooseUser {
         body: T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST request.
@@ -1947,7 +1960,7 @@ impl GooseUser {
         form: &T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST form request.
@@ -1997,7 +2010,7 @@ impl GooseUser {
         json: &T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST json request.
@@ -2043,7 +2056,7 @@ impl GooseUser {
         query: &T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST GraphQL request.
@@ -2090,7 +2103,7 @@ impl GooseUser {
         name: &str,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST GraphQL request with custom name.
@@ -2259,18 +2272,18 @@ impl GooseUser {
         method: &GooseMethod,
         path: &str,
     ) -> Result<RequestBuilder, Box<TransactionError>> {
-        // Prepend the `base_url` to all relative paths.
-        let url = self.build_url(path)?;
+        // Prepend the `base_url` to all relative paths, and hand reqwest the parsed URL.
+        let url = self.request_url(path)?;
 
         // Invoke appropriate Reqwest convenience function to generate an
         // appropriate RequestBuilder.
         Ok(match method {
-            GooseMethod::Delete => self.client.delete(&url),
-            GooseMethod::Get => self.client.get(&url),
-            GooseMethod::Head => self.client.head(&url),
-            GooseMethod::Patch => self.client.patch(&url),
-            GooseMethod::Post => self.client.post(&url),
-            GooseMethod::Put => self.client.put(&url),
+            GooseMethod::Delete => self.client.delete(url),
+            GooseMethod::Get => self.client.get(url),
+            GooseMethod::Head => self.client.head(url),
+            GooseMethod::Patch => self.client.patch(url),
+            GooseMethod::Post => self.client.post(url),
+            GooseMethod::Put => self.client.put(url),
             GooseMethod::Custom => {
                 return Err(Box::new(TransactionError::Custom(
                     "GooseMethod::Custom cannot be used with HTTP request builders; \
@@ -4494,6 +4507,24 @@ fn request_log_path(url: &str) -> String {
     }
 }
 
+/// `path` parsed as a URL, if it is an absolute URL with a host, which a request
+/// uses as given rather than joining it onto the user's base URL.
+///
+/// Only a string with a `:` can start with a scheme, so a relative path, which most
+/// requests use, skips the parse: it would fail every time.
+fn absolute_url(path: &str) -> Option<Url> {
+    if !path.contains(':') {
+        return None;
+    }
+    // Counted in tests, which check that a relative path is never parsed.
+    #[cfg(test)]
+    tests::URL_PARSES.with(|n| n.set(n.get() + 1));
+    match Url::parse(path) {
+        Ok(url) if url.host().is_some() => Some(url),
+        _ => None,
+    }
+}
+
 /// A helper to determine which host should be prepended to relative load test
 /// paths in this Scenario.
 ///
@@ -4939,6 +4970,237 @@ mod tests {
     };
 
     const EMPTY_ARGS: Vec<&str> = vec![];
+
+    thread_local! {
+        /// How many times `absolute_url` parsed a path on this thread.
+        pub(super) static URL_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// How many times `GooseUser::build_url` ran on this thread.
+        pub(super) static BUILD_URL_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// `GooseUser::build_url` as it was before relative paths skipped the parse, kept
+    /// here to prove the URLs Goose builds have not changed.
+    fn build_url_before(base_url: &Url, path: &str) -> Result<String, url::ParseError> {
+        if let Ok(parsed_path) = Url::parse(path) {
+            if let Some(_host) = parsed_path.host() {
+                return Ok(path.to_string());
+            }
+        }
+        base_url.join(path).map(|u| u.to_string())
+    }
+
+    /// The paths the URL tests build: relative, absolute, with `..` and `.`, with a
+    /// query and a fragment, with a `:` that is not a scheme, and ones that fail.
+    const URL_TEST_PATHS: &[&str] = &[
+        "",
+        "/",
+        "/foo",
+        "foo",
+        "foo/bar/",
+        "../foo",
+        "/a/b/../c",
+        "a/./b/../../c",
+        "/../../escape",
+        "/search?q=goose&page=2",
+        "/page#section",
+        "/page?q=1#section",
+        "?only=query",
+        "#only-fragment",
+        "/a b/ç?x=y z",
+        "/node/1:2",
+        "foo:bar",
+        "mailto:goose@example.com",
+        "https://other.example.com/path?q=1#frag",
+        "HTTP://Upper.Example.COM/A/../B",
+        "http:/one-slash.example.com/x",
+        "//protocol-relative.example.com/x",
+        "http://",
+        "http://[::1",
+    ];
+
+    #[test]
+    fn request_urls_are_built_as_before() {
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        // The default host, a host with a path, and a scenario host overriding the default.
+        let base_urls = [
+            get_base_url(Some("http://example.com/".to_string()), None, None).unwrap(),
+            get_base_url(
+                Some("http://example.com/with/path/".to_string()),
+                None,
+                None,
+            )
+            .unwrap(),
+            get_base_url(
+                None,
+                Some("http://scenario.example.com/s/".to_string()),
+                Some("http://default.example.com/".to_string()),
+            )
+            .unwrap(),
+        ];
+        assert_eq!(base_urls[2].as_str(), "http://scenario.example.com/s/");
+        for base_url in base_urls {
+            let user = GooseUser::new(0, Arc::from(""), base_url.clone(), &configuration, 0, None)
+                .unwrap();
+            for path in URL_TEST_PATHS {
+                let before = build_url_before(&base_url, path);
+                // build_url returns the same string, or fails the same way.
+                assert_eq!(
+                    user.build_url(path).map_err(|e| e.to_string()),
+                    before
+                        .clone()
+                        .map_err(|e| TransactionError::from(e).to_string()),
+                    "build_url({path:?}) on {base_url}"
+                );
+                // The request goes to the URL reqwest parsed from that string before.
+                assert_eq!(
+                    user.request_url(path)
+                        .map(String::from)
+                        .map_err(|e| e.to_string()),
+                    before
+                        .and_then(|s| Url::parse(&s))
+                        .map(String::from)
+                        .map_err(|e| TransactionError::from(e).to_string()),
+                    "request_url({path:?}) on {base_url}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relative_path_is_never_parsed_on_its_own() {
+        let server = MockServer::start();
+        let page = server.mock(|when, then| {
+            when.method(GET).path("/page");
+            then.status(200);
+        });
+        let mut user = setup_user(&server).unwrap();
+
+        URL_PARSES.with(|n| n.set(0));
+        BUILD_URL_CALLS.with(|n| n.set(0));
+        let goose = user.get("/page").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/page"));
+        page.assert_calls(1);
+        // No parse that would fail: the path has no scheme.
+        assert_eq!(URL_PARSES.with(|n| n.get()), 0);
+        // And no URL built as a string for reqwest to parse again.
+        assert_eq!(BUILD_URL_CALLS.with(|n| n.get()), 0);
+
+        // An absolute URL is parsed once, by Goose, and handed to reqwest as is.
+        let goose = user.get(&server.url("/page")).await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/page"));
+        page.assert_calls(2);
+        assert_eq!(URL_PARSES.with(|n| n.get()), 1);
+        assert_eq!(BUILD_URL_CALLS.with(|n| n.get()), 0);
+
+        // The same holds for a request builder, and for the post helpers.
+        let _ = user
+            .get_request_builder(&GooseMethod::Get, "/page")
+            .unwrap();
+        let _ = user.post("/page", "").await.unwrap();
+        assert_eq!(URL_PARSES.with(|n| n.get()), 1);
+        assert_eq!(BUILD_URL_CALLS.with(|n| n.get()), 0);
+    }
+
+    #[tokio::test]
+    async fn an_absolute_url_is_requested_as_given() {
+        let server = MockServer::start();
+        let other = MockServer::start();
+        let here = server.mock(|when, then| {
+            when.method(GET).path("/elsewhere");
+            then.status(200);
+        });
+        let there = other.mock(|when, then| {
+            when.method(GET).path("/elsewhere");
+            then.status(200);
+        });
+        let mut user = setup_user(&server).unwrap();
+        let url = other.url("/elsewhere");
+        let goose = user.get(&url).await.unwrap();
+        assert_eq!(goose.request.raw.url, url);
+        assert_eq!(goose.request.final_url, url);
+        assert_eq!(goose.request.name.as_ref(), url);
+        there.assert_calls(1);
+        here.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn a_relative_path_is_joined_onto_the_host() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/with/path/foo");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let base_url = get_base_url(Some(server.url("/with/path/")), None, None).unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let goose = user.get("foo").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/with/path/foo"));
+        assert_eq!(goose.request.name.as_ref(), "foo");
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn a_path_with_dot_dot_is_resolved() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/b/d");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let base_url = get_base_url(Some(server.url("/a/")), None, None).unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let goose = user.get("../b/c/../d").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/b/d"));
+        // The request keeps the path it was made with as its name.
+        assert_eq!(goose.request.name.as_ref(), "../b/c/../d");
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn a_query_and_a_fragment_are_kept() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/search")
+                .query_param("q", "goose")
+                .query_param("page", "2");
+            then.status(200);
+        });
+        let mut user = setup_user(&server).unwrap();
+        let goose = user.get("/search?q=goose&page=2#results").await.unwrap();
+        // The fragment stays in the URL Goose records; it is never sent.
+        assert_eq!(
+            goose.request.raw.url,
+            server.url("/search?q=goose&page=2#results")
+        );
+        assert_eq!(
+            goose.request.name.as_ref(),
+            "/search?q=goose&page=2#results"
+        );
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn a_scenario_host_overrides_the_default_host() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/foo");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        // No --host: the scenario's host wins over the load test's default host, which
+        // is not reachable.
+        let base_url = get_base_url(
+            None,
+            Some(server.url("/")),
+            Some("http://default.invalid/".to_string()),
+        )
+        .unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let goose = user.get("/foo").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/foo"));
+        mock.assert_calls(1);
+    }
 
     fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
         let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
