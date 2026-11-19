@@ -332,6 +332,23 @@ impl ClientStrategy {
     }
 }
 
+/// How users get their clients from a client builder, and whether they ask for
+/// gzip as the builder resolved it.
+#[derive(Clone, Debug)]
+pub(crate) struct BuilderClients {
+    /// How each user's client is built or shared.
+    pub(crate) strategy: ClientStrategy,
+    /// The resolved [`GooseClientConfig::gzip`].
+    pub(crate) gzip: bool,
+}
+
+impl BuilderClients {
+    /// A client for one user, as [`ClientStrategy::user_client`] gives it.
+    pub(crate) fn user_client(&self) -> Result<Client, reqwest::Error> {
+        self.strategy.user_client()
+    }
+}
+
 /// Type-safe builder for configuring Goose HTTP clients.
 pub struct GooseClientBuilder<State = CookiesEnabled> {
     config: GooseClientConfig,

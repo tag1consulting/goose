@@ -1481,10 +1481,32 @@ impl GooseUser {
         load_test_hash: u64,
         reqwest_client: Option<Client>,
     ) -> Result<Self, GooseError> {
-        trace!("new GooseUser");
-
         // A client given here handles gzip as it was built to.
         let gzip = reqwest_client.is_none() && !configuration.no_gzip;
+        Self::with_gzip(
+            scenarios_index,
+            scenario_name,
+            base_url,
+            configuration,
+            load_test_hash,
+            reqwest_client,
+            gzip,
+        )
+    }
+
+    /// [`Self::new`], with `gzip` deciding whether the user asks for gzip and
+    /// decompresses a gzip body the test reads: see [`GooseUser::gzip`].
+    pub(crate) fn with_gzip(
+        scenarios_index: usize,
+        scenario_name: Arc<str>,
+        base_url: Url,
+        configuration: &GooseConfiguration,
+        load_test_hash: u64,
+        reqwest_client: Option<Client>,
+        gzip: bool,
+    ) -> Result<Self, GooseError> {
+        trace!("new GooseUser");
+
         let client = match reqwest_client {
             Some(c) => c,
             // Use the new unified client creation function for consistency
@@ -1541,20 +1563,28 @@ impl GooseUser {
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        Self::single_with_client(base_url, configuration, None)
+        Self::single_with_client(base_url, configuration, None, !configuration.no_gzip)
     }
 
     /// [`Self::single`], with `reqwest_client` as its client when given, as a
-    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives.
+    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives,
+    /// and asking for gzip when `gzip`: a client from the client builder leaves
+    /// gzip to Goose too.
     pub(crate) fn single_with_client(
         base_url: Url,
         configuration: &GooseConfiguration,
         reqwest_client: Option<Client>,
+        gzip: bool,
     ) -> Result<Self, GooseError> {
-        let mut single_user =
-            GooseUser::new(0, Arc::from(""), base_url, configuration, 0, reqwest_client)?;
-        // A client from the client builder leaves gzip to Goose too.
-        single_user.gzip = !configuration.no_gzip;
+        let mut single_user = GooseUser::with_gzip(
+            0,
+            Arc::from(""),
+            base_url,
+            configuration,
+            0,
+            reqwest_client,
+            gzip,
+        )?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and

@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.20.0-dev
- - [#841](https://github.com/tag1consulting/goose/pull/841) a gzip response body is decompressed only when the load test reads it with `text()`, `bytes()`, `json()` or `chunk()`, never when it is thrown away by `discard_body()` or dropped unread, which saves the CPU it took (22.9 µs per request in the Umami example at 1,000 users)
+ - [#841](https://github.com/tag1consulting/goose/pull/841) a gzip response body is decompressed only when the load test reads it with `text()`, `bytes()`, `json()` or `chunk()`, never when it is thrown away by `discard_body()` or dropped unread, which cut Goose's CPU per request by about 12% in testing
     o **Breaking**: Goose builds its clients with reqwest's gzip decoding off and sets `Accept-Encoding: gzip` itself, unless `--no-gzip` is given or the request has its own `Accept-Encoding`; headers, `content_length()`, `discard_body()`'s count and `into_inner()` give the body as it came over the wire, still compressed; every gzip member is decompressed; a request sent through `GooseUser::client` directly no longer asks for gzip
     o **Breaking**: `GooseHttpResponse`'s `text()`, `bytes()`, `json()` and `chunk()` return `TransactionError`, not `reqwest::Error`; a body that does not decompress is `TransactionError::Custom`
  - [#836](https://github.com/tag1consulting/goose/pull/836) the `umami` and `drupal_memcache` examples compile each of their regexes once, instead of again on every page they parse

@@ -917,7 +917,7 @@ pub struct GooseAttack {
     client_builder: Option<client::ClientBuilderSettings>,
     /// How users get their clients when a client builder is set, built once when
     /// the load test starts, so a shared client is one client for the whole run.
-    client_strategy: Option<client::ClientStrategy>,
+    client_strategy: Option<client::BuilderClients>,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -1484,13 +1484,16 @@ impl GooseAttack {
         self.client_strategy = match &self.client_builder {
             Some(builder) => {
                 let config = builder.resolve(command_line_client_options, &self.configuration);
-                // Users ask for gzip as the builder resolved it: see GooseUser::gzip.
-                self.configuration.no_gzip = !config.gzip;
                 #[cfg(all(test, feature = "gaggle"))]
                 if let Some(report) = self.gaggle.client_report.take() {
                     let _ = report.send(config.clone());
                 }
-                Some(config.into_strategy()?)
+                // Users ask for gzip as the builder resolved it: see GooseUser::gzip.
+                let gzip = config.gzip;
+                Some(client::BuilderClients {
+                    strategy: config.into_strategy()?,
+                    gzip,
+                })
             }
             None => None,
         };
@@ -2739,6 +2742,14 @@ impl GooseAttack {
         }
     }
 
+    /// Whether users ask for gzip: as the client builder resolved it, else
+    /// unless `--no-gzip`.
+    fn users_gzip(&self) -> bool {
+        self.client_strategy
+            .as_ref()
+            .map_or(!self.configuration.no_gzip, |clients| clients.gzip)
+    }
+
     // Invoke `test_start` transactions if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // First run global test_start_transaction, if defined.
@@ -2755,8 +2766,9 @@ impl GooseAttack {
                 &self.configuration,
                 self.client_strategy
                     .as_ref()
-                    .map(client::ClientStrategy::user_client)
+                    .map(client::BuilderClients::user_client)
                     .transpose()?,
+                self.users_gzip(),
             )?;
             let function = &t.function;
             let _ = function(&mut user).await;
@@ -2782,8 +2794,9 @@ impl GooseAttack {
                 &self.configuration,
                 self.client_strategy
                     .as_ref()
-                    .map(client::ClientStrategy::user_client)
+                    .map(client::BuilderClients::user_client)
                     .transpose()?,
+                self.users_gzip(),
             )?;
             let function = &t.function;
             let _ = function(&mut user).await;
@@ -4550,7 +4563,7 @@ impl GooseAttack {
 fn build_weighted_users(
     user_params: &[(usize, Arc<str>, url::Url)],
     configuration: &GooseConfiguration,
-    client_strategy: &Option<client::ClientStrategy>,
+    client_strategy: &Option<client::BuilderClients>,
     metrics_hash: u64,
     stop: &AtomicBool,
 ) -> Result<Vec<GooseUser>, GooseError> {
@@ -4559,6 +4572,10 @@ fn build_weighted_users(
         .unwrap_or(1);
     let total_users = user_params.len();
     let chunk_size = total_users.div_ceil(num_cpus).max(1);
+    // A client from the client builder leaves gzip to Goose too.
+    let gzip = client_strategy
+        .as_ref()
+        .map_or(!configuration.no_gzip, |clients| clients.gzip);
 
     let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(num_cpus);
@@ -4574,18 +4591,17 @@ fn build_weighted_users(
                     // With no client builder, GooseUser::new builds the client.
                     let reqwest_client = client_strategy
                         .as_ref()
-                        .map(client::ClientStrategy::user_client)
+                        .map(client::BuilderClients::user_client)
                         .transpose()?;
-                    let mut user = GooseUser::new(
+                    let user = GooseUser::with_gzip(
                         *scenarios_index,
                         machine_name.clone(),
                         base_url.clone(),
                         configuration,
                         metrics_hash,
                         reqwest_client,
+                        gzip,
                     )?;
-                    // A client from the client builder leaves gzip to Goose too.
-                    user.gzip = !configuration.no_gzip;
                     users.push(user);
                 }
                 Ok::<Vec<GooseUser>, GooseError>(users)
@@ -6300,6 +6316,58 @@ mod tests {
             assert_eq!(indexes(start), serial_start);
             assert_eq!(indexes(stop), serial_stop);
         }
+    }
+
+    /// Requests `/`.
+    async fn get_root(user: &mut GooseUser) -> crate::goose::TransactionResult {
+        user.get("/").await?;
+        Ok(())
+    }
+
+    /// A client builder that resolves gzip off keeps its users, and the user a
+    /// `test_start` transaction runs as, from asking for gzip, and leaves the
+    /// run's `no_gzip` as it was set.
+    #[tokio::test]
+    async fn a_client_builder_without_gzip_leaves_no_gzip_alone() {
+        let server = httpmock::MockServer::start();
+        let without = server.mock(|when, then| {
+            when.path("/").header_missing("accept-encoding");
+            then.status(200);
+        });
+        let with = server.mock(|when, then| {
+            when.path("/").header_exists("accept-encoding");
+            then.status(200);
+        });
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--host", &server.url("/"), "--quiet"])
+                .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(scenario!("Root").register_transaction(transaction!(get_root)))
+            .test_start(transaction!(get_root))
+            .set_client_builder_without_cookies(
+                client::GooseClientBuilder::new()
+                    .without_cookies()
+                    .gzip(false),
+            )
+            .unwrap();
+        let defaults = goose_attack.defaults.clone();
+        goose_attack.configuration.configure(&defaults).unwrap();
+        goose_attack
+            .build_client_strategy(client::CommandLineClientOptions::default())
+            .unwrap();
+
+        for mut user in goose_attack.weight_scenario_users(2).unwrap() {
+            get_root(&mut user).await.unwrap();
+        }
+        goose_attack.run_test_start().await.unwrap();
+
+        without.assert_calls(3);
+        with.assert_calls(0);
+        assert!(
+            !goose_attack.configuration.no_gzip,
+            "the client builder rewrote the run's no_gzip"
+        );
     }
 
     /// Users weighted after the shared client is built, as a test plan change
