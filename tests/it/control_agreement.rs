@@ -1,0 +1,763 @@
+//! Telnet, WebSocket, the dashboard control endpoints and, with the `mcp`
+//! feature, the MCP Controller agree: the same command in the same state gets
+//! the same accept or refuse decision and the same message from each of them,
+//! and the same run folder gives the same saved runs, reports and comparisons
+//! through each of them as through the dashboard's runs panel.
+
+#[cfg(feature = "mcp")]
+use crate::common;
+use crate::mcp_client;
+use crate::saved_runs;
+
+use futures::{SinkExt, StreamExt};
+use httpmock::{Method::GET, MockServer};
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+use goose::config::GooseConfiguration;
+use goose::controller::{ControllerWebSocketRequest, ControllerWebSocketResponse};
+use goose::prelude::*;
+
+// Ports no other test uses.
+static TELNET_PORT: common::Port = common::Port::new();
+static WEBSOCKET_PORT: common::Port = common::Port::new();
+static DASHBOARD_PORT: common::Port = common::Port::new();
+const TOKEN: &str = "agreement-token";
+
+async fn get_index(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get("/").await?;
+    Ok(())
+}
+
+/// A telnet client that reads each reply up to the next prompt.
+struct Telnet(TcpStream);
+
+impl Telnet {
+    async fn connect() -> Self {
+        let mut telnet = Telnet(connect(TELNET_PORT.get()).await);
+        assert_eq!(telnet.read_reply().await, "goose> ");
+        telnet
+    }
+
+    /// Read until the prompt or until the server closes the connection.
+    async fn read_reply(&mut self) -> String {
+        let mut reply = Vec::new();
+        let mut buf = [0u8; 4096];
+        while !reply.ends_with(b"goose> ") {
+            let n = tokio::time::timeout(Duration::from_secs(20), self.0.read(&mut buf))
+                .await
+                .expect("telnet reply timed out")
+                .expect("telnet read");
+            if n == 0 {
+                break;
+            }
+            reply.extend_from_slice(&buf[..n]);
+        }
+        String::from_utf8(reply).expect("utf-8 reply")
+    }
+
+    /// Send `line` and return the reply without its prompt.
+    async fn send(&mut self, line: &str) -> String {
+        self.0
+            .write_all(format!("{line}\r\n").as_bytes())
+            .await
+            .expect("telnet write");
+        let reply = self.read_reply().await;
+        reply
+            .strip_suffix("\ngoose> ")
+            .unwrap_or(&reply)
+            .to_string()
+    }
+}
+
+type WebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+async fn websocket_connect() -> WebSocket {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{WEBSOCKET_PORT}")).await {
+            Ok((stream, _)) => return stream,
+            Err(e) if Instant::now() > deadline => panic!("websocket connect: {}", e),
+            Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+        }
+    }
+}
+
+/// Send `line` and return the reply's success flag and text.
+async fn websocket_send(websocket: &mut WebSocket, line: &str) -> (bool, String) {
+    let request = serde_json::to_string(&ControllerWebSocketRequest {
+        request: line.to_string(),
+    })
+    .unwrap();
+    websocket
+        .send(Message::Text(request.into()))
+        .await
+        .expect("websocket send");
+    let message = tokio::time::timeout(Duration::from_secs(20), websocket.next())
+        .await
+        .expect("websocket reply timed out")
+        .expect("websocket closed")
+        .expect("websocket read");
+    let reply: ControllerWebSocketResponse =
+        serde_json::from_str(message.to_text().expect("text reply")).expect("json reply");
+    (reply.success, reply.response)
+}
+
+async fn connect(port: u16) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match TcpStream::connect(("127.0.0.1", port)).await {
+            Ok(stream) => return stream,
+            Err(e) if Instant::now() > deadline => panic!("connect {}: {}", port, e),
+            Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+        }
+    }
+}
+
+/// POST a dashboard control command and return its `ok` and `message`.
+async fn dashboard_post(client: &reqwest::Client, command: &str, body: &str) -> (bool, String) {
+    let reply: serde_json::Value = client
+        .post(format!(
+            "http://127.0.0.1:{DASHBOARD_PORT}/api/v1/control/{command}"
+        ))
+        .header("Authorization", format!("Bearer {TOKEN}"))
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .expect("control POST")
+        .json()
+        .await
+        .expect("control json");
+    (
+        reply["ok"].as_bool().expect("ok"),
+        reply["message"].as_str().expect("message").to_string(),
+    )
+}
+
+/// Poll the dashboard snapshot until the phase is one of `phases`.
+async fn wait_for_phase(client: &reqwest::Client, phases: &[&str]) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let phase = match client
+            .get(format!("http://127.0.0.1:{DASHBOARD_PORT}/api/v1/snapshot"))
+            .header("Authorization", format!("Bearer {TOKEN}"))
+            .send()
+            .await
+        {
+            Ok(response) => response
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|snapshot| snapshot["phase"].as_str().map(str::to_string)),
+            Err(_) => None,
+        };
+        if phase.as_deref().is_some_and(|p| phases.contains(&p)) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "phase {:?} never reached {:?}",
+            phase,
+            phases
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The front ends of one Goose process.
+struct FrontEnds {
+    telnet: Telnet,
+    websocket: WebSocket,
+    client: reqwest::Client,
+    #[cfg(feature = "mcp")]
+    mcp: mcp_client::Mcp,
+}
+
+/// Which front end sends a command.
+#[derive(Clone, Copy, Debug)]
+enum Via {
+    Telnet,
+    WebSocket,
+    Dashboard,
+    #[cfg(feature = "mcp")]
+    Mcp,
+}
+
+/// Every front end, in the order the runs below go through them.
+fn every_front_end() -> Vec<Via> {
+    vec![
+        Via::Telnet,
+        Via::WebSocket,
+        Via::Dashboard,
+        #[cfg(feature = "mcp")]
+        Via::Mcp,
+    ]
+}
+
+impl FrontEnds {
+    /// Send one command through `via` and return its decision and message.
+    /// Telnet has no success flag, so its decision is `None`.
+    async fn send(
+        &mut self,
+        via: Via,
+        line: &str,
+        command: &str,
+        body: &str,
+    ) -> (Option<bool>, String) {
+        match via {
+            Via::Telnet => (None, self.telnet.send(line).await),
+            Via::WebSocket => {
+                let (ok, message) = websocket_send(&mut self.websocket, line).await;
+                (Some(ok), message)
+            }
+            Via::Dashboard => {
+                let (ok, message) = dashboard_post(&self.client, command, body).await;
+                (Some(ok), message)
+            }
+            // The tool for the line, its argument the line's value.
+            #[cfg(feature = "mcp")]
+            Via::Mcp => {
+                let (ok, message) = self.mcp.send_line(line).await;
+                (Some(ok), message)
+            }
+        }
+    }
+
+    /// With the `mcp` feature, the same line through the MCP Controller must
+    /// give `websocket`'s decision and message.
+    async fn agree_mcp(&mut self, line: &str, websocket: &(Option<bool>, String)) {
+        #[cfg(feature = "mcp")]
+        {
+            let mcp = self.send(Via::Mcp, line, "", "").await;
+            assert_eq!(&mcp, websocket, "{line}: mcp and websocket differ");
+        }
+        #[cfg(not(feature = "mcp"))]
+        let _ = (line, websocket);
+    }
+
+    /// Send the same command through all three front ends in the same state
+    /// and require the same decision and message from each.
+    async fn agree(&mut self, line: &str, command: &str, body: &str) -> (bool, String) {
+        let telnet = self.send(Via::Telnet, line, command, body).await;
+        let websocket = self.send(Via::WebSocket, line, command, body).await;
+        let dashboard = self.send(Via::Dashboard, line, command, body).await;
+        self.agree_mcp(line, &websocket).await;
+        assert_eq!(
+            websocket, dashboard,
+            "{line}: websocket and dashboard differ"
+        );
+        assert_eq!(
+            telnet.1, dashboard.1,
+            "{line}: telnet and dashboard messages differ"
+        );
+        (dashboard.0.unwrap(), dashboard.1)
+    }
+
+    /// As [`agree`], for a command only telnet and WebSocket take in this
+    /// form: the dashboard sends times as whole seconds and rates as JSON
+    /// numbers, so refuses their text forms with messages of its own.
+    async fn agree_controllers(&mut self, line: &str) -> (bool, String) {
+        let telnet = self.send(Via::Telnet, line, "", "").await;
+        let websocket = self.send(Via::WebSocket, line, "", "").await;
+        self.agree_mcp(line, &websocket).await;
+        assert_eq!(telnet.1, websocket.1, "{line}: telnet and websocket differ");
+        (websocket.0.unwrap(), websocket.1)
+    }
+}
+
+/// GET `path` from the dashboard, with the token; its status and body.
+async fn dashboard_get(client: &reqwest::Client, path: &str) -> (u16, String) {
+    let reply = client
+        .get(format!("http://127.0.0.1:{DASHBOARD_PORT}{path}"))
+        .header("Authorization", format!("Bearer {TOKEN}"))
+        .send()
+        .await
+        .expect("dashboard GET");
+    let status = reply.status().as_u16();
+    (status, reply.text().await.expect("dashboard body"))
+}
+
+/// The same line through telnet, WebSocket and, with the `mcp` feature, the
+/// MCP Controller: one text from all of them, which this returns.
+async fn controllers_say(front: &mut FrontEnds, line: &str) -> String {
+    let telnet = front.telnet.send(line).await;
+    let (ok, websocket) = websocket_send(&mut front.websocket, line).await;
+    assert!(ok, "{}: {}", line, websocket);
+    assert_eq!(telnet, websocket, "{line}: telnet and websocket differ");
+    #[cfg(feature = "mcp")]
+    {
+        let (ok, mcp) = front.mcp.send_line(line).await;
+        assert!(ok, "{}: {}", line, mcp);
+        assert_eq!(mcp, websocket, "{line}: mcp and websocket differ");
+    }
+    websocket
+}
+
+/// Telnet, WebSocket, MCP and the dashboard give the same saved runs: the
+/// listing, page by page; each run's Markdown report and JSON report; and a
+/// comparison. `newer` are the runs saved in this session, newest first,
+/// before the saved runs of `runs`; a run in progress is listed as running.
+async fn saved_runs_agree(front: &mut FrontEnds, runs: &saved_runs::SavedRuns, newer: &[&str]) {
+    // A client that takes no gzip, so the dashboard gunzips a gzipped
+    // report itself, as it does for any such client.
+    let plain = reqwest::Client::builder().no_gzip().build().unwrap();
+    let all: Vec<String> = newer
+        .iter()
+        .map(|name| name.to_string())
+        .chain(runs.names.iter().cloned())
+        .collect();
+    let (status, listing) = dashboard_get(&front.client, "/api/v1/reports").await;
+    assert_eq!(status, 200, "{}", listing);
+    let listing: serde_json::Value = serde_json::from_str(&listing).unwrap();
+    let reports = listing["reports"].as_array().unwrap();
+    let names: Vec<&str> = reports
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, all);
+    for (i, report) in reports.iter().enumerate() {
+        assert_eq!(report["running"], json(i < newer.len()), "{}", names[i]);
+    }
+    // Two pages: the newest 20, then the rest.
+    let pages = [
+        ("runs-json".to_string(), 0),
+        (
+            format!("runs-json {}", all[saved_runs::PAGE - 1]),
+            saved_runs::PAGE,
+        ),
+    ];
+    for (line, from) in pages {
+        let page: serde_json::Value =
+            serde_json::from_str(&controllers_say(front, &line).await).unwrap();
+        let to = all.len().min(from + saved_runs::PAGE);
+        assert_eq!(page["dir"], listing["dir"], "{}", line);
+        assert_eq!(
+            page["runs"],
+            serde_json::Value::Array(reports[from..to].to_vec()),
+            "{}",
+            line
+        );
+        assert_eq!(page["more"], json(to < all.len()), "{}", line);
+    }
+    // Each kind of report: rendered from report.json, gzipped, stored, and
+    // the newest, named and not.
+    let mut reported: Vec<(String, String)> = ["plain", "zipped", "stored"]
+        .iter()
+        .map(|name| (format!(" {name}"), name.to_string()))
+        .collect();
+    reported.push((String::new(), all[0].clone()));
+    for (named, name) in &reported {
+        let markdown = controllers_say(front, &format!("report{named}")).await;
+        for client in [&front.client, &plain] {
+            let (status, served) =
+                dashboard_get(client, &format!("/api/v1/reports/{name}/report.md")).await;
+            assert_eq!(status, 200, "{}", served);
+            assert_eq!(markdown, served, "report {}", name);
+        }
+        let json = controllers_say(front, &format!("report-json{named}")).await;
+        let (status, served) = dashboard_get(
+            &front.client,
+            &format!("/api/v1/reports/{name}/report.json"),
+        )
+        .await;
+        assert_eq!(status, 200, "{}", served);
+        let mut served: serde_json::Value = serde_json::from_str(&served).unwrap();
+        served.as_object_mut().unwrap().remove(saved_runs::GRAPHS);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            served,
+            "report-json {}",
+            name
+        );
+    }
+    // A comparison of the newest run with the oldest, named and not.
+    let oldest = runs.oldest();
+    let (status, served) = dashboard_get(
+        &front.client,
+        &format!("/api/v1/reports/{}/compare.md?baseline={oldest}", all[0]),
+    )
+    .await;
+    assert_eq!(status, 200, "{}", served);
+    assert_eq!(
+        controllers_say(front, &format!("compare {oldest}")).await,
+        served
+    );
+    assert_eq!(
+        controllers_say(front, &format!("compare {} {oldest}", all[0])).await,
+        served
+    );
+}
+
+/// `value` as JSON.
+fn json(value: bool) -> serde_json::Value {
+    serde_json::Value::Bool(value)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_control_agreement() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/");
+        then.status(200);
+    });
+    let host = server.base_url();
+    let telnet_port = TELNET_PORT.to_string();
+    let websocket_port = WEBSOCKET_PORT.to_string();
+    let dashboard_port = DASHBOARD_PORT.to_string();
+    #[cfg(feature = "mcp")]
+    let mcp_port = mcp_client::free_port().to_string();
+    // The saved runs the front ends read are in the folder the run folder
+    // goes in.
+    let parent =
+        std::env::temp_dir().join(format!("goose-control-agreement-{}", std::process::id()));
+    let runs = saved_runs::build_in(parent.clone()).await;
+    let output_dir = parent.join("run").to_string_lossy().into_owned();
+    #[allow(unused_mut)]
+    let mut args = vec![
+        "--users",
+        "2",
+        "--increase-rate",
+        "50",
+        "--host",
+        &host,
+        "--no-autostart",
+        "--telnet-host",
+        "127.0.0.1",
+        "--telnet-port",
+        &telnet_port,
+        "--websocket",
+        "--websocket-host",
+        "127.0.0.1",
+        "--websocket-port",
+        &websocket_port,
+        "--dashboard",
+        "--dashboard-host",
+        "127.0.0.1",
+        "--dashboard-port",
+        &dashboard_port,
+        "--dashboard-control",
+        "--dashboard-auth-token",
+        TOKEN,
+        "--co-mitigation",
+        "disabled",
+        "--quiet",
+        // Save report is on with the dashboard: keep its reports out of the
+        // checkout.
+        "--output-dir",
+        &output_dir,
+    ];
+    #[cfg(feature = "mcp")]
+    args.extend(["--mcp", "--mcp-set-host", "--mcp-port", mcp_port.as_str()]);
+    let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+    let goose_attack = GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario!("Agreement").register_transaction(transaction!(get_index)));
+    let load = tokio::spawn(async move { goose_attack.execute().await });
+
+    let mut front = FrontEnds {
+        telnet: Telnet::connect().await,
+        websocket: websocket_connect().await,
+        client: reqwest::Client::new(),
+        #[cfg(feature = "mcp")]
+        mcp: mcp_client::Mcp::new(mcp_port.parse().unwrap()),
+    };
+    wait_for_phase(&front.client, &["idle"]).await;
+
+    // The saved runs, idle, then with a run in progress.
+    saved_runs_agree(&mut front, &runs, &[]).await;
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    let (ok, message) = dashboard_post(&front.client, "report/now", "{}").await;
+    assert!(ok, "{}", message);
+    let in_progress = parent.join("run").join("report.json");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !in_progress.is_file() {
+        assert!(Instant::now() < deadline, "Save report now wrote no report");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    saved_runs_agree(&mut front, &runs, &["run"]).await;
+    assert_eq!(
+        dashboard_post(&front.client, "stop", "{}").await,
+        (true, "load test stopped".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+
+    // Users out of range, then in range, while idle.
+    let users_message = "users must be an integer between 1 and 100000";
+    for (line, body) in [
+        ("users 0", r#"{"users":0}"#),
+        ("users 100001", r#"{"users":100001}"#),
+        (
+            "users 99999999999999999999",
+            r#"{"users":99999999999999999999}"#,
+        ),
+    ] {
+        let (ok, message) = front.agree(line, "users", body).await;
+        assert!(!ok, "{}", line);
+        assert_eq!(message, users_message, "{line}");
+    }
+    assert_eq!(
+        front.agree("users 3", "users", r#"{"users":3}"#).await,
+        (true, "users configured".to_string())
+    );
+
+    // Every setting's bounds, the same from telnet and WebSocket.
+    for (line, message) in [
+        (
+            "host http://user:secret@example.com/",
+            "host must be a valid url starting with http:// or https://, without a user name or password",
+        ),
+        ("increaserate 0.009", "increase_rate must be a number from 0.01 to 100000"),
+        ("decreaserate 100001", "decrease_rate must be a number from 0.01 to 100000"),
+        (
+            "increasetime 720h1s",
+            "increase_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear",
+        ),
+        (
+            "decreasetime 2592001",
+            "decrease_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear",
+        ),
+        (
+            "runtime 43201m",
+            "run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear",
+        ),
+        (
+            "testplan 1,720h1s",
+            "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total",
+        ),
+    ] {
+        assert_eq!(
+            front.agree_controllers(line).await,
+            (false, message.to_string()),
+            "{}",
+            line
+        );
+    }
+
+    // A time needs 2 users in Idle: the same refusal from all three.
+    assert_eq!(
+        front
+            .agree("increasetime 5", "settings", r#"{"increase_time_secs":5}"#)
+            .await,
+        (true, "increase_time configured".to_string())
+    );
+    assert_eq!(
+        front.agree("users 1", "users", r#"{"users":1}"#).await,
+        (
+            false,
+            "failed to configure users, increase_time needs at least 2 users".to_string()
+        )
+    );
+    assert_eq!(
+        front
+            .agree(
+                "increasetime 0",
+                "settings",
+                r#"{"increase_time_secs":null}"#
+            )
+            .await,
+        (true, "increase_time cleared".to_string())
+    );
+
+    // A test plan sets users: a ramp setting is refused until users
+    // switches back, which all three accept alike.
+    assert_eq!(
+        front
+            .agree("testplan 3,1s", "settings", r#"{"test_plan":"3,1s"}"#)
+            .await,
+        (true, "test-plan configured".to_string())
+    );
+    for (line, body, field) in [
+        ("increaserate 2", r#"{"increase_rate":2}"#, "increase_rate"),
+        ("runtime 10", r#"{"run_time_secs":10}"#, "run_time"),
+    ] {
+        assert_eq!(
+            front.agree(line, "settings", body).await,
+            (
+                false,
+                format!("failed to configure {field}, a test plan is configured: set users first to switch to a users ramp")
+            ),
+            "{}",
+            line
+        );
+    }
+    assert_eq!(
+        front.agree("users 3", "users", r#"{"users":3}"#).await,
+        (true, "users configured".to_string())
+    );
+    assert_eq!(
+        front
+            .agree("increaserate 50", "settings", r#"{"increase_rate":50}"#)
+            .await,
+        (true, "increase_rate configured".to_string())
+    );
+
+    // Stop while idle is refused by all three.
+    assert_eq!(
+        front.agree("stop", "stop", "{}").await,
+        (false, "load test not running, failed to stop".to_string())
+    );
+
+    // Start, start again, change users, and stop, through each front end in
+    // turn: each one sees the same replies.
+    let mut runs = Vec::new();
+    for via in every_front_end() {
+        let mut replies = Vec::new();
+        replies.push(front.send(via, "start", "start", "{}").await);
+        wait_for_phase(&front.client, &["increase", "maintain"]).await;
+        replies.push(front.send(via, "start", "start", "{}").await);
+        replies.push(front.send(via, "users 4", "users", r#"{"users":4}"#).await);
+        replies.push(front.send(via, "stop", "stop", "{}").await);
+        wait_for_phase(&front.client, &["idle"]).await;
+        runs.push((via, replies));
+    }
+    for (via, replies) in &runs {
+        // Telnet has no success flag; the others must accept and refuse alike.
+        let ok = |decision: bool| match via {
+            Via::Telnet => None,
+            _ => Some(decision),
+        };
+        let expected = [
+            (ok(true), "load test started"),
+            (ok(false), "unable to start load test, it is not idle"),
+            (ok(true), "users configured"),
+            (ok(true), "load test stopped"),
+        ]
+        .map(|(decision, message)| (decision, message.to_string()));
+        assert_eq!(replies, &expected.to_vec(), "{:?}", via);
+    }
+
+    // Run time while a users ramp runs: set and cleared alike by all three,
+    // and refused alike once a ramp down is configured.
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    for (line, body, decision, message) in [
+        ("runtime 60", r#"{"run_time_secs":60}"#, true, "run_time configured"),
+        ("runtime 0", r#"{"run_time_secs":null}"#, true, "run_time cleared"),
+        ("decreaserate 2", r#"{"decrease_rate":2}"#, true, "decrease_rate configured"),
+        (
+            "runtime 0",
+            r#"{"run_time_secs":null}"#,
+            false,
+            "failed to clear run_time, a ramp down is configured: a running load test holds until stopped only without one",
+        ),
+        (
+            "increasetime 5",
+            r#"{"increase_time_secs":5}"#,
+            false,
+            "failed to configure increase_time, be sure load test is idle",
+        ),
+    ] {
+        assert_eq!(
+            front.agree(line, "settings", body).await,
+            (decision, message.to_string()),
+            "{}",
+            line
+        );
+    }
+    assert_eq!(
+        dashboard_post(&front.client, "stop", "{}").await,
+        (true, "load test stopped".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+    assert_eq!(
+        dashboard_post(&front.client, "settings", r#"{"decrease_rate":null}"#).await,
+        (true, "decrease_rate cleared".to_string())
+    );
+
+    // Users is refused by all three while a test plan runs.
+    assert_eq!(
+        front
+            .agree(
+                "testplan 3,1s;3,1m;0,0",
+                "settings",
+                r#"{"test_plan":"3,1s;3,1m;0,0"}"#
+            )
+            .await,
+        (true, "test-plan configured".to_string())
+    );
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    assert_eq!(
+        front.agree("users 5", "users", r#"{"users":5}"#).await,
+        (
+            false,
+            "failed to reconfigure users, the test plan sets users: edit the plan, or stop and switch mode".to_string()
+        )
+    );
+    assert_eq!(
+        front
+            .agree("decreaserate 2", "settings", r#"{"decrease_rate":2}"#)
+            .await,
+        (
+            false,
+            "failed to configure decrease_rate, a test plan is running".to_string()
+        )
+    );
+    assert_eq!(
+        dashboard_post(&front.client, "stop", "{}").await,
+        (true, "load test stopped".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+    assert_eq!(
+        front.agree("users 2", "users", r#"{"users":2}"#).await,
+        (true, "users configured".to_string())
+    );
+
+    // Quit: `quit` disconnects a telnet or WebSocket client and leaves the
+    // run alone; the dashboard Quit is refused while running and shuts Goose
+    // down from Idle.
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    assert_eq!(
+        dashboard_post(&front.client, "quit", "{}").await,
+        (
+            false,
+            "unable to quit, be sure the load test is idle".to_string()
+        )
+    );
+    assert_eq!(front.telnet.send("quit").await, "goodbye!");
+    assert_eq!(
+        websocket_send(&mut front.websocket, "quit").await,
+        (true, "goodbye!".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    assert_eq!(
+        dashboard_post(&front.client, "stop", "{}").await,
+        (true, "load test stopped".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+    // A Controller `quit` in Idle also only disconnects its client.
+    assert_eq!(Telnet::connect().await.send("quit").await, "goodbye!");
+    assert_eq!(
+        websocket_send(&mut websocket_connect().await, "quit").await,
+        (true, "goodbye!".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+    assert!(!load.is_finished(), "a Controller quit ended Goose");
+    assert_eq!(
+        dashboard_post(&front.client, "quit", "{}").await,
+        (true, "goose is shutting down".to_string())
+    );
+    tokio::time::timeout(Duration::from_secs(20), load)
+        .await
+        .expect("Goose exits on Quit")
+        .expect("join load test")
+        .expect("load test");
+}

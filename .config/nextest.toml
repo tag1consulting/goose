@@ -1,0 +1,21 @@
+# cargo-nextest runs each test in a process of its own, many at once:
+#
+#     cargo nextest run --all-features
+#
+# CI runs with `--profile ci`. `cargo test` still runs every test too.
+
+[profile.default]
+# A test still running after a minute is reported as slow, every minute.
+slow-timeout = { period = "60s" }
+
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
+slow-timeout = { period = "60s" }
+# Most tests wait on a mock server, a run time or a timer, not on the CPU, so
+# CI's runners, with 4 CPUs, run more tests at once than they have CPUs.
+test-threads = 12
+
+[profile.ci.junit]
+# target/nextest/ci/junit.xml: every test's time, for finding slow ones.
+path = "junit.xml"
