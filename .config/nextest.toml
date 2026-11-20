@@ -35,14 +35,26 @@ binary_id(goose::gaggle)
 """
 priority = 10
 
+# Tests that check wall clock time to the second or a rate over seconds, each
+# a test binary of its own, alone, under cargo test: a run cancelled 3
+# seconds in lasts 3 seconds, a Controller's user count is reached in time,
+# a throttle holds its rate. They take the slots of four tests, so on a busy
+# machine about as many tests run beside them as there are CPUs.
+[[profile.default.overrides]]
+filter = """
+(binary_id(goose::it) & test(/^(cancel|throttle|throttle_live|user_rate)::/))
+| (binary_id(goose::it) & test(/^controller::test_(telnet|websocket|mcp)_controller$/))
+"""
+threads-required = 4
+
 [profile.ci]
 fail-fast = false
 failure-output = "immediate-final"
 # Most tests wait on a mock server, a run time or a timer, not on the CPU, so
-# CI's runners, with 4 CPUs, run three times as many tests at once as they
-# have CPUs. Before the Gaggle tests took more than one slot each, 12 made a
-# Gaggle in one process miss its 3 second deadline.
-test-threads = 12
+# CI's runners, with 4 CPUs, run twice as many tests at once as they have
+# CPUs. At three times, with the CPU heavy native-tls clients, tests that
+# check wall clock time to the second missed it.
+test-threads = 8
 
 [profile.ci.junit]
 # target/nextest/ci/junit.xml: every test's time, for finding slow ones.

@@ -36,18 +36,8 @@ enum TestType {
     Iterations,
 }
 
-// Whether the first request started the SIGINT timer: each test runs in a
-// process of its own, so in each test the first request is its run's first.
-static TIMER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-// Test transaction. The first request starts the timer that cancels the load
-// test 3 seconds later: the run's duration counts from when its first users
-// start, not from when the test called execute(), which builds the users
-// first, so a slow start on a busy machine does not shorten the run.
+// Test transaction.
 pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
-    if !TIMER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        tokio::spawn(cancel_load_test(Duration::from_secs(3)));
-    }
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
@@ -232,8 +222,9 @@ async fn run_standalone_test(test_type: TestType) {
     // Build common configuration elements.
     let configuration = common_build_configuration(&server, &test_type);
 
-    // The first request starts the timer that sends a SIGINT to the running
-    // load test: see get_index.
+    // Start a thread that will send a SIGINT to the running load test.
+    // Don't await tokio::spawn, instead run in parallel and continue to start Goose Attakc.
+    let _ignored_joinhandle = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(common::build_load_test(
