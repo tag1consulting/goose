@@ -27,9 +27,10 @@ threads-required = 4
 fail-fast = false
 failure-output = "immediate-final"
 # Most tests wait on a mock server, a run time or a timer, not on the CPU, so
-# CI's runners, with 4 CPUs, run twice as many tests at once as they have
-# CPUs. More, 12, made a Gaggle in one process miss its 3 second deadline.
-test-threads = 8
+# CI's runners, with 4 CPUs, run three times as many tests at once as they
+# have CPUs. Before the Gaggle tests took more than one slot each, 12 made a
+# Gaggle in one process miss its 3 second deadline.
+test-threads = 12
 
 [profile.ci.junit]
 # target/nextest/ci/junit.xml: every test's time, for finding slow ones.
