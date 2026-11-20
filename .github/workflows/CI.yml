@@ -132,6 +132,7 @@ jobs:
           - "mcp"  # MCP Controller (opt-in; not in default)
           - "gaggle"  # Gaggle groundwork without the dashboard (opt-in; not in default)
           - "rustls-tls"
+          - "native-tls"  # Native TLS in place of rustls and the shared verifier
           - "all-features"  # Keep existing all-features test
 
     steps:

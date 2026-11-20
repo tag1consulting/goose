@@ -100,6 +100,15 @@ sha1 = { version = "0.10", optional = true }
 default = ["cookies"]
 # reqwest >==0.13 already defaults to rustls
 rustls-tls = ["tokio-tungstenite/rustls"]
+# Native TLS: every client Goose builds uses reqwest's native-tls backend, the
+# platform's TLS library (OpenSSL on Linux, Security.framework on macOS, SChannel
+# on Windows), in place of rustls with Goose's shared certificate verifier. ALPN
+# still offers HTTP/2 over HTTPS unless --http1-only. The cost: native-tls builds a
+# certificate store for every client, so memory and startup time grow with the
+# number of users (0.18.1 measured about 700 KiB per user). Enabling
+# reqwest/native-tls in a load test's own Cargo.toml does not do this: Goose
+# cannot see a dependency's features, so its clients stay on rustls.
+native-tls = ["reqwest/native-tls"]
 # Cookie support - can be completely disabled by compiling with --no-default-features for maximum performance
 cookies = ["reqwest/cookies"]
 pdf-reports = ["headless_chrome"]
@@ -154,3 +163,9 @@ harness = false
 name = "umami"
 path = "examples/umami/main.rs"
 test = true
+
+# `.cookie_store(true)` needs Reqwest's `cookies` feature, which Goose's
+# `cookies` feature turns on.
+[[example]]
+name = "custom_client"
+required-features = ["cookies"]
