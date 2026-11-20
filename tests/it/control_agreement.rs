@@ -4,8 +4,8 @@
 //! and the same run folder gives the same saved runs, reports and comparisons
 //! through each of them as through the dashboard's runs panel.
 
-#[cfg(feature = "mcp")]
 use crate::common;
+#[cfg(feature = "mcp")]
 use crate::mcp_client;
 use crate::saved_runs;
 
@@ -21,7 +21,7 @@ use goose::config::GooseConfiguration;
 use goose::controller::{ControllerWebSocketRequest, ControllerWebSocketResponse};
 use goose::prelude::*;
 
-// Ports no other test uses.
+// Ports of its own, free when the test starts.
 static TELNET_PORT: common::Port = common::Port::new();
 static WEBSOCKET_PORT: common::Port = common::Port::new();
 static DASHBOARD_PORT: common::Port = common::Port::new();

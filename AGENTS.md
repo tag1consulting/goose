@@ -31,7 +31,7 @@ The Goose Book documents everything below in full. Its source for `main` is in t
 | `src/dashboard.rs`, `src/dashboard/static/` | The live dashboard (feature `dashboard`): the Rust server, and a TypeScript client whose bundle, `app.js`, is committed and embedded at build time |
 | `src/gaggle/`, `src/gaggle_off.rs`, `proto/` | Gaggle (feature `gaggle`): manager and workers over gRPC; `proto/gaggle.proto` and the generator in `proto/gen/` produce the checked in protocol code in `src/gaggle/proto/` |
 | `examples/` | Example load tests: `simple`, `closure`, `session`, `basic_auth`, `graphql_loadtest`, `tcp_loadtest`, `drupal_memcache`, and `umami/` |
-| `tests/` | Integration tests, one file per area; unit tests sit beside the code in `#[cfg(test)]` modules |
+| `tests/` | Integration tests: `tests/it/`, one test binary with a module per area (`tests/it/main.rs` lists them); `tests/gaggle.rs` and `tests/metrics_print_unlocked.rs`, binaries of their own; helpers in `tests/common/`, `tests/mcp_client/` and `tests/saved_runs/`. Unit tests sit beside the code in `#[cfg(test)]` modules |
 | `src/docs/goose-book/` | The Goose Book (mdBook); `src/SUMMARY.md` is its table of contents |
 | `CHANGELOG.md` | Every user visible change, under the top `-dev` heading |
 
@@ -51,6 +51,8 @@ The crate is edition 2018. Its features:
 
 CI (`.github/workflows/CI.yml`) runs these on every pull request against `main` or a `release-*` branch. Run the ones your change touches before you push.
 
+CI runs the tests with [cargo-nextest](https://nexte.st/) (`cargo install cargo-nextest --locked`, or a prebuilt binary), which runs each test in a process of its own, many at once, and takes about a minute and a half for the whole suite on a machine with many cores; its settings, and the `ci` profile, are in `.config/nextest.toml`. nextest runs no doc tests, so `cargo test --doc` runs those. Plain `cargo test` still runs every test, more slowly: the tests of `tests/it/` then share one process, and a test that sets something global to the process (the logger, the working directory, an environment variable) or signals it runs in a process of its own through `own_process()` in `tests/it/main.rs`; give a new such test the same first lines. A test that uses a Controller or dashboard port takes a free one (`common::Port`), never a fixed one, as other tests run at once.
+
 ```bash
 # Style
 cargo fmt -- --check
@@ -58,8 +60,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 # Build and test, once per feature set: "" (none), cookies, dashboard, mcp, gaggle, rustls-tls, native-tls
 cargo build --verbose --no-default-features --features "<feature>"
-cargo test --verbose --no-default-features --features "<feature>"
-# With no features, the same two commands without --features.
+cargo nextest run --verbose --no-default-features --features "<feature>"
+cargo test --verbose --no-default-features --features "<feature>" --doc
+# With no features, the same commands without --features.
 # With gaggle, also:
 cargo clippy --all-targets --no-default-features --features gaggle -- -D warnings
 cargo run --locked --manifest-path proto/gen/Cargo.toml -- --check
@@ -68,17 +71,19 @@ cargo run --locked --manifest-path proto/gen/Cargo.toml -- --check
 cargo build --verbose --all-features
 cargo tree --all-features -i zip   # must find no zip package
 RUSTDOCFLAGS="-D warnings" cargo rustdoc --lib --all-features --examples
-cargo test --verbose --all-features --no-run
-tests=(); for f in tests/*.rs; do n=$(basename "$f" .rs); [ "$n" != gaggle ] && tests+=(--test "$n"); done
-cargo test --verbose --all-features --lib --bins --example umami "${tests[@]}"
+# Every test but the Gaggle process tests, which the gaggle job runs
+cargo nextest run --verbose --all-features -E 'not binary_id(goose::gaggle)'
 cargo test --verbose --all-features --doc
-cargo test --verbose --all-features --test pdf_chrome -- --include-ignored
-TZ="std +5" cargo test --verbose --all-features graph
+cargo nextest run --verbose --all-features --run-ignored all -E 'binary_id(goose::it) & test(/^pdf_chrome::/)'
+TZ="std +5" cargo nextest run --verbose --all-features -E 'test(graph) | binary_id(goose::metrics_print_unlocked)'
+TZ="std +5" cargo test --verbose --all-features --doc graph
+# Plain cargo test runs every test, in place of nextest
+cargo test --all-features
 
 # PDF reports: with an installed Chromium (arm64 Linux), both of these;
 # with no browser installed (Chrome for Testing is downloaded), the first only
-cargo test --verbose --features pdf-reports --test pdf_reports
-cargo test --verbose --features pdf-reports --test pdf_chrome -- --include-ignored
+cargo nextest run --verbose --features pdf-reports --test it -E 'test(/^pdf_reports::/)'
+cargo nextest run --verbose --features pdf-reports --test it --run-ignored all -E 'test(/^pdf_chrome::/)'
 
 # The Book, with mdBook built at the commit CI pins (no release has canonical-site-url yet):
 # cargo install --git https://github.com/rust-lang/mdBook --rev e18773a967eb7f3f1392c831cb2caf9af9bdf5a5 --locked mdbook
@@ -93,13 +98,13 @@ npm test
 
 CI also fails if a test leaves a `goose-runs/` folder in the checkout: a test that writes reports gives `--output-dir` a temporary folder.
 
-`tests/gaggle.rs` takes about 15 minutes; the all features job skips it and the `gaggle` job runs it.
+The Gaggle process tests, `tests/gaggle.rs`, start manager and worker processes of the `simple` example; the all features job skips them and the `gaggle` job runs them.
 
 ## Conventions
 
 - **CHANGELOG.** Every user visible change adds a line under the top `-dev` heading of the branch it targets (`## 0.20.0-dev` on `main`), in the form ` - [#PR](https://github.com/tag1consulting/goose/pull/PR) what changed`. The PR number is known only once the pull request is open: write it then.
 - **Branches.** `main` is the next minor release. `release-0.19` takes fixes for 0.19.x only: a fix is made there first, with its line under that branch's top `-dev` heading (`## 0.19.2-dev` at the time of writing), then forward ported to `main` with `git cherry-pick -x`; recent forward ports, such as #816, carry their line under `## 0.20.0-dev` on `main`. Work for 0.20 goes to `main` only.
-- **Tests.** Unit tests go in a `#[cfg(test)]` module in the file they cover; tests that run a whole load test go in `tests/`, usually against an `httpmock` server, never a real host.
+- **Tests.** Unit tests go in a `#[cfg(test)]` module in the file they cover; tests that run a whole load test go in a module of `tests/it/`, usually against an `httpmock` server, never a real host.
 - **The Book.** A change a user can see updates the Book page that covers it in the same pull request. CI builds the Book but does not compile its code blocks, so check a Rust example you add by building it.
 - **Options.** A new option gets a clap field in `src/config.rs` with long help, usually a `GooseDefault` variant, and a startup check for the options it conflicts with. Gaggle options are the exception: they have no `GooseDefault`, and their checks are in `src/gaggle/options.rs`. The Book includes the `-h` and `--help` output from `src/docs/goose-book/src/getting-started/runtime-options-short.txt` and `runtime-options-long.txt`, and a test fails when they differ from the help; regenerate them with `GOOSE_UPDATE_HELP=1 cargo test --all-features --lib config::test::help_matches_the_book`. Every line of the help fits in 80 columns.
 - **Log messages** start with a component prefix: `[user N]:`, `[controller]:`, `[throttle]:`, `[system]:` and so on, as `src/logger.rs` describes.
