@@ -3426,7 +3426,10 @@ async fn gaggle_idle_shutdown_and_workers_running_plans() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn gaggle_worker_health_in_one_process() {
-    const TELNET: u16 = 5236;
+    // A port of its own: 5236 is IDLE_TELNET's,
+    // which gaggle_idle_shutdown_and_workers_running_plans takes, and the
+    // two may run at once.
+    const TELNET: u16 = 5235;
     let test = async {
         let server = answering().await;
         let folder = scratch("worker-health");

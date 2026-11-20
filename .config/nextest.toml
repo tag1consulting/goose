@@ -2,19 +2,34 @@
 #
 #     cargo nextest run --all-features
 #
-# CI runs with `--profile ci`. `cargo test` still runs every test too.
+# CI runs with `--profile ci`, which takes everything here and adds its own
+# settings below. `cargo test` still runs every test too.
 
 [profile.default]
 # A test still running after a minute is reported as slow, every minute.
 slow-timeout = { period = "60s" }
 
+# A whole Gaggle in one test process, a manager and its workers with their
+# users, and in the library with test timeouts of a few seconds (a worker
+# that has not prepared within 3 seconds fails the run): it takes the slots
+# of two tests, so fewer run beside it on a busy machine.
+[[profile.default.overrides]]
+filter = 'binary_id(goose) & test(/^gaggle::(run_tests|ported_tests|manager|link|run|tests)::/)'
+threads-required = 2
+
+# The Gaggle process tests start a manager and two workers of the `simple`
+# example, each a process of its own: the slots of four tests.
+[[profile.default.overrides]]
+filter = 'binary_id(goose::gaggle)'
+threads-required = 4
+
 [profile.ci]
 fail-fast = false
 failure-output = "immediate-final"
-slow-timeout = { period = "60s" }
 # Most tests wait on a mock server, a run time or a timer, not on the CPU, so
-# CI's runners, with 4 CPUs, run more tests at once than they have CPUs.
-test-threads = 12
+# CI's runners, with 4 CPUs, run twice as many tests at once as they have
+# CPUs. More, 12, made a Gaggle in one process miss its 3 second deadline.
+test-threads = 8
 
 [profile.ci.junit]
 # target/nextest/ci/junit.xml: every test's time, for finding slow ones.
