@@ -9,6 +9,18 @@
 # A test still running after a minute is reported as slow, every minute.
 slow-timeout = { period = "60s" }
 
+# Tests that count the connections a user opens: a connection back in the
+# pool only once its task has run, so on a busy machine a request can start
+# before it is back and open another. They take the slots of four tests, as
+# the wall clock tests below; listed first, as the first override that
+# matches a test sets its slots.
+[[profile.default.overrides]]
+filter = """
+(binary_id(goose) & test(/^gaggle::ported_tests::worker_reads_dropped_bodies$/))
+| (binary_id(goose::it) & test(/^(discard_body|keep_alive_retry)::/))
+"""
+threads-required = 4
+
 # A whole Gaggle in one test process, a manager and its workers with their
 # users, and in the library with test timeouts of a few seconds (a worker
 # that has not prepared within 3 seconds fails the run): it takes the slots
