@@ -59,7 +59,7 @@ async fn website_signup(user: &mut GooseUser) -> TransactionResult {
     let response = match user.post_form("/signup", &params).await?.response {
         Ok(r) => match r.json::<AuthenticationResponse>().await {
             Ok(j) => j,
-            Err(e) => return Err(Box::new(e.into())),
+            Err(e) => return Err(Box::new(e)),
         },
         Err(e) => return Err(Box::new(e.into())),
     };

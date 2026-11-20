@@ -2,6 +2,7 @@ use goose::goose::GooseResponse;
 use goose::prelude::*;
 
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// The Umami website defines three content types.
 pub enum ContentType {
@@ -404,8 +405,10 @@ impl AssetKind {
 /// Decodes the HTML entities Drupal writes in attribute values, such as the `&amp;`
 /// between the query parameters of an aggregated CSS or JS URL.
 pub fn decode_entities(value: &str) -> String {
-    let entity = Regex::new(r"&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);").unwrap();
-    entity
+    // Compiled once, on first use, and shared by every user.
+    static ENTITY: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);").unwrap());
+    ENTITY
         .replace_all(value, |caps: &regex::Captures| {
             let name = &caps[1];
             let decoded = match name {
@@ -435,13 +438,16 @@ pub fn decode_entities(value: &str) -> String {
 /// path is taken, so both work.
 pub fn static_asset_urls(html: &str) -> Vec<(AssetKind, String)> {
     // @TODO: parse HTML5 srcset= also
-    let tag = Regex::new(r"(?is)<(link|script|img)\b([^>]*)>").unwrap();
-    let attribute = Regex::new(r#"(?is)\s([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap();
+    // Compiled once, on first use, and shared by every user.
+    static TAG: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<(link|script|img)\b([^>]*)>").unwrap());
+    static ATTRIBUTE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"(?is)\s([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap());
     let mut assets: Vec<(AssetKind, String)> = Vec::new();
-    for found in tag.captures_iter(html) {
+    for found in TAG.captures_iter(html) {
         let mut rel = None;
         let mut url = None;
-        for attr in attribute.captures_iter(&found[2]) {
+        for attr in ATTRIBUTE.captures_iter(&found[2]) {
             let value = attr.get(2).or_else(|| attr.get(3)).unwrap().as_str();
             match attr[1].to_ascii_lowercase().as_str() {
                 "rel" => rel = Some(value.to_ascii_lowercase()),
@@ -528,19 +534,38 @@ pub async fn validate_and_load_static_assets(
 }
 
 /// Use regular expression to get the value of a named form element.
+///
+/// The two names this example asks for each have a regex compiled once, on first use,
+/// and shared by every user; any other name is compiled on each call.
 pub fn get_form_value(html: &str, name: &str) -> Option<String> {
-    let re = Regex::new(&format!(r#"name="{name}" value=['"](.*?)['"]"#)).unwrap();
+    static FORM_BUILD_ID: LazyLock<Regex> = LazyLock::new(|| form_value_regex("form_build_id"));
+    static FORM_TOKEN: LazyLock<Regex> = LazyLock::new(|| form_value_regex("form_token"));
+    let other;
+    let re = match name {
+        "form_build_id" => &*FORM_BUILD_ID,
+        "form_token" => &*FORM_TOKEN,
+        _ => {
+            other = form_value_regex(name);
+            &other
+        }
+    };
     re.captures(html).map(|value| value[1].to_string())
+}
+
+/// The regex that captures the value of the form element with this name.
+fn form_value_regex(name: &str) -> Regex {
+    Regex::new(&format!(r#"name="{name}" value=['"](.*?)['"]"#)).unwrap()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The English front page of a stock Drupal 11.4 Umami site, saved with CSS and JS
-    // aggregation on and then off.
+    // The front pages come from a stock Drupal 11.4 Umami site; edit-form.html is the
+    // three hidden inputs of an article edit form, with placeholder values.
     const AGGREGATED: &str = include_str!("fixtures/front-aggregated.html");
     const UNAGGREGATED: &str = include_str!("fixtures/front-unaggregated.html");
+    const EDIT_FORM: &str = include_str!("fixtures/edit-form.html");
 
     fn urls(assets: &[(AssetKind, String)], kind: AssetKind) -> Vec<&str> {
         assets
@@ -561,8 +586,19 @@ mod tests {
             decode_entities("/a.css?delta=0&amp;language=en&#38;theme=umami&#x26;x=&lt;&gt;"),
             "/a.css?delta=0&language=en&theme=umami&x=<>"
         );
-        // An unknown entity is left as it is.
+        // Decimal, and hex with either case of x and of its digits.
+        assert_eq!(decode_entities("&#65;&#x4a;&#X4A;&#x4A;"), "AJJJ");
+        assert_eq!(decode_entities("&quot;&apos;"), "\"'");
+        // An unknown entity is left as it is, and names are case sensitive.
         assert_eq!(decode_entities("a&bogus;b"), "a&bogus;b");
+        assert_eq!(decode_entities("&AMP;"), "&AMP;");
+        // A surrogate or out of range code point is not a character: left as it is.
+        assert_eq!(decode_entities("&#xD800;"), "&#xD800;");
+        assert_eq!(decode_entities("&#99999999;"), "&#99999999;");
+        // Not an entity: no digits, or no closing semicolon.
+        assert_eq!(decode_entities("&#;"), "&#;");
+        assert_eq!(decode_entities("a&amp b"), "a&amp b");
+        assert_eq!(decode_entities(""), "");
     }
 
     #[test]
@@ -614,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn images_are_found_on_both_pages() {
+    fn images_are_found_on_each_page() {
         for html in [AGGREGATED, UNAGGREGATED] {
             let assets = static_asset_urls(html);
             let images = urls(&assets, AssetKind::Image);
@@ -623,5 +659,37 @@ mod tests {
                 .iter()
                 .any(|url| url.starts_with("/sites/default/files/styles/")));
         }
+    }
+
+    #[test]
+    fn form_values_are_read() {
+        // The values the admin user posts back from an edit form.
+        assert_eq!(
+            get_form_value(EDIT_FORM, "form_build_id").as_deref(),
+            Some("form-fixture-build-id-0123456789")
+        );
+        assert_eq!(
+            get_form_value(EDIT_FORM, "form_token").as_deref(),
+            Some("fixture-form-token-0123456789")
+        );
+        // A name with no compiled regex of its own.
+        assert_eq!(
+            get_form_value(EDIT_FORM, "form_id").as_deref(),
+            Some("node_article_edit_form")
+        );
+        // A form with a build id but no token.
+        assert_eq!(
+            get_form_value(
+                r#"<input name="form_build_id" value="b-1"/><input name="form_id" value="f-1"/>"#,
+                "form_token"
+            ),
+            None
+        );
+        // A single quoted value, and a name missing from the page.
+        assert_eq!(
+            get_form_value(r#"<input name="form_token" value='tok-1'>"#, "form_token").as_deref(),
+            Some("tok-1")
+        );
+        assert_eq!(get_form_value(EDIT_FORM, "missing"), None);
     }
 }

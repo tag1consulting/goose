@@ -317,6 +317,8 @@ use crate::metrics::{
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
+mod gzip;
+
 /// Atomically decrement `counter` by one, saturating at zero.
 ///
 /// An explicit `compare_exchange_weak` loop with `Relaxed` ordering, equivalent to
@@ -897,12 +899,12 @@ impl GooseResponse {
     /// this method is called, so reading the body does not change the request's
     /// recorded time. The time spent reading it counts toward the times of the
     /// transaction and scenario that read it, which cover the whole transaction
-    /// function. When the client decompresses gzip, as Goose's default client does, a
-    /// gzip compressed body is decompressed as it is read.
+    /// function. The body is read as it came over the wire: a gzip body is never
+    /// decompressed.
     ///
-    /// Returns the number of body bytes read (after decompression), or the error that
-    /// ended the read. If Goose got no response, as when the connection failed or timed
-    /// out, there is no body to read and that error is returned.
+    /// Returns the number of body bytes read over the wire, so the compressed size of a
+    /// gzip body, or the error that ended the read. If Goose got no response, as when the
+    /// connection failed or timed out, there is no body to read and that error is returned.
     ///
     /// # Example
     /// ```rust
@@ -920,7 +922,7 @@ impl GooseResponse {
     pub async fn discard_body(self) -> Result<u64, reqwest::Error> {
         let mut response = self.response?;
         let mut read = 0;
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = response.wire_chunk().await? {
             read += chunk.len() as u64;
         }
         Ok(read)
@@ -951,7 +953,7 @@ struct UnreadSlot {
 pub(crate) struct UnreadBodyTotals {
     /// Bodies read to the end, or until an error ended the read.
     pub(crate) bodies: AtomicU64,
-    /// Body bytes read (after decompression).
+    /// Body bytes read over the wire: a gzip body is never decompressed.
     pub(crate) bytes: AtomicU64,
     /// Reads an error ended.
     pub(crate) errors: AtomicU64,
@@ -980,6 +982,12 @@ pub(crate) struct UnreadBodyTotals {
 /// [`GooseDefault::DropUnreadBodies`](../config/enum.GooseDefault.html#variant.DropUnreadBodies))
 /// turns the reading off for a whole run.
 ///
+/// # Gzip
+///
+/// Unless `--no-gzip` is given, Goose asks for gzip, and `bytes`, `text`, `json` and
+/// `chunk` decompress a gzip body. A body thrown away, by [`GooseResponse::discard_body`]
+/// or dropped unread, is never decompressed. Headers describe the body on the wire.
+///
 /// # Example
 /// ```rust
 /// use goose::prelude::*;
@@ -1006,18 +1014,37 @@ pub struct GooseHttpResponse {
     unread: Option<UnreadSlot>,
     /// The body was read to its end, or an error ended it: nothing is left to read.
     body_done: bool,
+    /// The body is gzip and the test's reads decompress it.
+    gzip: bool,
+    /// Decompresses a gzip body read with `chunk`, made at its first chunk.
+    decoder: Option<Box<gzip::ChunkDecoder>>,
 }
 
 impl GooseHttpResponse {
     /// A response whose unread body is handed to `bodies` under `name`.
-    pub(crate) fn tracked(response: Response, bodies: &UnreadBodies, name: &Arc<str>) -> Self {
+    pub(crate) fn tracked(
+        response: Response,
+        bodies: &UnreadBodies,
+        name: &Arc<str>,
+        gzip: bool,
+    ) -> Self {
+        let mut response = GooseHttpResponse::untracked(response, gzip);
+        response.unread = Some(UnreadSlot {
+            bodies: bodies.clone(),
+            name: name.clone(),
+        });
+        response
+    }
+
+    /// A response whose body is dropped if it is dropped unread. With `gzip`, the
+    /// test's reads decompress a gzip body.
+    pub(crate) fn untracked(response: Response, gzip: bool) -> Self {
         GooseHttpResponse {
+            gzip: gzip && gzip::is_gzip(&response),
             response: Some(response),
-            unread: Some(UnreadSlot {
-                bodies: bodies.clone(),
-                name: name.clone(),
-            }),
+            unread: None,
             body_done: false,
+            decoder: None,
         }
     }
 
@@ -1036,33 +1063,60 @@ impl GooseHttpResponse {
     /// costs the user its connection.
     /// Use it for a response that never ends, such as a stream of server sent events,
     /// which Goose would otherwise read until the client's timeout.
+    ///
+    /// The response is as it came over the wire: a gzip body is still compressed, as
+    /// its `Content-Encoding` header says.
     pub fn into_inner(self) -> Response {
         self.take()
     }
 
     /// Reads the full body as bytes, as
-    /// [`reqwest::Response::bytes`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.bytes).
-    pub async fn bytes(self) -> reqwest::Result<bytes::Bytes> {
-        self.take().bytes().await
+    /// [`reqwest::Response::bytes`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.bytes),
+    /// decompressing a gzip body; after `chunk`, read the rest with `chunk`.
+    pub async fn bytes(self) -> Result<bytes::Bytes, TransactionError> {
+        if !self.gzip {
+            return Ok(self.take().bytes().await?);
+        }
+        gzip::decode(&self.take().bytes().await?)
     }
 
     /// Reads the full body as text, as
-    /// [`reqwest::Response::text`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.text).
-    pub async fn text(self) -> reqwest::Result<String> {
-        self.take().text().await
+    /// [`reqwest::Response::text`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.text)
+    /// does without reqwest's `charset` feature: UTF-8, with invalid sequences
+    /// replaced. A gzip body is decompressed.
+    pub async fn text(self) -> Result<String, TransactionError> {
+        Ok(String::from_utf8_lossy(&self.bytes().await?).into_owned())
     }
 
     /// Reads the full body as JSON, as
-    /// [`reqwest::Response::json`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.json).
-    pub async fn json<T: serde::de::DeserializeOwned>(self) -> reqwest::Result<T> {
-        self.take().json().await
+    /// [`reqwest::Response::json`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.json),
+    /// decompressing a gzip body.
+    pub async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T, TransactionError> {
+        serde_json::from_slice(&self.bytes().await?).map_err(|error| {
+            TransactionError::Custom(format!("error decoding response body: {error}"))
+        })
     }
 
     /// Reads the next chunk of the body, as
-    /// [`reqwest::Response::chunk`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.chunk).
-    /// A body read this way and then dropped has only its remaining chunks read by
-    /// Goose.
-    pub async fn chunk(&mut self) -> reqwest::Result<Option<bytes::Bytes>> {
+    /// [`reqwest::Response::chunk`](https://docs.rs/reqwest/*/reqwest/struct.Response.html#method.chunk),
+    /// decompressing a gzip body. A body read this way and then dropped has only its
+    /// remaining chunks read by Goose, which does not decompress them.
+    pub async fn chunk(&mut self) -> Result<Option<bytes::Bytes>, TransactionError> {
+        loop {
+            let raw = self.wire_chunk().await?;
+            if !self.gzip {
+                return Ok(raw);
+            }
+            let decoded = gzip::decode_chunk(&mut self.decoder, raw.as_deref())?;
+            // Some chunks, such as one holding only a gzip header, decode to nothing.
+            if decoded.is_some() || raw.is_none() {
+                return Ok(decoded);
+            }
+        }
+    }
+
+    /// Reads the next chunk of the body as it came over the wire.
+    async fn wire_chunk(&mut self) -> reqwest::Result<Option<bytes::Bytes>> {
         let chunk = match self.response.as_mut() {
             Some(response) => response.chunk().await,
             None => unreachable!("GooseHttpResponse used after its response was taken"),
@@ -1084,14 +1138,11 @@ impl GooseHttpResponse {
     }
 }
 
-/// A response built outside [`GooseUser::request`]: dropping its body unread drops it.
+/// A response built outside [`GooseUser::request`]: dropping its body unread drops it,
+/// and its body is read as it is, never decompressed.
 impl From<Response> for GooseHttpResponse {
     fn from(response: Response) -> Self {
-        GooseHttpResponse {
-            response: Some(response),
-            unread: None,
-            body_done: false,
-        }
+        GooseHttpResponse::untracked(response, false)
     }
 }
 
@@ -1124,8 +1175,7 @@ impl Drop for GooseHttpResponse {
             return;
         }
         if let (Some(response), Some(slot)) = (self.response.take(), self.unread.take()) {
-            // A body known to be empty, as a HEAD's or a 204's, has nothing to read. A gzip
-            // body's length reads None, so it goes to the user to read as any other.
+            // A body known to be empty, as a HEAD's or a 204's, has nothing to read.
             if response.content_length() == Some(0) {
                 return;
             }
@@ -1280,6 +1330,9 @@ pub struct GooseUser {
     pub(crate) transaction_name: Option<TransactionName>,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Client,
+    /// Goose asks for gzip and decompresses a gzip body the test reads: not with
+    /// `--no-gzip`, or a client set or given by the test.
+    pub(crate) gzip: bool,
     /// The base URL to prepend to all relative paths.
     pub base_url: Url,
     /// A local copy of the global [`GooseConfiguration`](../struct.GooseConfiguration.html).
@@ -1371,6 +1424,7 @@ impl Clone for GooseUser {
             transaction_index: self.transaction_index,
             transaction_name: self.transaction_name.clone(),
             client: self.client.clone(),
+            gzip: self.gzip,
             base_url: self.base_url.clone(),
             config: self.config.clone(),
             logger: self.logger.clone(),
@@ -1427,6 +1481,30 @@ impl GooseUser {
         load_test_hash: u64,
         reqwest_client: Option<Client>,
     ) -> Result<Self, GooseError> {
+        // A client given here handles gzip as it was built to.
+        let gzip = reqwest_client.is_none() && !configuration.no_gzip;
+        Self::with_gzip(
+            scenarios_index,
+            scenario_name,
+            base_url,
+            configuration,
+            load_test_hash,
+            reqwest_client,
+            gzip,
+        )
+    }
+
+    /// [`Self::new`], with `gzip` deciding whether the user asks for gzip and
+    /// decompresses a gzip body the test reads: see [`GooseUser::gzip`].
+    pub(crate) fn with_gzip(
+        scenarios_index: usize,
+        scenario_name: Arc<str>,
+        base_url: Url,
+        configuration: &GooseConfiguration,
+        load_test_hash: u64,
+        reqwest_client: Option<Client>,
+        gzip: bool,
+    ) -> Result<Self, GooseError> {
         trace!("new GooseUser");
 
         let client = match reqwest_client {
@@ -1449,6 +1527,7 @@ impl GooseUser {
             transaction_index: None,
             transaction_name: None,
             client,
+            gzip,
             base_url,
             config: configuration.clone(),
             logger: None,
@@ -1484,18 +1563,28 @@ impl GooseUser {
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        Self::single_with_client(base_url, configuration, None)
+        Self::single_with_client(base_url, configuration, None, !configuration.no_gzip)
     }
 
     /// [`Self::single`], with `reqwest_client` as its client when given, as a
-    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives.
+    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives,
+    /// and asking for gzip when `gzip`: a client from the client builder leaves
+    /// gzip to Goose too.
     pub(crate) fn single_with_client(
         base_url: Url,
         configuration: &GooseConfiguration,
         reqwest_client: Option<Client>,
+        gzip: bool,
     ) -> Result<Self, GooseError> {
-        let mut single_user =
-            GooseUser::new(0, Arc::from(""), base_url, configuration, 0, reqwest_client)?;
+        let mut single_user = GooseUser::with_gzip(
+            0,
+            Arc::from(""),
+            base_url,
+            configuration,
+            0,
+            reqwest_client,
+            gzip,
+        )?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -1686,16 +1775,29 @@ impl GooseUser {
     ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default host
     ///     defined for the current load test)
     pub fn build_url(&self, path: &str) -> Result<String, Box<TransactionError>> {
+        // Counted in tests, which check that a request never builds its URL as a string.
+        #[cfg(test)]
+        tests::BUILD_URL_CALLS.with(|n| n.set(n.get() + 1));
         // If URL includes a host, simply use it.
-        if let Ok(parsed_path) = Url::parse(path) {
-            if let Some(_host) = parsed_path.host() {
-                return Ok(path.to_string());
-            }
+        if let Some(_absolute) = absolute_url(path) {
+            return Ok(path.to_string());
         }
 
         // Otherwise use the `base_url`.
         match self.base_url.join(path) {
-            Ok(u) => Ok(u.to_string()),
+            Ok(u) => Ok(u.into()),
+            Err(e) => Err(Box::new(e.into())),
+        }
+    }
+
+    /// The URL a request for `path` goes to, as [`GooseUser::build_url`] builds it, but
+    /// as the parsed [`Url`] reqwest takes, so reqwest does not parse it again.
+    fn request_url(&self, path: &str) -> Result<Url, Box<TransactionError>> {
+        if let Some(absolute) = absolute_url(path) {
+            return Ok(absolute);
+        }
+        match self.base_url.join(path) {
+            Ok(u) => Ok(u),
             Err(e) => Err(Box::new(e.into())),
         }
     }
@@ -1811,7 +1913,7 @@ impl GooseUser {
         body: T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST request.
@@ -1858,7 +1960,7 @@ impl GooseUser {
         form: &T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST form request.
@@ -1908,7 +2010,7 @@ impl GooseUser {
         json: &T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST json request.
@@ -1954,7 +2056,7 @@ impl GooseUser {
         query: &T,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST GraphQL request.
@@ -2001,7 +2103,7 @@ impl GooseUser {
         name: &str,
     ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
-        let url = self.build_url(path)?;
+        let url = self.request_url(path)?;
         let reqwest_request_builder = self.client.post(url);
 
         // POST GraphQL request with custom name.
@@ -2170,18 +2272,18 @@ impl GooseUser {
         method: &GooseMethod,
         path: &str,
     ) -> Result<RequestBuilder, Box<TransactionError>> {
-        // Prepend the `base_url` to all relative paths.
-        let url = self.build_url(path)?;
+        // Prepend the `base_url` to all relative paths, and hand reqwest the parsed URL.
+        let url = self.request_url(path)?;
 
         // Invoke appropriate Reqwest convenience function to generate an
         // appropriate RequestBuilder.
         Ok(match method {
-            GooseMethod::Delete => self.client.delete(&url),
-            GooseMethod::Get => self.client.get(&url),
-            GooseMethod::Head => self.client.head(&url),
-            GooseMethod::Patch => self.client.patch(&url),
-            GooseMethod::Post => self.client.post(&url),
-            GooseMethod::Put => self.client.put(&url),
+            GooseMethod::Delete => self.client.delete(url),
+            GooseMethod::Get => self.client.get(url),
+            GooseMethod::Head => self.client.head(url),
+            GooseMethod::Patch => self.client.patch(url),
+            GooseMethod::Post => self.client.post(url),
+            GooseMethod::Put => self.client.put(url),
             GooseMethod::Custom => {
                 return Err(Box::new(TransactionError::Custom(
                     "GooseMethod::Custom cannot be used with HTTP request builders; \
@@ -2265,7 +2367,7 @@ impl GooseUser {
         let started = Instant::now();
 
         // Create a Reqwest Request object from the RequestBuilder.
-        let built_request = match request_builder.build() {
+        let mut built_request = match request_builder.build() {
             Ok(r) => r,
             Err(e) => return Err(Box::new(e.into())),
         };
@@ -2328,6 +2430,13 @@ impl GooseUser {
             self.weighted_users_index,
         );
 
+        // Ask for gzip unless the test set its own Accept-Encoding; after the headers
+        // are copied for the logs, which never showed the header reqwest added.
+        if self.gzip {
+            let headers = built_request.headers_mut().entry(header::ACCEPT_ENCODING);
+            headers.or_insert(header::HeaderValue::from_static("gzip"));
+        }
+
         // Keep a copy of an idempotent request, to send it once more if the server
         // closes the connection before responding. None if the body can't be cloned.
         let resend_request = if is_idempotent(built_request.method()) {
@@ -2370,9 +2479,14 @@ impl GooseUser {
         // goes to this user to read, unless --drop-unread-bodies is set.
         let response = response.map(|response| {
             if self.config.drop_unread_bodies {
-                GooseHttpResponse::from(response)
+                GooseHttpResponse::untracked(response, self.gzip)
             } else {
-                GooseHttpResponse::tracked(response, &self.unread_bodies, &request_metric.name)
+                GooseHttpResponse::tracked(
+                    response,
+                    &self.unread_bodies,
+                    &request_metric.name,
+                    self.gzip,
+                )
             }
         });
 
@@ -3749,8 +3863,10 @@ impl GooseUser {
     ///    requesting web pages (ie `goose/0.15.2`);
     ///  - [stores cookies](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store),
     ///    generally necessary if you aim to simulate logged in users;
-    ///  - enables
-    ///    [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) compression;
+    ///  - turns reqwest's own
+    ///    [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip)
+    ///    decoding off: unless `--no-gzip` is given, Goose asks for gzip and decompresses a
+    ///    body only when the test reads it (see [`GooseHttpResponse`]);
     ///  - sets a 60 second [`timeout`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.timeout) all
     ///    on all requests.
     ///
@@ -3764,7 +3880,7 @@ impl GooseUser {
     ///
     /// let mut builder = Client::builder()
     ///   .user_agent(APP_USER_AGENT)
-    ///   .gzip(true)
+    ///   .gzip(false)
     ///   .timeout(Duration::from_secs(60));
     ///
     /// #[cfg(feature = "cookies")]
@@ -3797,6 +3913,8 @@ impl GooseUser {
     ///    defaults. For example, if you want Goose clients to store cookies, you will have to
     ///    include
     ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store);
+    ///  - A client set here handles gzip as its builder says: Goose neither asks for gzip
+    ///    nor decompresses bodies for it;
     ///  - Default headers and the user agent set on the builder are sent with every request but
     ///    are not recorded in Goose's request, debug or error logs, see the
     ///    [request log](https://www.goose.rs/logging/requests.html) page of the Goose Book.
@@ -3911,6 +4029,7 @@ impl GooseUser {
         builder: ClientBuilder,
     ) -> Result<(), TransactionError> {
         self.client = builder.build()?;
+        self.gzip = false;
 
         Ok(())
     }
@@ -4388,6 +4507,24 @@ fn request_log_path(url: &str) -> String {
     }
 }
 
+/// `path` parsed as a URL, if it is an absolute URL with a host, which a request
+/// uses as given rather than joining it onto the user's base URL.
+///
+/// Only a string with a `:` can start with a scheme, so a relative path, which most
+/// requests use, skips the parse: it would fail every time.
+fn absolute_url(path: &str) -> Option<Url> {
+    if !path.contains(':') {
+        return None;
+    }
+    // Counted in tests, which check that a relative path is never parsed.
+    #[cfg(test)]
+    tests::URL_PARSES.with(|n| n.set(n.get() + 1));
+    match Url::parse(path) {
+        Ok(url) if url.host().is_some() => Some(url),
+        _ => None,
+    }
+}
+
 /// A helper to determine which host should be prepended to relative load test
 /// paths in this Scenario.
 ///
@@ -4833,6 +4970,237 @@ mod tests {
     };
 
     const EMPTY_ARGS: Vec<&str> = vec![];
+
+    thread_local! {
+        /// How many times `absolute_url` parsed a path on this thread.
+        pub(super) static URL_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// How many times `GooseUser::build_url` ran on this thread.
+        pub(super) static BUILD_URL_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// `GooseUser::build_url` as it was before relative paths skipped the parse, kept
+    /// here to prove the URLs Goose builds have not changed.
+    fn build_url_before(base_url: &Url, path: &str) -> Result<String, url::ParseError> {
+        if let Ok(parsed_path) = Url::parse(path) {
+            if let Some(_host) = parsed_path.host() {
+                return Ok(path.to_string());
+            }
+        }
+        base_url.join(path).map(|u| u.to_string())
+    }
+
+    /// The paths the URL tests build: relative, absolute, with `..` and `.`, with a
+    /// query and a fragment, with a `:` that is not a scheme, and ones that fail.
+    const URL_TEST_PATHS: &[&str] = &[
+        "",
+        "/",
+        "/foo",
+        "foo",
+        "foo/bar/",
+        "../foo",
+        "/a/b/../c",
+        "a/./b/../../c",
+        "/../../escape",
+        "/search?q=goose&page=2",
+        "/page#section",
+        "/page?q=1#section",
+        "?only=query",
+        "#only-fragment",
+        "/a b/ç?x=y z",
+        "/node/1:2",
+        "foo:bar",
+        "mailto:goose@example.com",
+        "https://other.example.com/path?q=1#frag",
+        "HTTP://Upper.Example.COM/A/../B",
+        "http:/one-slash.example.com/x",
+        "//protocol-relative.example.com/x",
+        "http://",
+        "http://[::1",
+    ];
+
+    #[test]
+    fn request_urls_are_built_as_before() {
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        // The default host, a host with a path, and a scenario host overriding the default.
+        let base_urls = [
+            get_base_url(Some("http://example.com/".to_string()), None, None).unwrap(),
+            get_base_url(
+                Some("http://example.com/with/path/".to_string()),
+                None,
+                None,
+            )
+            .unwrap(),
+            get_base_url(
+                None,
+                Some("http://scenario.example.com/s/".to_string()),
+                Some("http://default.example.com/".to_string()),
+            )
+            .unwrap(),
+        ];
+        assert_eq!(base_urls[2].as_str(), "http://scenario.example.com/s/");
+        for base_url in base_urls {
+            let user = GooseUser::new(0, Arc::from(""), base_url.clone(), &configuration, 0, None)
+                .unwrap();
+            for path in URL_TEST_PATHS {
+                let before = build_url_before(&base_url, path);
+                // build_url returns the same string, or fails the same way.
+                assert_eq!(
+                    user.build_url(path).map_err(|e| e.to_string()),
+                    before
+                        .clone()
+                        .map_err(|e| TransactionError::from(e).to_string()),
+                    "build_url({path:?}) on {base_url}"
+                );
+                // The request goes to the URL reqwest parsed from that string before.
+                assert_eq!(
+                    user.request_url(path)
+                        .map(String::from)
+                        .map_err(|e| e.to_string()),
+                    before
+                        .and_then(|s| Url::parse(&s))
+                        .map(String::from)
+                        .map_err(|e| TransactionError::from(e).to_string()),
+                    "request_url({path:?}) on {base_url}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relative_path_is_never_parsed_on_its_own() {
+        let server = MockServer::start();
+        let page = server.mock(|when, then| {
+            when.method(GET).path("/page");
+            then.status(200);
+        });
+        let mut user = setup_user(&server).unwrap();
+
+        URL_PARSES.with(|n| n.set(0));
+        BUILD_URL_CALLS.with(|n| n.set(0));
+        let goose = user.get("/page").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/page"));
+        page.assert_calls(1);
+        // No parse that would fail: the path has no scheme.
+        assert_eq!(URL_PARSES.with(|n| n.get()), 0);
+        // And no URL built as a string for reqwest to parse again.
+        assert_eq!(BUILD_URL_CALLS.with(|n| n.get()), 0);
+
+        // An absolute URL is parsed once, by Goose, and handed to reqwest as is.
+        let goose = user.get(&server.url("/page")).await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/page"));
+        page.assert_calls(2);
+        assert_eq!(URL_PARSES.with(|n| n.get()), 1);
+        assert_eq!(BUILD_URL_CALLS.with(|n| n.get()), 0);
+
+        // The same holds for a request builder, and for the post helpers.
+        let _ = user
+            .get_request_builder(&GooseMethod::Get, "/page")
+            .unwrap();
+        let _ = user.post("/page", "").await.unwrap();
+        assert_eq!(URL_PARSES.with(|n| n.get()), 1);
+        assert_eq!(BUILD_URL_CALLS.with(|n| n.get()), 0);
+    }
+
+    #[tokio::test]
+    async fn an_absolute_url_is_requested_as_given() {
+        let server = MockServer::start();
+        let other = MockServer::start();
+        let here = server.mock(|when, then| {
+            when.method(GET).path("/elsewhere");
+            then.status(200);
+        });
+        let there = other.mock(|when, then| {
+            when.method(GET).path("/elsewhere");
+            then.status(200);
+        });
+        let mut user = setup_user(&server).unwrap();
+        let url = other.url("/elsewhere");
+        let goose = user.get(&url).await.unwrap();
+        assert_eq!(goose.request.raw.url, url);
+        assert_eq!(goose.request.final_url, url);
+        assert_eq!(goose.request.name.as_ref(), url);
+        there.assert_calls(1);
+        here.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn a_relative_path_is_joined_onto_the_host() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/with/path/foo");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let base_url = get_base_url(Some(server.url("/with/path/")), None, None).unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let goose = user.get("foo").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/with/path/foo"));
+        assert_eq!(goose.request.name.as_ref(), "foo");
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn a_path_with_dot_dot_is_resolved() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/b/d");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let base_url = get_base_url(Some(server.url("/a/")), None, None).unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let goose = user.get("../b/c/../d").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/b/d"));
+        // The request keeps the path it was made with as its name.
+        assert_eq!(goose.request.name.as_ref(), "../b/c/../d");
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn a_query_and_a_fragment_are_kept() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/search")
+                .query_param("q", "goose")
+                .query_param("page", "2");
+            then.status(200);
+        });
+        let mut user = setup_user(&server).unwrap();
+        let goose = user.get("/search?q=goose&page=2#results").await.unwrap();
+        // The fragment stays in the URL Goose records; it is never sent.
+        assert_eq!(
+            goose.request.raw.url,
+            server.url("/search?q=goose&page=2#results")
+        );
+        assert_eq!(
+            goose.request.name.as_ref(),
+            "/search?q=goose&page=2#results"
+        );
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn a_scenario_host_overrides_the_default_host() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/foo");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        // No --host: the scenario's host wins over the load test's default host, which
+        // is not reachable.
+        let base_url = get_base_url(
+            None,
+            Some(server.url("/")),
+            Some("http://default.invalid/".to_string()),
+        )
+        .unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let goose = user.get("/foo").await.unwrap();
+        assert_eq!(goose.request.raw.url, server.url("/foo"));
+        mock.assert_calls(1);
+    }
 
     fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
         let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
