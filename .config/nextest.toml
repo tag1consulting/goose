@@ -23,6 +23,18 @@ threads-required = 2
 filter = 'binary_id(goose::gaggle)'
 threads-required = 4
 
+# The longest tests, 15 to 55 seconds each, start first, so none is left
+# running alone at the end of a run.
+[[profile.default.overrides]]
+filter = """
+binary_id(goose::gaggle)
+| (binary_id(goose::it) & test(/^(control_agreement|throttle_live|thresholds|pdf_reports|controller)::/))
+| (binary_id(goose) & test(/^gaggle::(run_tests|tests)::/))
+| test(/^dashboard::test_control_users_during_ramp_down$/)
+| test(/^tests::gaggle_ordinals_match_one_process$/)
+"""
+priority = 10
+
 [profile.ci]
 fail-fast = false
 failure-output = "immediate-final"
