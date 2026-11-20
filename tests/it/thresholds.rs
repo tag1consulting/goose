@@ -1,5 +1,9 @@
 //! Validate `--threshold`: rules that pass, rules that stop the run, and the
 //! Thresholds section of every report.
+//!
+//! A rule that fails triggers the killswitch, global to the process, which
+//! stops every load test running in it, and each run's start clears it, so
+//! each test runs in a process of its own: see `own_process`.
 use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 use std::path::PathBuf;
@@ -132,6 +136,9 @@ fn report_path(name: &str) -> PathBuf {
 #[serial(thresholds)]
 /// A passing rule returns Ok, with its result on the metrics.
 async fn passing_rules_return_ok() {
+    if !crate::own_process(module_path!(), "passing_rules_return_ok") {
+        return;
+    }
     let server = MockServer::start();
     let mocks = setup_mock_server_endpoints(&server);
 
@@ -175,6 +182,9 @@ async fn passing_rules_return_ok() {
 /// A failing error-rate stops the run well before its run time, and the error
 /// holds the metrics.
 async fn failing_rule_aborts_the_run() {
+    if !crate::own_process(module_path!(), "failing_rule_aborts_the_run") {
+        return;
+    }
     let server = MockServer::start();
     let mocks = setup_mock_server_endpoints(&server);
 
@@ -214,6 +224,9 @@ async fn failing_rule_aborts_the_run() {
 #[serial(thresholds)]
 /// Under --no-threshold-abort a failing rule runs its full time, then fails the run.
 async fn no_threshold_abort_runs_the_full_time() {
+    if !crate::own_process(module_path!(), "no_threshold_abort_runs_the_full_time") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -246,6 +259,9 @@ async fn no_threshold_abort_runs_the_full_time() {
 /// --threshold-abort-delay holds the first check back, then the rule still stops
 /// the run well before its run time.
 async fn abort_delay_holds_back_the_first_check() {
+    if !crate::own_process(module_path!(), "abort_delay_holds_back_the_first_check") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -281,6 +297,9 @@ async fn abort_delay_holds_back_the_first_check() {
 /// A users ramp that resets its metrics is not judged while users start: every
 /// user starts before the failing rule stops the run.
 async fn nothing_aborts_during_the_increase() {
+    if !crate::own_process(module_path!(), "nothing_aborts_during_the_increase") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -312,6 +331,9 @@ async fn nothing_aborts_during_the_increase() {
 /// A rule for one request judges only that request: it fails while a rule for
 /// every request passes.
 async fn rule_for_one_request() {
+    if !crate::own_process(module_path!(), "rule_for_one_request") {
+        return;
+    }
     let server = MockServer::start();
     let mocks = setup_mock_server_endpoints(&server);
 
@@ -356,6 +378,9 @@ async fn rule_for_one_request() {
 /// A rule for a request that never runs is skipped while the run goes, so it
 /// stops nothing, and fails at the end with no samples.
 async fn rule_for_a_request_that_never_runs() {
+    if !crate::own_process(module_path!(), "rule_for_a_request_that_never_runs") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -378,6 +403,9 @@ async fn rule_for_a_request_that_never_runs() {
 #[serial(thresholds)]
 /// Without thresholds, no report has a Thresholds section.
 async fn no_thresholds_no_section() {
+    if !crate::own_process(module_path!(), "no_thresholds_no_section") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -454,6 +482,12 @@ fn sections(html: &str, markdown: &str) -> (Vec<String>, Vec<String>) {
 /// Every report of a run with thresholds has the section, and a JSON report
 /// rendered with --render-report shows the same results.
 async fn reports_show_thresholds_and_render_them_again() {
+    if !crate::own_process(
+        module_path!(),
+        "reports_show_thresholds_and_render_them_again",
+    ) {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -549,6 +583,9 @@ async fn reports_show_thresholds_and_render_them_again() {
 /// still waits for the run to enter Maintain: every user starts before the failing
 /// rule stops the run, well before its run time.
 async fn checks_wait_for_maintain_without_a_reset() {
+    if !crate::own_process(module_path!(), "checks_wait_for_maintain_without_a_reset") {
+        return;
+    }
     for mode in [
         vec!["--no-reset-metrics", "--run-time", LONG_RUN_TIME],
         vec!["--iterations", "1000000"],
@@ -591,6 +628,9 @@ async fn checks_wait_for_maintain_without_a_reset() {
 /// whose ramp up drags the whole run's average under it passes, without stopping
 /// the run.
 async fn rps_counts_from_maintain() {
+    if !crate::own_process(module_path!(), "rps_counts_from_maintain") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -636,6 +676,12 @@ fn requests_made(metrics: &GooseMetrics) -> usize {
 /// abort on: its row matches the same run's with abort on, and sits well above
 /// the whole run's rate, which a ramp up kept without a metrics reset drags down.
 async fn no_threshold_abort_rps_counts_only_the_hold() {
+    if !crate::own_process(
+        module_path!(),
+        "no_threshold_abort_rps_counts_only_the_hold",
+    ) {
+        return;
+    }
     let mut rates = Vec::new();
     for mode in [&[][..], &["--no-threshold-abort"][..]] {
         let server = MockServer::start();
@@ -695,6 +741,9 @@ async fn no_threshold_abort_rps_counts_only_the_hold() {
 /// between two of them: its rate is the requests finished in the holds over the
 /// seconds held, and not that rate with the Increase step's requests counted.
 async fn rps_skips_an_increase_between_holds() {
+    if !crate::own_process(module_path!(), "rps_skips_an_increase_between_holds") {
+        return;
+    }
     use goose::test_plan::TestPlanStepAction;
 
     let server = MockServer::start();
@@ -760,6 +809,9 @@ async fn rps_skips_an_increase_between_holds() {
 /// counts: the rule fails at the end as `no samples`, while the other rules are
 /// judged over the whole run.
 async fn rps_without_a_hold_has_no_samples() {
+    if !crate::own_process(module_path!(), "rps_without_a_hold_has_no_samples") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 
@@ -793,6 +845,12 @@ async fn rps_without_a_hold_has_no_samples() {
 /// does: it keeps its metrics, writes its report and judges every rule, so a
 /// passing rule returns Ok and a failing one returns ThresholdsFailed.
 async fn a_plan_ending_on_a_0_user_hold_judges_its_rules() {
+    if !crate::own_process(
+        module_path!(),
+        "a_plan_ending_on_a_0_user_hold_judges_its_rules",
+    ) {
+        return;
+    }
     // Hold 2 users, ramp down to 0, then hold 0 users to the end.
     const PLAN: &str = "2,1s;2,2s;0,1s;0,2s";
 
@@ -848,6 +906,9 @@ async fn a_plan_ending_on_a_0_user_hold_judges_its_rules() {
 /// The rule that stopped the run says so in the console's Thresholds table and in
 /// every report, and a JSON report rendered again says the same.
 async fn reports_show_the_rule_that_stopped_the_run() {
+    if !crate::own_process(module_path!(), "reports_show_the_rule_that_stopped_the_run") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
 

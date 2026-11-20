@@ -3038,6 +3038,14 @@ async fn wait_after_counted_run(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial(dashboard)]
 async fn test_test_stop_runs_once_when_exiting_from_idle() {
+    // It triggers the killswitch, global to the process, which stops every
+    // load test running in it: see `own_process`.
+    if !crate::own_process(
+        module_path!(),
+        "test_test_stop_runs_once_when_exiting_from_idle",
+    ) {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
 

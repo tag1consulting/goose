@@ -189,6 +189,11 @@ async fn cancel_the_run(user: &mut GooseUser) -> TransactionResult {
 #[tokio::test]
 #[serial(output_files)]
 async fn a_canceled_run_records_why() {
+    // It triggers the killswitch, global to the process, which stops every
+    // load test running in it: see `own_process`.
+    if !crate::own_process(module_path!(), "a_canceled_run_records_why") {
+        return;
+    }
     let server = MockServer::start();
     let _mock = setup_mock_server_endpoints(&server);
     let dir = temp_dir("canceled");

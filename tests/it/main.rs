@@ -11,7 +11,8 @@
 //!
 //! `cargo test` still runs them, all in this one process. A test that sets
 //! something global to the process, such as the logger, the working
-//! directory or an environment variable, or signals the process, starts with
+//! directory, an environment variable or Goose's killswitch (which a failed
+//! threshold triggers too), or signals the process, starts with
 //! [`own_process`], which runs it in a process of its own under `cargo
 //! test` too. A test that shares something with the other tests in its
 //! module only, such as a static, is `#[serial(module)]`, keyed by its

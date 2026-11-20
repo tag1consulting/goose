@@ -426,6 +426,11 @@ async fn a_gz_report_is_read_wherever_a_json_report_is() {
 #[tokio::test]
 #[serial(compression)]
 async fn a_run_stopped_early_leaves_whole_gz_logs() {
+    // It triggers the killswitch, global to the process, which stops every
+    // load test running in it: see `own_process`.
+    if !crate::own_process(module_path!(), "a_run_stopped_early_leaves_whole_gz_logs") {
+        return;
+    }
     let server = MockServer::start();
     let _mocks = setup_mock_server_endpoints(&server);
     let dir = temp_dir("early");
