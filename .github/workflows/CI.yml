@@ -257,11 +257,11 @@ jobs:
       if: ${{ matrix.features == 'all-features' }}
       run: cargo test --verbose --all-features --test pdf_chrome -- --include-ignored
 
-    - name: 🔎 timezone-sensitive tests in non UTC (GMT-5)
+    - name: 🔎 timezone-sensitive tests in non UTC (Asia/Kolkata, UTC+05:30)
       if: ${{ matrix.features == 'all-features' }}
       uses: actions-rs/cargo@v1
       env:
-        TZ: std +5
+        TZ: Asia/Kolkata
       with:
         command: test 
         args: --verbose --all-features graph

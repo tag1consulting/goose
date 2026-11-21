@@ -88,6 +88,7 @@ impl<W: Write> Markdown<'_, '_, W> {
 "#
         )?;
 
+        let tz = crate::util::local_zone();
         for step in self.data.raw_metrics.history.windows(2) {
             let (seconds, minutes, hours) = self
                 .data
@@ -96,12 +97,12 @@ impl<W: Write> Markdown<'_, '_, W> {
             let started = step[0]
                 .timestamp
                 // @TODO: error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%y-%m-%d %H:%M:%S");
             let stopped = step[1]
                 .timestamp
                 // @TODO: error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%y-%m-%d %H:%M:%S");
 
             let users = match &step[0].action {

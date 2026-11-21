@@ -607,7 +607,7 @@ impl GraphsStart {
     pub(crate) fn describe(&self) -> String {
         let time = str::parse::<jiff::Timestamp>(&self.time)
             .map(|time| {
-                time.to_zoned_datetime(jiff::tz::TimeZone::system())
+                time.to_zoned_datetime(crate::util::local_zone())
                     .strftime("%Y-%m-%d %H:%M:%S")
                     .to_string()
             })
@@ -985,7 +985,7 @@ impl GooseAttack {
         if !self.configuration.uses_run_folder() {
             return Ok(());
         }
-        let started = jiff::ZonedDateTime::now();
+        let started = jiff::Timestamp::now().to_zoned_datetime(crate::util::local_zone());
         let folder = RunFolder::choose(&self.configuration, &started)
             .map_err(|e| folder_error(&RunFolder::base(&self.configuration, &started), e))
             .and_then(|folder| {
@@ -1358,12 +1358,16 @@ fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Opti
     let text = read_stored_text(json).ok()?;
     let record: RunRecord = serde_json::from_str(&text).ok()?;
     let metrics = serde_json::from_str::<Listed>(&text).ok()?.raw_metrics;
-    let written = jiff::Timestamp::try_from(modified).ok()?.as_second();
-    let sort_key = record
+    // The file's mtime is needed only when `started` is missing or does not
+    // parse, and only then can an mtime out of jiff's range drop the run.
+    let sort_key = match record
         .started
         .as_deref()
         .and_then(|started| str::parse::<jiff::Timestamp>(started).ok())
-        .map_or(written, |started| started.as_second());
+    {
+        Some(started) => started.as_second(),
+        None => jiff::Timestamp::try_from(modified).ok()?.as_second(),
+    };
     Some(ListedReport {
         name: name.to_string(),
         record,
@@ -2207,6 +2211,49 @@ mod tests {
             assert!(names.iter().any(|n| n == name), "{}", name);
         }
         assert!(!names.iter().any(|n| n.contains('/')));
+    }
+
+    /// A report whose `started` parses is listed, and sorted by it, even when
+    /// its file's mtime is out of jiff's range; only a report without a good
+    /// `started` falls back to the mtime, and is left out when that fails.
+    #[test]
+    fn a_good_started_does_not_need_the_mtime() {
+        let parent = temp_dir("listing-mtime");
+        let json = parent.join(REPORT_JSON);
+        // Some 12,000 years after 1970: past jiff's last year, 9999.
+        let modified = std::time::UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs(380_000_000_000))
+            .unwrap();
+        assert!(jiff::Timestamp::try_from(modified).is_err());
+
+        let report = serde_json::json!({
+            "started": "2026-10-22T10:00:00Z",
+            "raw_metrics": {"requests": {}},
+        });
+        std::fs::write(&json, report.to_string()).unwrap();
+        let listed = read_listed(&json, "run", modified).unwrap();
+        assert_eq!(listed.name, "run");
+        assert_eq!(
+            listed.sort_key,
+            "2026-10-22T10:00:00Z"
+                .parse::<jiff::Timestamp>()
+                .unwrap()
+                .as_second()
+        );
+
+        for started in [serde_json::json!(null), serde_json::json!("not a time")] {
+            let report = serde_json::json!({
+                "started": started,
+                "raw_metrics": {"requests": {}},
+            });
+            std::fs::write(&json, report.to_string()).unwrap();
+            assert!(read_listed(&json, "run", modified).is_none());
+            assert_eq!(
+                read_listed(&json, "run", std::time::UNIX_EPOCH).map(|l| l.sort_key),
+                Some(0)
+            );
+        }
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     /// A report whose request counts add up past what a u64 holds lists
