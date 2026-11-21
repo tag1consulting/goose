@@ -19,8 +19,9 @@ use crate::saved_runs;
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
-// Files generated during tests.
-const REPORT_FILE: &str = "test-controller-report.html";
+// The report the telnet test writes, in a folder of the test's own: two
+// runs of the suite at once, in one checkout, must not share it.
+const REPORT_FILE: &str = "report.html";
 
 // Indexes to the above paths.
 const INDEX_KEY: usize = 0;
@@ -596,6 +597,7 @@ fn validate_one_scenario(
     mock_endpoints: &[Mock],
     configuration: &GooseConfiguration,
     protocol: Protocol,
+    report_file: &str,
 ) {
     // Confirm that we loaded the mock endpoints.
     let index_calls = mock_endpoints[INDEX_KEY].calls();
@@ -660,20 +662,13 @@ fn validate_one_scenario(
     if protocol == Protocol::Telnet {
         // The report file must exist.
         assert!(
-            std::path::Path::new(REPORT_FILE).exists(),
+            std::path::Path::new(report_file).exists(),
             "no report file {}",
-            REPORT_FILE
+            report_file
         );
         // The report file must not be empty.
-        let length = common::file_length(REPORT_FILE);
-        assert!(
-            length > 0,
-            "report file {} is {} bytes",
-            REPORT_FILE,
-            length
-        );
-        // Now clean up the file.
-        common::cleanup_files(vec![REPORT_FILE]);
+        let lines = common::file_length(report_file);
+        assert!(lines > 0, "report file {} has {} lines", report_file, lines);
     }
 }
 
@@ -781,6 +776,8 @@ async fn run_standalone_test(protocol: Protocol) {
     let mcp_port_text = mcp_port.to_string();
     let telnet_port = TELNET_PORT.to_string();
     let websocket_port = WEBSOCKET_PORT.to_string();
+    let report_dir = saved_runs::folder("controller-report");
+    let report_file = report_dir.join(REPORT_FILE).to_string_lossy().into_owned();
     let mut configuration_flags = match protocol {
         Protocol::WebSocket => vec![
             "--websocket",
@@ -794,7 +791,7 @@ async fn run_standalone_test(protocol: Protocol) {
             "--telnet-port",
             &telnet_port,
             "--report-file",
-            REPORT_FILE,
+            &report_file,
         ],
         #[cfg(feature = "mcp")]
         Protocol::Mcp => vec![
@@ -831,7 +828,14 @@ async fn run_standalone_test(protocol: Protocol) {
     let goose_metrics = goose_metrics.expect("load test timed out");
 
     // Confirm that the load test ran correctly.
-    validate_one_scenario(&goose_metrics, &mock_endpoints, &configuration, protocol);
+    validate_one_scenario(
+        &goose_metrics,
+        &mock_endpoints,
+        &configuration,
+        protocol,
+        &report_file,
+    );
+    std::fs::remove_dir_all(&report_dir).unwrap();
 }
 
 // Test controlling a load test with Telnet.
