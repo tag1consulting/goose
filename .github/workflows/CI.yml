@@ -18,25 +18,19 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
 
-    - name: ⚡ Cache
-      uses: Swatinem/rust-cache@v1.3.0
-    
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-    
+        components: rustfmt, clippy
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v2
+
     - name: 🔎 Verify code formatting
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt 
-        args: -- --check
-    
+      run: cargo fmt -- --check
+
     - name: 🔎 Verify code style
-      uses: actions-rs/cargo@v1
-      with:
-        command: clippy 
-        args: --all-targets --all-features -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -D warnings
 
   # TypeScript dashboard SPA: type-check and ensure committed app.js matches the esbuild bundle.
   # Cargo embeds app.js via include_str!; it must not drift from the sources in src/.
@@ -139,20 +133,26 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
 
-    - name: ⚡ Cache
-      uses: Swatinem/rust-cache@v1.3.0
-    
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-    
-    # The generator's own target folder, so the check below is not a cold build.
-    - name: ⚡ Cache the Gaggle protocol generator
-      if: ${{ matrix.features == 'gaggle' }}
-      uses: Swatinem/rust-cache@v1.3.0
+        components: clippy
+
+    # One cache for each feature set, as each builds its own dependencies; the
+    # gaggle job's also holds the protocol generator's own target folder, so
+    # the check below is not a cold build.
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v2
       with:
-        working-directory: proto/gen
+        key: features-${{ matrix.features }}
+        workspaces: |
+          . -> target
+          proto/gen -> target
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest
 
     # The checked in Gaggle protocol code is what proto/gaggle.proto generates.
     # The generator is its own package with a committed Cargo.lock, so no Goose
@@ -182,89 +182,67 @@ jobs:
 
     - name: 🔨 Build (no default features)
       if: ${{ matrix.features == '' }}
-      uses: actions-rs/cargo@v1
-      with:
-        command: build 
-        args: --verbose --no-default-features
-    
+      run: cargo build --verbose --no-default-features
+
     - name: 🔨 Build (specific features)
       if: ${{ matrix.features != '' && matrix.features != 'all-features' }}
-      uses: actions-rs/cargo@v1
-      with:
-        command: build 
-        args: --verbose --no-default-features --features "${{ matrix.features }}"
-    
+      run: cargo build --verbose --no-default-features --features "${{ matrix.features }}"
+
     - name: 🔨 Build (all features)
       if: ${{ matrix.features == 'all-features' }}
-      uses: actions-rs/cargo@v1
-      with:
-        command: build 
-        args: --verbose --all-features
-    
+      run: cargo build --verbose --all-features
+
     # The style job runs clippy with every feature only, where dead code behind the gaggle
     # feature alone does not show.
     - name: 🔎 Clippy (gaggle without dashboard)
       if: ${{ matrix.features == 'gaggle' }}
-      uses: actions-rs/cargo@v1
-      with:
-        command: clippy
-        args: --all-targets --no-default-features --features gaggle -- -D warnings
+      run: cargo clippy --all-targets --no-default-features --features gaggle -- -D warnings
 
     - name: 📖 Docs
       if: ${{ matrix.features == 'all-features' }}
       env:
         RUSTDOCFLAGS: "-D warnings"
-      uses: actions-rs/cargo@v1
-      with:
-        command: rustdoc 
-        args: --lib --all-features --examples
-    
+      run: cargo rustdoc --lib --all-features --examples
+
+    # cargo-nextest runs each test in a process of its own, many at once, with
+    # the `ci` profile in .config/nextest.toml. It runs no doc tests: cargo
+    # test --doc runs those.
     - name: 🔎 Test (no default features)
       if: ${{ matrix.features == '' }}
-      uses: actions-rs/cargo@v1
-      with:
-        command: test 
-        args: --verbose --no-default-features
-    
+      run: |
+        cargo nextest run --verbose --profile ci --no-default-features
+        cargo test --verbose --no-default-features --doc
+
     - name: 🔎 Test (specific features)
       if: ${{ matrix.features != '' && matrix.features != 'all-features' }}
-      uses: actions-rs/cargo@v1
-      with:
-        command: test 
-        args: --verbose --no-default-features --features "${{ matrix.features }}"
-    
-    # Everything but the Gaggle process tests, tests/gaggle.rs, which the gaggle job
-    # runs: they take about 15 minutes, and need no other feature. Every test target,
-    # tests/gaggle.rs among them, is still built here. The examples that run tests are
-    # those with `test = true` in Cargo.toml, umami only: name any other given it here.
+      run: |
+        cargo nextest run --verbose --profile ci --no-default-features --features "${{ matrix.features }}"
+        cargo test --verbose --no-default-features --features "${{ matrix.features }}" --doc
+
+    # Everything but the Gaggle process tests, the binary tests/gaggle.rs, which the
+    # gaggle job runs: they need no other feature. Every test target, tests/gaggle.rs
+    # among them, is still built here. The examples that run tests are those with
+    # `test = true` in Cargo.toml, umami only.
     - name: 🔎 Test (all features)
       if: ${{ matrix.features == 'all-features' }}
-      shell: bash
       run: |
-        cargo test --verbose --all-features --no-run
-        tests=()
-        for file in tests/*.rs; do
-          name=$(basename "$file" .rs)
-          if [ "$name" != gaggle ]; then
-            tests+=(--test "$name")
-          fi
-        done
-        cargo test --verbose --all-features --lib --bins --example umami "${tests[@]}"
+        cargo nextest run --verbose --profile ci --all-features -E 'not binary_id(goose::gaggle)'
         cargo test --verbose --all-features --doc
-    
+
     # The ubuntu-latest image ships Google Chrome, which these ignored tests need.
     - name: 🔎 Test PDF reports with an installed Chrome
       if: ${{ matrix.features == 'all-features' }}
-      run: cargo test --verbose --all-features --test pdf_chrome -- --include-ignored
+      run: cargo nextest run --verbose --profile ci --all-features --run-ignored all -E 'binary_id(goose::it) & test(/^pdf_chrome::/)'
 
+    # Every test with `graph` in its name, and metrics_print_unlocked, which has
+    # no test harness, so `cargo test graph` ran it too.
     - name: 🔎 timezone-sensitive tests in non UTC (Asia/Kolkata, UTC+05:30)
       if: ${{ matrix.features == 'all-features' }}
-      uses: actions-rs/cargo@v1
       env:
         TZ: Asia/Kolkata
-      with:
-        command: test 
-        args: --verbose --all-features graph
+      run: |
+        cargo nextest run --verbose --profile ci --all-features -E 'test(graph) | binary_id(goose::metrics_print_unlocked)'
+        cargo test --verbose --all-features --doc graph
 
     # An output flag given without a path, and the dashboard's Save report,
     # write into goose-runs/ in the working directory. Goose's own tests write
@@ -293,13 +271,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
 
-    - name: ⚡ Cache
-      uses: Swatinem/rust-cache@v1.3.0
-
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@v2
       with:
-        toolchain: stable
+        tool: cargo-nextest
 
     - name: Cache Chromium
       uses: actions/cache@v4
@@ -316,11 +297,11 @@ jobs:
         chromium --version
 
     - name: 🔎 Test PDF reports
-      run: cargo test --verbose --features pdf-reports --test pdf_reports
+      run: cargo nextest run --verbose --profile ci --features pdf-reports --test it -E 'test(/^pdf_reports::/)'
 
     # These tests set CHROME, so they download nothing.
     - name: 🔎 Test Chrome failures with the installed Chromium
-      run: cargo test --verbose --features pdf-reports --test pdf_chrome -- --include-ignored
+      run: cargo nextest run --verbose --profile ci --features pdf-reports --test it --run-ignored all -E 'test(/^pdf_chrome::/)'
 
     - name: 🔎 Installed Chromium was used
       run: |
@@ -347,13 +328,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
 
-    - name: ⚡ Cache
-      uses: Swatinem/rust-cache@v1.3.0
-
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@v2
       with:
-        toolchain: stable
+        tool: cargo-nextest
 
     - name: Remove the installed browsers
       run: |
@@ -377,7 +361,7 @@ jobs:
         done
 
     - name: 🔎 Test PDF reports
-      run: cargo test --verbose --features pdf-reports --test pdf_reports
+      run: cargo nextest run --verbose --profile ci --features pdf-reports --test it -E 'test(/^pdf_reports::/)'
 
     - name: 🔎 Chrome was downloaded
       run: |

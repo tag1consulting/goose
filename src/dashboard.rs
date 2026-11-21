@@ -4306,8 +4306,15 @@ mod tests {
             .expect("sse");
         assert_eq!(resp.status(), 200);
 
-        // Wait long enough to cover the blip window (3 cancelled ticks) + recovery.
-        tokio::time::sleep(Duration::from_millis(7000)).await;
+        // Wait long enough to cover the blip window (3 cancelled ticks) +
+        // recovery: until the builds the check below asks for, the count only
+        // growing, or 7 seconds at most.
+        let waited = Instant::now();
+        while parent_builds.load(Ordering::SeqCst) < 6
+            && waited.elapsed() < Duration::from_millis(7000)
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         let builds = parent_builds.load(Ordering::SeqCst);
         // drop_from=2, drop_until=5 ⇒ attempts 2,3,4 cancelled; 6+ proves post-blip recovery.
         assert!(

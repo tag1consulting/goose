@@ -1,0 +1,73 @@
+# cargo-nextest runs each test in a process of its own, many at once:
+#
+#     cargo nextest run --all-features
+#
+# CI runs with `--profile ci`, which takes everything here and adds its own
+# settings below. `cargo test` still runs every test too.
+
+[profile.default]
+# A test still running after a minute is reported as slow, every minute.
+slow-timeout = { period = "60s" }
+
+# Tests that count the connections a user opens: a connection back in the
+# pool only once its task has run, so on a busy machine a request can start
+# before it is back and open another. They take the slots of four tests, as
+# the wall clock tests below; listed first, as the first override that
+# matches a test sets its slots.
+[[profile.default.overrides]]
+filter = """
+(binary_id(goose) & test(/^gaggle::ported_tests::worker_reads_dropped_bodies$/))
+| (binary_id(goose::it) & test(/^(discard_body|keep_alive_retry)::/))
+"""
+threads-required = 4
+
+# A whole Gaggle in one test process, a manager and its workers with their
+# users, and in the library with test timeouts of a few seconds (a worker
+# that has not prepared within 3 seconds fails the run): it takes the slots
+# of two tests, so fewer run beside it on a busy machine.
+[[profile.default.overrides]]
+filter = 'binary_id(goose) & test(/^gaggle::(run_tests|ported_tests|manager|link|run|tests)::/)'
+threads-required = 2
+
+# The Gaggle process tests start a manager and two workers of the `simple`
+# example, each a process of its own: the slots of four tests.
+[[profile.default.overrides]]
+filter = 'binary_id(goose::gaggle)'
+threads-required = 4
+
+# The longest tests, 15 to 55 seconds each, start first, so none is left
+# running alone at the end of a run.
+[[profile.default.overrides]]
+filter = """
+binary_id(goose::gaggle)
+| (binary_id(goose::it) & test(/^(control_agreement|throttle_live|thresholds|pdf_reports|controller)::/))
+| (binary_id(goose) & test(/^gaggle::(run_tests|tests)::/))
+| test(/^dashboard::test_control_users_during_ramp_down$/)
+| test(/^tests::gaggle_ordinals_match_one_process$/)
+"""
+priority = 10
+
+# Tests that check wall clock time to the second or a rate over seconds, each
+# a test binary of its own, alone, under cargo test: a run cancelled 3
+# seconds in lasts 3 seconds, a Controller's user count is reached in time,
+# a throttle holds its rate. They take the slots of four tests, so on a busy
+# machine about as many tests run beside them as there are CPUs.
+[[profile.default.overrides]]
+filter = """
+(binary_id(goose::it) & test(/^(cancel|throttle|throttle_live|user_rate)::/))
+| (binary_id(goose::it) & test(/^controller::test_(telnet|websocket|mcp)_controller$/))
+"""
+threads-required = 4
+
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
+# Most tests wait on a mock server, a run time or a timer, not on the CPU, so
+# CI's runners, with 4 CPUs, run twice as many tests at once as they have
+# CPUs. At three times, with the CPU heavy native-tls clients, tests that
+# check wall clock time to the second missed it.
+test-threads = 8
+
+[profile.ci.junit]
+# target/nextest/ci/junit.xml: every test's time, for finding slow ones.
+path = "junit.xml"
