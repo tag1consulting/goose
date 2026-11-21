@@ -77,7 +77,22 @@ async fn get_index(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
+/// This binary's one test, by the name cargo-nextest lists and runs it by.
+const NAME: &str = "metrics_print_unlocked";
+
 fn main() {
+    // cargo-nextest lists a test binary's tests with `--list --format terse`,
+    // as libtest answers it, and then runs each by name. This binary has no
+    // harness, so it answers the list itself: its one test, and no ignored
+    // test. Every other run runs the test, whatever else it is given, as it
+    // always has.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--list") {
+        if !args.iter().any(|arg| arg == "--ignored") {
+            println!("{NAME}: test");
+        }
+        return;
+    }
     log::set_boxed_logger(Box::new(Probe)).expect("the probe is the only logger");
     log::set_max_level(log::LevelFilter::Trace);
     let runtime = tokio::runtime::Builder::new_multi_thread()
