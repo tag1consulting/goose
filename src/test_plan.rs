@@ -2,7 +2,6 @@
 //!
 //! Internally, Goose represents all load tests as a series of Test Plan steps.
 
-use chrono::prelude::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -257,7 +256,7 @@ pub struct TestPlanHistory {
     /// What action happend in this step.
     pub action: TestPlanStepAction,
     /// A timestamp of when the step started.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: jiff::Timestamp,
     /// The number of users when the step started.
     pub users: usize,
 }
@@ -266,7 +265,7 @@ impl TestPlanHistory {
     pub(crate) fn step(action: TestPlanStepAction, users: usize) -> TestPlanHistory {
         TestPlanHistory {
             action,
-            timestamp: Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             users,
         }
     }

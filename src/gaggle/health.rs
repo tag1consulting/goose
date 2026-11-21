@@ -332,7 +332,7 @@ pub(crate) struct WorkerHealth {
     /// The users it started over the run.
     pub(crate) users_started: usize,
     /// When it was lost, and why.
-    pub(crate) lost: Option<(chrono::DateTime<chrono::Utc>, u64, String)>,
+    pub(crate) lost: Option<(jiff::Timestamp, u64, String)>,
     /// What the merge did with its deltas.
     pub(crate) merge: WorkerMerge,
     /// Its last CPU time sample.
@@ -346,7 +346,7 @@ pub(crate) struct WorkerHealth {
     pub(crate) saturated_total: Duration,
     /// Since when its CPU use has stayed at or above [`SATURATED_PERCENT`],
     /// as an instant and an RFC 3339 time: the current saturation's start.
-    pub(crate) above_since: Option<(Instant, chrono::DateTime<chrono::Utc>)>,
+    pub(crate) above_since: Option<(Instant, jiff::Timestamp)>,
     /// How long the current saturation has lasted, over the spans of the
     /// samples it covers: zero while it is not saturated.
     saturated_run: Duration,
@@ -566,7 +566,7 @@ impl GaggleHealth {
     }
 
     /// Worker `id` was lost in an earlier run, at `at`, for `why`.
-    pub(crate) fn lost_before(&mut self, id: u32, at: chrono::DateTime<chrono::Utc>, why: &str) {
+    pub(crate) fn lost_before(&mut self, id: u32, at: jiff::Timestamp, why: &str) {
         let worker = self.entry(id);
         worker.lost = Some((at, 0, bounded(why)));
         worker.state = WorkerState::Lost;
@@ -590,7 +590,7 @@ impl GaggleHealth {
         }
         // A worker's own words can reach `why`: kept bounded, as an event's
         // text is, as the dashboard sends it every second.
-        worker.lost = Some((chrono::Utc::now(), second, bounded(why)));
+        worker.lost = Some((jiff::Timestamp::now(), second, bounded(why)));
         self.set_state(id, WorkerState::Lost, now);
         let name = self.entry(id).name.clone();
         self.event(
@@ -663,9 +663,10 @@ impl GaggleHealth {
             worker.saturated_run += span;
             // Saturated since the start of the span this sample covers.
             worker.above_since.get_or_insert_with(|| {
+                let wall = jiff::Timestamp::now();
                 (
                     now.checked_sub(span).unwrap_or(now),
-                    chrono::Utc::now() - chrono::Duration::from_std(span).unwrap_or_default(),
+                    wall.checked_sub(span).unwrap_or(wall),
                 )
             });
         } else {
@@ -794,7 +795,7 @@ impl GaggleHealth {
         }
         self.events.push_back(GaggleEvent {
             second: self.second,
-            time: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            time: crate::runs::rfc3339(jiff::Timestamp::now()),
             kind,
             worker: worker.map(str::to_string),
             text,
@@ -957,7 +958,7 @@ impl GaggleHealth {
                     lost_at: worker
                         .lost
                         .as_ref()
-                        .map(|(at, _, _)| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                        .map(|(at, _, _)| crate::runs::rfc3339(*at)),
                     lost_reason: worker.lost.as_ref().map(|(_, _, why)| why.clone()),
                     last_seq: worker.lost.as_ref().map(|_| worker.merge.last_seq),
                     refused_deltas: worker.merge.refused,
@@ -1653,7 +1654,7 @@ mod tests {
         assert_eq!(dropped, extra as u64);
         assert_eq!(events[0].text, format!("event {extra}"));
         assert_eq!(events[0].second, extra as u64);
-        assert!(chrono::DateTime::parse_from_rfc3339(&events[0].time).is_ok());
+        assert!(str::parse::<jiff::Timestamp>(&events[0].time).is_ok());
     }
 
     #[test]

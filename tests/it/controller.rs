@@ -1039,7 +1039,7 @@ async fn test_saved_runs_over_telnet_and_websocket() {
         in_progress["in_progress"] = serde_json::json!(true);
         in_progress["ended"] = serde_json::Value::Null;
         in_progress["ended_by"] = serde_json::Value::Null;
-        in_progress["started"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+        in_progress["started"] = serde_json::json!(jiff::Timestamp::now().to_string());
         runs.save("live", &in_progress);
         for client in [&mut telnet, &mut websocket] {
             let listing = text(&client.send("runs").await);

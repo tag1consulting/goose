@@ -10,7 +10,6 @@ use crate::metrics::dashboard_snapshot::{
 };
 use crate::metrics::{buckets, GooseRequestMetricTimingData};
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
-use chrono::prelude::*;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1832,7 +1831,7 @@ impl LatencyHistograms {
     fn report_heatmap_with<S>(
         &self,
         co_active: bool,
-        started: DateTime<Utc>,
+        started: jiff::Timestamp,
         series: S,
     ) -> Option<ReportHeatmap<S>> {
         self.all_columns.as_ref()?;
@@ -1844,12 +1843,8 @@ impl LatencyHistograms {
             .max()
             .unwrap_or(0);
         Some(ReportHeatmap {
-            start: started.timestamp() * 1000,
-            offset: i64::from(
-                Local
-                    .offset_from_utc_datetime(&started.naive_utc())
-                    .local_minus_utc(),
-            ) * 1000,
+            start: started.as_second() * 1000,
+            offset: i64::from(jiff::tz::TimeZone::system().to_offset(started).seconds()) * 1000,
             origin: self.origin,
             buckets_us: bucket_table_us(last),
             series,
@@ -1861,7 +1856,7 @@ impl LatencyHistograms {
     fn report_heatmap(
         &self,
         co_active: bool,
-        started: DateTime<Utc>,
+        started: jiff::Timestamp,
     ) -> Option<ReportHeatmap<Vec<ReportSeries<'_>>>> {
         let series = self
             .report_sources(co_active)
@@ -2312,7 +2307,7 @@ impl GraphData {
     pub(crate) fn get_latency_heatmap_markup(
         &self,
         co_active: bool,
-        started: DateTime<Utc>,
+        started: jiff::Timestamp,
     ) -> String {
         // A run with no requests since the start or the last reset has no
         // heatmap to show.
@@ -2339,7 +2334,7 @@ impl GraphData {
     fn report_heatmap(
         &self,
         co_active: bool,
-        started: DateTime<Utc>,
+        started: jiff::Timestamp,
     ) -> Option<ReportHeatmap<SeriesStream<'_>>> {
         let latency = self.latency.as_ref().filter(|latency| {
             latency
@@ -2355,7 +2350,7 @@ impl GraphData {
     pub(crate) fn report_graphs<'a>(
         &'a self,
         co_active: bool,
-        started: DateTime<Utc>,
+        started: jiff::Timestamp,
         recorded: Option<&'a serde_json::Value>,
     ) -> ReportGraphs<'a> {
         let counts = |items: &'a ItemsPerSecond| {
@@ -3101,21 +3096,21 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
     pub(crate) fn get_markup(
         self,
         history: &[TestPlanHistory],
-        test_started_time: DateTime<Utc>,
+        test_started_time: jiff::Timestamp,
     ) -> String {
         let mut steps = String::new();
         for step in history.windows(2) {
-            let started = Local
-                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+            let started = step[0]
+                .timestamp
                 // @TODO: Error handling
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
-            let stopped = Local
-                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+            let stopped = step[1]
+                .timestamp
                 // @TODO: Error handling
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
             match &step[0].action {
                 // For increasing show the current number of users to the new number of users.
@@ -3356,7 +3351,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         &self,
         data: &[Option<U>],
         origin: usize,
-        started: DateTime<Utc>,
+        started: jiff::Timestamp,
     ) -> Vec<(String, U)> {
         // A second no clock can show, from an origin read back from a JSON
         // report, is left out rather than drawn.
@@ -3367,9 +3362,11 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     .checked_add(index)
                     .filter(|&second| Some(second) != self.left_out)
                     .and_then(|second| i64::try_from(second).ok())
-                    .and_then(|second| second.checked_add(started.timestamp()))?;
-                let time = Local.timestamp_opt(second, 0).single()?;
-                value.map(|data| (time.format("%Y-%m-%d %H:%M:%S").to_string(), data))
+                    .and_then(|second| second.checked_add(started.as_second()))?;
+                let time = jiff::Timestamp::from_second(second)
+                    .map(|ts| ts.to_zoned_datetime(jiff::tz::TimeZone::system()))
+                    .ok()?;
+                value.map(|data| (time.strftime("%Y-%m-%d %H:%M:%S").to_string(), data))
             })
             .collect::<Vec<_>>()
     }
@@ -5941,12 +5938,12 @@ mod test {
         let later = graph.add_timestamp_to_html_graph_data(
             &data[2..],
             2,
-            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23).unwrap(),
+            "2021-12-14T15:12:23Z".parse::<jiff::Timestamp>().unwrap(),
         );
         let all = graph.add_timestamp_to_html_graph_data(
             &data,
             0,
-            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23).unwrap(),
+            "2021-12-14T15:12:23Z".parse::<jiff::Timestamp>().unwrap(),
         );
         assert_eq!(later, all[2..]);
 
@@ -5954,71 +5951,51 @@ mod test {
             graph.add_timestamp_to_html_graph_data(
                 &data,
                 0,
-                Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23).unwrap()
+                "2021-12-14T15:12:23Z".parse::<jiff::Timestamp>().unwrap()
             ),
             vec![
                 (
-                    Local
-                        .timestamp_opt(
-                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23)
-                                .unwrap()
-                                .timestamp(),
-                            0
-                        )
+                    "2021-12-14T15:12:23Z"
+                        .parse::<jiff::Timestamp>()
                         .unwrap()
-                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_zoned_datetime(jiff::tz::TimeZone::system())
+                        .strftime("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     123
                 ),
                 (
-                    Local
-                        .timestamp_opt(
-                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 24)
-                                .unwrap()
-                                .timestamp(),
-                            0
-                        )
+                    "2021-12-14T15:12:24Z"
+                        .parse::<jiff::Timestamp>()
                         .unwrap()
-                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_zoned_datetime(jiff::tz::TimeZone::system())
+                        .strftime("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     234
                 ),
                 (
-                    Local
-                        .timestamp_opt(
-                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 25)
-                                .unwrap()
-                                .timestamp(),
-                            0
-                        )
+                    "2021-12-14T15:12:25Z"
+                        .parse::<jiff::Timestamp>()
                         .unwrap()
-                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_zoned_datetime(jiff::tz::TimeZone::system())
+                        .strftime("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     345
                 ),
                 (
-                    Local
-                        .timestamp_opt(
-                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 26)
-                                .unwrap()
-                                .timestamp(),
-                            0
-                        )
+                    "2021-12-14T15:12:26Z"
+                        .parse::<jiff::Timestamp>()
                         .unwrap()
-                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_zoned_datetime(jiff::tz::TimeZone::system())
+                        .strftime("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     456
                 ),
                 (
-                    Local
-                        .timestamp_opt(
-                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 27)
-                                .unwrap()
-                                .timestamp(),
-                            0
-                        )
+                    "2021-12-14T15:12:27Z"
+                        .parse::<jiff::Timestamp>()
                         .unwrap()
-                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_zoned_datetime(jiff::tz::TimeZone::system())
+                        .strftime("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     567
                 )
@@ -6119,16 +6096,15 @@ mod test {
                     }});
                 </script>
             </div>"#,
-            data_series_prefix = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M")
+            data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M")
         ).as_str();
 
         assert_eq!(
             Graph::new("graph-rps", "Requests #", true, &graph,).get_markup(
                 &Vec::new(),
-                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+                "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
             ),
             expected
         );
@@ -6138,7 +6114,7 @@ mod test {
         assert_eq!(
             Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &Vec::new(),
-                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+                "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
             ),
             expected
         );
@@ -6234,47 +6210,42 @@ mod test {
                     }});
                 </script>
             </div>"#,
-            data_series_prefix = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M"),
-            increasing = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S"),
-            decreasing = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 33).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S"),
-            cancelling = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 34).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S"),
-            finishing = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 35).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S"),
+            data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
+            increasing = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S"),
+            decreasing = "2021-11-21T21:20:33Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S"),
+            cancelling = "2021-11-21T21:20:34Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S"),
+            finishing = "2021-11-21T21:20:35Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S"),
         ).as_str();
 
         let steps = vec![
             TestPlanHistory {
                 action: TestPlanStepAction::Increasing,
-                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
+                timestamp: "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap(),
                 users: 123,
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Decreasing,
-                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 33).unwrap(),
+                timestamp: "2021-11-21T21:20:33Z".parse::<jiff::Timestamp>().unwrap(),
                 users: 123,
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Canceling,
-                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 34).unwrap(),
+                timestamp: "2021-11-21T21:20:34Z".parse::<jiff::Timestamp>().unwrap(),
                 users: 123,
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Finished,
-                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 35).unwrap(),
+                timestamp: "2021-11-21T21:20:35Z".parse::<jiff::Timestamp>().unwrap(),
                 users: 123,
             },
         ];
@@ -6282,7 +6253,7 @@ mod test {
         assert_eq!(
             Graph::new("graph-rps", "Requests #", true, &graph,).get_markup(
                 &steps,
-                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+                "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
             ),
             expected
         );
@@ -6292,7 +6263,7 @@ mod test {
         assert_eq!(
             Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &steps,
-                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+                "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
             ),
             expected
         );
@@ -6307,7 +6278,7 @@ mod test {
 
         let markup = Graph::new("graph-rps", "Requests #", true, &graph).get_markup(
             &Vec::new(),
-            Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
+            "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap(),
         );
         let expected_legend = r#"
                         legend: {
@@ -6336,15 +6307,11 @@ mod test {
                                 }},
                                 data: [["{data_series_prefix}:32",146],["{data_series_prefix}:33",123],["{data_series_prefix}:34",143],["{data_series_prefix}:35",156]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6361,15 +6328,11 @@ mod test {
                                 sampling: 'lttb',
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6386,15 +6349,11 @@ mod test {
                                 sampling: 'lttb',
                                 data: [["{data_series_prefix}:32",23],["{data_series_prefix}:33",12],["{data_series_prefix}:34",44],["{data_series_prefix}:35",22]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6419,16 +6378,15 @@ mod test {
                     }});
                 </script>
             </div>"#,
-            data_series_prefix = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M")
+            data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M")
         ).as_str();
 
         assert_eq!(
             Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &Vec::new(),
-                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+                "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
             ),
             expected
         );
@@ -6445,7 +6403,7 @@ mod test {
 
         let markup = Graph::new("graph-rps", "Requests #", true, &graph).get_markup(
             &Vec::new(),
-            Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
+            "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap(),
         );
         let expected_legend = r#"
                         legend: {
@@ -6474,15 +6432,11 @@ mod test {
                                 }},
                                 data: [["{data_series_prefix}:32",149],["{data_series_prefix}:33",126],["{data_series_prefix}:34",146],["{data_series_prefix}:35",159]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6499,15 +6453,11 @@ mod test {
                                 sampling: 'lttb',
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6524,15 +6474,11 @@ mod test {
                                 sampling: 'lttb',
                                 data: [["{data_series_prefix}:32",23],["{data_series_prefix}:33",12],["{data_series_prefix}:34",44],["{data_series_prefix}:35",22]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6549,15 +6495,11 @@ mod test {
                                 sampling: 'lttb',
                                 data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6574,15 +6516,11 @@ mod test {
                                 sampling: 'lttb',
                                 data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6599,15 +6537,11 @@ mod test {
                                 sampling: 'lttb',
                                 data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
                             }},"#,
-            data_series_prefix = Local
-                .timestamp_opt(
-                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
-                        .unwrap()
-                        .timestamp(),
-                    0
-                )
+            data_series_prefix = "2021-11-21T21:20:32Z"
+                .parse::<jiff::Timestamp>()
                 .unwrap()
-                .format("%Y-%m-%d %H:%M"),
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M"),
         );
         assert!(
             markup.contains(expected_line.as_str()),
@@ -6630,16 +6564,15 @@ mod test {
                     }});
                 </script>
             </div>"#,
-            data_series_prefix = Local
-                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M")
+            data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
+.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M")
         ).as_str();
 
         assert_eq!(
             Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &Vec::new(),
-                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+                "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
             ),
             expected
         );
@@ -6831,7 +6764,9 @@ mod test {
         assert_eq!(synthetic_all.columns[0].maximum_time_us, 2_000_000);
         assert_eq!(synthetic_a.columns[650 / 16].maximum_time_us, 3_000_000);
 
-        let heatmap = latency.report_heatmap(true, Utc::now()).unwrap();
+        let heatmap = latency
+            .report_heatmap(true, jiff::Timestamp::now())
+            .unwrap();
         let all = &heatmap.series[0];
         let adjusted = all.adjusted.as_ref().unwrap();
         // Column 0 holds 8 measured seconds and one synthetic time.
@@ -6845,7 +6780,9 @@ mod test {
             .sum();
         assert_eq!(measured, 8);
         // Without mitigation events there is no adjusted view.
-        let heatmap = latency.report_heatmap(false, Utc::now()).unwrap();
+        let heatmap = latency
+            .report_heatmap(false, jiff::Timestamp::now())
+            .unwrap();
         assert!(heatmap
             .series
             .iter()
@@ -6862,7 +6799,9 @@ mod test {
         graph.reset_rate_series(5);
         graph.record_request_per_second_and_latency("GET /a", 6, Some(10));
         graph.finish_latency_columns();
-        let heatmap = latency(&graph).report_heatmap(true, Utc::now()).unwrap();
+        let heatmap = latency(&graph)
+            .report_heatmap(true, jiff::Timestamp::now())
+            .unwrap();
         assert_eq!(heatmap.series.len(), 2);
         assert!(heatmap
             .series
@@ -6935,7 +6874,9 @@ mod test {
         graph.reset_rate_series(10);
         graph.record_request_per_second_and_latency("GET /a", 11, Some(10));
         graph.finish_latency_columns();
-        let heatmap = latency(&graph).report_heatmap(true, Utc::now()).unwrap();
+        let heatmap = latency(&graph)
+            .report_heatmap(true, jiff::Timestamp::now())
+            .unwrap();
         assert!(heatmap
             .series
             .iter()
@@ -6958,11 +6899,14 @@ mod test {
     fn no_card_without_requests() {
         let mut graph = GraphData::with_latency_budgets(false, 600, 120);
         graph.finish_latency_columns();
-        assert_eq!(graph.get_latency_heatmap_markup(false, Utc::now()), "");
+        assert_eq!(
+            graph.get_latency_heatmap_markup(false, jiff::Timestamp::now()),
+            ""
+        );
         graph.record_request_per_second_and_latency("GET /a", 1, Some(10));
         graph.finish_latency_columns();
         assert!(graph
-            .get_latency_heatmap_markup(false, Utc::now())
+            .get_latency_heatmap_markup(false, jiff::Timestamp::now())
             .contains("Response time heatmap"));
     }
 
@@ -7035,7 +6979,10 @@ mod test {
         assert_eq!(all.columns[0].maximum_time_us, 30_000);
         // The report places column 0 at the reset's second.
         assert_eq!(
-            latency.report_heatmap(false, Utc::now()).unwrap().origin,
+            latency
+                .report_heatmap(false, jiff::Timestamp::now())
+                .unwrap()
+                .origin,
             20
         );
     }
@@ -7060,7 +7007,9 @@ mod test {
             latency.all_columns.as_ref().unwrap().columns[1].counter,
             105
         );
-        let heatmap = latency.report_heatmap(false, Utc::now()).unwrap();
+        let heatmap = latency
+            .report_heatmap(false, jiff::Timestamp::now())
+            .unwrap();
         assert_eq!(heatmap.series.len(), MAX_REQUEST_SERIES + 1);
         assert!(heatmap
             .series
@@ -7121,12 +7070,12 @@ mod test {
         graph.prune_to_window(600);
         let origin = graph.first_second();
         assert!(origin > 0);
-        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        let started = "2026-10-22T10:00:00Z".parse::<jiff::Timestamp>().unwrap();
         let at = |second: usize| {
-            Local
-                .timestamp_opt(started.timestamp() + second as i64, 0)
+            jiff::Timestamp::from_second(started.as_second() + second as i64)
+                .map(|ts| ts.to_zoned_datetime(jiff::tz::TimeZone::system()))
                 .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
+                .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string()
         };
         let check = |graph: &GraphData| {
@@ -7169,7 +7118,10 @@ mod test {
         assert!(latency.all_columns.is_none());
         assert!(latency.rings.iter().all(|ring| ring.columns.is_none()));
         assert_eq!(latency.limit, usize::MAX);
-        assert_eq!(graph.get_latency_heatmap_markup(false, Utc::now()), "");
+        assert_eq!(
+            graph.get_latency_heatmap_markup(false, jiff::Timestamp::now()),
+            ""
+        );
 
         // A report under the off switch keeps no histograms at all.
         for args in [
@@ -7208,7 +7160,9 @@ mod test {
             }
         }
         graph.finish_latency_columns();
-        let heatmap = latency(&graph).report_heatmap(true, Utc::now()).unwrap();
+        let heatmap = latency(&graph)
+            .report_heatmap(true, jiff::Timestamp::now())
+            .unwrap();
         let all = &heatmap.series[0];
         assert_eq!(all.width, 4);
         let check = |view: &ReportView, times: &[(usize, u64)], width: usize| {
@@ -7273,7 +7227,7 @@ mod test {
             }
         }
         graph.finish_latency_columns();
-        let started = Utc::now();
+        let started = jiff::Timestamp::now();
         let markup = graph.get_latency_heatmap_markup(true, started);
         let start = markup.find("graph-latency-heatmap-data\">").unwrap() + 28;
         let end = start + markup[start..].find("</script>").unwrap();
@@ -7293,7 +7247,7 @@ mod test {
         let mut graph = GraphData::with_latency_budgets(false, 600, 120);
         graph.record_request_per_second_and_latency(name, 1, Some(10));
         graph.finish_latency_columns();
-        let markup = graph.get_latency_heatmap_markup(false, Utc::now());
+        let markup = graph.get_latency_heatmap_markup(false, jiff::Timestamp::now());
         let start = markup.find("graph-latency-heatmap-data\">").unwrap() + 28;
         let end = start + markup[start..].find("</script>").unwrap();
         let json = &markup[start..end];

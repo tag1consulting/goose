@@ -173,7 +173,7 @@ pub async fn build_in(parent: PathBuf) -> SavedRuns {
 
     // Copies of plain, each started an hour before the last.
     let started = plain["started"].as_str().unwrap().to_string();
-    let started = chrono::DateTime::parse_from_rfc3339(&started).unwrap();
+    let started = str::parse::<jiff::Timestamp>(&started).unwrap();
     // The three real runs, newest first: by when each started, to the
     // second, then by name, as the listing orders them.
     let mut real: Vec<(i64, String)> = ["plain", "stored", "zipped"]
@@ -185,20 +185,17 @@ pub async fn build_in(parent: PathBuf) -> SavedRuns {
             }
             .report_json(name);
             let started = value["started"].as_str().unwrap().to_string();
-            let started = chrono::DateTime::parse_from_rfc3339(&started).unwrap();
-            (started.timestamp(), name.to_string())
+            let started = str::parse::<jiff::Timestamp>(&started).unwrap();
+            (started.as_second(), name.to_string())
         })
         .collect();
     real.sort_by(|a, b| b.cmp(a));
     let mut names: Vec<String> = real.into_iter().map(|(_, name)| name).collect();
     for copy in 0..RUNS - 3 {
         let mut value = plain.clone();
-        let earlier = started - chrono::Duration::hours(copy as i64 + 1);
-        let utc = |time: chrono::DateTime<chrono::FixedOffset>| {
-            time.with_timezone(&chrono::Utc).to_rfc3339()
-        };
-        value["started"] = json!(utc(earlier));
-        value["ended"] = json!(utc(earlier + chrono::Duration::seconds(2)));
+        let earlier = started - jiff::SignedDuration::from_hours(copy as i64 + 1);
+        value["started"] = json!(earlier.to_string());
+        value["ended"] = json!((earlier + jiff::SignedDuration::from_secs(2)).to_string());
         value["notes"] = json!(format!("copy {copy} of a real run"));
         let name = format!("copy-{copy:02}");
         save(&parent, &name, &value);

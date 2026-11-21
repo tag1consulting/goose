@@ -96,7 +96,7 @@ fn scratch(name: &str) -> PathBuf {
     let folder = std::env::temp_dir().join(format!(
         "goose-gaggle-process-{name}-{}-{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_micros()
+        jiff::Timestamp::now().as_microsecond()
     ));
     std::fs::create_dir_all(&folder).unwrap();
     if let Ok(mut started) = STARTED.lock() {
@@ -355,7 +355,7 @@ fn worker_lost_mid_run(frozen: bool) {
         mut second,
     } = under_load("worker-killed", "40", "8s", &token, &token);
     std::thread::sleep(Duration::from_secs(1));
-    let killed = chrono::Utc::now();
+    let killed = jiff::Timestamp::now();
     if frozen {
         signal(second.child.id(), nix::sys::signal::Signal::SIGSTOP);
     } else {
@@ -395,9 +395,9 @@ fn worker_lost_mid_run(frozen: bool) {
         let reason = lost["lost_reason"].as_str().unwrap_or_default();
         assert!(reason.starts_with("nothing from it"), "{}", gaggle);
     }
-    let lost_at = chrono::DateTime::parse_from_rfc3339(lost["lost_at"].as_str().unwrap()).unwrap();
+    let lost_at = str::parse::<jiff::Timestamp>(lost["lost_at"].as_str().unwrap()).unwrap();
     // `lost_at` is to the second.
-    let after = lost_at.timestamp() - killed.timestamp();
+    let after = lost_at.as_second() - killed.as_second();
     assert!(
         // The heartbeat timeout, and 5 seconds of slack for a slow
         // machine; lost_at and killed are each truncated to the second.

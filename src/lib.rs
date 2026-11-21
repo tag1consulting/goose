@@ -3086,7 +3086,7 @@ impl GooseAttack {
                         self.step_started = Some(time::Instant::now());
                         if let Some(step) = self.metrics.history.last_mut() {
                             if matches!(step.action, TestPlanStepAction::Increasing) {
-                                step.timestamp = chrono::Utc::now();
+                                step.timestamp = jiff::Timestamp::now();
                             }
                         }
                         self.weighted_users = users;
@@ -4330,7 +4330,7 @@ impl GooseAttack {
         self.started = Some(now);
         self.series_started = Some(now);
         // The same start, as the reports' record gives it.
-        self.output.started = Some(chrono::Utc::now());
+        self.output.started = Some(jiff::Timestamp::now());
         // Align pre-created weighted users so request.elapsed matches series time.
         for user in &mut self.weighted_users {
             user.started = now;
@@ -4432,7 +4432,7 @@ impl GooseAttack {
                         self.metrics
                             .history
                             .push(TestPlanHistory::step(TestPlanStepAction::Increasing, 0));
-                        //self.graph_data.set_starting(Utc::now());
+                        //self.graph_data.set_starting(jiff::Timestamp::now());
                         self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
                     }
                 }
@@ -6968,7 +6968,7 @@ mod tests {
     async fn a_users_increase_stamps_its_step_from_the_build() {
         let (mut goose_attack, mut run_state) = users_ramp_attack(2).await;
         assert!(controller::tests::control(&mut goose_attack, &mut run_state, "users 12").await);
-        let answered = chrono::Utc::now();
+        let answered = jiff::Timestamp::now();
         increase_to(&mut goose_attack, &mut run_state, 12).await;
         let step = goose_attack
             .metrics

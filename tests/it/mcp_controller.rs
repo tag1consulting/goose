@@ -1095,7 +1095,7 @@ async fn saved_runs_tools() {
         in_progress["in_progress"] = json!(true);
         in_progress["ended"] = Value::Null;
         in_progress["ended_by"] = Value::Null;
-        in_progress["started"] = json!(chrono::Utc::now().to_rfc3339());
+        in_progress["started"] = json!(jiff::Timestamp::now().to_string());
         runs.save("live", &in_progress);
         let listed = mcp.call("list_runs", json!({})).await;
         assert_eq!(listed.structured["runs"][0]["name"], "live");

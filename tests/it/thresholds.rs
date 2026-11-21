@@ -45,11 +45,11 @@ pub async fn get_slow(user: &mut GooseUser) -> TransactionResult {
 }
 
 // When each request of `get_slow_timed` finished.
-static FINISHED: Mutex<Vec<chrono::DateTime<chrono::Utc>>> = Mutex::new(Vec::new());
+static FINISHED: Mutex<Vec<jiff::Timestamp>> = Mutex::new(Vec::new());
 
 pub async fn get_slow_timed(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(SLOW_PATH).await?;
-    FINISHED.lock().unwrap().push(chrono::Utc::now());
+    FINISHED.lock().unwrap().push(jiff::Timestamp::now());
     Ok(())
 }
 
@@ -777,9 +777,7 @@ async fn rps_skips_an_increase_between_holds() {
     assert_eq!(holds.len(), 2, "{:?}", metrics.history);
     let finished = FINISHED.lock().unwrap().clone();
     let within = |from, to| finished.iter().filter(|&&at| at >= from && at < to).count();
-    let seconds = |from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>| {
-        (to - from).num_microseconds().unwrap() as f64 / 1e6
-    };
+    let seconds = |from: jiff::Timestamp, to: jiff::Timestamp| (to - from).as_micros() as f64 / 1e6;
     let in_holds: usize = holds.iter().map(|&(from, to)| within(from, to)).sum();
     let held_seconds: f64 = holds.iter().map(|&(from, to)| seconds(from, to)).sum();
     let expected = in_holds as f64 / held_seconds;

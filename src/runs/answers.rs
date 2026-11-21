@@ -310,7 +310,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "goose-answers-{name}-{}-{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            jiff::Timestamp::now().as_nanosecond()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir

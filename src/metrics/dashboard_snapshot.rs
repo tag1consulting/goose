@@ -8,7 +8,6 @@ use super::{
     GooseRequestMetricTimingData, GooseTransactionErrorMetricAggregate, ScenarioMetricAggregate,
     TransactionMetricAggregate,
 };
-use chrono::prelude::*;
 use serde::Serialize;
 use std::collections::HashSet;
 
@@ -31,7 +30,9 @@ pub(crate) const SNAPSHOT_VERSION: u32 = 1;
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct DashboardSnapshot {
     pub version: u32,
-    pub generated_at: DateTime<Utc>,
+    // ts-rs implements TS for jiff 0.2 only; the field is an RFC 3339 string.
+    #[cfg_attr(test, ts(type = "string"))]
+    pub generated_at: jiff::Timestamp,
     pub goose_version: String,
 
     pub phase: String,
@@ -764,7 +765,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         hosts.sort();
         return DashboardSnapshot {
             version: SNAPSHOT_VERSION,
-            generated_at: Utc::now(),
+            generated_at: jiff::Timestamp::now(),
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             phase: input.phase,
             stopping: input.stopping,
@@ -947,7 +948,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
 
     DashboardSnapshot {
         version: SNAPSHOT_VERSION,
-        generated_at: Utc::now(),
+        generated_at: jiff::Timestamp::now(),
         goose_version: env!("CARGO_PKG_VERSION").to_string(),
         phase: input.phase,
         stopping: input.stopping,
