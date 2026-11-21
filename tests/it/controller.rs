@@ -108,20 +108,37 @@ struct Reply {
 // What a step checks of its reply, with the protocol that sent it.
 type Check = Box<dyn Fn(Protocol, &Reply) + Send>;
 
-// One line sent to the Controller, the check of its reply, and how long to
-// wait after it for Goose to catch up.
+// A test plan step the load test reaches after a command: the action and
+// user count its history records when the step starts.
+#[derive(Clone, Copy, Debug)]
+struct Reached {
+    action: &'static str,
+    users: usize,
+}
+
+// One line sent to the Controller, the check of its reply, and the test plan
+// step to wait for after it, if any. A Controller answers a users or stop
+// change once it is under way, not done: the next step waits for Goose to
+// finish it, however long a busy machine makes that.
 struct Step {
     line: String,
     check: Check,
-    pause: time::Duration,
+    until: Option<Reached>,
 }
 
 // A step whose reply must start with `prefix`.
 fn starts(line: &str, prefix: &'static str) -> Step {
+    let sent = line.to_string();
     Step {
         line: line.to_string(),
-        check: Box::new(move |_, reply: &Reply| assert!(reply.text.starts_with(prefix))),
-        pause: time::Duration::ZERO,
+        check: Box::new(move |_, reply: &Reply| {
+            assert!(
+                reply.text.starts_with(prefix),
+                "the reply to {sent:?} should start with {prefix:?}, but was {:?}",
+                reply.text
+            )
+        }),
+        until: None,
     }
 }
 
@@ -130,14 +147,15 @@ fn step(line: &str, check: impl Fn(Protocol, &Reply) + Send + 'static) -> Step {
     Step {
         line: line.to_string(),
         check: Box::new(check),
-        pause: time::Duration::ZERO,
+        until: None,
     }
 }
 
 impl Step {
-    // This step, waiting `pause` after its reply.
-    fn then_wait(mut self, pause: time::Duration) -> Self {
-        self.pause = pause;
+    // This step, then waiting until the load test has started a test plan
+    // step `action` with `users` users.
+    fn until(mut self, action: &'static str, users: usize) -> Self {
+        self.until = Some(Reached { action, users });
         self
     }
 }
@@ -381,23 +399,25 @@ fn commands(server_url: &str) -> Vec<(Command, Vec<Step>)> {
                     "users 99999999999999999999",
                     "users must be an integer between 1 and 100000",
                 ),
-                // Reconfigure the number of users, increasing; give Goose a
-                // second to increase users.
+                // Reconfigure the number of users, increasing, and wait for
+                // every user to launch: a decrease that came first would
+                // drop the users not yet launched, and total_users would
+                // fall short of MAX_USERS.
                 starts(
                     &["users ", &MAX_USERS.to_string()].concat(),
                     "users configured",
                 )
-                .then_wait(time::Duration::from_secs(1)),
-                // Reconfigure the number of users, decreasing; give Goose a
-                // second to decrease users.
+                .until("Maintaining", MAX_USERS),
+                // Reconfigure the number of users, decreasing, and wait for
+                // the users to stop.
                 starts(
                     &["users ", &FINAL_USERS.to_string()].concat(),
                     "users configured",
                 )
-                .then_wait(time::Duration::from_secs(1)),
-                // A running load test can be stopped; give Goose a half
-                // second to stop before moving on.
-                starts("stop", "load test stopped").then_wait(time::Duration::from_millis(500)),
+                .until("Maintaining", FINAL_USERS),
+                // A running load test can be stopped; wait for it to finish
+                // stopping before moving on.
+                starts("stop", "load test stopped").until("Finished", 0),
             ],
         ),
         (
@@ -578,8 +598,20 @@ fn validate_one_scenario(
     protocol: Protocol,
 ) {
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
+    let index_calls = mock_endpoints[INDEX_KEY].calls();
+    assert!(
+        index_calls > 0,
+        "{} was requested {} times",
+        INDEX_PATH,
+        index_calls
+    );
+    let about_calls = mock_endpoints[ABOUT_KEY].calls();
+    assert!(
+        about_calls > 0,
+        "{} was requested {} times",
+        ABOUT_PATH,
+        about_calls
+    );
 
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics
@@ -592,30 +624,54 @@ fn validate_one_scenario(
         .unwrap();
 
     // There should not have been any failures during this test.
-    assert!(index_metrics.fail_count == 0);
-    assert!(about_metrics.fail_count == 0);
+    assert_eq!(index_metrics.fail_count, 0, "failed GET {INDEX_PATH}");
+    assert_eq!(about_metrics.fail_count, 0, "failed GET {ABOUT_PATH}");
 
-    // Users were correctly configured through the controller.
-    assert!(goose_metrics.total_users == MAX_USERS);
+    // Users were correctly configured through the controller: every user
+    // the increase to MAX_USERS asked for was launched.
+    assert_eq!(
+        goose_metrics.total_users, MAX_USERS,
+        "users launched over the run, with history {:?}",
+        goose_metrics.history
+    );
 
     // Host was not configured at start time.
-    assert!(configuration.host.is_none());
+    assert_eq!(configuration.host, None, "host configured at start");
 
     // The load test was manually shut down instead of running to completion.
-    assert!(goose_metrics.duration < RUN_TIME);
+    assert!(
+        goose_metrics.duration < RUN_TIME,
+        "the load test ran {} seconds, not less than its run time of {RUN_TIME}",
+        goose_metrics.duration
+    );
 
     // Increasing, Maintaining, Increasing, Maintaining, Decreasing, Maintaining, Canceling,
     // Finished, Finished.
     // Finished is logged twice because `stop` puts the test to Idle, and then `shutdown`
     // actually shuts down the test, and both are logged as "Finished".
-    assert!(goose_metrics.history.len() == 9);
+    assert_eq!(
+        goose_metrics.history.len(),
+        9,
+        "test plan steps in the history {:?}",
+        goose_metrics.history
+    );
 
     // The Telnet test should create a report-file.
     if protocol == Protocol::Telnet {
         // The report file must exist.
-        assert!(std::path::Path::new(REPORT_FILE).exists());
+        assert!(
+            std::path::Path::new(REPORT_FILE).exists(),
+            "no report file {}",
+            REPORT_FILE
+        );
         // The report file must not be empty.
-        assert!(common::file_length(REPORT_FILE) > 0);
+        let length = common::file_length(REPORT_FILE);
+        assert!(
+            length > 0,
+            "report file {} is {} bytes",
+            REPORT_FILE,
+            length
+        );
         // Now clean up the file.
         common::cleanup_files(vec![REPORT_FILE]);
     }
@@ -628,11 +684,61 @@ fn get_transactions() -> Scenario {
         .register_transaction(transaction!(get_about).set_weight(1).unwrap())
 }
 
+// The longest the tests wait for the Controller to listen, or for a step
+// to be reached: far longer than either takes on a loaded machine, and well
+// short of RUN_TIME, so a ramp that never ends fails here, saying so, not as
+// a run that ended by itself.
+const STEP_TIMEOUT: time::Duration = time::Duration::from_secs(20);
+
+// After `line`, wait until the last step of the load test's history is
+// `reached`, read through the Controller's metrics-json. Goose records the
+// step a users change ramps to only once it has launched, or stopped, every
+// user the change asked for, and Finished only once a stop is done.
+async fn wait_until(client: &mut Client, line: &str, reached: Reached) {
+    let started = time::Instant::now();
+    loop {
+        let reply = client.send("metrics-json").await;
+        let metrics: serde_json::Value = serde_json::from_str(&text(&reply))
+            .unwrap_or_else(|e| panic!("metrics-json is not json ({e}): {:?}", reply.text));
+        let last = metrics["history"]
+            .as_array()
+            .and_then(|history| history.last())
+            .cloned()
+            .unwrap_or_default();
+        if last["action"] == reached.action && last["users"] == reached.users {
+            return;
+        }
+        assert!(
+            started.elapsed() < STEP_TIMEOUT,
+            "after {line:?} the load test did not reach {reached:?} within {STEP_TIMEOUT:?}: \
+             its last step is {last}, total_users {}",
+            metrics["total_users"]
+        );
+        tokio::time::sleep(time::Duration::from_millis(50)).await;
+    }
+}
+
 // Drive the `protocol` Controller through every command it has, checking
 // every reply.
 async fn drive(protocol: Protocol, server_url: String, mcp_port: u16) {
-    // Sleep a half a second allowing the GooseAttack to start.
-    tokio::time::sleep(time::Duration::from_millis(500)).await;
+    // Wait for the GooseAttack to start its Controller.
+    let port = match protocol {
+        Protocol::Telnet => TELNET_PORT.get(),
+        Protocol::WebSocket => WEBSOCKET_PORT.get(),
+        #[cfg(feature = "mcp")]
+        Protocol::Mcp => mcp_port,
+    };
+    let listening = time::Instant::now();
+    while TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+        assert!(
+            listening.elapsed() < STEP_TIMEOUT,
+            "the {:?} Controller did not listen on port {} within {:?}",
+            protocol,
+            port,
+            STEP_TIMEOUT
+        );
+        tokio::time::sleep(time::Duration::from_millis(50)).await;
+    }
 
     let mut client = Client::connect(protocol, mcp_port).await;
     for (command, steps) in commands(&server_url) {
@@ -642,7 +748,9 @@ async fn drive(protocol: Protocol, server_url: String, mcp_port: u16) {
         for step in steps {
             let reply = client.send(&step.line).await;
             (step.check)(protocol, &reply);
-            tokio::time::sleep(step.pause).await;
+            if let Some(reached) = step.until {
+                wait_until(&mut client, &step.line, reached).await;
+            }
             // Give the parent process time to catch up.
             tokio::time::sleep(time::Duration::from_millis(100)).await;
         }
