@@ -49,13 +49,12 @@ priority = 10
 
 # Tests that check wall clock time to the second or a rate over seconds, each
 # a test binary of its own, alone, under cargo test: a run cancelled 3
-# seconds in lasts 3 seconds, a Controller's user count is reached in time,
-# a throttle holds its rate. They take the slots of four tests, so on a busy
-# machine about as many tests run beside them as there are CPUs.
+# seconds in lasts 3 seconds, a throttle holds its rate. They take the slots
+# of four tests, so on a busy machine about as many tests run beside them as
+# there are CPUs.
 [[profile.default.overrides]]
 filter = """
-(binary_id(goose::it) & test(/^(cancel|throttle|throttle_live|user_rate)::/))
-| (binary_id(goose::it) & test(/^controller::test_(telnet|websocket|mcp)_controller$/))
+binary_id(goose::it) & test(/^(cancel|throttle|throttle_live|user_rate)::/)
 """
 threads-required = 4
 
