@@ -28,11 +28,9 @@ async fn get_error_then_set_success(user: &mut GooseUser) -> TransactionResult {
 fn partial_final_second(json: &serde_json::Value) -> Option<usize> {
     let history = json["raw_metrics"]["history"].as_array().unwrap();
     let at = |step: &serde_json::Value| {
-        chrono::DateTime::parse_from_rfc3339(step["timestamp"].as_str().unwrap()).unwrap()
+        str::parse::<jiff::Timestamp>(step["timestamp"].as_str().unwrap()).unwrap()
     };
-    let ran = (at(history.last().unwrap()) - at(&history[0]))
-        .num_microseconds()
-        .unwrap();
+    let ran = (at(history.last().unwrap()) - at(&history[0])).as_micros();
     (ran % 1_000_000 != 0).then_some((ran / 1_000_000) as usize)
 }
 

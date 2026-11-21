@@ -8,7 +8,6 @@ use crate::{
     test_plan::TestPlanStepAction,
     GooseError,
 };
-use chrono::{Local, TimeZone};
 use std::io::Write;
 
 struct Markdown<'m, 'w, W: Write> {
@@ -94,16 +93,16 @@ impl<W: Write> Markdown<'_, '_, W> {
                 .data
                 .raw_metrics
                 .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
-            let started = Local
-                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+            let started = step[0]
+                .timestamp
                 // @TODO: error handling
-                .unwrap()
-                .format("%y-%m-%d %H:%M:%S");
-            let stopped = Local
-                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%y-%m-%d %H:%M:%S");
+            let stopped = step[1]
+                .timestamp
                 // @TODO: error handling
-                .unwrap()
-                .format("%y-%m-%d %H:%M:%S");
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%y-%m-%d %H:%M:%S");
 
             let users = match &step[0].action {
                 // For maintaining just show the current number of users.

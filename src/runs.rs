@@ -22,9 +22,9 @@ use crate::metrics::{load_baseline_file, write_folder_report, GooseMetrics, Load
 #[cfg(feature = "dashboard")]
 use crate::{ControlOutcome, GooseAttackRunState};
 use crate::{GooseAttack, GooseError};
-use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -605,10 +605,10 @@ pub(crate) struct GraphsStart {
 impl GraphsStart {
     /// The sentence a report shows.
     pub(crate) fn describe(&self) -> String {
-        let time = DateTime::parse_from_rfc3339(&self.time)
+        let time = str::parse::<jiff::Timestamp>(&self.time)
             .map(|time| {
-                time.with_timezone(&Local)
-                    .format("%Y-%m-%d %H:%M:%S")
+                time.to_zoned_datetime(jiff::tz::TimeZone::system())
+                    .strftime("%Y-%m-%d %H:%M:%S")
                     .to_string()
             })
             .unwrap_or_else(|_| self.time.clone());
@@ -687,7 +687,7 @@ impl RunFolder {
     /// when this returns.
     pub(crate) fn choose(
         configuration: &GooseConfiguration,
-        started: DateTime<Local>,
+        started: &jiff::ZonedDateTime,
     ) -> io::Result<RunFolder> {
         Ok(RunFolder {
             path: reserve(&Self::base(configuration, started))?,
@@ -695,10 +695,10 @@ impl RunFolder {
     }
 
     /// The name a run started at `started` asks for, before any suffix.
-    fn base(configuration: &GooseConfiguration, started: DateTime<Local>) -> PathBuf {
+    fn base(configuration: &GooseConfiguration, started: &jiff::ZonedDateTime) -> PathBuf {
         match configuration.output_dir() {
             Some(dir) => PathBuf::from(dir),
-            None => Path::new(DEFAULT_PARENT).join(started.format("%Y%m%d-%H%M%S").to_string()),
+            None => Path::new(DEFAULT_PARENT).join(started.strftime("%Y%m%d-%H%M%S").to_string()),
         }
     }
 
@@ -858,7 +858,7 @@ pub(crate) struct Output {
     /// Include graph data in the JSON report.
     pub graph_data: bool,
     /// When the run started.
-    pub started: Option<DateTime<Utc>>,
+    pub started: Option<jiff::Timestamp>,
     /// The folder of the last report written into a run's folder at the end
     /// of a run.
     pub last_report: Option<String>,
@@ -985,9 +985,9 @@ impl GooseAttack {
         if !self.configuration.uses_run_folder() {
             return Ok(());
         }
-        let started = Local::now();
-        let folder = RunFolder::choose(&self.configuration, started)
-            .map_err(|e| folder_error(&RunFolder::base(&self.configuration, started), e))
+        let started = jiff::ZonedDateTime::now();
+        let folder = RunFolder::choose(&self.configuration, &started)
+            .map_err(|e| folder_error(&RunFolder::base(&self.configuration, &started), e))
             .and_then(|folder| {
                 self.output.reserved = Some(folder.path.clone());
                 folder.check_writable().map(|()| folder)
@@ -1043,7 +1043,7 @@ impl GooseAttack {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             test: test_name(),
             started: self.output.started.map(rfc3339),
-            ended: (!in_progress).then(|| rfc3339(Utc::now())),
+            ended: (!in_progress).then(|| rfc3339(jiff::Timestamp::now())),
             ended_by,
             canceled_reason,
             in_progress,
@@ -1078,7 +1078,7 @@ impl GooseAttack {
             )
         };
         Some(GraphsStart {
-            time: rfc3339(started + chrono::Duration::seconds(graphs_from as i64)),
+            time: rfc3339(started + jiff::SignedDuration::from_secs(graphs_from as i64)),
             reason,
         })
     }
@@ -1358,12 +1358,12 @@ fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Opti
     let text = read_stored_text(json).ok()?;
     let record: RunRecord = serde_json::from_str(&text).ok()?;
     let metrics = serde_json::from_str::<Listed>(&text).ok()?.raw_metrics;
-    let written = DateTime::<Utc>::from(modified).timestamp();
+    let written = jiff::Timestamp::try_from(modified).ok()?.as_second();
     let sort_key = record
         .started
         .as_deref()
-        .and_then(|started| DateTime::parse_from_rfc3339(started).ok())
-        .map_or(written, |started| started.timestamp());
+        .and_then(|started| str::parse::<jiff::Timestamp>(started).ok())
+        .map_or(written, |started| started.as_second());
     Some(ListedReport {
         name: name.to_string(),
         record,
@@ -1583,11 +1583,9 @@ pub(crate) fn compared_runs_line(
 
 /// An RFC 3339 time as `YYYY-MM-DD HH:MM:SS UTC`, or `None` if it is not one.
 pub(crate) fn utc_text(time: &str) -> Option<String> {
-    DateTime::parse_from_rfc3339(time).ok().map(|time| {
-        time.with_timezone(&Utc)
-            .format("%Y-%m-%d %H:%M:%S UTC")
-            .to_string()
-    })
+    str::parse::<jiff::Timestamp>(time)
+        .ok()
+        .map(|time| time.strftime("%Y-%m-%d %H:%M:%S UTC").to_string())
 }
 
 /// The files `DELETE /api/v1/reports/{name}` removes from a run's folder:
@@ -1815,8 +1813,8 @@ pub(crate) fn reason(e: &GooseError) -> String {
 }
 
 /// RFC 3339 in UTC, to the second, as the JSON report records times.
-pub(crate) fn rfc3339(time: DateTime<Utc>) -> String {
-    time.to_rfc3339_opts(SecondsFormat::Secs, true)
+pub(crate) fn rfc3339(time: jiff::Timestamp) -> String {
+    time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// The load test's executable name, without extension.
@@ -1830,13 +1828,12 @@ pub(crate) fn test_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "goose-folder-test-{name}-{}-{}",
             std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            jiff::Timestamp::now().as_nanosecond()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -1851,8 +1848,10 @@ mod tests {
 
     #[test]
     fn default_folder_is_named_for_the_start_time() {
-        let started = Local.with_ymd_and_hms(2026, 10, 9, 14, 12, 3).unwrap();
-        let base = RunFolder::base(&configuration(None), started);
+        let started = jiff::civil::datetime(2026, 10, 9, 14, 12, 3, 0)
+            .to_zoned_datetime(jiff::tz::TimeZone::system())
+            .unwrap();
+        let base = RunFolder::base(&configuration(None), &started);
         assert_eq!(base, Path::new("goose-runs/20261009-141203"));
     }
 
@@ -1862,8 +1861,8 @@ mod tests {
     fn folder_holding_files_is_never_reused() {
         let parent = temp_dir("suffix");
         let dir = parent.join("nightly");
-        let started = Local::now();
-        let choose = || RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
+        let started = jiff::ZonedDateTime::now();
+        let choose = || RunFolder::choose(&configuration(Some(&dir)), &started).unwrap();
         let mut chosen = Vec::new();
         for _ in 0..4 {
             let folder = choose();
@@ -1888,9 +1887,9 @@ mod tests {
     fn a_chosen_folder_is_reserved_at_once() {
         let parent = temp_dir("reserve");
         let dir = parent.join("nightly");
-        let started = Local::now();
-        let first = RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
-        let second = RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
+        let started = jiff::ZonedDateTime::now();
+        let first = RunFolder::choose(&configuration(Some(&dir)), &started).unwrap();
+        let second = RunFolder::choose(&configuration(Some(&dir)), &started).unwrap();
         assert_eq!(
             (first.name(), second.name()),
             ("nightly".into(), "nightly-2".into())
@@ -1899,8 +1898,8 @@ mod tests {
 
         let empty = parent.join("empty");
         std::fs::create_dir(&empty).unwrap();
-        let first = RunFolder::choose(&configuration(Some(&empty)), started).unwrap();
-        let second = RunFolder::choose(&configuration(Some(&empty)), started).unwrap();
+        let first = RunFolder::choose(&configuration(Some(&empty)), &started).unwrap();
+        let second = RunFolder::choose(&configuration(Some(&empty)), &started).unwrap();
         assert_eq!(
             (first.name(), second.name()),
             ("empty".into(), "empty-2".into())
@@ -1935,7 +1934,7 @@ mod tests {
     #[test]
     fn graphs_start_when_the_graphs_do_not_cover_the_run() {
         let mut attack = GooseAttack::initialize_with_config(configuration(None)).unwrap();
-        attack.output.started = Some(Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap());
+        attack.output.started = Some("2026-10-22T10:00:00Z".parse::<jiff::Timestamp>().unwrap());
         assert_eq!(attack.report_record(false, 0).graphs_start, None);
         attack.output.save_report = true;
         let start = attack.report_record(false, 300).graphs_start.unwrap();
@@ -1956,12 +1955,12 @@ mod tests {
         let parent = temp_dir("graphs-start");
         let mut attack =
             GooseAttack::initialize_with_config(configuration(Some(&parent.join("run")))).unwrap();
-        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        let started = "2026-10-22T10:00:00Z".parse::<jiff::Timestamp>().unwrap();
         attack.run_in_progress = true;
         attack.output.started = Some(started);
         attack.output.save_report = true;
         attack.output.folder =
-            Some(RunFolder::choose(&attack.configuration, Local::now()).unwrap());
+            Some(RunFolder::choose(&attack.configuration, &jiff::ZonedDateTime::now()).unwrap());
         for step in [TestPlanStepAction::Increasing, TestPlanStepAction::Finished] {
             attack.metrics.history.push(TestPlanHistory::step(step, 0));
         }
@@ -1978,7 +1977,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             report["graphs_start"]["time"],
-            rfc3339(started + chrono::Duration::seconds(origin as i64))
+            rfc3339(started + jiff::SignedDuration::from_secs(origin as i64))
         );
         std::fs::remove_dir_all(&parent).ok();
     }
@@ -1989,7 +1988,7 @@ mod tests {
     fn a_report_saved_now_is_marked_in_progress() {
         let mut attack = GooseAttack::initialize_with_config(configuration(None)).unwrap();
         attack.run_in_progress = true;
-        attack.output.started = Some(Utc::now());
+        attack.output.started = Some(jiff::Timestamp::now());
         let record = attack.report_record(true, 0);
         assert!(record.in_progress);
         assert_eq!((record.ended.as_deref(), record.ended_by), (None, None));
@@ -2073,14 +2072,14 @@ mod tests {
     #[test]
     fn a_released_folder_goes_only_when_empty() {
         let parent = temp_dir("release");
-        let started = Local::now();
+        let started = jiff::ZonedDateTime::now();
         let empty =
-            RunFolder::choose(&configuration(Some(&parent.join("empty"))), started).unwrap();
+            RunFolder::choose(&configuration(Some(&parent.join("empty"))), &started).unwrap();
         let mut output = Output::default();
         output.reserved = Some(empty.path.clone());
         output.release_folder();
         assert!(!empty.path.exists());
-        let used = RunFolder::choose(&configuration(Some(&parent.join("used"))), started).unwrap();
+        let used = RunFolder::choose(&configuration(Some(&parent.join("used"))), &started).unwrap();
         std::fs::write(used.file("goose.log"), "x").unwrap();
         output.reserved = Some(used.path.clone());
         output.release_folder();
@@ -2101,11 +2100,12 @@ mod tests {
                 ..configuration(Some(&parent.join("run")))
             })
             .unwrap();
-            let folder = RunFolder::choose(&attack.configuration, Local::now()).unwrap();
+            let folder =
+                RunFolder::choose(&attack.configuration, &jiff::ZonedDateTime::now()).unwrap();
             // A folder where report.html goes, so the write fails.
             std::fs::create_dir(folder.file(REPORT_HTML)).unwrap();
             attack.run_in_progress = true;
-            attack.output.started = Some(Utc::now());
+            attack.output.started = Some(jiff::Timestamp::now());
             attack.output.save_report = true;
             attack.output.folder = Some(folder);
             attack

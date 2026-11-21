@@ -49,7 +49,6 @@ use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::threshold::{self, ThresholdResult};
 use crate::util;
 use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
-use chrono::prelude::*;
 /// The report data builder, for the whole run audit in `goose.rs`.
 #[cfg(test)]
 pub(crate) use common::{prepare_data_with_baseline, ReportOptions as AuditReportOptions};
@@ -75,6 +74,7 @@ pub(crate) mod arc_str_serde {
 }
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fmt::Write;
@@ -3212,10 +3212,10 @@ impl GooseMetrics {
     // Determine the seconds, minutes and hours between two chrono:DateTimes.
     pub(crate) fn get_seconds_minutes_hours(
         &self,
-        start: &chrono::DateTime<chrono::Utc>,
-        end: &chrono::DateTime<chrono::Utc>,
+        start: &jiff::Timestamp,
+        end: &jiff::Timestamp,
     ) -> (i64, i64, i64) {
-        let duration = end.timestamp() - start.timestamp();
+        let duration = end.as_second() - start.as_second();
         let seconds = duration % 60;
         let minutes = (duration / 60) % 60;
         let hours = duration / 60 / 60;
@@ -3250,17 +3250,17 @@ impl GooseMetrics {
         for step in self.history.windows(2) {
             let (seconds, minutes, hours) =
                 self.get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
-            let started = Local
-                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+            let started = step[0]
+                .timestamp
                 // @TODO: error handling
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
-            let stopped = Local
-                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+            let stopped = step[1]
+                .timestamp
                 // @TODO: error handling
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
             match &step[0].action {
                 // For maintaining just show the current number of users.
@@ -5350,11 +5350,11 @@ impl ReportSource<'_> {
     }
 
     /// When the run started, as the graphs count it.
-    fn started(&self) -> DateTime<Utc> {
+    fn started(&self) -> jiff::Timestamp {
         self.metrics
             .history
             .first()
-            .map_or_else(Utc::now, |step| step.timestamp)
+            .map_or_else(jiff::Timestamp::now, |step| step.timestamp)
     }
 
     /// The run's final second, counted as the graphs count seconds, when the
@@ -5366,7 +5366,7 @@ impl ReportSource<'_> {
         if !matches!(last.action, TestPlanStepAction::Finished) {
             return None;
         }
-        let ran = (last.timestamp - first.timestamp).num_microseconds()?;
+        let ran = i64::try_from((last.timestamp - first.timestamp).as_micros()).ok()?;
         (ran > 0 && ran % 1_000_000 != 0).then_some((ran / 1_000_000) as usize)
     }
 
@@ -5379,7 +5379,7 @@ impl ReportSource<'_> {
     }
 
     /// The heatmap card: from the histograms, or from the JSON read back.
-    fn heatmap_markup(&self, started: DateTime<Utc>) -> String {
+    fn heatmap_markup(&self, started: jiff::Timestamp) -> String {
         match self.heatmap {
             Some(heatmap) => crate::graph::heatmap_card(heatmap),
             None => self
@@ -5431,16 +5431,16 @@ impl ReportSource<'_> {
             let (seconds, minutes, hours) = self
                 .metrics
                 .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
-            let started = Local
-                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+            let started = step[0]
+                .timestamp
                 // @TODO: error handling
-                .unwrap()
-                .format("%y-%m-%d %H:%M:%S");
-            let stopped = Local
-                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%y-%m-%d %H:%M:%S");
+            let stopped = step[1]
+                .timestamp
                 // @TODO: error handling
-                .unwrap()
-                .format("%y-%m-%d %H:%M:%S");
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime("%y-%m-%d %H:%M:%S");
             match &step[0].action {
                 // For maintaining just show the current number of users.
                 TestPlanStepAction::Maintaining => {
@@ -7275,7 +7275,7 @@ mod test {
         // The heatmap takes the seconds the rings held before the switch.
         assert!(!processor
             .graph_data
-            .get_latency_heatmap_markup(false, chrono::Utc::now())
+            .get_latency_heatmap_markup(false, jiff::Timestamp::now())
             .is_empty());
         record(&mut processor, keep + 300, 2 * keep + 300);
         assert_eq!(processor.graph_data.first_second(), pruned_to);
@@ -7293,7 +7293,7 @@ mod test {
         assert_eq!(timed, 2 * keep + 300, "the totals cover the whole run");
         assert_eq!(graph_data.first_second(), pruned_to);
         assert!(!graph_data
-            .get_latency_heatmap_markup(false, chrono::Utc::now())
+            .get_latency_heatmap_markup(false, jiff::Timestamp::now())
             .is_empty());
 
         // Off again: back to the window, and no heatmap columns.
@@ -9249,7 +9249,7 @@ mod test {
     fn report_count_graphs_leave_out_the_final_partial_second() {
         let processor = make_test_processor(0);
         let mut metrics = processor.metrics.clone();
-        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        let started = "2026-10-22T10:00:00Z".parse::<jiff::Timestamp>().unwrap();
         metrics.history = vec![
             TestPlanHistory {
                 action: TestPlanStepAction::Increasing,
@@ -9258,7 +9258,7 @@ mod test {
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Finished,
-                timestamp: started + chrono::Duration::milliseconds(2_500),
+                timestamp: started + jiff::SignedDuration::from_millis(2_500),
                 users: 0,
             },
         ];

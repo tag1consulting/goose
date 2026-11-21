@@ -17,7 +17,7 @@ license = "Apache-2.0"
 async-compression = { version = "0.4.51", default-features = false, features = ["gzip", "tokio"] }
 # The body chunks GooseHttpResponse returns; reqwest already pulls it in.
 bytes = "1"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+jiff = { version = "1.0", features = ["serde"] }
 clap = { version = "4.5", default-features = false, features = [
     "derive",
     "error-context",
@@ -139,7 +139,7 @@ tokio-rustls = { version = "0.26", default-features = false }
 # that changes formatting would fail CI with no change here. To upgrade, bump
 # the pin, run `GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib
 # dashboard_types_match_rust`, review the diff, and run `npm run check`.
-ts-rs = { version = "=12.0.1", features = ["chrono-impl"] }
+ts-rs = "=12.0.1"
 
 # A Gaggle worker reads its own CPU time with getrusage, with the `gaggle`
 # feature. Already in the tree, through tokio.

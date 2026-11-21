@@ -13,7 +13,6 @@ use crate::metrics::{
     TransactionDetail, TransactionMetric,
 };
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
-use chrono::{TimeZone, Utc};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -491,7 +490,7 @@ impl Side {
                 respond,
             });
         let (mut metrics, graph) = received.try_recv().unwrap();
-        let started = Utc.with_ymd_and_hms(2026, 10, 30, 12, 0, 0).unwrap();
+        let started = "2026-10-30T12:00:00Z".parse::<jiff::Timestamp>().unwrap();
         metrics.history = vec![
             TestPlanHistory {
                 action: TestPlanStepAction::Increasing,
@@ -500,7 +499,7 @@ impl Side {
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Finished,
-                timestamp: started + chrono::Duration::seconds(SECONDS as i64),
+                timestamp: started + jiff::SignedDuration::from_secs(SECONDS as i64),
                 users: 0,
             },
         ];
