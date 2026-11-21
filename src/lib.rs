@@ -4432,7 +4432,6 @@ impl GooseAttack {
                         self.metrics
                             .history
                             .push(TestPlanHistory::step(TestPlanStepAction::Increasing, 0));
-                        //self.graph_data.set_starting(jiff::Timestamp::now());
                         self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
                     }
                 }

@@ -1844,7 +1844,7 @@ impl LatencyHistograms {
             .unwrap_or(0);
         Some(ReportHeatmap {
             start: started.as_second() * 1000,
-            offset: i64::from(jiff::tz::TimeZone::system().to_offset(started).seconds()) * 1000,
+            offset: i64::from(crate::util::local_zone().to_offset(started).seconds()) * 1000,
             origin: self.origin,
             buckets_us: bucket_table_us(last),
             series,
@@ -3099,17 +3099,18 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         test_started_time: jiff::Timestamp,
     ) -> String {
         let mut steps = String::new();
+        let tz = crate::util::local_zone();
         for step in history.windows(2) {
             let started = step[0]
                 .timestamp
                 // @TODO: Error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
             let stopped = step[1]
                 .timestamp
                 // @TODO: Error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
             match &step[0].action {
@@ -3353,6 +3354,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         origin: usize,
         started: jiff::Timestamp,
     ) -> Vec<(String, U)> {
+        let tz = crate::util::local_zone();
         // A second no clock can show, from an origin read back from a JSON
         // report, is left out rather than drawn.
         data.iter()
@@ -3364,7 +3366,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     .and_then(|second| i64::try_from(second).ok())
                     .and_then(|second| second.checked_add(started.as_second()))?;
                 let time = jiff::Timestamp::from_second(second)
-                    .map(|ts| ts.to_zoned_datetime(jiff::tz::TimeZone::system()))
+                    .map(|ts| ts.to_zoned_datetime(tz.clone()))
                     .ok()?;
                 value.map(|data| (time.strftime("%Y-%m-%d %H:%M:%S").to_string(), data))
             })
@@ -6097,7 +6099,7 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M")
         ).as_str();
 
@@ -6211,19 +6213,19 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M"),
             increasing = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M:%S"),
             decreasing = "2021-11-21T21:20:33Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M:%S"),
             cancelling = "2021-11-21T21:20:34Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M:%S"),
             finishing = "2021-11-21T21:20:35Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M:%S"),
         ).as_str();
 
@@ -6379,7 +6381,7 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M")
         ).as_str();
 
@@ -6565,7 +6567,7 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = "2021-11-21T21:20:32Z".parse::<jiff::Timestamp>().unwrap()
-.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(jiff::tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M")
         ).as_str();
 
