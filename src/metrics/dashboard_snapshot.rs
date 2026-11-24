@@ -538,6 +538,26 @@ impl SeriesWindow {
     }
 }
 
+/// The line charts over the whole run, the `lines` of `GET /api/v1/whole-run`:
+/// at most 600 points, each `width` seconds wide from `start_second`, the
+/// newest covering the seconds through `end_second`. Requests and failures
+/// per second are each point's mean rate, users the level at the end of the
+/// point, and the average response time is weighted by request count.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct WholeRunLines {
+    /// The second, from the test start, point 0 begins at.
+    pub start_second: u64,
+    /// Seconds in each point.
+    pub width: u64,
+    /// The newest second the points cover: the newest complete one.
+    pub end_second: u64,
+    pub rps: Vec<f64>,
+    pub fps: Vec<f64>,
+    pub users: Vec<u64>,
+    pub avg_latency_ms: Vec<f64>,
+}
+
 /// Response times by second over the trailing window, as counts in Goose's response time buckets. Only the columns that changed since the client's last heatmap are sent: apply them to the columns kept from earlier ones. `since` 0 means every column of the window is here; otherwise a client holding `since` of this `generation` applies the columns, and any other client asks again with its own `heatmap_generation` and `heatmap_since`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -1768,6 +1788,7 @@ mod tests {
         };
         declarations.visit::<DashboardSnapshot>();
         declarations.visit::<RequestSeries>();
+        declarations.visit::<WholeRunLines>();
         // The derive's visiting order is not stable from one build to the
         // next; sort by type name so the file is.
         declarations.decls.sort();

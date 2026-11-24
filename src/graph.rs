@@ -1799,20 +1799,53 @@ impl LatencyHistograms {
         series: S,
     ) -> Option<ReportHeatmap<S>> {
         self.all_columns.as_ref()?;
-        let last = self
-            .report_sources(co_active)
+        Some(self.report_heatmap_of(self.report_sources(co_active), started, series))
+    }
+
+    /// The report's heatmap with `series` as its series, its bucket table
+    /// reaching the slowest bucket of `sources`, where they come from.
+    fn report_heatmap_of<'a, S>(
+        &'a self,
+        sources: impl Iterator<Item = ReportSource<'a>>,
+        started: jiff::Timestamp,
+        series: S,
+    ) -> ReportHeatmap<S> {
+        let last = sources
             .flat_map(|(_, _, measured, added)| [Some(measured), added])
             .flatten()
             .filter_map(Columns::last_bucket)
             .max()
             .unwrap_or(0);
-        Some(ReportHeatmap {
+        ReportHeatmap {
             start: started.as_second() * 1000,
             offset: i64::from(jiff::tz::TimeZone::system().to_offset(started).seconds()) * 1000,
             origin: self.origin,
             buckets_us: bucket_table_us(last),
             series,
-        })
+        }
+    }
+
+    /// The report's heatmap with one series: all requests when `key` is
+    /// `None`, otherwise the request `key` names (`METHOD name`); `None`
+    /// without whole run columns, or when `key` has none.
+    fn report_heatmap_one(
+        &self,
+        key: Option<&str>,
+        co_active: bool,
+        started: jiff::Timestamp,
+    ) -> Option<ReportHeatmap<Vec<ReportSeries<'_>>>> {
+        self.all_columns.as_ref()?;
+        let mut sources = self.report_sources(co_active);
+        let source = match key {
+            // All requests come first.
+            None => sources.next()?,
+            Some(key) => sources.skip(1).find(|(name, ..)| *name == key)?,
+        };
+        Some(self.report_heatmap_of(
+            std::iter::once(source),
+            started,
+            vec![ReportSeries::new(source)],
+        ))
     }
 
     /// The report's heatmap with every series built (unit tests).
@@ -2077,6 +2110,7 @@ impl RecordedGraphs {
             users_per_second: self.users_per_second,
             latency: None,
             provisional_from: None,
+            whole_run: None,
         };
         (graph_data, self.heatmap)
     }
@@ -2107,6 +2141,10 @@ pub(crate) struct GraphData {
     /// arrived so far. `None` on one process, and once every worker finished
     /// or was lost.
     provisional_from: Option<usize>,
+    /// On a dashboard only run, what the dashboard's window pruned, folded
+    /// for its whole run view; `None` until the window first prunes, and on
+    /// a run that keeps its graph data whole.
+    whole_run: Option<Box<whole_run::WholeRunLines>>,
 }
 
 impl GraphData {
@@ -2122,6 +2160,7 @@ impl GraphData {
             users_per_second: TimeSeries::new(),
             latency: None,
             provisional_from: None,
+            whole_run: None,
         }
     }
 
@@ -2165,6 +2204,7 @@ impl GraphData {
         self.average_response_time_per_second = HashMap::new();
         self.transactions_per_second = TimeSeries::with_origin(origin);
         self.scenarios_per_second = TimeSeries::with_origin(origin);
+        self.reset_whole_run_rates();
         if let Some(latency) = self.latency.as_mut() {
             latency.clear(series_elapsed_secs);
         }
@@ -2402,6 +2442,70 @@ impl GraphData {
         let latency = self.latency.as_ref()?;
         latency.all_columns.as_ref()?;
         Some(PercentilesOverTime { latency, co_active })
+    }
+
+    /// The body of `GET /api/v1/whole-run`, as JSON: the line charts over
+    /// the whole run through the newest complete second, the one before
+    /// the last the live window ends at (`end_second_hint` as there), and
+    /// on a Gaggle manager before the first still arriving from the
+    /// workers; and the response time heatmap
+    /// over the whole run of all requests, or of the request `key` names
+    /// (`METHOD name`), as the HTML report embeds it but with that one
+    /// series; the heatmap is null without whole run columns (percentiles
+    /// over time off) or when `key` has none. `co_active` says coordinated
+    /// omission mitigation recorded synthetic times; `started` is when the
+    /// test started. Built only when asked for.
+    pub(crate) fn whole_run_json(
+        &mut self,
+        key: Option<&str>,
+        end_second_hint: Option<usize>,
+        co_active: bool,
+        started: jiff::Timestamp,
+    ) -> serde_json::Result<Vec<u8>> {
+        // Every response time held moves to its ring, which folds it into
+        // the columns as its second packs.
+        self.move_pending_latency();
+        let mut last = self
+            .series_window_bounds(1, end_second_hint)
+            .map_or(0, |(_, end)| end.saturating_sub(1));
+        if let Some(from) = self.provisional_from {
+            last = last.min(from.saturating_sub(1));
+        }
+        #[derive(Serialize)]
+        struct Body<'a> {
+            lines: crate::metrics::dashboard_snapshot::WholeRunLines,
+            heatmap: Option<ReportHeatmap<Vec<ReportSeries<'a>>>>,
+        }
+        let body = Body {
+            lines: self.whole_run_lines(last),
+            heatmap: self
+                .latency
+                .as_ref()
+                .and_then(|latency| latency.report_heatmap_one(key, co_active, started)),
+        };
+        serde_json::to_vec(&body)
+    }
+
+    /// [`Self::whole_run_json`] for `GET /api/v1/whole-run`: `request` is
+    /// the request's method label and name, `None` for all requests, and
+    /// `series_elapsed_secs` the series clock's now. `None`, logged, when
+    /// it can't be written.
+    pub(crate) fn whole_run_body(
+        &mut self,
+        request: Option<(String, String)>,
+        series_elapsed_secs: usize,
+        co_active: bool,
+        started: jiff::Timestamp,
+    ) -> Option<Vec<u8>> {
+        let key = request.map(|(method, name)| format!("{method} {name}"));
+        self.whole_run_json(
+            key.as_deref(),
+            Some(series_elapsed_secs),
+            co_active,
+            started,
+        )
+        .map_err(|e| warn!("[dashboard]: failed to write the whole run view: {e}"))
+        .ok()
     }
 
     /// Whether response times are kept by second for the heatmaps.
@@ -2914,30 +3018,35 @@ impl GraphData {
         if keep == 0 {
             return;
         }
+        // Every request, failure, average and users sample dropped is folded
+        // into the whole run lines first, for the dashboard's whole run view.
+        let lines = self.whole_run.get_or_insert_with(Default::default);
         for series in self.requests_per_second.series.values_mut() {
-            series.prune_to_window(keep);
+            series.prune_to_window_with(keep, |second, sample| lines.add_requests(second, sample));
         }
         for series in self.errors_per_second.series.values_mut() {
-            series.prune_to_window(keep);
+            series.prune_to_window_with(keep, |second, sample| lines.add_errors(second, sample));
         }
         for series in self.average_response_time_per_second.values_mut() {
-            series.prune_to_window(keep);
+            series.prune_to_window_with(keep, |second, sample| lines.add_average(second, sample));
         }
         self.transactions_per_second.prune_to_window(keep);
         self.scenarios_per_second.prune_to_window(keep);
-        self.users_per_second.prune_to_window(keep);
+        self.users_per_second
+            .prune_to_window_with(keep, |second, &users| lines.add_users(second, users));
 
         // Align every series (and the ItemsPerSecond new-key origin) to the
         // retained users window so idle keys cannot re-expand from second 0.
         let origin = self.users_per_second.origin;
         for series in self.requests_per_second.series.values_mut() {
-            series.align_origin_to(origin);
+            series
+                .align_origin_to_with(origin, |second, sample| lines.add_requests(second, sample));
         }
         for series in self.errors_per_second.series.values_mut() {
-            series.align_origin_to(origin);
+            series.align_origin_to_with(origin, |second, sample| lines.add_errors(second, sample));
         }
         for series in self.average_response_time_per_second.values_mut() {
-            series.align_origin_to(origin);
+            series.align_origin_to_with(origin, |second, sample| lines.add_average(second, sample));
         }
         self.transactions_per_second.align_origin_to(origin);
         self.scenarios_per_second.align_origin_to(origin);
@@ -3513,12 +3622,20 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// series still has a stale low `origin` (idle keys). Callers that need a
     /// shared window must follow up with [`Self::align_origin_to`].
     fn prune_to_window(&mut self, keep_secs: usize) {
+        self.prune_to_window_with(keep_secs, |_, _| {});
+    }
+
+    /// [`Self::prune_to_window`], handing each sample it drops to `dropped`
+    /// with its second first.
+    fn prune_to_window_with(&mut self, keep_secs: usize, mut dropped: impl FnMut(usize, &T)) {
         if keep_secs == 0 || self.data.len() <= keep_secs {
             return;
         }
         let drop = self.data.len() - keep_secs;
-        for _ in 0..drop {
-            self.data.pop_front();
+        for second in self.origin..self.origin + drop {
+            if let Some(sample) = self.data.pop_front() {
+                dropped(second, &sample);
+            }
         }
         self.origin = self.origin.saturating_add(drop);
         // `total` still reflects historical increments (including dropped samples).
@@ -3532,23 +3649,22 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// reappearance at absolute second *S* would expand from the stale origin.
     /// No-op when `target_origin <= self.origin`.
     fn align_origin_to(&mut self, target_origin: usize) {
+        self.align_origin_to_with(target_origin, |_, _| {});
+    }
+
+    /// [`Self::align_origin_to`], handing each sample it drops to `dropped`
+    /// with its second first.
+    fn align_origin_to_with(&mut self, target_origin: usize, mut dropped: impl FnMut(usize, &T)) {
         if target_origin <= self.origin {
             return;
         }
-        if self.data.is_empty() {
-            self.origin = target_origin;
-            return;
-        }
-        let last = self.origin + self.data.len() - 1;
-        if last < target_origin {
-            // Entire series is before the retained window.
-            self.data.clear();
-            self.origin = target_origin;
-            return;
-        }
-        let drop = target_origin - self.origin;
-        for _ in 0..drop {
-            self.data.pop_front();
+        // Every sample before the target, or the whole series when it ends
+        // before the retained window.
+        let drop = (target_origin - self.origin).min(self.data.len());
+        for second in self.origin..self.origin + drop {
+            if let Some(sample) = self.data.pop_front() {
+                dropped(second, &sample);
+            }
         }
         self.origin = target_origin;
     }
@@ -3922,6 +4038,9 @@ impl Eq for MovingAverage {}
 /// rebuilds graph data from.
 #[cfg(feature = "gaggle")]
 mod gaggle;
+
+/// The dashboard's whole run view of its line charts.
+mod whole_run;
 #[cfg(feature = "gaggle")]
 pub(crate) use gaggle::{gaggle_max_row, GraphSettings, MergedUsers};
 

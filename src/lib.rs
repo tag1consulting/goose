@@ -2447,6 +2447,7 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
         let mut series_requests = Vec::new();
+        let mut whole_run_requests = Vec::new();
         let mut pending_snapshot: Option<(
             tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>,
             Option<metrics::dashboard_snapshot::HeatmapCursor>,
@@ -2474,6 +2475,9 @@ impl GooseAttack {
                         respond,
                     }) => {
                         series_requests.push((method, name, since, respond));
+                    }
+                    Ok(dashboard::DashboardRequest::GetWholeRun { request, respond }) => {
+                        whole_run_requests.push((request, respond));
                     }
                     Err(flume::TryRecvError::Empty) => break,
                     Err(flume::TryRecvError::Disconnected) => {
@@ -2582,6 +2586,53 @@ impl GooseAttack {
                         since,
                     );
                     let _ = respond.send(series);
+                }
+                Err(_) => {
+                    // Other command variants cannot appear here.
+                    debug!("[dashboard]: metrics processor unavailable");
+                }
+            }
+        }
+
+        // And each whole run view, the same way.
+        for (request, respond) in whole_run_requests {
+            if respond.is_closed() {
+                continue;
+            }
+            let started = self
+                .metrics
+                .history
+                .first()
+                .map_or_else(jiff::Timestamp::now, |step| step.timestamp);
+            match goose_attack_run_state
+                .metrics_cmd_tx
+                .send(MetricsCommand::GetWholeRun {
+                    request,
+                    series_elapsed_secs: self.series_elapsed_secs(),
+                    started,
+                    respond,
+                }) {
+                Ok(()) => {}
+                // Processor gone (e.g. Idle after control Stop): answer from
+                // main-loop state, as for snapshots.
+                Err(flume::SendError(MetricsCommand::GetWholeRun {
+                    request,
+                    series_elapsed_secs,
+                    started,
+                    respond,
+                })) => {
+                    let co_active = self
+                        .metrics
+                        .coordinated_omission_metrics
+                        .as_ref()
+                        .is_some_and(|m| m.has_events());
+                    let body = self.graph_data.whole_run_body(
+                        request,
+                        series_elapsed_secs,
+                        co_active,
+                        started,
+                    );
+                    let _ = respond.send(body);
                 }
                 Err(_) => {
                     // Other command variants cannot appear here.

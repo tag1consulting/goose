@@ -513,6 +513,19 @@ pub(crate) enum MetricsCommand {
         since: Option<dashboard_snapshot::HeatmapCursor>,
         respond: tokio::sync::oneshot::Sender<Option<dashboard_snapshot::RequestSeries>>,
     },
+    /// The dashboard's whole run view (`GET /api/v1/whole-run`), as JSON:
+    /// its line charts, and the heatmap of all requests or of `request`.
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+    GetWholeRun {
+        /// The request's method label and name, or `None` for all requests.
+        request: Option<(String, String)>,
+        /// Seconds since the continuous series clock started, as for
+        /// [`MetricsCommand::GetDashboardSnapshot`].
+        series_elapsed_secs: usize,
+        /// When the test started, as the report's graphs count it.
+        started: jiff::Timestamp,
+        respond: tokio::sync::oneshot::Sender<Option<Vec<u8>>>,
+    },
 }
 
 /// A dedicated task that processes metrics from user threads independently of
@@ -4062,6 +4075,23 @@ impl MetricsProcessor {
                 let _ = respond.send(series);
                 false
             }
+            MetricsCommand::GetWholeRun {
+                request,
+                series_elapsed_secs,
+                started,
+                respond,
+            } => {
+                // Capped, as for GetDashboardSnapshot.
+                self.drain_up_to(METRICS_DRAIN_LIMIT);
+                let co_active = self.co_active();
+                let _ = respond.send(self.graph_data.whole_run_body(
+                    request,
+                    series_elapsed_secs,
+                    co_active,
+                    started,
+                ));
+                false
+            }
         }
     }
 
@@ -7335,6 +7365,70 @@ mod test {
         assert!(processor.graph_data.has_latency_columns_for_test());
         record(&mut processor, 2 * keep + 300, 2 * keep + 400);
         assert!(processor.graph_data.first_second() > pruned_to);
+    }
+
+    /// A dashboard only run (Save report off) prunes its graph data to the
+    /// window, yet keeps the heatmap's whole run columns and folds what it
+    /// prunes, so `GetWholeRun` covers every second: every request counted,
+    /// at most 600 points, and the heatmap of all requests.
+    #[tokio::test]
+    async fn a_dashboard_only_run_keeps_its_whole_run_view() {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        let mut processor = make_window_test_processor(&configuration);
+        assert!(processor.graph_data.has_latency_columns_for_test());
+        let seconds = 2_000;
+        for sec in 0..seconds {
+            let mut request = make_test_request_metric();
+            request.elapsed = sec as u64 * 1000 + 500;
+            request.response_time = 5 + (sec % 20) as u64;
+            processor.process_request_metric(&request);
+            let _ = processor.handle_command(MetricsCommand::RecordUsers {
+                active_users: 2,
+                elapsed_secs: sec,
+            });
+        }
+        assert!(
+            processor.graph_data.first_second() > 0,
+            "pruned to the window"
+        );
+        let (respond, rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetWholeRun {
+            request: None,
+            series_elapsed_secs: seconds,
+            started: jiff::Timestamp::now(),
+            respond,
+        });
+        let body: serde_json::Value = serde_json::from_slice(&rx.await.unwrap().unwrap()).unwrap();
+        let lines = &body["lines"];
+        assert_eq!(lines["width"], 4);
+        let rps = lines["rps"].as_array().unwrap();
+        assert_eq!(rps.len(), 500);
+        let requests: f64 = rps.iter().map(|rate| rate.as_f64().unwrap() * 4.0).sum();
+        assert_eq!(requests.round() as usize, seconds);
+        assert!(lines["users"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|users| users == 2));
+        let heatmap = &body["heatmap"];
+        assert_eq!(heatmap["series"][0]["name"], "All requests");
+        assert_eq!(heatmap["series"][0]["width"], 4);
+        let counted: u64 = heatmap["series"][0]["measured"]["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|column| {
+                column.as_array().unwrap()[4..]
+                    .chunks(3)
+                    .map(|cell| cell[1].as_u64().unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .sum();
+        // The newest seconds are still in the rings, not yet in the columns.
+        assert!(counted + 3 >= seconds as u64 && counted <= seconds as u64);
     }
 
     #[tokio::test]
