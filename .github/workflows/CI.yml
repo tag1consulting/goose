@@ -117,6 +117,20 @@ jobs:
   build:
     name: build and run tests
     runs-on: ubuntu-latest
+    env:
+      # The tests the all-features job leaves to the gaggle job, which runs them
+      # with no other feature: the Gaggle process tests, the binary tests/gaggle.rs,
+      # and the Gaggle library tests, those in src/ that exist only with the gaggle
+      # feature: every test in `gaggle::` and the nine named outside it. The three
+      # `gaggle::run_tests` tests named last also need the dashboard feature, so
+      # they exist only with all features and stay there. A new test in src/gaggle/
+      # that needs another feature as well, `#[cfg(feature = "dashboard")]` say,
+      # must be added to that list; the all-features job fails until it is.
+      GAGGLE_JOB_TESTS: >-
+        binary_id(goose::gaggle)
+        | (binary_id(goose) & (test(/^gaggle::/)
+        | test(/^(tests::gaggle_(ordinals_match_one_process|shadow_merge_runs_in_execute|worker_share_of_another_size_fails_to_launch|worker_slice_sets_its_share|worker_users_start_at_offset)|controller::tests::test_control_gaggle_manager_applies_changes_and_answers_metrics|goose::tests::gaggle_whole_run_figures_match_a_reference|metrics::test::gaggle_(earliest_second_covers_every_arm|second_pass_has_no_side_effects))$/))
+        & not test(/^gaggle::run_tests::(gaggle_dashboard_shows_the_workers|gaggle_manager_failing_to_start_its_run_runs_test_stop|gaggle_runtime_control_in_one_process)$/))
     strategy:
       matrix:
         features:
@@ -128,6 +142,60 @@ jobs:
           - "rustls-tls"
           - "native-tls"  # Native TLS in place of rustls and the shared verifier
           - "all-features"  # Keep existing all-features test
+        # The core suite, every test that exists with no feature, runs in three jobs:
+        # "" (no features), gaggle and all-features, which also runs it with every
+        # feature on at once. Each of the other single feature jobs runs only `tests`,
+        # a nextest filter of the tests that feature adds or whose code path it
+        # changes, and no doc tests: the doc test list is the same for every feature
+        # set, and "" and all-features compile each doc test with its features off
+        # and on. The filters are derived as follows; keep them current the same way.
+        #
+        # dashboard and mcp name the modules to run:
+        # - Every test that exists only with the feature: `cargo nextest list` with
+        #   the job's flags, less the list with --no-default-features. Such a test
+        #   sits behind `#[cfg(feature = "...")]`; one in a module not named below
+        #   must be added to the filter, or it runs in all-features only.
+        # - Every test in a module whose source branches on the feature with cfg,
+        #   apart from code the feature runs only when its option is given (the
+        #   dashboard and MCP servers start only with --dashboard and --mcp). When
+        #   you add a `cfg(feature = "...")` to a file, add that file's tests: in
+        #   the library `controller::` for src/controller.rs, `tests::` for
+        #   src/lib.rs; in tests/it/ the file's module name.
+        #
+        # cookies, rustls-tls and native-tls change the client every user builds (a
+        # cookie jar; the TLS backend), and rustls-tls also tokio-tungstenite, which
+        # only the Controller tests use. These three jobs run every test that builds
+        # a Goose client or sends a request through one, which is almost every test.
+        # Their filter, the same for all three, leaves out only the modules where no
+        # test does either. Those modules were found by logging each test that
+        # reached `client_builder()` in src/client.rs or `GooseUser::request()` in
+        # a run of the whole suite. A module the filter does not name runs, so a new
+        # module needs no change; a test that builds a client in a module the filter
+        # names means taking that module out of all three.
+        include:
+          - features: "cookies"
+            tests: >-
+              not ((binary_id(goose) & test(/^(graph|logger|report|run_shape|runs|test_plan|threshold|throttle|util)::/))
+              | (binary_id(goose::it) & test(/^(controller_no_autostart|coordinated_omission|test_plan)::/))
+              | binary_id(goose::example/umami))
+          - features: "dashboard"
+            tests: >-
+              (binary_id(goose) & test(/^(dashboard|serve|controller|config|runs|run_shape|metrics|tests)::/))
+              | (binary_id(goose::it) & test(/^(dashboard|dashboard_goose_log|dashboard_no_folder|gzip_goose_log_dashboard|throttle_live|controller|control_agreement|controller_bind|controller_no_autostart)::/))
+          - features: "mcp"
+            tests: >-
+              (binary_id(goose) & test(/^(controller|serve|config|runs|tests)::/))
+              | (binary_id(goose::it) & test(/^(mcp_controller|controller|control_agreement|controller_bind|controller_no_autostart)::/))
+          - features: "rustls-tls"
+            tests: >-
+              not ((binary_id(goose) & test(/^(graph|logger|report|run_shape|runs|test_plan|threshold|throttle|util)::/))
+              | (binary_id(goose::it) & test(/^(controller_no_autostart|coordinated_omission|test_plan)::/))
+              | binary_id(goose::example/umami))
+          - features: "native-tls"
+            tests: >-
+              not ((binary_id(goose) & test(/^(graph|logger|report|run_shape|runs|test_plan|threshold|throttle|util)::/))
+              | (binary_id(goose::it) & test(/^(controller_no_autostart|coordinated_omission|test_plan)::/))
+              | binary_id(goose::example/umami))
 
     steps:
     - name: Checkout code
@@ -213,21 +281,61 @@ jobs:
         cargo nextest run --verbose --profile ci --no-default-features
         cargo test --verbose --no-default-features --doc
 
-    - name: 🔎 Test (specific features)
-      if: ${{ matrix.features != '' && matrix.features != 'all-features' }}
+    # The whole suite with the gaggle feature: the core suite, the Gaggle library
+    # tests the all-features job leaves out, and the Gaggle process tests.
+    - name: 🔎 Test (gaggle)
+      if: ${{ matrix.features == 'gaggle' }}
       run: |
-        cargo nextest run --verbose --profile ci --no-default-features --features "${{ matrix.features }}"
-        cargo test --verbose --no-default-features --features "${{ matrix.features }}" --doc
+        cargo nextest run --verbose --profile ci --no-default-features --features gaggle
+        cargo test --verbose --no-default-features --features gaggle --doc
 
-    # Everything but the Gaggle process tests, the binary tests/gaggle.rs, which the
-    # gaggle job runs: they need no other feature. Every test target, tests/gaggle.rs
-    # among them, is still built here. The examples that run tests are those with
-    # `test = true` in Cargo.toml, umami only.
+    # Only the tests the feature adds or changes: the matrix's `tests` filter,
+    # whose comment above says how it is derived. Every test target is still built.
+    - name: 🔎 Test (what the feature adds or changes)
+      if: ${{ matrix.tests }}
+      env:
+        TESTS: ${{ matrix.tests }}
+      run: cargo nextest run --verbose --profile ci --no-default-features --features "${{ matrix.features }}" -E "$TESTS"
+
+    # Everything but what the gaggle job runs and needs no other feature: the Gaggle
+    # process tests and the Gaggle library tests, GAGGLE_JOB_TESTS at the top of this
+    # job. Every test target, tests/gaggle.rs among them, is still built here. The
+    # examples that run tests are those with `test = true` in Cargo.toml, umami only.
     - name: 🔎 Test (all features)
       if: ${{ matrix.features == 'all-features' }}
       run: |
-        cargo nextest run --verbose --profile ci --all-features -E 'not binary_id(goose::gaggle)'
+        cargo nextest run --verbose --profile ci --all-features -E "not ($GAGGLE_JOB_TESTS)"
         cargo test --verbose --all-features --doc
+
+    # A test GAGGLE_JOB_TESTS matches that also needs a feature other than gaggle
+    # exists only in this build, and the step above would leave it to a job that
+    # does not have it. This lists what the filter matches here and what the gaggle
+    # job's build has, the library and tests/gaggle.rs built with gaggle alone, and
+    # fails naming any test missing from the second.
+    - name: 🔎 Every test left to the gaggle job is in it
+      if: ${{ matrix.features == 'all-features' }}
+      run: |
+        cargo nextest list --all-features --run-ignored all --lib --test gaggle \
+          -E "$GAGGLE_JOB_TESTS" --message-format json > "$RUNNER_TEMP/left-to-gaggle.json"
+        cargo nextest list --no-default-features --features gaggle --run-ignored all --lib --test gaggle \
+          --message-format json > "$RUNNER_TEMP/gaggle-job.json"
+        python3 - "$RUNNER_TEMP/left-to-gaggle.json" "$RUNNER_TEMP/gaggle-job.json" <<'EOF'
+        import json, sys
+        def tests(path, matching):
+            suites = json.load(open(path))["rust-suites"]
+            return {(binary, name) for binary, suite in suites.items()
+                    for name, test in suite["testcases"].items()
+                    if not matching or test["filter-match"]["status"] == "matches"}
+        left, gaggle = tests(sys.argv[1], True), tests(sys.argv[2], False)
+        missing = sorted(left - gaggle)
+        for binary, name in missing:
+            print(f"::error::{binary} {name} is left to the gaggle job, which does not have it: "
+                  "add it to the tests GAGGLE_JOB_TESTS keeps in the all-features job")
+        if not left:
+            print("::error::GAGGLE_JOB_TESTS matches no test")
+        print(f"{len(left)} tests left to the gaggle job, {len(missing)} of them missing from it")
+        sys.exit(1 if missing or not left else 0)
+        EOF
 
     # The ubuntu-latest image ships Google Chrome, which these ignored tests need.
     - name: 🔎 Test PDF reports with an installed Chrome
