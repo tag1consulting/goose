@@ -692,6 +692,17 @@ body {
   font-size: 0.85rem;
 }
 
+/* The time range of every chart: the live window or the whole run. */
+.charts-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.85rem;
+}
+
+.charts-head + .charts-grid {
+  margin-top: 0.5rem;
+}
+
 /* Two buttons that choose one of two views. */
 .segmented {
   display: inline-flex;

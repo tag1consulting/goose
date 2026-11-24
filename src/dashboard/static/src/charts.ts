@@ -69,6 +69,8 @@ let chartRps: LineChart | null = null;
 let rpsMarkers: ChartMarker[] = [];
 /** The second each index of the RPS chart stands for starts at. */
 let rpsStart = 0;
+/** Seconds in each point of the RPS chart. */
+let rpsWidth = 1;
 /** Whether the RPS chart shows its lines by worker. */
 let rpsByWorker = false;
 let chartUsers: LineChart | null = null;
@@ -327,7 +329,7 @@ function placedMarkers(chart: Chart): { marker: ChartMarker; x: number }[] {
   const count = (chart.data.labels || []).length;
   const placed: { marker: ChartMarker; x: number }[] = [];
   for (const marker of rpsMarkers) {
-    const at = marker.second - rpsStart;
+    const at = Math.floor((marker.second - rpsStart) / rpsWidth);
     if (at < 0 || at >= count) continue;
     const x = indexX(chart, at);
     if (x !== null) placed.push({ marker, x });
@@ -402,7 +404,7 @@ export function markerNear(x: number, slack: number): ChartMarker | null {
 /** The pixel x of `marker` on the RPS chart's canvas, or null. */
 export function markerX(marker: ChartMarker): number | null {
   if (!drawable(chartRps)) return null;
-  return indexX(chartRps as unknown as Chart, marker.second - rpsStart);
+  return indexX(chartRps as unknown as Chart, Math.floor((marker.second - rpsStart) / rpsWidth));
 }
 
 /** Sets the RPS chart's markers, drawn at the next update. */
@@ -561,10 +563,38 @@ function drawable(chart: LineChart | null): chart is LineChart {
 }
 
 /**
+ * The whole run lines as a series the charts draw: each point `width`
+ * seconds wide, every one complete.
+ */
+export function wholeRunSeries(lines: WholeRunLines): SeriesWindow {
+  return {
+    start_second: lines.start_second,
+    rps: lines.rps,
+    fps: lines.fps,
+    users: lines.users,
+    avg_latency_ms: lines.avg_latency_ms,
+    heatmap: null,
+  };
+}
+
+/** The values a chart draws: the whole run's all, the live window's without its newest second. */
+function drawnValues(values: number[], whole: boolean): number[] {
+  return whole ? values : completeSeconds(values);
+}
+
+/**
  * Draws the charts; the average latency chart only when `averageLatency`
  * (percentiles over time are off and the response time card shows it).
+ * `width` is the seconds in each point: 1 for the live window, more for the
+ * whole run (`whole`), whose points are all complete and which has no lines
+ * by worker.
  */
-export function updateCharts(series: SeriesWindow, averageLatency: boolean): void {
+export function updateCharts(
+  series: SeriesWindow,
+  averageLatency: boolean,
+  width = 1,
+  whole = false
+): void {
   ensureCharts();
   const start = series.start_second;
   const rps = series.rps;
@@ -574,7 +604,7 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
   const len = Math.max(rps.length, fps.length, users.length, lat.length);
   const labels: string[] = [];
   for (let i = 0; i < len; i++) {
-    labels.push(String(start + i));
+    labels.push(String(start + i * width));
   }
 
   // On a Gaggle manager the newest seconds are still arriving: drawn
@@ -583,12 +613,13 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
   rpsProvisional = provisional;
   latencyProvisional = provisional;
   if (drawable(chartRps)) {
-    const rpsComplete = completeSeconds(rps);
-    const fpsComplete = completeSeconds(fps);
+    const rpsComplete = drawnValues(rps, whole);
+    const fpsComplete = drawnValues(fps, whole);
     const empty = (i: number): boolean => !rpsComplete[i] && !fpsComplete[i];
     rpsStart = start;
+    rpsWidth = width;
     chartRps.data.labels = labels.slice(0, Math.max(rpsComplete.length, fpsComplete.length));
-    applyRpsView(chartRps, rpsView, series);
+    applyRpsView(chartRps, whole ? null : rpsView, series);
     if (!rpsByWorker) {
       chartRps.data.datasets[0].data = provisionalValues(rpsComplete, provisional, empty);
       chartRps.data.datasets[1].data = provisionalValues(fpsComplete, provisional, empty);
@@ -601,7 +632,7 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
     chartUsers.update("none");
   }
   if (averageLatency && drawable(chartLatency)) {
-    const latComplete = completeSeconds(lat);
+    const latComplete = drawnValues(lat, whole);
     chartLatency.data.labels = labels.slice(0, latComplete.length);
     chartLatency.data.datasets[0].data = provisionalValues(
       latComplete,

@@ -41,6 +41,7 @@ import {
 } from "./runs";
 import { setBanner, setConnection, type ConnectionMode } from "./status";
 import { initTables, setTableData } from "./tables";
+import { initRangeToggle, showsWholeRun } from "./whole-run";
 
 const hostsEl = requireElement("hosts", HTMLElement);
 const runSettingsEl = requireElement("run-settings", HTMLElement);
@@ -118,6 +119,17 @@ function renderHosts(snap: DashboardSnapshot): void {
   }
   runSettingsEl.hidden = false;
   runSettingsEl.textContent = settingsSummary(snap.settings, idle && differ);
+}
+
+/** The last snapshot rendered, for the time charts to draw again. */
+let lastSnapshot: { snap: DashboardSnapshot; averageLatency: boolean } | null = null;
+
+/** Draws the time charts' live window from the last snapshot. */
+function drawRecent(): void {
+  if (lastSnapshot === null) return;
+  const { snap, averageLatency } = lastSnapshot;
+  updateChartData(snap.series, averageLatency, snap.target_users);
+  updateCharts(snap.series, averageLatency);
 }
 
 function renderSnapshot(
@@ -238,8 +250,9 @@ function renderSnapshot(
   // On a Gaggle manager, its workers: before the charts, which draw this
   // snapshot's lines by worker and markers.
   updateGaggle(snap);
-  updateChartData(snap.series, averageLatency, snap.target_users);
-  updateCharts(snap.series, averageLatency);
+  lastSnapshot = { snap, averageLatency };
+  // Over the whole run the time charts draw its view instead (whole-run.ts).
+  if (!showsWholeRun()) drawRecent();
   updateControlFromSnapshot(snap);
 
   // Prefer metrics/auth banners.
@@ -278,6 +291,7 @@ initTables();
 ensureCharts();
 initHeatmapCard();
 setHeatmapCursorSource(snapshotHeatmapCursor);
+initRangeToggle(drawRecent);
 // Recolour on an OS theme change; the light query sees every switch the CSS makes.
 if (window.matchMedia) {
   window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {

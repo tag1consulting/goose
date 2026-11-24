@@ -154,9 +154,16 @@ export interface HeatmapTick {
 }
 
 export interface HeatmapView {
+  /** The second, from the test start, the first column begins at. */
   startSecond: number;
-  /** Seconds in the window, so the number of columns. */
+  /** The number of columns. */
   columns: number;
+  /**
+   * Seconds in each column: 1 for the live window, more over the whole
+   * run. Column `c` begins at second `startSecond + c * width`, which is
+   * the `second` its cells and percentiles are keyed by.
+   */
+  width: number;
   /** Rows from the fastest bucket with requests to the slowest. */
   rows: HeatmapRow[];
   cells: HeatmapCell[];
@@ -210,6 +217,7 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
   const empty: HeatmapView = {
     startSecond: state ? state.startSecond : 0,
     columns: state ? state.endSecond - state.startSecond + 1 : 0,
+    width: 1,
     rows: [],
     cells: [],
     minCount: 0,
@@ -249,13 +257,34 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
   }
   if (cells.length === 0) return empty;
 
-  const axisLow = Math.log(bucketSpan(bucketOf(state, low))[0]);
-  const axisHigh = Math.log(bucketSpan(bucketOf(state, high))[1]);
+  const { rows, ticks } = rowsAndTicks(state.buckets, low, high);
+  return {
+    startSecond: state.startSecond,
+    columns: state.endSecond - state.startSecond + 1,
+    width: 1,
+    rows,
+    cells,
+    minCount,
+    maxCount,
+    ticks,
+    secondTotals,
+    percentiles: secondPercentiles(cells, rows),
+  };
+}
+
+/** The rows from bucket `low` to `high` on a latency axis spanning them, and its ticks. */
+function rowsAndTicks(
+  buckets: number[][],
+  low: number,
+  high: number
+): { rows: HeatmapRow[]; ticks: HeatmapTick[] } {
+  const axisLow = Math.log(bucketSpan(bucketOf(buckets, low))[0]);
+  const axisHigh = Math.log(bucketSpan(bucketOf(buckets, high))[1]);
   const fraction = (ms: number): number =>
     (axisHigh - Math.log(ms)) / (axisHigh - axisLow);
   const rows: HeatmapRow[] = [];
   for (let bucket = low; bucket <= high; bucket++) {
-    const entry = bucketOf(state, bucket);
+    const entry = bucketOf(buckets, bucket);
     const [from, to] = bucketSpan(entry);
     rows.push({
       bucket,
@@ -271,16 +300,137 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
     const y = fraction(ms);
     if (y >= 0 && y <= 1) ticks.push({ ms, label: tickLabel(ms), y });
   }
+  return { rows, ticks };
+}
+
+/**
+ * One view of a series of the HTML report's heatmap, as Goose writes it
+ * (`ReportView` in src/graph.rs): each column with requests, flattened, as
+ * its index, its p50, p95 and p99 in microseconds, then each non empty
+ * bucket as its index, its count and the count's place from 0 to 1000 on
+ * the colour scale; and the sparsest and busiest cell counts.
+ */
+export interface ReportView {
+  min: number;
+  max: number;
+  columns: number[][];
+}
+
+/** One series of the HTML report's heatmap. */
+export interface ReportSeries {
+  /** "All requests", or a request's "METHOD name". */
+  name: string;
+  /** Seconds in each column. */
+  width: number;
+  measured: ReportView;
+  /** Measured and synthetic times together, when mitigation recorded any. */
+  adjusted: ReportView | null;
+}
+
+/**
+ * The HTML report's heatmap, as `GET /api/v1/whole-run` returns it with the
+ * one series asked for: columns over the whole run from second `origin`.
+ */
+export interface ReportHeatmap {
+  start: number;
+  offset: number;
+  origin: number;
+  buckets_us: number[][];
+  series: ReportSeries[];
+}
+
+/** The body of `GET /api/v1/whole-run`. */
+export interface WholeRun {
+  lines: WholeRunLines;
+  /** Null when percentiles over time are off or the request has no columns. */
+  heatmap: ReportHeatmap | null;
+}
+
+/**
+ * The cells, rows and ticks to draw from the report heatmap's first series
+ * over the whole run, through second `endSecond`, so drawHeatmap draws it as
+ * it draws the live window: its adjusted view when `adjusted` and it has
+ * one. Each column's p50, p95 and p99 are Goose's own, each drawn in the
+ * row it falls in; counts are not split into measured and synthetic.
+ */
+export function reportHeatmapView(
+  heatmap: ReportHeatmap | null,
+  adjusted: boolean,
+  endSecond: number
+): HeatmapView {
+  const series = heatmap ? heatmap.series[0] : undefined;
+  const width = series ? Math.max(1, series.width) : 1;
+  const origin = heatmap ? heatmap.origin : 0;
+  const reach = Math.floor(Math.max(0, endSecond - origin) / width) + 1;
+  const empty: HeatmapView = {
+    startSecond: origin,
+    columns: reach,
+    width,
+    rows: [],
+    cells: [],
+    minCount: 0,
+    maxCount: 0,
+    ticks: [],
+    secondTotals: new Map(),
+    percentiles: new Map(),
+  };
+  if (!heatmap || !series) return empty;
+  const shown = adjusted && series.adjusted ? series.adjusted : series.measured;
+  const buckets = bucketTable(heatmap as unknown as Heatmap);
+  const cells: HeatmapCell[] = [];
+  const secondTotals = new Map<number, number>();
+  let low = Infinity;
+  let high = -Infinity;
+  let columns = reach;
+  for (const column of shown.columns) {
+    const index = column[0];
+    const second = origin + index * width;
+    columns = Math.max(columns, index + 1);
+    let total = 0;
+    for (let i = 4; i + 2 < column.length; i += 3) {
+      const bucket = column[i];
+      const count = column[i + 1];
+      if (count === 0) continue;
+      cells.push({ column: index, second, bucket, count, synthetic: 0 });
+      total += count;
+      low = Math.min(low, bucket);
+      high = Math.max(high, bucket);
+    }
+    if (total > 0) secondTotals.set(second, total);
+  }
+  if (cells.length === 0) return { ...empty, columns };
+  const { rows, ticks } = rowsAndTicks(buckets, low, high);
+  // A percentile in microseconds as the time of the row it falls in, so
+  // the lines go through row middles, as the live window's do.
+  const rowTime = (us: number): number => {
+    const ms = us / 1000;
+    for (const row of rows) {
+      if (ms < row.highest + 1) return row.time;
+    }
+    return rows[rows.length - 1].time;
+  };
+  const percentiles = new Map<number, SecondPercentiles>();
+  for (const column of shown.columns) {
+    const second = origin + column[0] * width;
+    if (!secondTotals.has(second)) continue;
+    percentiles.set(second, {
+      second,
+      p50: rowTime(column[1]),
+      p95: rowTime(column[2]),
+      p99: rowTime(column[3]),
+    });
+  }
   return {
-    startSecond: state.startSecond,
-    columns: state.endSecond - state.startSecond + 1,
+    startSecond: origin,
+    columns,
+    width,
     rows,
     cells,
-    minCount,
-    maxCount,
+    minCount: shown.min,
+    maxCount: shown.max,
     ticks,
     secondTotals,
-    percentiles: secondPercentiles(cells, rows),
+    percentiles,
   };
 }
 
@@ -357,37 +507,41 @@ export function rowMs(ms: number): string {
 /** Steps between second labels: the smallest that fits is used. */
 export const SECOND_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300];
 
-/** The step between second labels for a window of `columns` seconds. */
-export function secondStep(columns: number): number {
-  for (const step of SECOND_STEPS) {
-    if (Math.ceil(columns / step) <= 8) return step;
+/** Further steps for the whole run, which can be days long. */
+const LONG_STEPS = [600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
+
+/** The step between second labels for a span of `seconds` seconds. */
+export function secondStep(seconds: number): number {
+  for (const step of SECOND_STEPS.concat(LONG_STEPS)) {
+    if (Math.ceil(seconds / step) <= 8) return step;
   }
-  return SECOND_STEPS[SECOND_STEPS.length - 1];
+  return LONG_STEPS[LONG_STEPS.length - 1];
 }
 
 /**
- * The seconds to label in a window of `columns` seconds from `startSecond`:
- * every multiple of the step counted from the test start, so the labels stay
- * on the same seconds as the window slides.
+ * The seconds to label in `columns` columns of `width` seconds from
+ * `startSecond`: every multiple of the step counted from the test start, so
+ * the labels stay on the same seconds as the window slides.
  */
-export function secondLabels(startSecond: number, columns: number): number[] {
-  const step = secondStep(columns);
+export function secondLabels(startSecond: number, columns: number, width = 1): number[] {
+  const span = columns * width;
+  const step = secondStep(span);
   const labels: number[] = [];
   const first = Math.ceil(startSecond / step) * step;
-  for (let second = first; second < startSecond + columns; second += step) {
+  for (let second = first; second < startSecond + span; second += step) {
     labels.push(second);
   }
   return labels;
 }
 
 /** A bucket's table entry, or one built past the table's end (1 s apart). */
-function bucketOf(state: HeatmapState, bucket: number): number[] {
-  const entry = state.buckets[bucket];
+function bucketOf(buckets: number[][], bucket: number): number[] {
+  const entry = buckets[bucket];
   if (entry !== undefined) return entry;
   // The table always holds every fixed bucket, and the last ones are 1 s
   // apart, so a bucket past it is that many seconds past its last entry.
-  const last = state.buckets.length - 1;
-  const time = Math.round(state.buckets[last][0]) + (bucket - last) * 1000;
+  const last = buckets.length - 1;
+  const time = Math.round(buckets[last][0]) + (bucket - last) * 1000;
   return [time, time - 500, time + 499];
 }
 
@@ -457,9 +611,12 @@ export function tooltipText(
       " ms)";
   }
   const total = view.secondTotals.get(cell.second) || cell.count;
+  const span =
+    view.width > 1
+      ? "Seconds " + cell.second + " to " + (cell.second + view.width - 1)
+      : "Second " + cell.second;
   let text =
-    "Second " +
-    cell.second +
+    span +
     ": " +
     bucket +
     ", " +
@@ -469,7 +626,11 @@ export function tooltipText(
     text += ", of which " + formats.int(cell.synthetic) + " synthetic";
   }
   text +=
-    " (" + formats.pct(cell.count / total) + " of the second's " + formats.int(total) + ")";
+    " (" +
+    formats.pct(cell.count / total) +
+    (view.width > 1 ? " of the column's " : " of the second's ") +
+    formats.int(total) +
+    ")";
   const percentiles = view.percentiles.get(cell.second);
   if (percentiles !== undefined) {
     text +=
@@ -524,7 +685,7 @@ export function newestPercentiles(
   view: HeatmapView
 ): Array<{ key: PercentileKey; value: number; y: number }> {
   for (let c = view.columns - 1; c >= 0; c--) {
-    const percentiles = view.percentiles.get(view.startSecond + c);
+    const percentiles = view.percentiles.get(view.startSecond + c * (view.width || 1));
     if (percentiles) {
       return PERCENTILE_LINES.map((line) => ({ key: line.key, value: percentiles[line.key], y: 0 }));
     }
@@ -540,6 +701,8 @@ export interface PercentileLabel {
 
 /** The caption over the right edge labels, which give the newest second. */
 export const LABELS_CAPTION = "last second";
+/** The caption over the whole run's labels, which give the newest column. */
+export const LABELS_CAPTION_COLUMN = "last column";
 
 /**
  * The right edge labels for the lines' newest points: lines that end at the
@@ -602,6 +765,7 @@ export function drawHeatmap(
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 
   const font = getComputedStyle(canvas).fontFamily;
+  const caption = view.width > 1 ? LABELS_CAPTION_COLUMN : LABELS_CAPTION;
   // The right margin fits the widest label and the caption, so a shared one
   // ("p50, p95, p99: 200 ms") is never cut off at the edge.
   ctx.font = "11px " + font;
@@ -612,7 +776,7 @@ export function drawHeatmap(
   }
   if (labelsNow.length) {
     ctx.font = "10px " + font;
-    labelWidth = Math.max(labelWidth, ctx.measureText(LABELS_CAPTION).width);
+    labelWidth = Math.max(labelWidth, ctx.measureText(caption).width);
   }
   const right = Math.max(MARGIN.right, Math.ceil(labelWidth) + 12);
 
@@ -672,9 +836,11 @@ export function drawHeatmap(
   // Second labels along the bottom, at round seconds from the test start.
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  for (const second of secondLabels(view.startSecond, view.columns)) {
-    const c = second - view.startSecond;
-    ctx.fillText(String(second), (x(c) + x(c + 1)) / 2, top + height + 6);
+  const secondsWide = view.width || 1;
+  for (const second of secondLabels(view.startSecond, view.columns, secondsWide)) {
+    const c = (second - view.startSecond) / secondsWide;
+    const at = secondsWide > 1 ? left + c * columnWidth : (x(c) + x(c + 1)) / 2;
+    ctx.fillText(String(second), at, top + height + 6);
   }
 
   // Each second's p50, p95 and p99 through the column centres, each value
@@ -690,7 +856,7 @@ export function drawHeatmap(
     let segment: Array<[number, number]> = [];
     let newest: { value: number; y: number } | null = null;
     for (let c = 0; c < view.columns; c++) {
-      const percentiles = view.percentiles.get(view.startSecond + c);
+      const percentiles = view.percentiles.get(view.startSecond + c * (view.width || 1));
       const row = percentiles && rowsByTime.get(percentiles[line.key]);
       if (!percentiles || !row) {
         if (segment.length) segments.push(segment);
@@ -745,7 +911,7 @@ export function drawHeatmap(
   if (labels.length) {
     ctx.fillStyle = colors.tick;
     ctx.font = "10px " + font;
-    ctx.fillText(LABELS_CAPTION, left + width + 6, labels[0].y - 14);
+    ctx.fillText(caption, left + width + 6, labels[0].y - 14);
   }
   ctx.fillStyle = colors.percentile;
   ctx.font = "11px " + font;

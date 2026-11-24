@@ -107,7 +107,17 @@ export function setLatencySummary(text: string): void {
  * need a canvas, so they are written even where the charts cannot draw.
  * `targetUsers` is the users summary's "of".
  */
-export function updateChartData(series: SeriesWindow, averageLatency: boolean, targetUsers: number): void {
+export function updateChartData(
+  series: SeriesWindow,
+  averageLatency: boolean,
+  targetUsers: number,
+  width = 1,
+  whole = false
+): void {
+  if (whole) {
+    wholeRunChartData(series, averageLatency, width);
+    return;
+  }
   const start = series.start_second;
   // Left in, the newest second would lean every summary to "falling".
   const rpsDrawn = completeSeconds(series.rps);
@@ -167,5 +177,61 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
         .filter((row) => provisional === null || row.at < provisional || row.avg > 0)
         .map(({ second, avg }) => ({ second, avg }))
     );
+  }
+}
+
+/** The mean of `values`, 0 without any. */
+function meanOf(values: number[]): number {
+  let sum = 0;
+  for (const value of values) sum += value;
+  return values.length ? sum / values.length : 0;
+}
+
+/**
+ * The summaries and data tables of the whole run's lines, `width` seconds a
+ * point: each summary over the whole run, each table row a point, by the
+ * second it begins at.
+ */
+function wholeRunChartData(series: SeriesWindow, averageLatency: boolean, width: number): void {
+  const start = series.start_second;
+  const second = (i: number): number => start + i * width;
+  setNote(rpsProvisionalNote, "");
+  setNote(latencyProvisionalNote, "");
+  const empty = series.rps.length === 0;
+  setSummary(
+    rpsSummary,
+    empty
+      ? "No data yet."
+      : "Whole run: RPS " +
+          formatRate(meanOf(series.rps)) +
+          ", peak " +
+          formatRate(Math.max(...series.rps)) +
+          "; failures " +
+          formatRate(meanOf(series.fps)) +
+          "/s."
+  );
+  showRpsData(series.rps.map((rps, i) => ({ second: second(i), rps, fps: series.fps[i] || 0 })));
+  setSummary(
+    usersSummary,
+    series.users.length === 0
+      ? "No data yet."
+      : "Whole run: up to " + formatInt(Math.max(...series.users)) + " users."
+  );
+  showUsersData(series.users.map((users, i) => ({ second: second(i), users })));
+  if (averageLatency) {
+    const lat = series.avg_latency_ms;
+    // The run's mean weighs each point by its requests.
+    let total = 0;
+    let requests = 0;
+    lat.forEach((avg, i) => {
+      total += avg * (series.rps[i] || 0);
+      requests += series.rps[i] || 0;
+    });
+    setLatencySummary(
+      lat.length === 0
+        ? "No data yet."
+        : "Whole run: average " + formatMs(requests > 0 ? total / requests : 0) + " ms."
+    );
+    showLatencyData(lat.map((avg, i) => ({ second: second(i), avg })));
   }
 }

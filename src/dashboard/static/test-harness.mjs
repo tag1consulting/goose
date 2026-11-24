@@ -65,6 +65,10 @@ function fileResponse(status, body, filename) {
 // or the body `series(url)` returns when it is a function, after
 // `seriesDelayMs` (default 0).
 //
+// The whole run view: `GET /api/v1/whole-run` answers with the `wholeRun`
+// body (default: empty lines and no heatmap), or the body `wholeRun(url)`
+// returns when it is a function.
+//
 // Reports: `reports` is the listing `GET /api/v1/reports` answers (default:
 // none); a report or comparison under /api/v1/reports/ answers with a small
 // body and a Content-Disposition naming it, or `reportFileStatus` with a one
@@ -86,6 +90,7 @@ export function stubServer(token, options = {}) {
     seriesStatus = 200,
     series = null,
     seriesDelayMs = 0,
+    wholeRun = null,
     controlDelayMs = 0,
     controlAnswer = null,
   } = options;
@@ -171,6 +176,24 @@ export function stubServer(token, options = {}) {
     const ok =
       open || url.searchParams.get("token") === token || bearer === "Bearer " + token;
     if (!ok) return Promise.resolve(jsonResponse(401, {}));
+    if (url.pathname === "/api/v1/whole-run") {
+      const body =
+        typeof wholeRun === "function"
+          ? wholeRun(url)
+          : wholeRun || {
+              lines: {
+                start_second: 0,
+                width: 1,
+                end_second: 0,
+                rps: [],
+                fps: [],
+                users: [],
+                avg_latency_ms: [],
+              },
+              heatmap: null,
+            };
+      return Promise.resolve(jsonResponse(200, body));
+    }
     if (url.pathname === "/api/v1/series") {
       if (seriesStatus !== 200) {
         return Promise.resolve(jsonResponse(seriesStatus, { error: "not_found" }));
