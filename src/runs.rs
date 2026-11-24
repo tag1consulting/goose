@@ -950,9 +950,12 @@ impl GooseAttack {
     }
 
     /// Whether the per second histograms also fold into whole run columns,
-    /// for the report's response time heatmap.
+    /// for the report's response time heatmap, the JSON report's
+    /// percentiles over time and the dashboard's whole run view: whenever
+    /// the histograms are kept, with or without a report. The column
+    /// budgets bound them however long the run.
     pub(crate) fn records_latency_columns(&self) -> bool {
-        self.keeps_full_graph() && self.configuration.records_latency_series()
+        self.configuration.records_latency_series()
     }
 
     /// When a run starts: choose its folder when it may need one, failing
@@ -1665,10 +1668,9 @@ impl GooseAttack {
             self.output.save_report = save;
             let keep = self.keeps_full_graph();
             if self.run_in_progress && keep != keeps_before {
-                let now = self.series_elapsed_secs();
                 let _ = goose_attack_run_state
                     .metrics_cmd_tx
-                    .send(MetricsCommand::KeepGraph { keep, now });
+                    .send(MetricsCommand::KeepGraph { keep });
             }
         }
         let message = format!(
@@ -1773,6 +1775,7 @@ impl GooseAttack {
                 graph_data: &graph_data,
                 graphs: true,
                 heatmap: None,
+                percentiles: None,
                 loaded: None,
                 record: &record,
                 graph_data_in_json,
@@ -2026,6 +2029,13 @@ mod tests {
                         assert_eq!(
                             attack.keeps_full_graph(),
                             path || save,
+                            "path={path} bare={bare} dashboard={dashboard} save={save}"
+                        );
+                        // The heatmap's whole run columns do not follow
+                        // Save report: a dashboard only run keeps them too.
+                        assert_eq!(
+                            attack.records_latency_columns(),
+                            attack.configuration.records_latency_series(),
                             "path={path} bare={bare} dashboard={dashboard} save={save}"
                         );
                     }

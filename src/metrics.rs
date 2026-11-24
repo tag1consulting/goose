@@ -394,10 +394,10 @@ pub(crate) enum MetricsCommand {
         respond: tokio::sync::oneshot::Sender<GooseMetrics>,
     },
     /// Keep the graph data for the whole run, or only the dashboard's window,
-    /// as Save report is turned on or off. `now` is the current second on
-    /// the series clock.
+    /// as Save report is turned on or off. The heatmap's whole run columns
+    /// and the whole run lines stay either way.
     #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-    KeepGraph { keep: bool, now: usize },
+    KeepGraph { keep: bool },
     /// Copies of the metrics and graph data so far, for Save report now.
     #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     GetReportData {
@@ -3886,9 +3886,8 @@ impl MetricsProcessor {
                 let _ = respond.send(snapshot);
                 false
             }
-            MetricsCommand::KeepGraph { keep, now } => {
+            MetricsCommand::KeepGraph { keep } => {
                 self.keep_full_graph = keep;
-                self.graph_data.keep_latency_columns(keep, now);
                 false
             }
             MetricsCommand::GetReportData {
@@ -5194,6 +5193,7 @@ impl GooseAttack {
             graph_data: &self.graph_data,
             graphs: true,
             heatmap: None,
+            percentiles: None,
             loaded: None,
             record,
             graph_data_in_json: self.output.graph_data,
@@ -5270,6 +5270,9 @@ pub(crate) struct ReportSource<'a> {
     pub graphs: bool,
     /// The heatmap of a JSON report read back, which keeps no histograms.
     pub heatmap: Option<&'a serde_json::Value>,
+    /// The percentiles over time of a JSON report read back, written again
+    /// as they were.
+    pub percentiles: Option<&'a serde_json::Value>,
     /// The tables of a JSON report read back.
     pub loaded: Option<&'a ReportData<'static>>,
     pub record: &'a RunRecord,
@@ -5281,16 +5284,42 @@ pub(crate) struct ReportSource<'a> {
 /// under, `JsonReport::graphs`: what `report-json` leaves out.
 pub(crate) const REPORT_GRAPHS: &str = "graphs";
 
-/// The JSON report: the record of the run, its metrics, and, when asked for,
-/// the per second data the HTML report graphs.
+/// The JSON report: the record of the run, its metrics, its percentiles
+/// over time and, when asked for, the per second data the HTML report
+/// graphs.
 #[derive(Serialize)]
 struct JsonReport<'a> {
     #[serde(flatten)]
     record: &'a RunRecord,
     #[serde(flatten)]
     data: ReportData<'a>,
+    /// `percentiles_over_time_ms`: each whole run column's p50, p95 and
+    /// p99, for all requests and each request name with columns, written
+    /// whenever the heatmap's whole run columns are kept, with or without
+    /// `--report-graph-data`.
+    #[serde(
+        rename = "percentiles_over_time_ms",
+        skip_serializing_if = "Option::is_none"
+    )]
+    percentiles: Option<JsonPercentiles<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     graphs: Option<crate::graph::ReportGraphs<'a>>,
+}
+
+/// The JSON report's percentiles over time: built from the run's columns,
+/// or read back from a JSON report.
+enum JsonPercentiles<'a> {
+    Live(crate::graph::PercentilesOverTime<'a>),
+    Recorded(&'a serde_json::Value),
+}
+
+impl Serialize for JsonPercentiles<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            JsonPercentiles::Live(percentiles) => percentiles.serialize(serializer),
+            JsonPercentiles::Recorded(percentiles) => percentiles.serialize(serializer),
+        }
+    }
 }
 
 impl ReportSource<'_> {
@@ -5326,6 +5355,13 @@ impl ReportSource<'_> {
         let report = JsonReport {
             record: self.record,
             data: self.data(baseline),
+            percentiles: match self.percentiles {
+                Some(recorded) => Some(JsonPercentiles::Recorded(recorded)),
+                None => self
+                    .graph_data
+                    .percentiles_over_time(co_active)
+                    .map(JsonPercentiles::Live),
+            },
             graphs: (self.graph_data_in_json && self.graphs).then(|| {
                 self.graph_data
                     .report_graphs(co_active, self.started(), self.heatmap)
@@ -7236,10 +7272,11 @@ mod test {
     }
 
     /// Save report turned on during a run: the totals still cover the whole
-    /// run, the graphs keep from then on plus the dashboard's window before
-    /// it, and the heatmap gets whole run columns; turned off, the window
-    /// alone again. Save report now's copy is the same, and leaves the
-    /// processor's own data alone.
+    /// run, and the graphs keep from then on plus the dashboard's window
+    /// before it; turned off, the window alone again. The heatmap's whole
+    /// run columns are kept throughout, for the dashboard's whole run view.
+    /// Save report now's copy is the same, and leaves the processor's own
+    /// data alone.
     #[tokio::test]
     async fn save_report_turned_on_during_a_run() {
         let configuration = GooseConfiguration {
@@ -7248,7 +7285,7 @@ mod test {
         };
         let mut processor = make_graph_test_processor(&configuration);
         processor.keep_full_graph = false;
-        processor.graph_data.keep_latency_columns(false, 0);
+        assert!(processor.graph_data.has_latency_columns_for_test());
         let keep = dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2;
         let record = |processor: &mut MetricsProcessor, from: usize, to: usize| {
             for sec in from..to {
@@ -7267,12 +7304,9 @@ mod test {
         assert!(pruned_to > 0, "Save report off keeps only the window");
 
         // On: nothing more is dropped from here.
-        processor.handle_command(MetricsCommand::KeepGraph {
-            keep: true,
-            now: keep + 300,
-        });
+        processor.handle_command(MetricsCommand::KeepGraph { keep: true });
         assert!(processor.graph_data.has_latency_columns_for_test());
-        // The heatmap takes the seconds the rings held before the switch.
+        // The heatmap holds every second, from before the switch too.
         assert!(!processor
             .graph_data
             .get_latency_heatmap_markup(false, jiff::Timestamp::now())
@@ -7296,12 +7330,9 @@ mod test {
             .get_latency_heatmap_markup(false, jiff::Timestamp::now())
             .is_empty());
 
-        // Off again: back to the window, and no heatmap columns.
-        processor.handle_command(MetricsCommand::KeepGraph {
-            keep: false,
-            now: 2 * keep + 300,
-        });
-        assert!(!processor.graph_data.has_latency_columns_for_test());
+        // Off again: back to the window; the heatmap's columns stay.
+        processor.handle_command(MetricsCommand::KeepGraph { keep: false });
+        assert!(processor.graph_data.has_latency_columns_for_test());
         record(&mut processor, 2 * keep + 300, 2 * keep + 400);
         assert!(processor.graph_data.first_second() > pruned_to);
     }
@@ -8721,11 +8752,10 @@ mod test {
     }
 
     /// [`make_graph_test_processor`] with Save report off, keeping only the
-    /// dashboard's window.
+    /// dashboard's window of the per second graphs.
     fn make_window_test_processor(configuration: &GooseConfiguration) -> MetricsProcessor {
         let mut processor = make_graph_test_processor(configuration);
         processor.keep_full_graph = false;
-        processor.graph_data.keep_latency_columns(false, 0);
         processor
     }
 
@@ -9294,6 +9324,7 @@ mod test {
             graph_data: &graph_data,
             graphs: true,
             heatmap: None,
+            percentiles: None,
             loaded: None,
             record: &record,
             graph_data_in_json: false,

@@ -724,6 +724,10 @@ pub(crate) struct LoadedReport {
     pub data: ReportData<'static>,
     pub record: crate::runs::RunRecord,
     pub graphs: Option<(crate::graph::GraphData, Option<serde_json::Value>)>,
+    /// Its percentiles over time (`percentiles_over_time_ms`), written
+    /// again as they are; absent from a JSON report older than them, or
+    /// from one of a run that kept no whole run columns.
+    pub percentiles: Option<serde_json::Value>,
 }
 
 impl LoadedReport {
@@ -742,16 +746,18 @@ impl LoadedReport {
         #[derive(Deserialize)]
         struct Graphs {
             graphs: Option<crate::graph::RecordedGraphs>,
+            #[serde(default, rename = "percentiles_over_time_ms")]
+            percentiles: Option<serde_json::Value>,
         }
         let mut data = read_report(text.as_bytes())?;
         data.raw_metrics = Cow::Owned(data.raw_metrics.into_owned());
         restore_breakdown_rows(&mut data);
+        let graphs = serde_json::from_str::<Graphs>(text)?;
         Ok(LoadedReport {
             data,
             record: serde_json::from_str(text)?,
-            graphs: serde_json::from_str::<Graphs>(text)?
-                .graphs
-                .map(crate::graph::RecordedGraphs::into_parts),
+            graphs: graphs.graphs.map(crate::graph::RecordedGraphs::into_parts),
+            percentiles: graphs.percentiles,
         })
     }
 
@@ -771,6 +777,7 @@ impl LoadedReport {
             graph_data,
             graphs: self.graphs.is_some(),
             heatmap,
+            percentiles: self.percentiles.as_ref(),
             loaded: Some(&self.data),
             record: &self.record,
             graph_data_in_json: self.graphs.is_some(),

@@ -591,12 +591,6 @@ impl GaggleAccumulator {
         self.limits.max_users = self.limits.max_users.max(max_users);
     }
 
-    /// Build whole run columns for the report's heatmap, or not, as Save
-    /// report is turned on or off.
-    pub(crate) fn set_columns(&mut self, keep: bool) {
-        self.settings.columns = keep;
-    }
-
     /// Merge only metrics epoch `epoch` from now on, the manager having
     /// reset its metrics: a worker on an older epoch is left out, and a
     /// delta of a newer one is refused.

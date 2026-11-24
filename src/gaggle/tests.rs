@@ -650,6 +650,7 @@ fn differences(
             graph_data: graph,
             graphs: true,
             heatmap: None,
+            percentiles: None,
             loaded: None,
             record: &record,
             graph_data_in_json: true,
@@ -2705,10 +2706,7 @@ fn gaggle_manager_users_keep_the_dashboard_window() {
         .gaggle_enable_manager(DeltaLimits::default(), Default::default());
     // Save report off: the dashboard keeps only its window.
     side.processor
-        .handle_command_for_test(MetricsCommand::KeepGraph {
-            keep: false,
-            now: 0,
-        });
+        .handle_command_for_test(MetricsCommand::KeepGraph { keep: false });
     let delta = |at: u64| {
         let mut delta = GaggleDelta::new(0, at + 1, 0, DeltaKind::Delta);
         delta.now = at + 1;
@@ -2763,17 +2761,17 @@ fn gaggle_manager_users_keep_the_dashboard_window() {
     assert!(graph.first_second() > 0, "the window was not kept");
 }
 
-/// Save report on a manager's dashboard changes what its merge builds: with
-/// it off the merged graph keeps no whole run heatmap columns, with it on
-/// it does, though the merge was set up with them.
+/// Save report on a manager's dashboard leaves the merge's whole run
+/// heatmap columns alone: the dashboard's whole run view needs them with it
+/// off as with it on.
 #[test]
-fn gaggle_save_report_on_a_manager_changes_the_merge() {
+fn gaggle_save_report_on_a_manager_keeps_the_columns() {
     let mut side = Side::new(0..0, Some(0));
     side.processor
         .gaggle_enable_manager(DeltaLimits::default(), Default::default());
     let mut columns = |keep: bool| {
         side.processor
-            .handle_command_for_test(MetricsCommand::KeepGraph { keep, now: 0 });
+            .handle_command_for_test(MetricsCommand::KeepGraph { keep });
         let (respond, report) = tokio::sync::oneshot::channel();
         side.processor
             .handle_command_for_test(MetricsCommand::GetReportData {
@@ -2789,7 +2787,7 @@ fn gaggle_save_report_on_a_manager_changes_the_merge() {
             .1
             .has_latency_columns_for_test()
     };
-    assert!(!columns(false));
+    assert!(columns(false));
     assert!(columns(true));
 }
 

@@ -61,6 +61,7 @@ fn reports() -> Vec<(&'static str, Vec<u8>)> {
         graph_data: &graph_data,
         graphs: false,
         heatmap: None,
+        percentiles: None,
         loaded: None,
         record: &record,
         graph_data_in_json: false,
