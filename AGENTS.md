@@ -60,13 +60,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 # Build and test, once per feature set: "" (none), cookies, dashboard, mcp, gaggle, rustls-tls, native-tls
 cargo build --verbose --no-default-features --features "<feature>"
-# "" and gaggle: the whole suite and the doc tests
-cargo nextest run --verbose --no-default-features --features "<feature>"
-cargo test --verbose --no-default-features --features "<feature>" --doc
+# "": the whole suite and the doc tests
+cargo nextest run --verbose --no-default-features
+cargo test --verbose --no-default-features --doc
 # cookies, dashboard, mcp, rustls-tls and native-tls: only the feature's `tests` filter in CI.yml
 cargo nextest run --verbose --no-default-features --features "<feature>" -E '<the tests filter>'
-# With no features, the same commands without --features.
-# With gaggle, also:
+# gaggle: only the Gaggle library and process tests, GAGGLE_JOB_TESTS in CI.yml
+cargo nextest run --verbose --no-default-features --features gaggle -E '<GAGGLE_JOB_TESTS>'
 cargo clippy --all-targets --no-default-features --features gaggle -- -D warnings
 cargo run --locked --manifest-path proto/gen/Cargo.toml -- --check
 
@@ -100,7 +100,7 @@ git diff --exit-code -- app.js   # must show nothing
 npm test
 ```
 
-CI runs the core suite, every test that exists with no feature, in three jobs: `""` (no features), `gaggle`, and `all-features`, which runs it with every feature on at once. The other single feature jobs run only the tests that feature adds or whose code path it changes, a nextest filter named `tests` in the `build` job's matrix, and no doc tests. `cookies`, `rustls-tls` and `native-tls` change the client every user builds, so they run every test that builds a Goose client or sends a request, which is almost all of them: their filter names only the modules where no test does, and a new module runs there on its own; a test that builds a client in a module that filter names means taking the module out of it. The `dashboard` and `mcp` filters name the modules to run: library tests by their module path (`controller::`, `tests::` for `src/lib.rs`) and integration tests by their file in `tests/it/`. A new test in a module they name is picked up on its own; a new test behind `#[cfg(feature = "...")]` in a module they do not name, or a new `cfg(feature = "...")` in a file whose tests they do not run, means adding that module to the feature's filter. The comment above the filters in `CI.yml` says how all of them are derived. The `all-features` job leaves out the Gaggle tests the `gaggle` job runs (`GAGGLE_JOB_TESTS`); a Gaggle test that also needs another feature, `#[cfg(feature = "dashboard")]` in `src/gaggle/` say, exists only with all features, so add its name to the list there that keeps it: the `all-features` job fails, naming the test, until you do.
+CI runs the core suite, every test that exists with no feature, in two jobs: `""` (no features) and `all-features`, which runs it with every feature on at once. Those two are also the only jobs that run the doc tests, whose list is the same for every feature set. Every other job in the `build` matrix runs only a nextest filter of the tests its feature adds or whose code path it changes, and every test not in that filter runs with the feature on in `all-features`. The `gaggle` job runs `GAGGLE_JOB_TESTS`, at the top of the `build` job: the Gaggle process tests (`tests/gaggle.rs`) and the Gaggle library tests, those that exist only with the `gaggle` feature; it also runs clippy with `gaggle` alone and the protocol check. `cookies`, `rustls-tls`, `native-tls`, `dashboard` and `mcp` each run the filter named `tests` in the matrix, which names the modules to run: library tests by their module path (`client::` for `src/client.rs`, `controller::`, `tests::` for `src/lib.rs`) and integration tests by their file in `tests/it/`. `cookies` runs the tests that build or configure a client or check what a request carries; `rustls-tls` and `native-tls` the tests that build a client, check its TLS or HTTP version, or make an HTTPS connection, and `rustls-tls` also the WebSocket Controller tests. A new test in a module a filter names is picked up on its own. To mark a new feature specific test: put it behind `#[cfg(feature = "...")]` in a module the feature's filter names, or add its module (or its file in `tests/it/`) to that filter; likewise a new `cfg(feature = "...")` in a file whose tests the filter does not run means adding that file's module. A new Gaggle library test outside `gaggle::` goes into the names `GAGGLE_JOB_TESTS` lists, or it runs in `all-features` only. The comment above the filters in `CI.yml` says how all of them are derived. The `all-features` job leaves out the Gaggle tests the `gaggle` job runs (`GAGGLE_JOB_TESTS`); a Gaggle test that also needs another feature, `#[cfg(feature = "dashboard")]` in `src/gaggle/` say, exists only with all features, so add its name to the list there that keeps it: the `all-features` job fails, naming the test, until you do.
 
 CI also fails if a test leaves a `goose-runs/` folder in the checkout: a test that writes reports gives `--output-dir` a temporary folder.
 
