@@ -2476,7 +2476,7 @@ impl GooseAttack {
                     }) => {
                         series_requests.push((method, name, since, respond));
                     }
-                    Ok(dashboard::DashboardRequest::GetWholeRun { request, respond }) => {
+                    Ok(dashboard::DashboardRequest::WholeRun { request, respond }) => {
                         whole_run_requests.push((request, respond));
                     }
                     Err(flume::TryRecvError::Empty) => break,

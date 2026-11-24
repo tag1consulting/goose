@@ -163,7 +163,7 @@ pub(crate) enum DashboardRequest {
     /// The whole run view (`GET /api/v1/whole-run`), as JSON: the line
     /// charts, and the heatmap of all requests or of `request`, its method
     /// and name. `None` when it could not be written.
-    GetWholeRun {
+    WholeRun {
         request: Option<(String, String)>,
         respond: tokio::sync::oneshot::Sender<Option<Vec<u8>>>,
     },
@@ -1713,7 +1713,7 @@ async fn whole_run_handler(
         return series_error(StatusCode::SERVICE_UNAVAILABLE, "busy");
     };
     let (respond, respond_rx) = oneshot::channel();
-    let ask = DashboardRequest::GetWholeRun {
+    let ask = DashboardRequest::WholeRun {
         request: request.clone(),
         respond,
     };
@@ -2891,7 +2891,7 @@ mod tests {
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
                     }
-                    DashboardRequest::GetWholeRun { respond, .. } => {
+                    DashboardRequest::WholeRun { respond, .. } => {
                         let _ = respond.send(Some(b"{}".to_vec()));
                     }
                 }
@@ -2991,7 +2991,7 @@ mod tests {
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
                     }
-                    DashboardRequest::GetWholeRun { respond, .. } => {
+                    DashboardRequest::WholeRun { respond, .. } => {
                         let _ = respond.send(Some(b"{}".to_vec()));
                     }
                 }
@@ -4192,7 +4192,7 @@ mod tests {
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
                     }
-                    DashboardRequest::GetWholeRun { respond, .. } => {
+                    DashboardRequest::WholeRun { respond, .. } => {
                         let _ = respond.send(Some(b"{}".to_vec()));
                     }
                 }
