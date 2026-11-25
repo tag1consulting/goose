@@ -494,6 +494,36 @@ pub(crate) fn warning_block(tag: &str, text: &str) {
     warn!("{tag}: {}", text.replace('\n', " "));
 }
 
+/// The local time zone that reports, logs and the runs listing show times in.
+///
+/// jiff caches a zone it finds for a few minutes but never caches a failed
+/// lookup, so call this once per report, graph or table rather than once per
+/// timestamp. When the zone cannot be read, such as a `TZ` jiff cannot parse,
+/// this warns once per process and returns UTC.
+pub(crate) fn local_zone() -> jiff::tz::TimeZone {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    zone_or_utc(jiff::tz::TimeZone::try_system(), &WARNED)
+}
+
+/// Returns the zone a lookup found, or warns once per `warned` and returns UTC.
+fn zone_or_utc(
+    zone: Result<jiff::tz::TimeZone, jiff::Error>,
+    warned: &std::sync::Once,
+) -> jiff::tz::TimeZone {
+    zone.unwrap_or_else(|error| {
+        warned.call_once(|| match std::env::var_os("TZ") {
+            Some(tz) => warn!(
+                "[system]: cannot read the time zone TZ={:?} ({error}), times are shown in UTC",
+                tz.to_string_lossy()
+            ),
+            None => warn!(
+                "[system]: cannot find the system time zone ({error}), times are shown in UTC"
+            ),
+        });
+        jiff::tz::TimeZone::UTC
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,5 +744,24 @@ mod tests {
         assert!(is_valid_host("http://foo").is_ok());
         assert!(is_valid_host("http:///example.com").is_ok());
         assert!(is_valid_host("http:// example.com").is_err());
+    }
+
+    /// A zone jiff cannot read gives UTC, and a real one gives that zone.
+    /// The test brings its own `Once`, so it leaves the warning `local_zone`
+    /// gives once per process for a real failure later in the same process.
+    #[test]
+    fn local_zone_falls_back_to_utc() {
+        let warned = std::sync::Once::new();
+        let unreadable = jiff::tz::TimeZone::get("std +5");
+        assert!(unreadable.is_err());
+        assert_eq!(zone_or_utc(unreadable, &warned), jiff::tz::TimeZone::UTC);
+        assert!(warned.is_completed());
+
+        let found = std::sync::Once::new();
+        let kolkata = zone_or_utc(jiff::tz::TimeZone::get("Asia/Kolkata"), &found);
+        assert!(!found.is_completed());
+        let at = "2026-01-15T12:00:00Z".parse::<jiff::Timestamp>().unwrap();
+        assert_eq!(kolkata.iana_name(), Some("Asia/Kolkata"));
+        assert_eq!(kolkata.to_offset(at).seconds(), 5 * 3600 + 30 * 60);
     }
 }

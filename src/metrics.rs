@@ -3209,7 +3209,7 @@ impl GooseMetrics {
         Ok(())
     }
 
-    // Determine the seconds, minutes and hours between two chrono:DateTimes.
+    // Determine the seconds, minutes and hours between two `jiff::Timestamp`s.
     pub(crate) fn get_seconds_minutes_hours(
         &self,
         start: &jiff::Timestamp,
@@ -3247,19 +3247,20 @@ impl GooseMetrics {
         )?;
 
         // Step through history looking at current step and next step.
+        let tz = crate::util::local_zone();
         for step in self.history.windows(2) {
             let (seconds, minutes, hours) =
                 self.get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
             let started = step[0]
                 .timestamp
                 // @TODO: error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
             let stopped = step[1]
                 .timestamp
                 // @TODO: error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string();
             match &step[0].action {
@@ -5427,6 +5428,7 @@ impl ReportSource<'_> {
         let users = self.metrics.maximum_users.to_string();
 
         let mut steps_overview = String::new();
+        let tz = crate::util::local_zone();
         for step in self.metrics.history.windows(2) {
             let (seconds, minutes, hours) = self
                 .metrics
@@ -5434,12 +5436,12 @@ impl ReportSource<'_> {
             let started = step[0]
                 .timestamp
                 // @TODO: error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%y-%m-%d %H:%M:%S");
             let stopped = step[1]
                 .timestamp
                 // @TODO: error handling
-                .to_zoned_datetime(jiff::tz::TimeZone::system())
+                .to_zoned_datetime(tz.clone())
                 .strftime("%y-%m-%d %H:%M:%S");
             match &step[0].action {
                 // For maintaining just show the current number of users.

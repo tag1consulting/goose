@@ -85,8 +85,8 @@ RUSTDOCFLAGS="-D warnings" cargo rustdoc --lib --all-features --examples
 cargo nextest run --verbose --all-features
 cargo test --verbose --all-features --doc
 cargo nextest run --verbose --all-features --run-ignored all -E 'binary_id(goose::it) & test(/^pdf_chrome::/)'
-TZ="std +5" cargo nextest run --verbose --all-features -E 'test(graph) | binary_id(goose::metrics_print_unlocked)'
-TZ="std +5" cargo test --verbose --all-features --doc graph
+TZ=Asia/Kolkata cargo nextest run --verbose --all-features -E 'test(graph) | binary_id(goose::metrics_print_unlocked)'
+TZ=Asia/Kolkata cargo test --verbose --all-features --doc graph
 # Plain cargo test runs every test, in place of nextest
 cargo test --all-features
 
