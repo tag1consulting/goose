@@ -147,9 +147,9 @@ jobs:
         # "" (no features) and all-features, which runs it with every feature on at
         # once. The default job builds, lints and runs every test with Goose's
         # default features, what a load test that names no features gets; it runs
-        # no doc tests. Only "" and all-features run the doc tests: the doc test list is the same for
-        # every feature set, and they compile each doc test with its features off and
-        # on. The gaggle job runs the tests the gaggle feature adds: GAGGLE_JOB_TESTS,
+        # no doc tests. Only "" and all-features run the doc tests: the doc test list
+        # is the same for every feature set, and they compile each doc test with its
+        # features off and on. The gaggle job runs the tests the gaggle feature adds: GAGGLE_JOB_TESTS,
         # and every other test its build has that the no feature build does not,
         # such as tests/it/gaggle_shadow.rs. Each of the other single feature jobs
         # runs only `tests`, a nextest
