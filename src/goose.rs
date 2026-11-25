@@ -318,6 +318,8 @@ use crate::metrics::{
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
 mod gzip;
+#[cfg(feature = "request-hooks")]
+pub mod hooks;
 
 /// Atomically decrement `counter` by one, saturating at zero.
 ///
@@ -1412,6 +1414,11 @@ pub struct GooseUser {
     /// The run's totals of unread bodies read, shared by every user; `None` outside a
     /// load test.
     pub(crate) unread_body_totals: Option<Arc<UnreadBodyTotals>>,
+    /// Every hook the attack registered, with the `request-hooks` feature;
+    /// shared by every user behind one `Arc`. Empty unless a load test
+    /// registered a hook. See [`hooks::HookSet`].
+    #[cfg(feature = "request-hooks")]
+    pub(crate) hooks: Arc<hooks::HookSet>,
 }
 
 impl Clone for GooseUser {
@@ -1461,6 +1468,8 @@ impl Clone for GooseUser {
             unread_bodies: UnreadBodies::default(),
             reading_bodies: Vec::new(),
             unread_body_totals: self.unread_body_totals.clone(),
+            #[cfg(feature = "request-hooks")]
+            hooks: self.hooks.clone(),
         }
     }
 }
@@ -1558,12 +1567,76 @@ impl GooseUser {
             unread_bodies: UnreadBodies::default(),
             reading_bodies: Vec::new(),
             unread_body_totals: None,
+            #[cfg(feature = "request-hooks")]
+            hooks: Arc::new(hooks::HookSet::default()),
         })
     }
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
         Self::single_with_client(base_url, configuration, None, !configuration.no_gzip)
+    }
+
+    /// Experimental, behind the `request-hooks` feature: attach a
+    /// `before_send` hook directly to this user, without going through a
+    /// `GooseAttack`. Exists for tests and the design investigation's
+    /// benchmark harness; a real load test registers hooks on the
+    /// `GooseAttack` instead (`GooseAttack::register_before_send_hook`),
+    /// which is what every user in the attack then shares. See
+    /// `src/docs/goose-book/src/design/request-hooks.md`.
+    #[cfg(feature = "request-hooks")]
+    pub fn with_before_send_hook<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&mut hooks::HookRequestParts, &mut GooseUser) -> hooks::BeforeSendOutcome
+            + Send
+            + Sync
+            + 'static,
+    {
+        Arc::get_mut(&mut self.hooks)
+            .expect("no other reference to a freshly built user's hooks exists yet")
+            .before_send
+            .push(Arc::new(hook));
+        self
+    }
+
+    /// [`Self::with_before_send_hook`], for an async `before_send` hook. See
+    /// [`hooks::AsyncBeforeSendHook`] for why its signature differs from the
+    /// sync version.
+    #[cfg(feature = "request-hooks")]
+    pub fn with_before_send_hook_async<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(
+                http::HeaderMap,
+            )
+                -> futures::future::BoxFuture<'static, (http::HeaderMap, hooks::BeforeSendOutcome)>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Arc::get_mut(&mut self.hooks)
+            .expect("no other reference to a freshly built user's hooks exists yet")
+            .before_send_async
+            .push(Arc::new(hook));
+        self
+    }
+
+    /// [`Self::with_before_send_hook`], for an `on_response` hook.
+    #[cfg(feature = "request-hooks")]
+    pub fn with_on_response_hook<F>(mut self, hook: F, retry_policy: hooks::RetryPolicy) -> Self
+    where
+        F: Fn(
+                Result<&hooks::HookResponseParts, &hooks::TransportError>,
+                &mut GooseUser,
+            ) -> hooks::ResponseOutcome
+            + Send
+            + Sync
+            + 'static,
+    {
+        Arc::get_mut(&mut self.hooks)
+            .expect("no other reference to a freshly built user's hooks exists yet")
+            .on_response
+            .push((Arc::new(hook), retry_policy));
+        self
     }
 
     /// [`Self::single`], with `reqwest_client` as its client when given, as a
@@ -2334,9 +2407,20 @@ impl GooseUser {
         &mut self,
         mut request: GooseRequest<'_>,
     ) -> Result<GooseResponse, Box<TransactionError>> {
-        // Read to the end any body an earlier response dropped unread, so its
-        // connection is back in the pool before this request goes out. This comes
-        // before the request is started, so it is not part of the request's time.
+        let (request_builder, request_name) = self.prepare_request(&mut request).await?;
+        let (request_metric, response) = self.send_request(request_builder, request_name).await?;
+        self.finish_request(request, request_metric, response).await
+    }
+
+    /// **prepare**: everything before the throttle. Resolves the
+    /// [`RequestBuilder`] and this request's name, reading to the end any
+    /// body an earlier response dropped unread first, so its connection is
+    /// back in the pool before this request goes out — before the request
+    /// is started, so none of this is part of the request's measured time.
+    async fn prepare_request(
+        &mut self,
+        request: &mut GooseRequest<'_>,
+    ) -> Result<(RequestBuilder, Arc<str>), Box<TransactionError>> {
         self.read_unread_bodies().await;
 
         // If the RequestBuilder is already defined in the GooseRequest use it.
@@ -2348,8 +2432,23 @@ impl GooseUser {
         };
 
         // Determine the name for this request.
-        let request_name = self.get_request_name(&request);
+        let request_name = self.get_request_name(request);
 
+        Ok((request_builder, request_name))
+    }
+
+    /// **send**: the throttle token through the response duration (time to
+    /// first byte). With the `request-hooks` feature and no hook
+    /// registered, this is the same sequence `main` runs, just reached
+    /// through this private method instead of inline; with a hook
+    /// registered, `before_send` and `on_response` run at the seams this
+    /// function's doc comments mark, and a hook-driven retry loops this
+    /// function's send/resend-on-close/measure sequence again.
+    async fn send_request(
+        &mut self,
+        request_builder: RequestBuilder,
+        request_name: Arc<str>,
+    ) -> Result<(GooseRequestMetric, Result<Response, reqwest::Error>), Box<TransactionError>> {
         // If throttle-requests is enabled...
         if self.is_throttled && self.throttle.is_some() {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
@@ -2437,12 +2536,56 @@ impl GooseUser {
             headers.or_insert(header::HeaderValue::from_static("gzip"));
         }
 
+        // Experimental, behind `request-hooks`: how many times this request
+        // was sent, and how much of that time a hook asked to exclude from
+        // `response_time`. Both stay at their defaults, at no cost beyond
+        // this declaration, unless a hook is registered and used.
+        #[cfg(feature = "request-hooks")]
+        let mut attempts: u32 = 1;
+        #[cfg(feature = "request-hooks")]
+        let mut hidden_time_us: u64 = 0;
+
+        // `before_send` hooks mutate the request about to go out. Their own
+        // CPU time falls inside `started`'s window automatically: no extra
+        // timer call makes that true. Checked and skipped at the cost of one
+        // `Vec::is_empty` read when no hook is registered.
+        #[cfg(feature = "request-hooks")]
+        if self.hooks.has_before_send() {
+            self.call_before_send_hooks(&mut built_request).await;
+        }
+
         // Keep a copy of an idempotent request, to send it once more if the server
         // closes the connection before responding. None if the body can't be cloned.
         let resend_request = if is_idempotent(built_request.method()) {
             built_request.try_clone()
         } else {
             None
+        };
+
+        // A second clone, kept only when an `on_response` hook is
+        // registered AND at least one of them has a `RetryPolicy` that
+        // could actually permit retrying this request's method — so a
+        // non-idempotent request under the (default) idempotent-only
+        // policy never pays for a clone that could never be used, and a
+        // request with no `on_response` hook at all never evaluates any of
+        // this. `built_method` exists only inside this same guard, so it is
+        // never cloned on the zero-hook path either.
+        #[cfg(feature = "request-hooks")]
+        let (hook_retry_template, built_method) = if !self.hooks.on_response.is_empty() {
+            let built_method = built_request.method().clone();
+            let template = if self
+                .hooks
+                .on_response
+                .iter()
+                .any(|(_, policy)| policy.permits(&built_method))
+            {
+                built_request.try_clone()
+            } else {
+                None
+            };
+            (template, Some(built_method))
+        } else {
+            (None, None)
         };
 
         // Make the actual request.
@@ -2471,10 +2614,173 @@ impl GooseUser {
             }
         }
 
+        // `on_response` hooks may ask Goose to retry; Goose runs and times
+        // the retry itself (a hook never hands Goose a duration). Checked
+        // and skipped at the cost of one `Vec::is_empty` read when no hook
+        // is registered; the extra `Instant::now()` pair a retry needs is
+        // paid only inside this loop, only when a hook actually retries.
+        #[cfg(feature = "request-hooks")]
+        if !self.hooks.on_response.is_empty() {
+            self.run_on_response_hooks(
+                &mut response,
+                &hook_retry_template,
+                built_method
+                    .as_ref()
+                    .expect("built_method is Some whenever on_response hooks are registered"),
+                &mut attempts,
+                &mut hidden_time_us,
+            )
+            .await;
+        }
+
         // Record Time to First Byte (TTFB): client.execute() returns when response headers
         // are received, not when the complete response body is downloaded. A request sent
         // again counts the time of both attempts.
         request_metric.set_response_duration(started.elapsed());
+
+        #[cfg(feature = "request-hooks")]
+        {
+            request_metric.attempts = attempts;
+            request_metric.hidden_time_us = hidden_time_us;
+        }
+
+        Ok((request_metric, response))
+    }
+
+    /// Experimental, behind `request-hooks`: runs every registered
+    /// `before_send` hook against `built_request`, in registration order.
+    /// A `FailWith` outcome is specified (see the design doc) but not
+    /// honored by this prototype — fault injection via `before_send` is a
+    /// follow-up, not exercised by the benchmark this feature exists to
+    /// run.
+    #[cfg(feature = "request-hooks")]
+    async fn call_before_send_hooks(&mut self, built_request: &mut reqwest::Request) {
+        let hooks = Arc::clone(&self.hooks);
+        {
+            let mut parts = hooks::HookRequestParts::new(built_request);
+            for hook in &hooks.before_send {
+                match hook(&mut parts, self) {
+                    hooks::BeforeSendOutcome::Continue => {}
+                    hooks::BeforeSendOutcome::FailWith(_reason) => {
+                        debug!(
+                            "[user {}]: a before_send hook asked to fail the request; not honored by this prototype",
+                            self.weighted_users_index + 1
+                        );
+                    }
+                }
+            }
+        }
+        for hook in &hooks.before_send_async {
+            let headers = built_request.headers().clone();
+            let (headers, outcome) = hook(headers).await;
+            *built_request.headers_mut() = headers;
+            match outcome {
+                hooks::BeforeSendOutcome::Continue => {}
+                hooks::BeforeSendOutcome::FailWith(_reason) => {
+                    debug!(
+                        "[user {}]: an async before_send hook asked to fail the request; not honored by this prototype",
+                        self.weighted_users_index + 1
+                    );
+                }
+            }
+        }
+    }
+
+    /// Experimental, behind `request-hooks`: runs every registered
+    /// `on_response` hook against the current `response`, and drives a
+    /// bounded retry loop when one asks for it and the method's idempotency
+    /// (or an explicit opt-in) and the attempt cap allow it. Goose always
+    /// measures a retried attempt's own duration; a hook only ever says
+    /// whether that duration should also count toward `hidden_time_us`.
+    #[cfg(feature = "request-hooks")]
+    #[allow(clippy::too_many_arguments)]
+    async fn run_on_response_hooks(
+        &mut self,
+        response: &mut Result<Response, reqwest::Error>,
+        hook_retry_template: &Option<reqwest::Request>,
+        built_method: &Method,
+        attempts: &mut u32,
+        hidden_time_us: &mut u64,
+    ) {
+        loop {
+            let ok_view = response
+                .as_ref()
+                .ok()
+                .map(|r| hooks::HookResponseParts::new(r.status(), r.headers(), r.url()));
+            let err_view = response.as_ref().err().map(hooks::TransportError::new);
+            let hook_arg: Result<&hooks::HookResponseParts, &hooks::TransportError> =
+                match (&ok_view, &err_view) {
+                    (Some(v), _) => Ok(v),
+                    (_, Some(e)) => Err(e),
+                    _ => unreachable!("a response is always Ok or Err"),
+                };
+
+            let hooks_arc = Arc::clone(&self.hooks);
+            let mut retry_requested = None;
+            for (hook, policy) in &hooks_arc.on_response {
+                match hook(hook_arg, self) {
+                    hooks::ResponseOutcome::Accept => {}
+                    hooks::ResponseOutcome::Retry { hide_this_attempt } => {
+                        if policy.permits(built_method) && *attempts < hooks::MAX_ATTEMPTS {
+                            // Honored: stop here and retry. A hook registered
+                            // after this one does not see this attempt's
+                            // response at all — it will see whatever attempt
+                            // replaces it.
+                            retry_requested = Some(hide_this_attempt);
+                            break;
+                        }
+                        // Not honored (non-idempotent without opt-in, or the
+                        // attempt cap reached): this response is still going
+                        // to be the final one, so every other registered
+                        // on_response hook must still see it — continue the
+                        // loop rather than silently skipping them.
+                        debug!(
+                            "[user {}]: an on_response hook asked to retry; not honored (a non-idempotent method without opt-in, or the attempt cap was reached)",
+                            self.weighted_users_index + 1
+                        );
+                    }
+                }
+            }
+            drop(ok_view);
+            drop(err_view);
+
+            let Some(hide_this_attempt) = retry_requested else {
+                break;
+            };
+            let Some(template) = hook_retry_template.as_ref() else {
+                break;
+            };
+            let Some(mut clone) = template.try_clone() else {
+                debug!(
+                    "[user {}]: an on_response hook asked to retry a request whose body can't be cloned a second time; not honored",
+                    self.weighted_users_index + 1
+                );
+                break;
+            };
+
+            if self.hooks.has_before_send() {
+                self.call_before_send_hooks(&mut clone).await;
+            }
+
+            let attempt_started = Instant::now();
+            *response = self.client.execute(clone).await;
+            *attempts += 1;
+            if hide_this_attempt {
+                *hidden_time_us += attempt_started.elapsed().as_micros() as u64;
+            }
+        }
+    }
+
+    /// **finish**: everything from here on, on `&mut self`. Wraps the
+    /// response for unread-body tracking, decides success or failure,
+    /// handles `sticky_follow`, coordinated omission mitigation, sends the
+    /// metric to the parent, and `error_on_fail`.
+    async fn finish_request(
+        &mut self,
+        request: GooseRequest<'_>,
+        mut request_metric: GooseRequestMetric,
+        response: Result<Response, reqwest::Error>,
+    ) -> Result<GooseResponse, Box<TransactionError>> {
         // From here, a body dropped unread, by the test or by an early return below,
         // goes to this user to read, unless --drop-unread-bodies is set.
         let response = response.map(|response| {
@@ -4451,7 +4757,7 @@ fn clean_reqwest_error(e: &reqwest::Error, request_name: &str) -> String {
 /// Whether a request with this method may be sent again without the server seeing a
 /// change, so is idempotent as RFC 9110 section 9.2.2 defines it. A client may send
 /// such a request again after its connection fails.
-fn is_idempotent(method: &Method) -> bool {
+pub(crate) fn is_idempotent(method: &Method) -> bool {
     matches!(
         *method,
         Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS | Method::TRACE
@@ -7846,6 +8152,43 @@ mod tests {
     }
 
     /// The request log line for `metric` in each format.
+    /// `request-hooks` adds `attempts`/`hidden_time_us` to `GooseRequestMetric`'s
+    /// JSON and raw (Debug) log lines; its CSV line is unaffected (those two
+    /// fields aren't wired into the CSV macro). A default build's expected
+    /// lines pass through unchanged.
+    fn with_hook_fields(lines: [&str; 3]) -> [String; 3] {
+        let [json, raw, csv] = lines;
+        let json = {
+            #[cfg(feature = "request-hooks")]
+            {
+                format!(
+                    "{}{}",
+                    &json[..json.len() - 1],
+                    ",\"attempts\":1,\"hidden_time_us\":0}"
+                )
+            }
+            #[cfg(not(feature = "request-hooks"))]
+            {
+                json.to_string()
+            }
+        };
+        let raw = {
+            #[cfg(feature = "request-hooks")]
+            {
+                format!(
+                    "{}{}",
+                    &raw[..raw.len() - 2],
+                    ", attempts: 1, hidden_time_us: 0 }"
+                )
+            }
+            #[cfg(not(feature = "request-hooks"))]
+            {
+                raw.to_string()
+            }
+        };
+        [json, raw, csv.to_string()]
+    }
+
     fn request_log_lines(metric: &GooseRequestMetric) -> Vec<String> {
         use crate::logger::{GooseLogFormat, GooseLogger};
         [
@@ -7953,7 +8296,11 @@ mod tests {
                 transaction.unwrap_or(TransactionName::default_value()),
                 "{mode}"
             );
-            assert_eq!(request_log_lines(&metric), lines, "{mode}");
+            assert_eq!(
+                request_log_lines(&metric),
+                with_hook_fields(lines),
+                "{mode}"
+            );
         }
     }
 

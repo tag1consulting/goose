@@ -63,3 +63,6 @@
     - [Umami](example/umami.md)
 
 - [Upgrading From 0.18](getting-started/upgrading.md)
+
+- [Design Investigations](design/overview.md)
+    - [Request Hooks](design/request-hooks.md)
