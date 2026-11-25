@@ -114,8 +114,9 @@ cookies = ["reqwest/cookies"]
 pdf-reports = ["headless_chrome"]
 # Live web dashboard HTTP server (axum). DTO/builder always compiled; only HTTP is gated.
 # A default feature: the server is built in, but starts only with --dashboard.
-# To leave axum and tower-http out of the build, turn off Goose's default features
-# (`default-features = false`, with `features = ["cookies"]` to keep cookies).
+# To leave axum out of the build, turn off Goose's default features
+# (`default-features = false`, with `features = ["cookies"]` to keep cookies);
+# tower-http stays, as reqwest's gzip feature needs it.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 # MCP Controller: Model Context Protocol tools for every Controller command,
 # for AI agents. Opt-in, and off at run time until --mcp.

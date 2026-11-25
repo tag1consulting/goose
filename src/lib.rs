@@ -903,8 +903,9 @@ pub struct GooseAttack {
     run_shape: Option<run_shape::RunShape>,
     /// The snapshot's run settings, but for the fields computed per
     /// snapshot; built when first asked for after a control command.
+    /// Boxed, so a run without the dashboard holds one pointer for it.
     #[cfg(feature = "dashboard")]
-    settings: Option<metrics::dashboard_snapshot::SnapshotSettings>,
+    settings: Option<Box<metrics::dashboard_snapshot::SnapshotSettings>>,
     /// When the current test plan step started.
     step_started: Option<time::Instant>,
     /// All metrics merged together.
@@ -2694,10 +2695,10 @@ impl GooseAttack {
             _ => None,
         };
         let mut settings = match &self.settings {
-            Some(settings) => settings.clone(),
+            Some(settings) => settings.as_ref().clone(),
             None => {
                 let settings = self.configured_settings();
-                self.settings = Some(settings.clone());
+                self.settings = Some(Box::new(settings.clone()));
                 settings
             }
         };
@@ -2870,7 +2871,7 @@ impl GooseAttack {
             &self.configuration,
             dashboard_control_tx,
             listening_controllers,
-            saved_runs.clone(),
+            &saved_runs,
         )
         .await?
         {
@@ -5446,6 +5447,21 @@ mod tests {
             assert!(!debug.contains('\n'), "{}", debug);
             assert!(debug.starts_with(error.describe()), "{}", debug);
         }
+    }
+
+    /// The dashboard's run settings are boxed and built only when a snapshot
+    /// asks for them, so a run without `--dashboard` holds one pointer for
+    /// them.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn dashboard_settings_hold_one_pointer_until_asked_for() {
+        let goose_attack =
+            GooseAttack::initialize_with_config(GooseConfiguration::default()).unwrap();
+        assert!(goose_attack.settings.is_none());
+        assert_eq!(
+            std::mem::size_of_val(&goose_attack.settings),
+            std::mem::size_of::<usize>()
+        );
     }
 
     /// `{:#?}` keeps the structure the derive printed, field for field.
