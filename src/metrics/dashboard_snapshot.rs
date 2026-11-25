@@ -556,6 +556,9 @@ pub(crate) struct WholeRunLines {
     pub fps: Vec<f64>,
     pub users: Vec<u64>,
     pub avg_latency_ms: Vec<f64>,
+    /// The most users of any second, which a point's level, its last
+    /// second's, can leave out.
+    pub max_users: u64,
 }
 
 /// Response times by second over the trailing window, as counts in Goose's response time buckets. Only the columns that changed since the client's last heatmap are sent: apply them to the columns kept from earlier ones. `since` 0 means every column of the window is here; otherwise a client holding `since` of this `generation` applies the columns, and any other client asks again with its own `heatmap_generation` and `heatmap_since`.

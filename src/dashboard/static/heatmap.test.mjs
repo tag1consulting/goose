@@ -27,6 +27,7 @@ import {
   tooltipText,
   provisionalAlpha,
   reportHeatmapView,
+  rowOf,
 } from "./test-build/heatmap.mjs";
 import { formatMs } from "./test-build/format.mjs";
 import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
@@ -1003,9 +1004,14 @@ test("the whole run heatmap is drawn from the report's columns, width seconds ea
   assert.equal(view.minCount, 1);
   assert.equal(view.maxCount, 9);
   assert.equal(view.secondTotals.get(10), 5);
-  // Each percentile is drawn in the row it falls in: 5.2 ms is in the 5 ms row.
-  assert.deepEqual(view.percentiles.get(10), { second: 10, p50: 3.5, p95: 5.5, p99: 5.5 });
-  assert.deepEqual(view.percentiles.get(18), { second: 18, p50: 7.5, p95: 7.5, p99: 7.5 });
+  // Each percentile is the one the HTML and JSON reports state, in ms, not
+  // its row's middle; the line is drawn through the row it falls in.
+  assert.deepEqual(view.percentiles.get(10), { second: 10, p50: 3.5, p95: 5.2, p99: 5.9 });
+  assert.deepEqual(view.percentiles.get(18), { second: 18, p50: 7.1, p95: 7.1, p99: 7.1 });
+  assert.equal(rowOf(view.rows, 5.2).bucket, 5);
+  assert.equal(rowOf(view.rows, 5.999).bucket, 5);
+  assert.equal(rowOf(view.rows, 6).bucket, 6);
+  assert.equal(rowOf(view.rows, 5.5).bucket, 5, "a live percentile, a row's middle");
   assert.equal(view.rows[0].bucket, 3);
   assert.equal(view.rows[view.rows.length - 1].bucket, 7);
   // The tooltip names the column's seconds.
@@ -1051,6 +1057,7 @@ test("Whole run switches every time chart, asks once a second, and is kept for t
     fps: [0, 1, 0, 0, 0],
     users: [1, 2, 3, 3, 3],
     avg_latency_ms: [5, 6, 5, 5, 6],
+    max_users: 3,
   };
   const heatmap = reportHeatmap([[0, 500, 500, 500, 0, 3, 1000]], { width: 2, origin: 0 });
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
@@ -1104,6 +1111,8 @@ test("Whole run switches every time chart, asks once a second, and is kept for t
   const select = el(page, "heatmap-request");
   select.value = "GET\n/a";
   select.dispatchEvent(new page.window.Event("change"));
+  // Asked for within a second of the last ask.
+  await wait(page.window, 1_100);
   await settle(page.window);
   const last = wholeRunRequests(page).pop();
   assert.equal(new URL(last.url).searchParams.get("name"), "/a");
@@ -1158,4 +1167,48 @@ test("with percentiles off, Whole run shows the whole run's average line", async
   assert.equal(el(page, "chart-latency-wrap").hidden, false);
   assert.equal(el(page, "heatmap-wrap").hidden, true);
   assert.equal(el(page, "chart-latency-summary").textContent, "Whole run: average 5 ms.");
+});
+
+test("the whole run summaries weigh each point by the seconds it covers, and give the most users", async () => {
+  // Two points of 2 seconds and a newest of 1: seconds 0 to 4.
+  const lines = {
+    start_second: 0,
+    width: 2,
+    end_second: 4,
+    rps: [10, 10, 40],
+    fps: [0, 1, 4],
+    users: [5, 5, 5],
+    avg_latency_ms: [10, 10, 25],
+    // Second 1 had 20 users; its point ends at 5.
+    max_users: 20,
+  };
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", true, 5)]),
+    wholeRun: { lines, heatmap: null },
+  });
+  el(page, "range-whole").click();
+  await settle(page.window);
+  // 20 + 20 + 40 requests over 5 seconds, not the mean of the three rates.
+  assert.match(el(page, "chart-rps-summary").textContent, /^Whole run: RPS 16\.00, peak 40\.00; failures 1\.20\/s\.$/);
+  assert.equal(el(page, "chart-users-summary").textContent, "Whole run: up to 20 users.");
+});
+
+test("a new request asked for over the whole run waits a second after the last ask", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", true, 5)]),
+  });
+  el(page, "range-whole").click();
+  await settle(page.window);
+  assert.equal(wholeRunRequests(page).length, 1);
+  const select = el(page, "heatmap-request");
+  select.value = "GET\n/a";
+  select.dispatchEvent(new page.window.Event("change"));
+  await settle(page.window);
+  await wait(page.window, 500);
+  assert.equal(wholeRunRequests(page).length, 1, "not again within the second");
+  await wait(page.window, 700);
+  await settle(page.window);
+  const asked = wholeRunRequests(page);
+  assert.equal(asked.length, 2, "once the second is up");
+  assert.equal(new URL(asked[1].url).searchParams.get("name"), "/a");
 });

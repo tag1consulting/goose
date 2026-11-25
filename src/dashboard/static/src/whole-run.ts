@@ -6,7 +6,7 @@
 // nothing more, and the charts draw the snapshots again. The choice is kept
 // for the tab's session only.
 
-import { updateChartData } from "./chart-data";
+import { updateWholeRunChartData } from "./chart-data";
 import { updateCharts, wholeRunSeries } from "./charts";
 import { fetchWholeRun } from "./connection";
 import { requireElement } from "./dom";
@@ -28,8 +28,10 @@ const recentButton = requireElement("range-recent", HTMLButtonElement);
 const wholeButton = requireElement("range-whole", HTMLButtonElement);
 
 let whole = false;
-let timer: ReturnType<typeof setInterval> | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
 let inFlight = false;
+/** When the last request began, so the next waits a second after it. */
+let lastAsked = -Infinity;
 /** Draws the live window again from the last snapshot, given by main. */
 let redrawRecent: () => void = () => {};
 
@@ -69,19 +71,41 @@ function show(view: WholeRun): void {
   const width = view.lines.width;
   const average = showsAverage();
   setWholeRunHeatmap(view.heatmap, view.lines.end_second);
-  updateChartData(series, average, 0, width, true);
+  updateWholeRunChartData(view.lines, average);
   updateCharts(series, average, width, true);
 }
 
-/** Asks for the whole run view and draws it, unless one is still on its way. */
+/** Asks again a second after the last request began, or once it answers. */
+function schedule(): void {
+  if (timer !== null) clearTimeout(timer);
+  const wait = Math.max(0, lastAsked + WHOLE_RUN_INTERVAL_MS - Date.now());
+  timer = setTimeout(() => {
+    timer = null;
+    poll();
+  }, wait);
+}
+
+/**
+ * Asks for the whole run view and draws it: at once when the last request
+ * began a second ago or more and has answered, otherwise as soon as both
+ * hold, so a new choice of request never asks twice within a second.
+ */
 function poll(): void {
-  if (!whole || inFlight) return;
+  if (!whole) return;
+  if (inFlight) return; // Its answer schedules the next.
+  if (Date.now() - lastAsked < WHOLE_RUN_INTERVAL_MS) {
+    schedule();
+    return;
+  }
   inFlight = true;
+  lastAsked = Date.now();
   const request = chosenRequest();
   void fetchWholeRun(request).then((data) => {
     inFlight = false;
+    if (!whole) return;
+    schedule();
     // Drawn only if the page still shows the whole run of the same choice.
-    if (!whole || data === null || chosenRequest() !== request) return;
+    if (data === null || chosenRequest() !== request) return;
     show(data as WholeRun);
   });
 }
@@ -92,12 +116,11 @@ function choose(next: boolean): void {
   storeChoice();
   setButtons();
   if (timer !== null) {
-    clearInterval(timer);
+    clearTimeout(timer);
     timer = null;
   }
   setHeatmapWholeRun(whole, poll);
   if (whole) {
-    timer = setInterval(poll, WHOLE_RUN_INTERVAL_MS);
     poll();
   } else {
     redrawRecent();

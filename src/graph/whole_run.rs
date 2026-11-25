@@ -148,13 +148,15 @@ impl<T: Fold> WholeRun<T> {
 
 /// The whole run lines a dashboard only run folds the seconds it prunes
 /// into: requests and failures summed, the average weighted by request
-/// count, users by the last level of each point.
+/// count, users by the last level of each point, and the most users of
+/// any second, which a point's last level can hide.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WholeRunLines {
     requests: WholeRun<u64>,
     errors: WholeRun<u64>,
     average: WholeRun<Weighted>,
     users: WholeRun<Level>,
+    max_users: u64,
 }
 
 impl WholeRunLines {
@@ -176,6 +178,7 @@ impl WholeRunLines {
     /// Fold a users level the window drops.
     pub(super) fn add_users(&mut self, second: usize, users: usize) {
         self.users.add(second, &Level(Some(users as u64)));
+        self.max_users = self.max_users.max(users as u64);
     }
 }
 
@@ -242,6 +245,7 @@ impl GraphData {
             for second in self.users_per_second.origin..=last {
                 let users = self.users_per_second.get_held(second) as u64;
                 lines.users.add(second, &Level(Some(users)));
+                lines.max_users = lines.max_users.max(users);
             }
         }
         // One width for all four, so their points line up.
@@ -293,6 +297,7 @@ impl GraphData {
             avg_latency_ms: (0..len)
                 .map(|at| lines.average.points.get(at).map_or(0.0, Weighted::mean))
                 .collect(),
+            max_users: lines.max_users,
         }
     }
 
@@ -409,6 +414,7 @@ mod test {
         assert_eq!(errors.round() as usize, seconds.div_ceil(11));
         assert_eq!(a.users[0], 0);
         assert_eq!(*a.users.last().unwrap(), (last / 40) as u64);
+        assert_eq!(a.max_users, (last / 40) as u64);
         assert!(a.avg_latency_ms.iter().all(|&ms| (0.0..50.0).contains(&ms)));
     }
 
@@ -425,5 +431,26 @@ mod test {
         let lines = graph.whole_run_lines(1_999);
         assert!(lines.rps.iter().all(|&rate| rate == 0.0));
         assert!(lines.users.iter().all(|&users| users == 3));
+    }
+
+    /// A peak inside a point, whose last second has fewer users, is still
+    /// the run's most users, folded or not.
+    #[test]
+    fn the_most_users_survive_a_point_that_ends_lower() {
+        for prune in [false, true] {
+            let mut graph = GraphData::new();
+            for second in 0..2_000 {
+                let users = if second == 1_001 { 20 } else { 5 };
+                graph.record_users_per_second(users, second);
+                if prune {
+                    graph.prune_to_window(600);
+                }
+            }
+            let lines = graph.whole_run_lines(1_999);
+            assert_eq!(lines.width, 4);
+            // Second 1,001 ends its point at 5 users.
+            assert!(lines.users.iter().all(|&users| users == 5), "{:?}", prune);
+            assert_eq!(lines.max_users, 20, "{:?}", prune);
+        }
     }
 }

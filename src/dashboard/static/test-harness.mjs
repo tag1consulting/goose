@@ -189,6 +189,7 @@ export function stubServer(token, options = {}) {
                 fps: [],
                 users: [],
                 avg_latency_ms: [],
+                max_users: 0,
               },
               heatmap: null,
             };

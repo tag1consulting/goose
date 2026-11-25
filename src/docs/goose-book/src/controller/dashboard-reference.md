@@ -767,9 +767,9 @@ Above the charts, **Last 5 minutes** and **Whole run** choose what every time ch
 
 While **Whole run** is chosen the page asks [`GET /api/v1/whole-run`](#whole-run-endpoint) once a second, never while an earlier request is still waiting, and stops asking as soon as **Last 5 minutes** is chosen again. The whole run is never part of the snapshot or the live stream.
 
-The line charts hold at most 600 points. A point covers one second until the run is longer than 600 seconds; then each point covers twice as many seconds, 2, 4, 8 and so on, as often as needed. The RPS and failures lines show each point's requests and failures divided by the seconds it covers, the users line the users at the end of the point's last second (as each second of the live chart shows the users at its end), and the average line the mean of the point's response times, each second weighted by its requests. The summary under each chart covers the whole run, such as `Whole run: RPS 1,950, peak 2,104; failures 0/s.`, and each data table row is a point, by the second it begins at. On a Gaggle manager the RPS chart shows the total only.
+The line charts hold at most 600 points. A point covers one second until the run is longer than 600 seconds; then each point covers twice as many seconds, 2, 4, 8 and so on, as often as needed. The RPS and failures lines show each point's requests and failures divided by the seconds it covers, the users line the users at the end of the point's last second (as each second of the live chart shows the users at its end), and the average line the mean of the point's response times, each second weighted by its requests. The summary under each chart covers the whole run, such as `Whole run: RPS 1,950, peak 2,104; failures 0/s.`: its requests and failures a second are the run's totals over the seconds covered, so a newest point that covers fewer seconds weighs only as much as it covers, its average weighs each point by its requests, and `up to N users` is the most users of any second, which a point's level can leave out. Each data table row is a point, by the second it begins at. On a Gaggle manager the RPS chart shows the total only.
 
-The heatmap shows the HTML report's columns: up to 600 for all requests and 60 for each of the first 100 request names, each covering 1, 2, 4 or more seconds as the run grows, with the p50, p95 and p99 of each column, worked out by the same code as the HTML report's and the JSON report's. Hovering a cell names its seconds, such as `Seconds 120 to 239`, and the summary under it gives the slowest column's p95 and the newest column's percentiles, such as `Whole run: p95 peaked at 312 ms (seconds 480 to 481); last column p50 8 ms, p95 66 ms, p99 78 ms.` The request select and the **Adjusted** and **Measured** buttons work as in the trailing window.
+The heatmap shows the HTML report's columns: up to 600 for all requests and 60 for each of the first 100 request names, each covering 1, 2, 4 or more seconds as the run grows, with the p50, p95 and p99 of each column, worked out by the same code as the HTML report's and the JSON report's. The tooltip, the summary and the data table show those values; the lines go through the middle of the row each falls in. Hovering a cell names its seconds, such as `Seconds 120 to 239`, and the summary under it gives the slowest column's p95 and the newest column's percentiles, such as `Whole run: p95 peaked at 312 ms (seconds 480 to 481); last column p50 8 ms, p95 66 ms, p99 78 ms.` The request select and the **Adjusted** and **Measured** buttons work as in the trailing window.
 
 ## Snapshot data
 
@@ -900,13 +900,14 @@ The phase goes back to `idle`, and the test does not start again. Goose exits on
 {
   "lines": {
     "start_second": 0, "width": 2, "end_second": 1080,
-    "rps": [1950.5, ...], "fps": [0, ...], "users": [100, ...], "avg_latency_ms": [12.4, ...]
+    "rps": [1950.5, ...], "fps": [0, ...], "users": [100, ...], "avg_latency_ms": [12.4, ...],
+    "max_users": 120
   },
   "heatmap": { "start": ..., "offset": ..., "origin": 0, "buckets_us": [...], "series": [...] }
 }
 ```
 
-`lines` covers the seconds from `start_second` to `end_second`, `width` seconds a point. `heatmap` is the HTML report's heatmap with one series, all requests or the request asked for, or `null` when percentiles over time are off or the request has no heatmap of its own.
+`lines` covers the seconds from `start_second` to `end_second`, `width` seconds a point; the newest point can cover fewer, up to `end_second`, and its rates are over the seconds it covers. `max_users` is the most users of any second. `heatmap` is the HTML report's heatmap with one series, all requests or the request asked for, or `null` when percentiles over time are off or the request has no heatmap of its own.
 
 | Status | Body |
 |--------|------|

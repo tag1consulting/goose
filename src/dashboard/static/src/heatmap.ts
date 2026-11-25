@@ -400,24 +400,19 @@ export function reportHeatmapView(
   }
   if (cells.length === 0) return { ...empty, columns };
   const { rows, ticks } = rowsAndTicks(buckets, low, high);
-  // A percentile in microseconds as the time of the row it falls in, so
-  // the lines go through row middles, as the live window's do.
-  const rowTime = (us: number): number => {
-    const ms = us / 1000;
-    for (const row of rows) {
-      if (ms < row.highest + 1) return row.time;
-    }
-    return rows[rows.length - 1].time;
-  };
+  // Each column's percentiles as the reports state them, from microseconds
+  // to milliseconds, so the summary, the tooltip and the table agree with
+  // the HTML and JSON reports; the lines still go through the middle of the
+  // row each falls in (see `rowOf`).
   const percentiles = new Map<number, SecondPercentiles>();
   for (const column of shown.columns) {
     const second = origin + column[0] * width;
     if (!secondTotals.has(second)) continue;
     percentiles.set(second, {
       second,
-      p50: rowTime(column[1]),
-      p95: rowTime(column[2]),
-      p99: rowTime(column[3]),
+      p50: column[1] / 1000,
+      p95: column[2] / 1000,
+      p99: column[3] / 1000,
     });
   }
   return {
@@ -502,6 +497,19 @@ export function rowMs(ms: number): string {
     return (Math.floor(us / 100) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 });
   }
   return Math.floor(us / 1000).toLocaleString();
+}
+
+/**
+ * The row, of `rows` from the fastest, that holds `ms`: the live window's
+ * percentiles are row times, the whole run's the times the reports state,
+ * anywhere in their row. Undefined without rows.
+ */
+export function rowOf(rows: ReadonlyArray<HeatmapRow>, ms: number): HeatmapRow | undefined {
+  // A row ends at `highest + 1`, as `bucketTable` gives it.
+  for (const row of rows) {
+    if (ms < row.highest + 1) return row;
+  }
+  return rows[rows.length - 1];
 }
 
 /** Steps between second labels: the smallest that fits is used. */
@@ -845,8 +853,6 @@ export function drawHeatmap(
 
   // Each second's p50, p95 and p99 through the column centres, each value
   // in the middle of its bucket's row, broken at a second with no requests.
-  const rowsByTime = new Map<number, HeatmapRow>();
-  for (const row of view.rows) rowsByTime.set(row.time, row);
   const newestPoints: Array<{ key: PercentileKey; value: number; y: number }> = [];
   const lineSegments: Array<Array<Array<[number, number]>>> = [];
   ctx.lineJoin = "round";
@@ -857,7 +863,7 @@ export function drawHeatmap(
     let newest: { value: number; y: number } | null = null;
     for (let c = 0; c < view.columns; c++) {
       const percentiles = view.percentiles.get(view.startSecond + c * (view.width || 1));
-      const row = percentiles && rowsByTime.get(percentiles[line.key]);
+      const row = percentiles && rowOf(view.rows, percentiles[line.key]);
       if (!percentiles || !row) {
         if (segment.length) segments.push(segment);
         segment = [];

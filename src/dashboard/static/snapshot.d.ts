@@ -543,4 +543,9 @@ width: number,
 /**
  * The newest second the points cover: the newest complete one.
  */
-end_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>, };
+end_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>,
+/**
+ * The most users of any second, which a point's level, its last
+ * second's, can leave out.
+ */
+max_users: number, };

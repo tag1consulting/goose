@@ -964,6 +964,30 @@ struct WholeRunQuery {
 /// for all requests.
 type WholeRunCache = HashMap<Option<(String, String)>, (Instant, Bytes)>;
 
+/// Most whole run answers cached at once: all requests and a few request
+/// names, enough for several viewers. A name with no heatmap of its own
+/// still gets an answer (the lines), so without a cap a run of made up
+/// names could each leave a copy of the lines for a second.
+const MAX_WHOLE_RUN_CACHED: usize = 8;
+
+/// Cache a whole run body, dropping every entry older than
+/// [`SERIES_CACHE_TTL`], and the oldest when [`MAX_WHOLE_RUN_CACHED`] are
+/// held.
+fn cache_whole_run(cache: &mut WholeRunCache, key: Option<(String, String)>, body: Bytes) {
+    cache.retain(|_, (built, _)| built.elapsed() < SERIES_CACHE_TTL);
+    while cache.len() >= MAX_WHOLE_RUN_CACHED && !cache.contains_key(&key) {
+        let Some(oldest) = cache
+            .iter()
+            .min_by_key(|(_, (built, _))| *built)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        cache.remove(&oldest);
+    }
+    cache.insert(key, (Instant::now(), body));
+}
+
 /// Liveness plus lightweight operational counters (no load-test metrics).
 ///
 /// `last_build_ms` is the time the metrics processor spent draining metrics and
@@ -1723,13 +1747,14 @@ async fn whole_run_handler(
     match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
         Ok(Ok(Some(body))) => {
             let body = Bytes::from(body);
-            let mut cache = state
-                .whole_run_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            cache.retain(|_, (built, _)| built.elapsed() < SERIES_CACHE_TTL);
-            cache.insert(request, (Instant::now(), body.clone()));
-            drop(cache);
+            cache_whole_run(
+                &mut state
+                    .whole_run_cache
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()),
+                request,
+                body.clone(),
+            );
             ([(header::CONTENT_TYPE, "application/json")], body).into_response()
         }
         Ok(Ok(None)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -2815,12 +2840,32 @@ async fn control_report_now_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::config::GooseConfiguration;
     use crate::metrics::dashboard_snapshot::{
         AggregateMetrics, Percentiles, SeriesWindow, SnapshotFlags,
     };
     use crate::serve::{HEADER_READ_TIMEOUT, SERVER_DRAIN_TIMEOUT};
     use std::time::Instant;
+
+    /// Made up request names, each answered with the lines, keep at most
+    /// [`MAX_WHOLE_RUN_CACHED`] answers cached, the newest.
+    #[test]
+    fn the_whole_run_cache_holds_a_few_answers() {
+        let mut cache = WholeRunCache::new();
+        cache_whole_run(&mut cache, None, Bytes::from_static(b"all"));
+        for n in 0..100 {
+            let key = Some(("GET".to_string(), format!("/made-up/{n}")));
+            cache_whole_run(&mut cache, key, Bytes::from(vec![0u8; 1024]));
+            assert!(cache.len() <= MAX_WHOLE_RUN_CACHED);
+        }
+        assert_eq!(cache.len(), MAX_WHOLE_RUN_CACHED);
+        assert!(cache.contains_key(&Some(("GET".to_string(), "/made-up/99".to_string()))));
+        // The same key again replaces its entry and evicts nothing.
+        let key = Some(("GET".to_string(), "/made-up/99".to_string()));
+        cache_whole_run(&mut cache, key, Bytes::from_static(b"again"));
+        assert_eq!(cache.len(), MAX_WHOLE_RUN_CACHED);
+    }
 
     fn dummy_snapshot(seq: u64) -> DashboardSnapshot {
         DashboardSnapshot {

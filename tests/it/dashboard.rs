@@ -2122,6 +2122,7 @@ async fn test_dashboard_whole_run_view() {
         }
         assert!(json_sum(&lines["rps"]) > 0.0);
         assert!(lines["users"].as_array().unwrap().iter().any(|u| u == 1));
+        assert_eq!(lines["max_users"], 1);
 
         if !percentiles {
             assert!(body["heatmap"].is_null());
