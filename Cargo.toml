@@ -123,8 +123,17 @@ dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 mcp = ["dep:rmcp", "axum", "hyper", "hyper-util"]
 # Distributed load tests (Gaggle): a manager and workers, over gRPC.
 gaggle = ["dep:http-body", "dep:libc", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
+# Experimental, off by default: the request-hook prototype described in
+# src/docs/goose-book/src/design/request-hooks.md. No new dependency; adds
+# no code to a build that doesn't enable it. Not a supported API yet.
+request-hooks = []
 
 [dev-dependencies]
+# Microbenchmarks the request-hooks dispatch mechanism alone (no network),
+# for the design investigation at
+# src/docs/goose-book/src/design/request-hooks.md. Dev-only: adds nothing to
+# any normal build.
+criterion = { version = "0.5", default-features = false }
 httpmock = "0.8"
 serial_test = "3.2"
 # A strict CSV reader, to check every error log row has the header's columns.
@@ -172,3 +181,10 @@ test = true
 [[example]]
 name = "custom_client"
 required-features = ["cookies"]
+
+# Microbenchmarks the request-hooks dispatch mechanism alone (no network).
+# Part of the design investigation; not a supported benchmark target.
+[[bench]]
+name = "hook_dispatch"
+harness = false
+required-features = ["request-hooks"]

@@ -964,6 +964,20 @@ pub struct GooseRequestMetric {
     /// both together. 0 when read from a log written before Goose kept them.
     #[serde(default)]
     pub response_time_fraction_us: u16,
+    /// Experimental, behind the `request-hooks` feature: how many times
+    /// Goose sent this request, including the first attempt. Always `1`
+    /// unless an `on_response` hook asked for (and was granted) a retry.
+    /// See `src/docs/goose-book/src/design/request-hooks.md`.
+    #[cfg(feature = "request-hooks")]
+    #[serde(default)]
+    pub attempts: u32,
+    /// Experimental, behind the `request-hooks` feature: microseconds a
+    /// hook asked to mark as excludable from `response_time`, summed across
+    /// every retried attempt. `response_time` itself is never reduced by
+    /// this; see the design doc's Visibility model section.
+    #[cfg(feature = "request-hooks")]
+    #[serde(default)]
+    pub hidden_time_us: u64,
 }
 
 impl GooseRequestMetric {
@@ -993,6 +1007,10 @@ impl GooseRequestMetric {
             coordinated_omission_elapsed: 0,
             user_cadence: 0,
             response_time_fraction_us: 0,
+            #[cfg(feature = "request-hooks")]
+            attempts: 1,
+            #[cfg(feature = "request-hooks")]
+            hidden_time_us: 0,
         }
     }
 
@@ -6970,7 +6988,12 @@ mod test {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn metric_sizes_stay_small() {
+        // `request-hooks` adds `attempts: u32` and `hidden_time_us: u64` to
+        // `GooseRequestMetric`.
+        #[cfg(not(feature = "request-hooks"))]
         assert_eq!(std::mem::size_of::<GooseRequestMetric>(), 272);
+        #[cfg(feature = "request-hooks")]
+        assert_eq!(std::mem::size_of::<GooseRequestMetric>(), 288);
         assert_eq!(std::mem::size_of::<TransactionMetric>(), 64);
         assert!(std::mem::size_of::<GooseMetric>() <= 120);
     }

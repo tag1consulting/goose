@@ -1477,10 +1477,26 @@ mod microsecond_tests {
         let at = header.iter().position(|&h| h == "response_time").unwrap();
         assert_eq!(cells[cells.len() - header.len() + at], "2");
         let raw = configuration(GooseLogFormat::Raw).format_message(request.clone());
+        #[cfg(not(feature = "request-hooks"))]
         assert!(raw.ends_with("response_time_fraction_us: 345 }"), "{}", raw);
+        #[cfg(feature = "request-hooks")]
+        assert!(
+            raw.ends_with("response_time_fraction_us: 345, attempts: 1, hidden_time_us: 0 }"),
+            "{}",
+            raw
+        );
         let pretty = configuration(GooseLogFormat::Pretty).format_message(request.clone());
+        #[cfg(not(feature = "request-hooks"))]
         assert!(
             pretty.ends_with("response_time_fraction_us: 345,\n}"),
+            "{}",
+            pretty
+        );
+        #[cfg(feature = "request-hooks")]
+        assert!(
+            pretty.ends_with(
+                "response_time_fraction_us: 345,\n    attempts: 1,\n    hidden_time_us: 0,\n}"
+            ),
             "{}",
             pretty
         );
@@ -1742,9 +1758,15 @@ mod json_line_tests {
         };
         let line = configuration().format_message(debug);
         assert!(!line.contains('\n'), "{}", line);
+        #[cfg(not(feature = "request-hooks"))]
         assert_eq!(
             line,
             r#"{"tag":"post","request":{"elapsed":1500,"scenario_index":0,"scenario_name":"Anon","transaction_index":1,"transaction_name":{"InheritNameByRequests":"front page"},"raw":{"method":"Post","url":"http://example.com/a?b=\"c\"","headers":[],"body":"name=\"Zoë\", one\ntwo\u0001","custom_method":""},"name":"/a","final_url":"","redirected":false,"response_time":0,"status_code":0,"success":true,"update":false,"user":2,"error":"","coordinated_omission_elapsed":0,"user_cadence":0,"response_time_fraction_us":0},"header":null,"body":"ok"}"#
+        );
+        #[cfg(feature = "request-hooks")]
+        assert_eq!(
+            line,
+            r#"{"tag":"post","request":{"elapsed":1500,"scenario_index":0,"scenario_name":"Anon","transaction_index":1,"transaction_name":{"InheritNameByRequests":"front page"},"raw":{"method":"Post","url":"http://example.com/a?b=\"c\"","headers":[],"body":"name=\"Zoë\", one\ntwo\u0001","custom_method":""},"name":"/a","final_url":"","redirected":false,"response_time":0,"status_code":0,"success":true,"update":false,"user":2,"error":"","coordinated_omission_elapsed":0,"user_cadence":0,"response_time_fraction_us":0,"attempts":1,"hidden_time_us":0},"header":null,"body":"ok"}"#
         );
     }
 }

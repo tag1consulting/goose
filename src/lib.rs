@@ -868,6 +868,11 @@ pub struct GooseAttack {
     worker_data_hook: Option<Arc<WorkerDataHook>>,
     /// What the hook returned for this process, given to every user.
     worker_data: Option<Arc<[u8]>>,
+    /// Every hook registered with the `request-hooks` feature, behind one
+    /// `Arc` so starting a user only needs an `Arc::clone` of it. See
+    /// `goose::hooks::HookSet`.
+    #[cfg(feature = "request-hooks")]
+    hooks: Arc<goose::hooks::HookSet>,
     /// Everything a Gaggle manager or worker keeps, and the shadow merge.
     #[cfg(feature = "gaggle")]
     gaggle: gaggle::run::GaggleState,
@@ -1002,6 +1007,8 @@ impl GooseAttack {
             user_ordinals: std::collections::VecDeque::new(),
             worker_data_hook: None,
             worker_data: None,
+            #[cfg(feature = "request-hooks")]
+            hooks: Arc::new(goose::hooks::HookSet::default()),
             #[cfg(feature = "gaggle")]
             gaggle: Default::default(),
             defaults: GooseDefaults::default(),
@@ -1060,6 +1067,8 @@ impl GooseAttack {
             user_ordinals: std::collections::VecDeque::new(),
             worker_data_hook: None,
             worker_data: None,
+            #[cfg(feature = "request-hooks")]
+            hooks: Arc::new(goose::hooks::HookSet::default()),
             #[cfg(feature = "gaggle")]
             gaggle: Default::default(),
             defaults: GooseDefaults::default(),
@@ -1336,6 +1345,59 @@ impl GooseAttack {
         F: Fn(&WorkerShare) -> Vec<u8> + Send + Sync + 'static,
     {
         self.worker_data_hook = Some(Arc::new(hook));
+        self
+    }
+
+    /// Experimental, behind the `request-hooks` feature: register a hook run
+    /// on every request, just before it is sent, able to mutate its headers
+    /// (e.g. sign it, add a trace header). The hook may also return
+    /// `BeforeSendOutcome::FailWith` to ask Goose to skip sending the
+    /// request and treat it as a transport error instead (fault injection);
+    /// **this prototype does not honor that yet** — it is logged and the
+    /// request is sent anyway. See
+    /// `src/docs/goose-book/src/design/request-hooks.md`.
+    #[cfg(feature = "request-hooks")]
+    pub fn register_before_send_hook<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(
+                &mut goose::hooks::HookRequestParts,
+                &mut goose::GooseUser,
+            ) -> goose::hooks::BeforeSendOutcome
+            + Send
+            + Sync
+            + 'static,
+    {
+        Arc::get_mut(&mut self.hooks)
+            .expect("hooks are registered before the attack starts, no other reference exists yet")
+            .before_send
+            .push(Arc::new(hook));
+        self
+    }
+
+    /// Experimental, behind the `request-hooks` feature: register a hook run
+    /// on every request's response (or transport error), before success or
+    /// failure is decided. May ask Goose to retry — bounded, and only for
+    /// an idempotent method unless `retry_policy` opts in. See
+    /// `src/docs/goose-book/src/design/request-hooks.md`.
+    #[cfg(feature = "request-hooks")]
+    pub fn register_on_response_hook<F>(
+        mut self,
+        hook: F,
+        retry_policy: goose::hooks::RetryPolicy,
+    ) -> Self
+    where
+        F: Fn(
+                Result<&goose::hooks::HookResponseParts, &goose::hooks::TransportError>,
+                &mut goose::GooseUser,
+            ) -> goose::hooks::ResponseOutcome
+            + Send
+            + Sync
+            + 'static,
+    {
+        Arc::get_mut(&mut self.hooks)
+            .expect("hooks are registered before the attack starts, no other reference exists yet")
+            .on_response
+            .push((Arc::new(hook), retry_policy));
         self
     }
 
@@ -3162,6 +3224,12 @@ impl GooseAttack {
 
                 // The worker data hook's bytes, shared by every user.
                 thread_user.worker_data.clone_from(&self.worker_data);
+
+                // Every registered request hook, shared by every user.
+                #[cfg(feature = "request-hooks")]
+                {
+                    thread_user.hooks = self.hooks.clone();
+                }
 
                 // Copy the GooseUser-metrics sender channel, used by all threads.
                 thread_user.metrics_channel =
