@@ -51,6 +51,7 @@
     - [Proxy](config/proxy.md)
     - [Cookies](config/cookie.md)
     - [TLS And Certificates](config/tls.md)
+    - [Raw Hyper Client](config/raw-hyper.md)
 
 - [Examples](example/overview.md)
     - [Simple](example/simple.md)

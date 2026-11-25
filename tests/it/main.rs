@@ -146,6 +146,8 @@ mod pdf_chrome;
 #[cfg(feature = "pdf-reports")]
 mod pdf_print_html_once;
 mod pdf_reports;
+#[cfg(feature = "raw-hyper")]
+mod raw_hyper;
 mod redirect;
 mod request_headers;
 mod reset_errors;
