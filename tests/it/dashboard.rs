@@ -1845,6 +1845,133 @@ async fn test_dashboard_series_without_report_file() {
     let _metrics = load.join().await.expect("load test execute");
 }
 
+/// `GET /api/v1/metrics` with `request`, retrying a 503 while the hub builds
+/// its first snapshot.
+async fn scrape(request: impl Fn() -> reqwest::RequestBuilder) -> (u16, String, String) {
+    for _ in 0..20 {
+        let resp = request().send().await.expect("metrics GET");
+        let status = resp.status().as_u16();
+        if status == 503 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            continue;
+        }
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        return (
+            status,
+            content_type,
+            resp.text().await.expect("metrics body"),
+        );
+    }
+    panic!("/api/v1/metrics stayed 503");
+}
+
+/// The value of `goose_requests_total` for `GET /`.
+fn requests_total(body: &str) -> u64 {
+    body.lines()
+        .find_map(|line| line.strip_prefix("goose_requests_total{method=\"GET\",name=\"/\"} "))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("no goose_requests_total for GET / in:\n{}", body))
+}
+
+/// Every line is a comment or a sample: a metric name, optional labels and
+/// a number.
+fn assert_exposition_format(body: &str) {
+    assert!(body.ends_with('\n'), "{}", body);
+    for line in body.lines() {
+        if let Some(comment) = line.strip_prefix("# ") {
+            assert!(
+                comment.starts_with("HELP goose_") || comment.starts_with("TYPE goose_"),
+                "{}",
+                line
+            );
+            continue;
+        }
+        let (series, value) = line.rsplit_once(' ').expect(line);
+        assert!(value.parse::<f64>().is_ok(), "{}", line);
+        let name = series.split('{').next().unwrap_or_default();
+        assert!(
+            name.starts_with("goose_")
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "{}",
+            line
+        );
+        if series.contains('{') {
+            assert!(series.ends_with('}'), "{}", line);
+        }
+    }
+}
+
+/// `GET /api/v1/metrics` serves the run's metrics in the Prometheus text
+/// format behind the dashboard's token, and its counters rise as the run goes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial(dashboard)]
+async fn test_dashboard_prometheus_metrics() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{}", port);
+
+    let configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _health) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/v1/metrics", base);
+
+    let (status, _, body) = scrape(|| client.get(&url)).await;
+    assert_eq!(status, 401, "no token");
+    assert!(
+        !body.contains("goose_"),
+        "401 must not leak metrics: {}",
+        body
+    );
+    let (status, _, _) = scrape(|| client.get(format!("{url}?token=wrong"))).await;
+    assert_eq!(status, 401, "wrong token");
+
+    let bearer = || client.get(&url).header("Authorization", bearer_header());
+    // Wait for the first requests to reach the metrics.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let first = loop {
+        let (status, content_type, body) = scrape(bearer).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(content_type, "text/plain; version=0.0.4; charset=utf-8");
+        if body.contains("goose_requests_total{method=\"GET\",name=\"/\"}") {
+            break body;
+        }
+        assert!(Instant::now() < deadline, "no requests in:\n{}", body);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    assert_exposition_format(&first);
+    assert!(first.contains("\ngoose_users 1\n"), "{}", first);
+    assert!(first.contains("# TYPE goose_response_time_seconds summary\n"));
+    assert!(first.contains(
+        "goose_transactions_total{scenario=\"DashboardLoad\",name=\"index\",transaction=\"1.1\"} "
+    ));
+    assert!(
+        !first.contains(AUTH_TOKEN),
+        "the token is never in the body"
+    );
+
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let (status, _, second) = scrape(|| client.get(format!("{url}?token={AUTH_TOKEN}"))).await;
+    assert_eq!(status, 200, "query token");
+    assert_exposition_format(&second);
+    assert!(
+        requests_total(&second) > requests_total(&first),
+        "goose_requests_total must rise between scrapes:\n{}\n{}",
+        first,
+        second
+    );
+
+    load.join().await.expect("load test execute");
+}
+
 /// `GET /api/v1/series` with these query parameters, encoded.
 fn series_url(base: &str, params: &[(&str, &str)]) -> reqwest::Url {
     reqwest::Url::parse_with_params(&format!("{base}/api/v1/series"), params).expect("series url")

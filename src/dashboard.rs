@@ -51,6 +51,8 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, watch, Notify};
 use tower_http::set_header::SetResponseHeaderLayer;
 
+mod prometheus;
+
 /// Embedded SPA shell and assets (no inline scripts — CSP-friendly).
 const INDEX_HTML: &str = include_str!("dashboard/static/index.html");
 const APP_JS: &str = include_str!("dashboard/static/app.js");
@@ -108,6 +110,10 @@ const MAX_SERIES_QUERY_LEN: usize = 2048;
 /// How long a `GET /api/v1/series` answer is served from the cache, so
 /// several viewers polling one request cost one export a second.
 const SERIES_CACHE_TTL: Duration = Duration::from_secs(1);
+
+/// How long a `GET /api/v1/metrics` body is reused, so many scrapers cost
+/// one render a second.
+const METRICS_CACHE_TTL: Duration = Duration::from_secs(1);
 
 /// Result of a successful dashboard server spawn.
 #[derive(Debug)]
@@ -890,6 +896,8 @@ struct DashboardState {
     /// Recent `GET /api/v1/series` 200 answers by method and name, with when
     /// each was built.
     series_cache: Arc<Mutex<SeriesCache>>,
+    /// The latest `GET /api/v1/metrics` body, with when it was rendered.
+    metrics_cache: Arc<Mutex<Option<(Instant, Bytes)>>>,
     /// The folder run folders go in, which the report routes read, and only
     /// them; the folder of the run in progress, which Delete refuses and the
     /// runs panel shows as running; and the listing cache. Shared with the
@@ -1064,6 +1072,7 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
+        metrics_cache: Arc::new(Mutex::new(None)),
         saved_runs,
         log_folder: log_folder.clone(),
         controllers: HealthControllers {
@@ -1286,6 +1295,7 @@ fn build_router(state: DashboardState, host: &str) -> Router {
         .route("/static/app.css", get(app_css_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
+        .route("/api/v1/metrics", get(metrics_handler))
         .route("/api/v1/series", get(series_handler))
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/reports", get(reports_handler))
@@ -1531,6 +1541,53 @@ async fn snapshot_handler(
     let cursor = heatmap_cursor(query.heatmap_generation, query.heatmap_since);
     let bytes = state.hub.snapshot_bytes_since(cursor).await?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
+}
+
+/// `GET /api/v1/metrics`: the latest snapshot in the Prometheus text format.
+/// Authorized as `GET /api/v1/snapshot` is. The body is rendered from the
+/// snapshot the hub keeps and reused for [`METRICS_CACHE_TTL`].
+async fn metrics_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let response = |body: Bytes| ([(header::CONTENT_TYPE, prometheus::CONTENT_TYPE)], body);
+
+    let cached = state
+        .metrics_cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(built, _)| built.elapsed() < METRICS_CACHE_TTL)
+        .map(|(_, body)| body.clone());
+    if let Some(body) = cached {
+        // Keep the hub building while scrapes keep coming.
+        state.hub.mark_poll();
+        return Ok(response(body));
+    }
+
+    // Waits for a snapshot no older than the hub's cadence.
+    state.hub.snapshot_bytes().await?;
+    let body = {
+        let view = state
+            .hub
+            .inner
+            .view
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(snapshot) = view.snapshot.as_ref() else {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        };
+        Bytes::from(prometheus::render(snapshot))
+    };
+    *state
+        .metrics_cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), body.clone()));
+    Ok(response(body))
 }
 
 /// A `GET /api/v1/series` error: the status and `{"error":"<code>"}`.

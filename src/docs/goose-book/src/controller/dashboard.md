@@ -137,6 +137,45 @@ The **Runs** panel at the foot of the page lists the saved reports in `goose-run
 
 Each row downloads its HTML, Markdown or JSON report; a format the run did not save is rendered from its JSON report. Check **Compare** on two rows and **Download comparison** gives a Markdown report of the newer run against the older. With control on, **Delete** removes a run's reports and logs. See [Saving the report](dashboard-reference.md#saving-the-report) and [The runs panel](dashboard-reference.md#the-runs-panel).
 
+## Prometheus and Grafana
+
+While the dashboard runs it also serves the run's metrics in the Prometheus text format at `/api/v1/metrics`, for example `http://127.0.0.1:5118/api/v1/metrics`. Prometheus, Grafana Agent, VictoriaMetrics and InfluxDB 2's Prometheus scraper can all read it, so Grafana can graph a load test as it runs. It takes the dashboard's token as the snapshot does, and is open only where the dashboard needs no token.
+
+It serves:
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `goose_info` | gauge, always 1 | `version` |
+| `goose_users` | gauge: users running now | |
+| `goose_requests_total`, `goose_request_failures_total` | counter | `method`, `name` |
+| `goose_response_time_seconds` | summary: `_sum`, `_count`, and quantiles `0.5`, `0.95` and `0.99` over the whole run | `method`, `name` |
+| `goose_transactions_total`, `goose_transaction_failures_total` | counter | `scenario`, `name`, `transaction` (its number, such as `1.2`) |
+
+The counters count from the start of the run and start again at 0 with the next one, which Prometheus reads as a counter reset. Requests are those of the dashboard's Requests table, at most 100 names by count; past that the rest are counted together under `name="other"`, with no `method` and no quantiles.
+
+A Prometheus scrape job that reads it every 5 seconds:
+
+```yaml
+scrape_configs:
+  - job_name: goose
+    scrape_interval: 5s
+    metrics_path: /api/v1/metrics
+    authorization:
+      credentials: SECRET   # the dashboard token; leave this out with no token
+    static_configs:
+      - targets: ["127.0.0.1:5118"]
+```
+
+Queries for Grafana:
+
+| Panel | Query |
+|-------|-------|
+| Requests per second | `sum by (name) (rate(goose_requests_total[30s]))` |
+| Failures per second | `sum by (name) (rate(goose_request_failures_total[30s]))` |
+| Mean response time | `rate(goose_response_time_seconds_sum[30s]) / rate(goose_response_time_seconds_count[30s])` |
+
+The endpoint lives only while the dashboard does, from Goose's start until it exits, so a short test may end after only a few scrapes. To scrape from another machine, bind the dashboard off loopback with a token, as [Watching from another machine](#watching-from-another-machine) says. [Prometheus metrics endpoint](dashboard-reference.md#prometheus-metrics-endpoint) has the details.
+
 ## When the run ends
 
 When a run Goose started on its own (without `--no-autostart`) reaches its end, Goose exits. That is when its run time and any ramp down are over, its test plan finishes, or every user exits. If a page is connected at that moment and the report was saved, Goose stays up instead, so the report can still be downloaded, and prints:
@@ -151,4 +190,4 @@ A Stop leaves Goose in Idle with the page up, ready for the next run, and a run 
 
 ## Reference
 
-[Dashboard Reference](dashboard-reference.md) lists every flag and default, the bind and token rules, the control endpoints, the snapshot and health endpoints, and how to build the page from its TypeScript sources.
+[Dashboard Reference](dashboard-reference.md) lists every flag and default, the bind and token rules, the control endpoints, the snapshot, Prometheus and health endpoints, and how to build the page from its TypeScript sources.
