@@ -406,10 +406,13 @@ pub(crate) struct AggregateMetrics {
     pub co_adjusted: Option<CoAdjusted>,
     /// How many measured response times there are, and their total in
     /// microseconds; coordinated omission mitigation's synthetic times are
-    /// not among them. Not part of the JSON.
+    /// not among them. Not part of the JSON: read by the dashboard's
+    /// Prometheus endpoint.
     #[serde(skip)]
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     pub measured_count: u64,
     #[serde(skip)]
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     pub measured_total_us: u64,
 }
 
@@ -436,10 +439,13 @@ pub(crate) struct RequestRow {
     pub has_series: bool,
     /// How many measured response times there are, and their total in
     /// microseconds; coordinated omission mitigation's synthetic times are
-    /// not among them. Not part of the JSON.
+    /// not among them. Not part of the JSON: read by the dashboard's
+    /// Prometheus endpoint.
     #[serde(skip)]
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     pub measured_count: u64,
     #[serde(skip)]
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     pub measured_total_us: u64,
 }
 
