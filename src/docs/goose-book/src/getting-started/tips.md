@@ -4,6 +4,7 @@ The tips follow a load test's life: writing it, checking it, the first runs, sca
 
 - Each request opens a new connection: [Read every response body](#read-every-response-body).
 - A request that should fail passes: [Check the page, not only the status code](#check-the-page-not-only-the-status-code).
+- Goose uses more CPU than its requests explain: [Compile regular expressions once](#compile-regular-expressions-once).
 - The machine running Goose is the limit: [Check that Goose is not the bottleneck](#check-that-goose-is-not-the-bottleneck).
 - Requests fail to connect once you add users: [Raise the open file limit](#raise-the-open-file-limit).
 - The reports are missing: [Write the reports, and keep each run](#write-the-reports-and-keep-each-run).
@@ -42,6 +43,55 @@ Only an empty body is reliably safe to drop. Measured with 50 users against ngin
 Reading a body does not change the time Goose records for a request, which is the [time to first byte](metrics.md#response-times), but the download counts toward the time of the transaction that reads it, and of its scenario. It also downloads every byte, and decompresses a gzip body, so the load generator does more work for each request.
 
 A server closes a connection that sits idle longer than its keep-alive timeout, and when it does so just as a user's next request goes out on that connection, the request gets no response. A browser sends such a request once more on a new connection, and so does Goose: a GET, HEAD, PUT, DELETE, OPTIONS or TRACE request whose connection closes or is reset before the response head arrives is sent once more, and Goose records one request, with the second attempt's result and the time of both attempts. A browser can see that none of the response arrived, and sends a POST again too. Goose can't, so it never sends a POST or PATCH again, as repeating one may not be safe ([RFC 9110, section 9.2.2](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2)), and it sends a request again even when the response stopped partway through its head. A timeout, a failure to connect, and any error after the response head arrived are never sent again. A run that sent requests again ends with a line such as `25 requests were sent again after the server closed a reused connection before responding`. A high count means the server's keep-alive timeout is shorter than the test's wait times, or close to them, so many requests go out just as the server closes their connection.
+
+### Compile regular expressions once
+
+A `Regex` built inside a transaction function is compiled again every time the function runs, and the cache it builds up while matching is thrown away with it. Compiling costs far more than matching: in the [Umami example](../example/umami.md) it was about half of the CPU time Goose spent on each request, until each regex was compiled once. Keep each regex in a `std::sync::LazyLock` static (Rust 1.80 or later), which compiles it the first time it is used and shares it with every user, and add `regex` to your `Cargo.toml`:
+
+```rust,ignore
+use goose::prelude::*;
+use regex::Regex;
+use std::sync::LazyLock;
+
+static FORM_BUILD_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap());
+
+async fn login_page(user: &mut GooseUser) -> TransactionResult {
+    let goose = user.get("/user/login").await?;
+    if let Ok(response) = goose.response {
+        if let Ok(html) = response.text().await {
+            if let Some(form_build_id) = FORM_BUILD_ID.captures(&html) {
+                let params = [("form_build_id", &form_build_id[1])];
+                let _ = user.post_form("/user/login", &params).await?.discard_body().await;
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+When the pattern is built from an argument, give each value your test uses a static of its own, and build the pattern for any other value on each call, as the Umami example's `get_form_value` does:
+
+```rust,ignore
+fn form_value_regex(name: &str) -> Regex {
+    Regex::new(&format!(r#"name="{name}" value=['"](.*?)['"]"#)).unwrap()
+}
+
+fn get_form_value(html: &str, name: &str) -> Option<String> {
+    static FORM_BUILD_ID: LazyLock<Regex> = LazyLock::new(|| form_value_regex("form_build_id"));
+    static FORM_TOKEN: LazyLock<Regex> = LazyLock::new(|| form_value_regex("form_token"));
+    let other;
+    let re = match name {
+        "form_build_id" => &*FORM_BUILD_ID,
+        "form_token" => &*FORM_TOKEN,
+        _ => {
+            other = form_value_regex(name);
+            &other
+        }
+    };
+    re.captures(html).map(|value| value[1].to_string())
+}
+```
 
 ### Name requests that carry an ID
 
