@@ -7,10 +7,10 @@ The [`examples/sse.rs`](https://github.com/tag1consulting/goose/blob/main/exampl
 It defines one scenario, `SseUser`, with one transaction, `events`, and no wait time. Each time the transaction runs, the user:
 
 1. sends `GET /events` with `Accept: text/event-stream` and `Accept-Encoding: identity`, under the request name `events`;
-2. marks the request failed if the status is not 200, if `Content-Type` does not start with `text/event-stream`, or if the response has a `Content-Encoding`;
+2. marks the request failed if the status is not 200, if `Content-Type` is not `text/event-stream` (in any case, with or without parameters such as `charset=utf-8`), or if the response has a `Content-Encoding`; a request that gets no response, such as a refused connection, fails the transaction too;
 3. reads the stream until it has seen 10 events, then drops the response, which closes the connection, and the transaction runs again on a new one.
 
-An event ends at a blank line, which the spec allows to be written `\n\n`, `\r\n\r\n` or `\r\r`. An event counts only if it has a `data:` line: a comment, a line that starts with `:`, is what servers send as a keep alive, and a block of comments alone is not an event. The example never logs what an event holds, as events can carry tokens or user data: it reports counts and errors only.
+An event ends at a blank line, which the spec allows to be written `\n\n`, `\r\n\r\n` or `\r\r`. An event counts only if it has a `data:` line: a comment, a line that starts with `:`, is what servers send as a keep alive, and a block of comments alone is not an event. A UTF-8 byte order mark at the start of the stream is dropped, as the spec says. The example never logs what an event holds, as events can carry tokens or user data: it reports counts and errors only.
 
 The path, the number of events and the two caps below are constants at the top of the file: `EVENTS_PATH`, `EVENTS_PER_CONNECTION`, `EVENT_TIMEOUT` and `MAX_EVENT_BYTES`.
 
@@ -31,7 +31,7 @@ Goose asks for gzip unless a request sets its own `Accept-Encoding`, and a body 
 ## The two caps
 
 - `EVENT_TIMEOUT`, 30 seconds: each read of the stream is wrapped in `tokio::time::timeout`, and the time runs from the last event, so a server that stops sending, or sends only keep alives, fails the request instead of holding the user. A read error, or a stream that ends before 10 events, fails it too.
-- `MAX_EVENT_BYTES`, 64 KiB: each connection has one buffer, and each event is drained from it as it completes. If the buffer holds more than this with no complete event, the request fails, so a server that never sends a blank line cannot grow the user's memory without bound.
+- `MAX_EVENT_BYTES`, 64 KiB: each connection has one buffer, and each event is drained from it as it completes. If, before the tenth event, the buffer holds more than this with no complete event, the request fails, so a server that never sends a blank line cannot grow the user's memory without bound. The check runs after each piece the client reads is added and the events in it are drained, so the buffer holds at most this plus one piece.
 
 Each piece that arrives is added to the buffer, and only the new bytes are searched for the end of an event.
 
@@ -69,7 +69,7 @@ Run with 20 users for 20 seconds against a small local server that writes an eve
 
 ## Tests
 
-The example's tests run with `cargo test --example sse`: unit tests of the function that finds the events in the buffer, and two load tests of 2 seconds with 1 user against a local server that never ends its response. Against one that sends an event every 20 ms, every request succeeds; against one that sends bytes with no blank line, every request fails on `MAX_EVENT_BYTES`. Both must end within 10 seconds, which a stream left open would prevent.
+The example's tests run with `cargo test --example sse`: unit tests of the function that finds the events in the buffer, of the `Content-Type` check, and of the stream reader on bodies that arrive whole, and three load tests of 2 seconds with 1 user. Against a local server that sends an event every 20 ms and never ends its response, every request succeeds; against one that sends bytes with no blank line, every request fails on `MAX_EVENT_BYTES`; against a port nothing listens on, every request and transaction fails. Each must end within 10 seconds, which a stream left open would prevent.
 
 ## Complete Source Code
 

@@ -42,6 +42,8 @@ const EVENT_TIMEOUT: Duration = Duration::from_secs(30);
 /// The most bytes a user holds of an event not yet complete, so a server that never
 /// ends an event cannot grow the buffer without bound.
 const MAX_EVENT_BYTES: usize = 64 * 1024;
+/// The UTF-8 byte order mark a stream may start with.
+const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
@@ -77,12 +79,10 @@ async fn read_events(user: &mut GooseUser) -> TransactionResult {
         .build();
     let mut goose = user.request(goose_request).await?;
 
-    // Goose already recorded a request that got no response as failed.
-    let response = match goose.response {
-        // Take the body out of Goose's hands, so dropping it closes the connection.
-        Ok(response) => response.into_inner(),
-        Err(_) => return Ok(()),
-    };
+    // Take the body out of Goose's hands, so dropping it closes the connection. A
+    // request that got no response, which Goose recorded as failed, fails the
+    // transaction too.
+    let response = goose.response?.into_inner();
 
     if response.status() != 200 {
         return user.set_failure("status not 200", &mut goose.request, None, None);
@@ -92,7 +92,7 @@ async fn read_events(user: &mut GooseUser) -> TransactionResult {
         .get("Content-Type")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    if !content_type.starts_with("text/event-stream") {
+    if !is_event_stream(content_type) {
         return user.set_failure("not text/event-stream", &mut goose.request, None, None);
     }
     if response.headers().contains_key("Content-Encoding") {
@@ -117,6 +117,13 @@ async fn read_events(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
+/// Whether a `Content-Type` is `text/event-stream`, in any case, with or without
+/// parameters such as `charset=utf-8`.
+fn is_event_stream(content_type: &str) -> bool {
+    let media_type = content_type.split(';').next().unwrap_or("");
+    media_type.trim().eq_ignore_ascii_case("text/event-stream")
+}
+
 /// Reads the stream until it has seen `EVENTS_PER_CONNECTION` events, or returns why
 /// it could not. Only counts and errors are reported: events can carry tokens or user
 /// data, so their contents are never logged.
@@ -127,6 +134,8 @@ async fn read_stream(mut response: reqwest::Response) -> Result<(), &'static str
     let mut scanned = 0;
     let mut events = 0;
     let mut last_event = Instant::now();
+    // Whether a byte order mark at the start of the stream may still be to come.
+    let mut at_start = true;
 
     while events < EVENTS_PER_CONNECTION {
         // The timeout runs from the last event, so a server that sends only keep
@@ -140,6 +149,18 @@ async fn read_stream(mut response: reqwest::Response) -> Result<(), &'static str
         };
         buffer.extend_from_slice(&chunk);
 
+        // A stream may start with a UTF-8 byte order mark, which is not part of the
+        // first event's first line.
+        if at_start {
+            if buffer.len() < BOM.len() && BOM.starts_with(&buffer) {
+                continue;
+            }
+            if buffer.starts_with(BOM) {
+                buffer.drain(..BOM.len());
+            }
+            at_start = false;
+        }
+
         let split = split_events(&buffer, scanned);
         if split.events > 0 {
             events += split.events;
@@ -148,8 +169,9 @@ async fn read_stream(mut response: reqwest::Response) -> Result<(), &'static str
         buffer.drain(..split.consumed);
         scanned = split.scanned - split.consumed;
 
-        if buffer.len() > MAX_EVENT_BYTES {
-            return Err("event larger than MAX_EVENT_BYTES");
+        // Once enough events have arrived, what follows them does not matter.
+        if events < EVENTS_PER_CONNECTION && buffer.len() > MAX_EVENT_BYTES {
+            return Err("no event end within MAX_EVENT_BYTES");
         }
     }
 
@@ -340,6 +362,60 @@ mod tests {
         assert_eq!(split_events(b"data: a\n", 0).scanned, 7);
     }
 
+    #[test]
+    fn checks_the_media_type() {
+        assert!(is_event_stream("text/event-stream"));
+        assert!(is_event_stream("Text/Event-Stream"));
+        assert!(is_event_stream("text/event-stream; charset=utf-8"));
+        assert!(is_event_stream(" TEXT/EVENT-STREAM ;charset=utf-8"));
+        assert!(!is_event_stream("text/event-streaming"));
+        assert!(!is_event_stream("text/plain"));
+        assert!(!is_event_stream(""));
+    }
+
+    /// A response whose whole body arrives as one chunk, then ends.
+    fn one_chunk(body: Vec<u8>) -> reqwest::Response {
+        reqwest::Response::from(http::Response::new(body))
+    }
+
+    /// `count` events of one `data` line each.
+    fn events_bytes(count: usize) -> Vec<u8> {
+        (0..count)
+            .flat_map(|n| format!("data: {n}\n\n").into_bytes())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn reads_enough_events_followed_by_a_large_unfinished_one() {
+        let mut body = events_bytes(EVENTS_PER_CONNECTION);
+        body.extend(vec![b'a'; MAX_EVENT_BYTES + 1]);
+        assert_eq!(read_stream(one_chunk(body)).await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn fails_a_large_unfinished_event_before_enough_events() {
+        let mut body = events_bytes(EVENTS_PER_CONNECTION - 1);
+        body.extend(vec![b'a'; MAX_EVENT_BYTES + 1]);
+        assert_eq!(
+            read_stream(one_chunk(body)).await,
+            Err("no event end within MAX_EVENT_BYTES")
+        );
+    }
+
+    #[tokio::test]
+    async fn counts_the_first_event_after_a_byte_order_mark() {
+        let mut body = BOM.to_vec();
+        body.extend(events_bytes(EVENTS_PER_CONNECTION));
+        assert_eq!(read_stream(one_chunk(body)).await, Ok(()));
+        // Without enough events, the stream ends early.
+        let mut body = BOM.to_vec();
+        body.extend(events_bytes(EVENTS_PER_CONNECTION - 1));
+        assert_eq!(
+            read_stream(one_chunk(body)).await,
+            Err("stream ended early")
+        );
+    }
+
     /// Serves `GET` with a `text/event-stream` response that never ends, whose body
     /// `body` writes; returns the server's address.
     async fn serve<F, Fut>(body: F) -> String
@@ -437,6 +513,22 @@ mod tests {
         let stream = metrics.requests.get("SSE events (stream)").unwrap();
         assert!(stream.success_count > 0);
         assert_eq!(stream.fail_count, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fails_the_transaction_when_the_connection_is_refused() {
+        // A port that was free a moment ago, with nothing listening on it.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let metrics = run(&format!("http://{address}")).await;
+
+        let request = metrics.requests.get("GET events").unwrap();
+        assert!(request.fail_count > 0);
+        assert_eq!(request.success_count, 0);
+        let transaction = &metrics.transactions[0][0];
+        assert!(transaction.fail_count > 0);
+        assert_eq!(transaction.success_count, 0);
     }
 
     #[tokio::test(flavor = "multi_thread")]
