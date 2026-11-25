@@ -166,7 +166,14 @@ mod tests {
 
     /// How many tokens users sending as fast as they can get in over
     /// `seconds`, after taking any burst first.
+    ///
+    /// On tokio's paused clock the drain ticks exactly every `TICK` from the
+    /// start, and a test's sleeps of whole ticks end on a tick. The window
+    /// opens half a tick later, so no tick falls on either of its ends, and
+    /// the count does not depend on which of two tasks woken at the same
+    /// instant runs first: `seconds` of ticks, each draining a tick's worth.
     async fn sent_over(sender: &flume::Sender<bool>, seconds: f64) -> usize {
+        time::sleep(TICK / 2).await;
         burst(sender);
         let sender = sender.clone();
         let sending = tokio::spawn(async move {
@@ -216,9 +223,7 @@ mod tests {
             let throttle = start(1);
             burst(&throttle.users);
             throttle.rate.store(1_000, Ordering::Relaxed);
-            // Exact on tokio's paused clock: the window opens at the start
-            // and closes on the tick at 2 s, which still counts, so it
-            // holds 200 ticks of 10 tokens.
+            // Exact on tokio's paused clock: 200 ticks of 10 tokens.
             assert_eq!(
                 sent_over(&throttle.users, 2.0).await,
                 2_000,
@@ -244,12 +249,10 @@ mod tests {
             assert_eq!(burst(&throttle.users), 0, "no free slots once full");
             tokio::time::sleep(QUIET).await;
             assert_eq!(burst(&throttle.users), 200, "a burst at 200 a second");
-            // Exact on tokio's paused clock: the window opens on a tick
-            // that runs after the burst was taken and closes on a tick that
-            // still counts, so it holds 201 ticks of 2 tokens.
+            // Exact on tokio's paused clock: 200 ticks of 2 tokens.
             assert_eq!(
                 sent_over(&throttle.users, 2.0).await,
-                402,
+                400,
                 "sent over 2 s at 200 a second"
             );
             throttle.stop.send(true).unwrap();
