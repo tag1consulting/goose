@@ -17,7 +17,7 @@ The MCP Controller is off twice over: Goose has to be built with the `mcp` featu
 cargo run --release --features mcp -- --host https://staging.example.org/ --mcp --no-autostart
 ```
 
-`--mcp` in a Goose built without the feature fails at startup, as `--dashboard` does without its feature:
+`--mcp` in a Goose built without the feature fails at startup, as `--dashboard` does in a build without the `dashboard` feature:
 
 ```text
 Error: required compile-time feature not enabled (mcp: rebuild with `--features mcp`)

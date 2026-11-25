@@ -1,6 +1,9 @@
 //! Live web dashboard HTTP server.
 //!
-//! Compiled only with the `dashboard` crate feature. Runs an HTTP/1 accept
+//! Compiled only with the `dashboard` crate feature, one of Goose's default
+//! features; the server starts only with `--dashboard`. A load test that sets
+//! `default-features = false` on Goose, with `features = ["cookies"]` to keep
+//! cookies, builds without it, and without axum. Runs an HTTP/1 accept
 //! loop over an axum router that serves a minimal static shell, a one-shot
 //! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
 //! `--dashboard-control` is set) authenticated Start/Stop/Users/Quit control
@@ -1000,8 +1003,8 @@ struct HealthControllers {
 /// Binds to `configuration.dashboard_host`:`configuration.dashboard_port` and
 /// returns the parent end of the request channel. Logs the listening URL.
 ///
-/// When `--dashboard` is set, bind failure is a hard error (opt-in server must
-/// not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
+/// When `--dashboard` is set, bind failure is a hard error (a server asked for
+/// must not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
 /// `control_tx`, given only with dashboard control, registers the control routes.
 ///
 /// A Gaggle worker never serves the dashboard: it refuses `--dashboard`, and
@@ -3554,6 +3557,35 @@ mod tests {
                 eprintln!("skipping ::1 bind assertion: {msg}");
             }
         }
+    }
+
+    /// Without `--dashboard`, setup returns before it binds or spawns
+    /// anything: here the port it is given is taken, which would be a hard
+    /// error if it tried to bind it. `tests/it/dashboard_off.rs` checks the
+    /// same through a whole run on the default port.
+    #[tokio::test]
+    async fn setup_dashboard_without_the_option_binds_nothing() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("occupy port");
+        let port = occupied.local_addr().unwrap().port();
+
+        let config = GooseConfiguration {
+            dashboard: false,
+            dashboard_host: Some("127.0.0.1".to_string()),
+            dashboard_port: Some(port),
+            ..Default::default()
+        };
+        let setup = setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            runs::SavedRuns::new(&config),
+        )
+        .await
+        .expect("no dashboard to set up is not an error");
+        assert!(setup.is_none(), "no dashboard without --dashboard");
+        drop(occupied);
     }
 
     #[tokio::test]

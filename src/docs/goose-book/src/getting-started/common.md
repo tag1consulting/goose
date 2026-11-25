@@ -86,7 +86,7 @@ cargo run --release -- --iterations 5
 
 ## Watching a run
 
-With the `dashboard` feature turned on in your load test's `Cargo.toml`, `--dashboard` serves a live web dashboard while the load test runs. Open `http://127.0.0.1:5118/` in a browser to see the users, requests per second, response times and errors as they change.
+`--dashboard` serves a live web dashboard while the load test runs. Open `http://127.0.0.1:5118/` in a browser to see the users, requests per second, response times and errors as they change.
 
 ![The Goose live dashboard, read-only, just over two minutes into a load test of the Umami demo site: the header with the Maintain phase, the host and the time run; the Save report checkbox, checked; a notice that the request rows are truncated; the read-only Control card, which names the options that turn on control; the KPI row; and the requests per second and active users charts](common-dashboard.png)
 
@@ -95,15 +95,13 @@ With the `dashboard` feature turned on in your load test's `Cargo.toml`, `--dash
 By default the dashboard only watches: it cannot start, stop or change the test, and its Control card says how to turn control on. With **Save report** on, as it is by default, Goose writes the run's `report.html` and `report.json` into its [run folder](#run-folders) when the run ends. `--dashboard-control` lets the dashboard start and stop the test, change its users and settings, and, once the test is stopped, quit Goose. It also needs a token, set with `--dashboard-auth-token <TOKEN>` and given by opening `http://127.0.0.1:5118/?token=<TOKEN>`, or `--dashboard-no-auth`, which lets anyone who can reach the port control the test. [Live Dashboard](../controller/dashboard.md) tours every part of the page, including the truncation notice.
 
 ### Dashboard example
-_Turn on the `dashboard` feature, then watch a load test in the browser._
-
-```toml
-goose = { version = "^0.19", features = ["dashboard"] }
-```
+_Watch a load test in the browser._
 
 ```bash
 cargo run --release -- --dashboard
 ```
+
+The dashboard is one of Goose's default features from Goose 0.20, and serves nothing without `--dashboard`. In Goose 0.19 turn it on first, with `goose = { version = "^0.19", features = ["dashboard"] }` in `Cargo.toml`.
 
 ## Writing reports {#writing-an-html-formatted-report}
 

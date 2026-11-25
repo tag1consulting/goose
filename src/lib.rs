@@ -5374,10 +5374,13 @@ mod tests {
             (
                 GooseError::FeatureNotEnabled {
                     feature: "dashboard".to_string(),
-                    detail: "rebuild with `--features dashboard`".to_string(),
+                    detail: "keep Goose's default features, \
+                             or turn the feature on"
+                        .to_string(),
                 },
                 "required compile-time feature not enabled \
-                 (dashboard: rebuild with `--features dashboard`)",
+                 (dashboard: keep Goose's default features, \
+                 or turn the feature on)",
             ),
             (
                 GooseError::InvalidHost {
@@ -5450,13 +5453,13 @@ mod tests {
     fn alternate_debug_keeps_the_structure() {
         let error = GooseError::FeatureNotEnabled {
             feature: "dashboard".to_string(),
-            detail: "rebuild with `--features dashboard`".to_string(),
+            detail: "keep Goose's default features, or turn the feature on".to_string(),
         };
         assert_eq!(
             format!("{error:#?}"),
             "FeatureNotEnabled {\n    \
              feature: \"dashboard\",\n    \
-             detail: \"rebuild with `--features dashboard`\",\n\
+             detail: \"keep Goose's default features, or turn the feature on\",\n\
              }"
         );
         let error = GooseError::Gaggle {

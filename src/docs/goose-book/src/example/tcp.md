@@ -6,7 +6,7 @@ The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/ma
 
 <img src="tcp-requests.png" width="630" alt="The dashboard's Requests table cut after its avg ms column, with one row: method TCP, name tcp_echo, 3,271 requests, 0 fails, 33.04 a second, 0.31 ms on average">
 
-*`cargo run --release --features dashboard --example tcp_loadtest -- --host tcp://127.0.0.1:9000 -u 10 -r 10 -t 3m --no-reset-metrics --dashboard -q`, against a small local Node echo server that writes each connection's bytes back to it, about 100 seconds in.*
+*`cargo run --release --example tcp_loadtest -- --host tcp://127.0.0.1:9000 -u 10 -r 10 -t 3m --no-reset-metrics --dashboard -q`, against a small local Node echo server that writes each connection's bytes back to it, about 100 seconds in.*
 
 The latency image shows the left part of the dashboard's Response times by second card, the run's first 77 seconds; the summary under its chart is the mean of the last 10 drawn seconds, which fall to the right of that part. Each user pauses 100 to 500 ms after every round trip, so 10 users make about 33 round trips a second. The example records each round trip as a `Duration`, so Goose keeps the fraction of a millisecond: most fall between 0.2 and 0.5 ms, and they average 0.31 ms. `as_millis()` truncates, so with `record_custom_request` every round trip under 1 ms would have been recorded as 0 ms. With `-q` Goose does not print the dashboard's address when it starts: open `http://127.0.0.1:5118` while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.
 

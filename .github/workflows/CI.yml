@@ -135,8 +135,9 @@ jobs:
       matrix:
         features:
           - ""  # No features (minimal build)
+          - "default"  # Goose's default features: cookies and dashboard
           - "cookies"
-          - "dashboard"  # Live dashboard HTTP server (opt-in; not in default)
+          - "dashboard"  # Live dashboard HTTP server (a default feature), alone
           - "mcp"  # MCP Controller (opt-in; not in default)
           - "gaggle"  # Gaggle groundwork without the dashboard (opt-in; not in default)
           - "rustls-tls"
@@ -144,7 +145,9 @@ jobs:
           - "all-features"  # Keep existing all-features test
         # The core suite, every test that exists with no feature, runs in two jobs:
         # "" (no features) and all-features, which runs it with every feature on at
-        # once. Only those two run the doc tests: the doc test list is the same for
+        # once. The default job builds, lints and runs every test with Goose's
+        # default features, what a load test that names no features gets; it runs
+        # no doc tests. Only "" and all-features run the doc tests: the doc test list is the same for
         # every feature set, and they compile each doc test with its features off and
         # on. The gaggle job runs the tests the gaggle feature adds: GAGGLE_JOB_TESTS,
         # and every other test its build has that the no feature build does not,
@@ -183,7 +186,7 @@ jobs:
           - features: "dashboard"
             tests: >-
               (binary_id(goose) & test(/^(dashboard|serve|controller|config|runs|run_shape|metrics|tests)::/))
-              | (binary_id(goose::it) & test(/^(dashboard|dashboard_goose_log|dashboard_no_folder|gzip_goose_log_dashboard|throttle_live|controller|control_agreement|controller_bind|controller_no_autostart)::/))
+              | (binary_id(goose::it) & test(/^(dashboard|dashboard_goose_log|dashboard_no_folder|dashboard_off|gzip_goose_log_dashboard|throttle_live|controller|control_agreement|controller_bind|controller_no_autostart)::/))
           - features: "mcp"
             tests: >-
               (binary_id(goose) & test(/^(controller|serve|config|runs|tests)::/))
@@ -252,8 +255,12 @@ jobs:
       if: ${{ matrix.features == '' }}
       run: cargo build --verbose --no-default-features
 
+    - name: 🔨 Build (default features)
+      if: ${{ matrix.features == 'default' }}
+      run: cargo build --verbose
+
     - name: 🔨 Build (specific features)
-      if: ${{ matrix.features != '' && matrix.features != 'all-features' }}
+      if: ${{ matrix.features != '' && matrix.features != 'default' && matrix.features != 'all-features' }}
       run: cargo build --verbose --no-default-features --features "${{ matrix.features }}"
 
     - name: 🔨 Build (all features)
@@ -265,6 +272,12 @@ jobs:
     - name: 🔎 Clippy (gaggle without dashboard)
       if: ${{ matrix.features == 'gaggle' }}
       run: cargo clippy --all-targets --no-default-features --features gaggle -- -D warnings
+
+    # The style job runs clippy with every feature; this is the build a load test
+    # that names no features gets.
+    - name: 🔎 Clippy (default features)
+      if: ${{ matrix.features == 'default' }}
+      run: cargo clippy --all-targets -- -D warnings
 
     - name: 📖 Docs
       if: ${{ matrix.features == 'all-features' }}
@@ -280,6 +293,12 @@ jobs:
       run: |
         cargo nextest run --verbose --profile ci --no-default-features
         cargo test --verbose --no-default-features --doc
+
+    # Every test, with Goose's default features. The doc tests run in the ""
+    # and all-features jobs.
+    - name: 🔎 Test (default features)
+      if: ${{ matrix.features == 'default' }}
+      run: cargo nextest run --verbose --profile ci
 
     # Only the tests the gaggle feature adds: GAGGLE_JOB_TESTS at the top of this
     # job, the Gaggle library tests and the Gaggle process tests, and every other

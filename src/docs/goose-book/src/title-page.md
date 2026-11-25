@@ -27,8 +27,7 @@
 <p>In the run above, users start one a second: the requests per second climb with them and level off, the tiles other than Users cover the whole run, and each column of the heatmap is one second of response times.</p>
 <p>That run came from the <a href="./example/umami.html">Umami example</a> in a checkout of Goose, against a copy of the Drupal Umami demo site, with its admin password in the <code>ADMIN_PASSWORD</code> environment variable. <code>--no-reset-metrics</code> keeps the ramp up in its numbers; without it, Goose clears the metrics when the ramp up ends:</p>
 </div>
-<pre><code class="language-bash">cargo run --release --features dashboard \
-  --example umami -- \
+<pre><code class="language-bash">cargo run --release --example umami -- \
   --dashboard -H http://umami.example.com \
   -u 50 -r 1 -t 3m --no-reset-metrics</code></pre>
 </div>
@@ -67,7 +66,7 @@
 <div class="gb-cols">
 <div class="gb-col">
 <h3 id="while-it-runs">While It Runs</h3>
-<p>The <a href="./controller/dashboard.html">live dashboard</a> needs the <code>dashboard</code> feature, which is off by default; <a href="./getting-started/common.html#watching-a-run">Watching a run</a> shows how to turn it on. Goose then serves it at <code>http://127.0.0.1:5118/</code> while a load test runs with <code>--dashboard</code>, and saves the run's report when it ends. With <code>--dashboard-control</code> and a <a href="./glossary.html#dashboard-token">dashboard token</a>, the dashboard can also start and stop the test and change its users and settings; <a href="./controller/dashboard.html#turning-it-on">Turning it on</a> explains the token, and <code>--dashboard-no-auth</code>, which turns authentication off.</p>
+<p>The <a href="./controller/dashboard.html">live dashboard</a> is built in with Goose's default features (see <a href="./getting-started/common.html#watching-a-run">Watching a run</a>). Goose serves it at <code>http://127.0.0.1:5118/</code> while a load test runs with <code>--dashboard</code>, and saves the run's report when it ends. With <code>--dashboard-control</code> and a <a href="./glossary.html#dashboard-token">dashboard token</a>, the dashboard can also start and stop the test and change its users and settings; <a href="./controller/dashboard.html#turning-it-on">Turning it on</a> explains the token, and <code>--dashboard-no-auth</code>, which turns authentication off.</p>
 </div>
 <div class="gb-col">
 <h3 id="when-it-ends">When It Ends</h3>

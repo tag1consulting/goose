@@ -4,7 +4,7 @@ The [`examples/session.rs`](https://github.com/tag1consulting/goose/blob/main/ex
 
 <img src="session-requests.png" width="445" alt="The HTML report's Request Metrics table cut after its # Fails column: GET / with 1,285 requests and POST /signup with 100, both with 0 fails, and 1,385 in all">
 
-*The HTML report's Request Metrics, from `cargo run --release --features dashboard --example session -- --host http://127.0.0.1:8081 -u 100 -r 20 -t 2m --no-reset-metrics --report-file --dashboard -q` against a local nginx server whose `POST /signup` answers `{"jwtToken":"goose-example-token"}`; the run writes `report.html` and `report.json` to `goose-runs/<YYYYMMDD-HHMMSS>/`.*
+*The HTML report's Request Metrics, from `cargo run --release --example session -- --host http://127.0.0.1:8081 -u 100 -r 20 -t 2m --no-reset-metrics --report-file --dashboard -q` against a local nginx server whose `POST /signup` answers `{"jwtToken":"goose-example-token"}`; the run writes `report.html` and `report.json` to `goose-runs/<YYYYMMDD-HHMMSS>/`.*
 
 `POST /signup` ran 100 times, once for each of the 100 users, because it is the on start transaction. The server answers `/` with 401 to any request without the token, and Goose counts a 401 as a failed request, so 0 fails on `GET /` means every one of its 1,285 requests carried the token the user stored. With `-q` Goose does not print the dashboard's address when it starts: open `http://127.0.0.1:5118` while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.
 

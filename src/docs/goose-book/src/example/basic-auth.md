@@ -4,7 +4,7 @@ The [`basic_auth.rs`](https://github.com/tag1consulting/goose/blob/main/examples
 
 <img src="basic-auth-requests.png" width="450" alt="The HTML report's Request Metrics table cut after its # Fails column: GET /basic-auth/user/passwd with 1,854 requests, GET /json 607, GET /user-agent 621 and POST /post 612, all with 0 fails, and 3,694 in all">
 
-*The HTML report's Request Metrics, from `cargo run --release --features dashboard --example basic_auth -- --host http://127.0.0.1:8080 -u 60 -r 20 -t 2m --no-reset-metrics --report-file --dashboard -q` against a local nginx server that answers the example's four httpbin.org paths; the run writes `report.html` and `report.json` to `goose-runs/<YYYYMMDD-HHMMSS>/`.*
+*The HTML report's Request Metrics, from `cargo run --release --example basic_auth -- --host http://127.0.0.1:8080 -u 60 -r 20 -t 2m --no-reset-metrics --report-file --dashboard -q` against a local nginx server that answers the example's four httpbin.org paths; the run writes `report.html` and `report.json` to `goose-runs/<YYYYMMDD-HHMMSS>/`.*
 
 The server answers `/basic-auth/user/passwd` with 401 unless the request has Basic auth for the user `user` with the password `passwd`, and Goose counts a 401 as a failed request. No request failed, including all 1,854 to the protected path, so all three approaches below sent the credentials. With `-q` Goose does not print the dashboard's address when it starts: open `http://127.0.0.1:5118` while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.
 

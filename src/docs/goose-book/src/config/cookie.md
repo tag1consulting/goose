@@ -80,12 +80,14 @@ The new client replaces all of Goose's defaults for that user, so set again any 
 
 ## Building Without Cookie Support
 
-To leave cookie support out of the build, turn off Goose's default features:
+To leave cookie support out of the build, turn off Goose's default features. In Goose 0.20 that also turns off the [live dashboard](../controller/dashboard.md); list it in `features` to keep it:
 
 ```toml
 [dependencies]
-goose = { version = "^0.19", default-features = false }
+goose = { version = "^0.20", default-features = false, features = ["dashboard"] }
 ```
+
+In Goose 0.19, where `cookies` is the only default feature, `goose = { version = "^0.19", default-features = false }` is enough.
 
 Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off; [Proxy](proxy.html) names some of what they add.
 
