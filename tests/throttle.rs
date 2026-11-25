@@ -116,6 +116,7 @@ fn validate_test(
     request_logs: &[String],
     throttle_value: usize,
     previous_requests_file_lines: Option<usize>,
+    ran: std::time::Duration,
 ) -> usize {
     // Verify that the metrics file was created and has the correct number of lines.
     let mut current_requests_file_lines = 0;
@@ -128,8 +129,17 @@ fn validate_test(
     assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
-    // Requests are made while GooseUsers are launched, and then for RUN_TIME seconds.
-    assert!(current_requests_file_lines <= (RUN_TIME + 1) * throttle_value);
+    // Requests are made at the throttle's rate for as long as its throttle
+    // runs, which is within `ran`, the whole load test's time: the users'
+    // launch, RUN_TIME and the shutdown. Each process's throttle also starts
+    // with one token's room free.
+    let most = (ran.as_secs_f64() * throttle_value as f64).ceil() as usize + request_logs.len();
+    assert!(
+        current_requests_file_lines <= most,
+        "{} requests, at most {}",
+        current_requests_file_lines,
+        most
+    );
 
     if let Some(previous_lines) = previous_requests_file_lines {
         // Verify the second load test generated more than 4x the load of the first test.
@@ -179,6 +189,7 @@ async fn test_throttle() {
     );
 
     // Run the Goose Attack.
+    let began = std::time::Instant::now();
     common::run_load_test(
         common::build_load_test(configuration, vec![get_transactions()], None, None),
         None,
@@ -191,6 +202,7 @@ async fn test_throttle() {
         &[REQUEST_LOG.to_string()],
         THROTTLE_REQUESTS,
         None,
+        began.elapsed(),
     );
 
     // Increase the throttle and run a second load test, so we can compare the difference
@@ -209,6 +221,7 @@ async fn test_throttle() {
     );
 
     // Run the Goose Attack.
+    let began = std::time::Instant::now();
     common::run_load_test(
         common::build_load_test(configuration, vec![get_transactions()], None, None),
         None,
@@ -221,6 +234,7 @@ async fn test_throttle() {
         &[REQUEST_LOG.to_string()],
         increased_throttle,
         Some(test1_lines),
+        began.elapsed(),
     );
 }
 
@@ -286,6 +300,7 @@ async fn test_throttle_gaggle() {
     );
 
     // Run the Goose Attack.
+    let began = std::time::Instant::now();
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     // Confirm that the load test was actually throttled.
@@ -295,6 +310,7 @@ async fn test_throttle_gaggle() {
         // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
         THROTTLE_REQUESTS * EXPECT_WORKERS,
         None,
+        began.elapsed(),
     );
 
     // Increase the throttle and run a second load test, so we can compare the difference
@@ -332,6 +348,7 @@ async fn test_throttle_gaggle() {
         common::build_load_test(manager_configuration, vec![get_transactions()], None, None);
 
     // Run the Goose Attack.
+    let began = std::time::Instant::now();
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     // Confirm that the load test was actually throttled, at an increased rate.
@@ -341,5 +358,85 @@ async fn test_throttle_gaggle() {
         // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
         increased_throttle * EXPECT_WORKERS,
         Some(test1_lines),
+        began.elapsed(),
+    );
+}
+
+// When each request of `test_throttle_holds_its_rate` completed.
+static HELD_RATE_TIMES: std::sync::Mutex<Vec<std::time::Instant>> =
+    std::sync::Mutex::new(Vec::new());
+
+// Test transaction: notes when each request completed.
+pub async fn get_index_timed(user: &mut GooseUser) -> TransactionResult {
+    let _ = user.get(INDEX_PATH).await?.discard_body().await;
+    HELD_RATE_TIMES
+        .lock()
+        .unwrap()
+        .push(std::time::Instant::now());
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+// A throttle of 1,000 requests a second holds within 2% of 1,000 over the
+// run's steady part. The throttle's wakes run late, by about a millisecond
+// in ten, and a throttle that drains a fixed number of tokens a wake held
+// about 900 a second.
+async fn test_throttle_holds_its_rate() {
+    const RATE: usize = 1_000;
+    // Enough users that each needs only 50 requests a second.
+    const USERS: usize = 20;
+    const RUN_TIME: usize = 8;
+
+    let server = MockServer::start();
+    let index = server.mock(|when, then| {
+        when.method(GET).path(INDEX_PATH);
+        then.status(200);
+    });
+
+    let configuration = common::build_configuration(
+        &server,
+        vec![
+            "--users",
+            &USERS.to_string(),
+            "--increase-rate",
+            &USERS.to_string(),
+            "--run-time",
+            &RUN_TIME.to_string(),
+            "--throttle-requests",
+            &RATE.to_string(),
+        ],
+    );
+    HELD_RATE_TIMES.lock().unwrap().clear();
+    common::run_load_test(
+        common::build_load_test(
+            configuration,
+            vec![scenario!("LoadTest").register_transaction(transaction!(get_index_timed))],
+            None,
+            None,
+        ),
+        None,
+    )
+    .await;
+    assert!(index.calls() > 0);
+
+    // The rate over the run's steady part: from a second after the first
+    // request to a second before the last, leaving out the users' start and
+    // the end of the run.
+    let times = HELD_RATE_TIMES.lock().unwrap().clone();
+    let from = times[0] + std::time::Duration::from_secs(1);
+    let to = *times.last().unwrap() - std::time::Duration::from_secs(1);
+    let requests = times.iter().filter(|t| **t >= from && **t < to).count();
+    let held = requests as f64 / (to - from).as_secs_f64();
+    println!(
+        "throttle of {RATE} a second held {held:.1} a second ({requests} requests in {:.3} s)",
+        (to - from).as_secs_f64()
+    );
+    let slack = RATE as f64 * 0.02;
+    assert!(
+        (held - RATE as f64).abs() <= slack,
+        "throttle of {} a second held {:.1} a second, outside 2%",
+        RATE,
+        held
     );
 }
