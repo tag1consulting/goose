@@ -191,14 +191,19 @@ Goose 0.20 removed the whole millisecond row fields that Goose 0.19.1 deprecated
 ```json
 {
   "name": "GET /search",
-  "width_secs": 16,
+  "width_secs": 32,
   "origin_second": 0,
   "columns": [
-    [0, 51.199, 76.799, 79.871],
-    [16, 50.687, 76.287, 79.359]
+    [0, 51.5, 79.0, 81.0],
+    [32, 50.5, 79.0, 81.0],
+    ...
+    [480, 205.0, 315.0, 325.0],
+    ...
   ]
 }
 ```
+
+This is from a 19 minute run of 5 request names whose server slowed down from minute 6 to minute 10: each request name's 60 columns had merged to 32 seconds, and all requests' 600 columns to 2 seconds.
 
 - `name` is `All requests`, first, or a request's method and name, as the Requests table shows them.
 - `width_secs` is how many seconds each column covers. Goose keeps up to 600 columns for all requests and 60 for each request name, so a column covers one second until the run outgrows them, then 2, 4, 8 seconds and so on.
