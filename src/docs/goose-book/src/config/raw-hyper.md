@@ -6,7 +6,7 @@ This page gives the measurements behind the feature, what tuning reqwest recover
 
 ## What was measured
 
-`benches/client_overhead.rs` runs a hyper HTTP/1.1 server in a process of its own, answering every request with the same 13 byte body, and each client in a fresh process. Each of 16 users is a task with one keep-alive connection, sending its next request as soon as it has read the last response. The figure is the client process's CPU time, user plus system, from `getrusage`, over 10 seconds after a 2 second warm up, divided by the requests it completed; each client ran 5 times, interleaved with the others.
+`benches/client_overhead.rs` runs a hyper HTTP/1.1 server in a process of its own, answering every request with the same 13 byte body, and each client in a fresh process. Each of 16 users is a task with one keep-alive connection, sending its next request as soon as it has read the last response. The figure is the client process's CPU time, user plus system, from `getrusage`, over 10 seconds after a 2 second warm up, divided by the requests it completed. The runs of the clients in a suite are interleaved.
 
 | Client | What it is |
 |---|---|
@@ -21,7 +21,37 @@ This page gives the measurements behind the feature, what tuning reqwest recover
 
 Measured on an Apple M3 Ultra (24 performance and 8 efficiency cores), macOS, 4 client worker threads, 8 server threads, plain HTTP:
 
-RESULTS_TABLE
+All ten clients, 5 runs each (`suite` with its defaults). The machine was shared, and its load average rose from 13 to over 100 during this run, which shows in the spread:
+
+| Client | CPU µs per request, median | lowest | highest | requests/s, median |
+|---|---:|---:|---:|---:|
+| `goose` | 35.66 | 26.25 | 37.88 | 80,769 |
+| `goose-tuned` | 34.62 | 31.41 | 39.62 | 81,622 |
+| `goose-raw` | 24.32 | 17.98 | 27.99 | 89,186 |
+| `reqwest` | 31.94 | 29.16 | 34.19 | 79,875 |
+| `reqwest-tuned` | 30.53 | 28.77 | 33.08 | 72,187 |
+| `reqwest-tuned+no-timeout` | 29.20 | 28.01 | 31.69 | 91,428 |
+| `hyper` | 22.81 | 22.36 | 24.52 | 96,971 |
+| `hyper+timeout` | 25.00 | 21.88 | 26.30 | 92,153 |
+| `hyper-conn` | 21.43 | 19.25 | 22.82 | 98,235 |
+| `hyper-conn+timeout` | 21.91 | 18.84 | 23.00 | 92,562 |
+
+The clients the decision rests on, 9 runs each, with the load average between 8 and 19 throughout, the quietest run:
+
+```bash
+cargo bench --bench client_overhead --features raw-hyper -- suite --runs 9 \
+    --modes goose,goose-tuned,goose-raw,reqwest-tuned+no-timeout,hyper-conn+timeout
+```
+
+| Client | CPU µs per request, median | lowest | highest | requests/s, median |
+|---|---:|---:|---:|---:|
+| `goose` | 33.94 | 32.62 | 36.99 | 86,657 |
+| `goose-tuned` | 33.32 | 32.08 | 33.87 | 87,604 |
+| `goose-raw` | 24.85 | 24.11 | 25.45 | 99,289 |
+| `reqwest-tuned+no-timeout` | 27.99 | 27.38 | 29.66 | 94,495 |
+| `hyper-conn+timeout` | 21.45 | 20.97 | 22.20 | 104,922 |
+
+reqwest as Goose builds it (`reqwest`) costs 8 to 10 µs more CPU per request than the raw client's design (`hyper-conn+timeout`), in bare loops of each.
 
 macOS cannot pin a thread to a core, so these runs were not pinned; the spread is the lowest and highest of the 5 runs. On Linux, `--pin` runs the server and each client under `taskset` with fixed cores. No HTTPS row was measured: the raw client has no TLS, and over HTTPS the handshake and encryption would add the same cost to both.
 
@@ -50,11 +80,18 @@ Sampling `reqwest-tuned` and `hyper` with macOS's `sample` and charging each on 
 | tokio, the kernel and `bytes`: more wakeups and copies | about 1.4 |
 | The tower layers: retry, cookie, redirect and decompression | about 0.3 |
 
-The bare hyper client in that comparison, `hyper`, still uses the `hyper_util` legacy client's pool. Dropping the pool for one connection per user (`hyper-conn`) saves about 3 µs more per request.
+The bare hyper client in that comparison, `hyper`, still uses the `hyper_util` legacy client's pool. Dropping the pool for one connection per user (`hyper-conn`) saved 1.4 to 3.8 µs more per request, depending on the suite.
 
 ## What tuning reqwest recovers
 
-Very little. Each setting alone, and all of them together, measured within the spread of plain `reqwest` (medians of 5 runs; the first suite, run on its own):
+Very little. Each setting alone, and all of them together, measured within the spread of plain `reqwest` (medians of 5 runs, from a suite of their own, its spreads 1 to 7 µs):
+
+```bash
+cargo bench --bench client_overhead -- suite --modes reqwest,reqwest+no-cookies,\
+reqwest+no-redirect,reqwest+no-retry,reqwest+no-proxy,reqwest+no-timeout,\
+reqwest-tuned,reqwest-tuned+no-timeout
+```
+
 
 | reqwest setting | CPU µs per request, median |
 |---|---:|
@@ -71,7 +108,16 @@ None of these settings removes a layer: the redirect, cookie, retry and decompre
 
 ## The decision
 
-The bar for adding a raw client was a cut of at least 25% in CPU per request against the best tuned reqwest, with no type parameter on `GooseUser`, `GooseAttack` or `Scenario`. One hyper connection per user with a timeout, the raw client's design, cuts DECISION_CUT against tuned reqwest without a timeout, the best tuned figure, in the bare loops. The `hyper_util` legacy client, with its pool, does not meet the bar. Inside Goose, where Goose's own work per request is the same for both, `goose-raw` costs GOOSE_RAW_CUT less CPU per request than `goose`. Goose adds the raw client behind the `raw-hyper` feature.
+The bar for adding a raw client was a cut of at least 25% in CPU per request against the best tuned reqwest, with no type parameter on `GooseUser`, `GooseAttack` or `Scenario`. The design meets the second part. The first part is met or not depending on what is compared, and is close either way:
+
+| Comparison (medians) | Cut |
+|---|---:|
+| Bare loops: `hyper-conn+timeout` against `reqwest-tuned+no-timeout`, the best tuned figure, which has no timeout while the raw client keeps one. Quietest run; the other three suites gave 27.1%, 23.7% (the noisiest) and 25.0% | 23.4% |
+| Bare loops, both with a timeout: `hyper-conn+timeout` against `reqwest-tuned` | 27% to 32% over three suites |
+| In Goose, both with a timeout: `goose-raw` against `goose-tuned` | 25.4% |
+| In Goose: `goose-raw` against `goose`, Goose as it is | 26.8% |
+
+The `hyper_util` legacy client, with its pool (`hyper+timeout`), cuts only 13% to 14% against the best tuned reqwest, and does not meet the bar; one connection per user does the rest. Goose adds the raw client behind the `raw-hyper` feature, as a load test that sends its requests through it spends about a quarter less CPU per request than with reqwest, tuned or not. The strictest comparison sits just below the bar in the quietest run, and at or above it in the others.
 
 ## Using the raw client
 
