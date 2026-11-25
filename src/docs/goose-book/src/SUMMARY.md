@@ -58,6 +58,7 @@
     - [Session](example/session.md)
     - [Basic Authentication](example/basic-auth.md)
     - [GraphQL](example/graphql.md)
+    - [Server Sent Events](example/sse.md)
     - [TCP Load Test](example/tcp.md)
     - [Drupal Memcache](example/drupal-memcache.md)
     - [Umami](example/umami.md)

@@ -1,6 +1,6 @@
 # Examples
 
-Goose ships eight example load tests. Each entry below says what the example demonstrates and what it needs, and, except for Drupal Memcache, shows a piece of a real run; select the picture to open the example's page. Simple is the smallest place to start, and Umami is the closest to a real site.
+Goose ships nine example load tests. Each entry below says what the example demonstrates and what it needs, and, except for Server Sent Events and Drupal Memcache, shows a piece of a real run; select the picture to open the example's page. Simple is the smallest place to start, and Umami is the closest to a real site.
 
 ## Simple
 
@@ -31,6 +31,12 @@ Three ways to send HTTP Basic auth, one scenario each, and which of them covers 
 GraphQL queries and a mutation sent with `post_graphql` and `post_graphql_named`, and how each names its request. Needs: a server at `POST /graphql` that answers the example's four operations with 200; a real GraphQL server needs the `user`, `posts` and `createPost` fields the queries ask for. Source: [examples/graphql_loadtest.rs](https://github.com/tag1consulting/goose/blob/main/examples/graphql_loadtest.rs)
 
 <a href="graphql.html"><img src="thumbs/graphql.png" width="469" alt="The dashboard's Transactions table: Simple Query, User Query, Complex Query and Mutation, each run about 1,828,975 times"></a>
+
+## Server Sent Events
+
+An event stream that never ends, read with `into_inner()` until a set number of events, with a timeout and a cap on the bytes of one event, and the time to those events recorded with `record_custom_request_duration`. Needs: a server whose `GET /events` answers with a `text/event-stream`. Source: [examples/sse.rs](https://github.com/tag1consulting/goose/blob/main/examples/sse.rs)
+
+[Open the Server Sent Events page](sse.md)
 
 ## TCP Load Test
 
