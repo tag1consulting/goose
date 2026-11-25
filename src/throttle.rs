@@ -166,7 +166,14 @@ mod tests {
 
     /// How many tokens users sending as fast as they can get in over
     /// `seconds`, after taking any burst first.
+    ///
+    /// On tokio's paused clock the drain ticks exactly every `TICK` from the
+    /// start, and a test's sleeps of whole ticks end on a tick. The window
+    /// opens half a tick later, so no tick falls on either of its ends, and
+    /// the count does not depend on which of two tasks woken at the same
+    /// instant runs first: `seconds` of ticks, each draining a tick's worth.
     async fn sent_over(sender: &flume::Sender<bool>, seconds: f64) -> usize {
+        time::sleep(TICK / 2).await;
         burst(sender);
         let sender = sender.clone();
         let sending = tokio::spawn(async move {
@@ -180,26 +187,13 @@ mod tests {
         sending.await.unwrap()
     }
 
-    /// Asserts `got` is within `percent` of `want`.
-    fn near(what: &str, got: usize, want: usize, percent: usize) {
-        let slack = (want * percent).div_ceil(100).max(2);
-        assert!(
-            got + slack >= want && got <= want + slack,
-            "{}: {}, want {} within {}%",
-            what,
-            got,
-            want,
-            percent
-        );
-    }
-
     const QUIET: time::Duration = time::Duration::from_millis(1_500);
 
     /// After a quiet spell, users may send one second of the current rate
     /// at once, whatever the rate the run started at: raised from 100 to
     /// 400 a second the burst is 400, and lowered to 50 after a quiet spell,
     /// with 400 slots free, the fillers take back all but 50 of them.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn the_burst_follows_the_rate() {
         let test = async {
             let throttle = start(100);
@@ -223,17 +217,17 @@ mod tests {
     /// A throttle started at 1 a second rises to 1,000, 1,000 times its
     /// start, past the 100 times a channel of one second of the starting
     /// rate allowed: both its rate and its burst follow.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_throttle_rises_past_100_times_its_start() {
         let test = async {
             let throttle = start(1);
             burst(&throttle.users);
             throttle.rate.store(1_000, Ordering::Relaxed);
-            near(
-                "sent over 2 s at 1,000 a second",
+            // Exact on tokio's paused clock: 200 ticks of 10 tokens.
+            assert_eq!(
                 sent_over(&throttle.users, 2.0).await,
                 2_000,
-                5,
+                "sent over 2 s at 1,000 a second"
             );
             tokio::time::sleep(QUIET).await;
             assert_eq!(burst(&throttle.users), 1_000, "a burst at 1,000 a second");
@@ -247,7 +241,7 @@ mod tests {
     /// With an unchanged rate the throttle behaves exactly as a fixed one:
     /// one slot free at the start, none once full, one second of the rate
     /// after a quiet spell, and the rate held while users send.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn an_unchanged_rate_is_a_fixed_throttle() {
         let test = async {
             let throttle = start(200);
@@ -255,11 +249,11 @@ mod tests {
             assert_eq!(burst(&throttle.users), 0, "no free slots once full");
             tokio::time::sleep(QUIET).await;
             assert_eq!(burst(&throttle.users), 200, "a burst at 200 a second");
-            near(
-                "sent over 2 s at 200 a second",
+            // Exact on tokio's paused clock: 200 ticks of 2 tokens.
+            assert_eq!(
                 sent_over(&throttle.users, 2.0).await,
                 400,
-                5,
+                "sent over 2 s at 200 a second"
             );
             throttle.stop.send(true).unwrap();
         };

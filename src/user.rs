@@ -192,23 +192,20 @@ pub(crate) async fn user_main(
     );
 }
 
-// Determine if the parent has sent a GooseUserCommand::Exit message.
+// Determine if the user should exit: the parent sent GooseUserCommand::Exit,
+// or dropped its sender, as when the load test ended with an error or a Gaggle
+// worker lost its manager, so no Exit will ever come.
 fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
-    let mut message = thread_receiver.try_recv();
-    while message.is_ok() {
-        match message.unwrap() {
-            // GooseUserCommand::Exit received.
-            GooseUserCommand::Exit => {
-                return true;
-            }
-            command => {
+    loop {
+        match thread_receiver.try_recv() {
+            Ok(GooseUserCommand::Exit) => return true,
+            Ok(command) => {
                 debug!("ignoring unexpected GooseUserCommand: {command:?}");
             }
+            Err(flume::TryRecvError::Empty) => return false,
+            Err(flume::TryRecvError::Disconnected) => return true,
         }
-        message = thread_receiver.try_recv();
     }
-    // GooseUserCommand::Exit not received.
-    false
 }
 
 // Send scenario metric to parent and logger when enabled. When batching is
@@ -406,5 +403,18 @@ mod tests {
         assert!(batch.requests.contains_key("GET /"));
         exit_tx.send(GooseUserCommand::Exit).unwrap();
         user.await.unwrap();
+    }
+
+    /// A user exits on `Exit` or once its sender is gone, and on nothing else.
+    #[test]
+    fn received_exit_on_exit_or_a_dropped_sender() {
+        let (tx, rx) = flume::unbounded();
+        assert!(!received_exit(&rx), "an empty channel");
+        tx.send(GooseUserCommand::Exit).unwrap();
+        assert!(received_exit(&rx), "Exit");
+        tx.send(GooseUserCommand::Run).unwrap();
+        assert!(!received_exit(&rx), "a command other than Exit");
+        drop(tx);
+        assert!(received_exit(&rx), "a dropped sender");
     }
 }
