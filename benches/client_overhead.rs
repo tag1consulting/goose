@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! # Every client mode, 5 runs each, interleaved, with a median and spread:
-//! cargo bench --bench client_overhead --features raw-hyper -- suite
+//! cargo bench --bench client_overhead -- suite
 //! # Options, with their defaults:
 //! cargo bench --bench client_overhead -- suite --users 16 --workers 4 \
 //!     --server-threads 8 --warmup 2 --seconds 10 --runs 5 [--modes a,b,...] [--pin]
@@ -24,8 +24,6 @@
 //!   `discard_body()`, as a load test does today.
 //! - `goose-tuned`: the same, each user's client replaced at start with the tuned
 //!   reqwest client below, through `GooseUser::set_client_builder`.
-//! - `goose-raw`: the same, each request sent with `user.raw_get("/")` over the
-//!   raw hyper client; build with `--features raw-hyper`.
 //! - `reqwest`: a bare loop over a reqwest client per user, built as Goose builds
 //!   each user's client (user agent, 60 s timeout, cookie store, Goose's own
 //!   `Accept-Encoding: gzip`, reqwest's own decompression off).
@@ -80,6 +78,9 @@ mod bench {
 
     /// Requests completed by every user, counted as each completes.
     static COMPLETED: AtomicU64 = AtomicU64::new(0);
+    /// Requests a Goose mode saw fail, or return a body other than `BODY`; any
+    /// fails the run. A bare loop panics on such a request instead.
+    static FAILED: AtomicU64 = AtomicU64::new(0);
     /// Set when the measured seconds are over, to stop a bare loop.
     static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -95,6 +96,7 @@ mod bench {
         modes: Vec<String>,
         addr: String,
         pin: bool,
+        body: Option<String>,
     }
 
     impl Options {
@@ -109,8 +111,6 @@ mod bench {
                 modes: [
                     "goose",
                     "goose-tuned",
-                    #[cfg(feature = "raw-hyper")]
-                    "goose-raw",
                     "reqwest",
                     "reqwest-tuned",
                     "reqwest-tuned+no-timeout",
@@ -124,6 +124,7 @@ mod bench {
                 .collect(),
                 addr: String::new(),
                 pin: false,
+                body: None,
             };
             let mut args = args.iter();
             while let Some(arg) = args.next() {
@@ -146,6 +147,7 @@ mod bench {
                     }
                     "--addr" => options.addr = value(),
                     "--pin" => options.pin = true,
+                    "--body" => options.body = Some(value()),
                     // cargo bench passes --bench to every bench target.
                     "--bench" => {}
                     other => panic!("unknown option {}", other),
@@ -180,6 +182,7 @@ mod bench {
                 run(&mode, Options::parse(&args[2..]));
             }
             Some("suite") => suite(Options::parse(&args[1..])),
+            Some("self-check") => self_check(Options::parse(&args[1..])),
             // `cargo bench` with no arguments runs every bench target, this one
             // with only --bench: a short suite, so it ends in a reasonable time.
             Some("--bench") | None => suite(Options::parse(&[
@@ -190,7 +193,10 @@ mod bench {
                 "--warmup".into(),
                 "1".into(),
             ])),
-            Some(other) => panic!("unknown subcommand {}: use suite, server or run", other),
+            Some(other) => panic!(
+                "unknown subcommand {}: use suite, self-check, server or run",
+                other
+            ),
         }
     }
 
@@ -215,9 +221,13 @@ mod bench {
             .expect("tokio runtime")
     }
 
-    /// Serves `BODY` over HTTP/1.1 with keep-alive, and prints the address it
-    /// listens on.
+    /// Serves `BODY`, or the `--body` given, over HTTP/1.1 with keep-alive, and
+    /// prints the address it listens on.
     fn server(options: Options) {
+        let body: &'static [u8] = match options.body.clone() {
+            Some(body) => Box::leak(body.into_bytes().into_boxed_slice()),
+            None => BODY,
+        };
         runtime(options.server_threads).block_on(async {
             let addr = if options.addr.is_empty() {
                 "127.0.0.1:0"
@@ -233,9 +243,10 @@ mod bench {
                 };
                 let _ = stream.set_nodelay(true);
                 tokio::spawn(async move {
-                    let service = service_fn(|_request: Request<hyper::body::Incoming>| async {
-                        Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(BODY))))
-                    });
+                    let service =
+                        service_fn(move |_request: Request<hyper::body::Incoming>| async move {
+                            Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(body))))
+                        });
                     let _ = hyper::server::conn::http1::Builder::new()
                         .serve_connection(TokioIo::new(stream), service)
                         .await;
@@ -291,7 +302,7 @@ mod bench {
 
         let rt = runtime(options.workers);
         match base.as_str() {
-            "goose" | "goose-tuned" | "goose-raw" => rt.block_on(run_goose(&base, &options)),
+            "goose" | "goose-tuned" => rt.block_on(run_goose(&base, &options)),
             "reqwest" | "reqwest-tuned" => rt.block_on(users(options.users, || {
                 let client = reqwest_client(&knobs);
                 let url = reqwest::Url::parse(&base_url).unwrap();
@@ -446,13 +457,7 @@ mod bench {
             "--no-telnet",
         ];
         let configuration = GooseConfiguration::parse_args_default(&args).expect("options");
-        let mut scenario = match mode {
-            #[cfg(feature = "raw-hyper")]
-            "goose-raw" => scenario!("Bench").register_transaction(transaction!(raw_get_index)),
-            #[cfg(not(feature = "raw-hyper"))]
-            "goose-raw" => panic!("goose-raw needs --features raw-hyper"),
-            _ => scenario!("Bench").register_transaction(transaction!(get_index)),
-        };
+        let mut scenario = scenario!("Bench").register_transaction(transaction!(get_index));
         if mode == "goose-tuned" {
             scenario = scenario.register_transaction(transaction!(tune_client).set_on_start());
         }
@@ -462,18 +467,26 @@ mod bench {
             .execute()
             .await
             .expect("goose run");
+        let failed = FAILED.load(Ordering::SeqCst);
+        if failed > 0 {
+            eprintln!("{} requests failed or returned another body", failed);
+            std::process::exit(1);
+        }
     }
 
+    /// Counts the request as completed only as the bare loops do: a success, with
+    /// the whole body read. Anything else is counted as failed, which fails the run.
     async fn get_index(user: &mut GooseUser) -> TransactionResult {
-        let _ = user.get("/").await?.discard_body().await;
-        COMPLETED.fetch_add(1, Ordering::Relaxed);
-        Ok(())
-    }
-
-    #[cfg(feature = "raw-hyper")]
-    async fn raw_get_index(user: &mut GooseUser) -> TransactionResult {
-        let _ = user.raw_get("/").await?.discard_body().await;
-        COMPLETED.fetch_add(1, Ordering::Relaxed);
+        let goose = user.get("/").await?;
+        let success = goose.request.success;
+        match goose.discard_body().await {
+            Ok(read) if success && read == BODY.len() as u64 => {
+                COMPLETED.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                FAILED.fetch_add(1, Ordering::Relaxed);
+            }
+        }
         Ok(())
     }
 
@@ -558,24 +571,9 @@ mod bench {
         let mut samples: BTreeMap<String, Samples> = BTreeMap::new();
         for run in 1..=options.runs {
             for mode in &options.modes {
-                let output = command(cores(0, options.workers))
-                    .arg("run")
-                    .arg(mode)
-                    .args(options.client_args())
-                    .stderr(Stdio::inherit())
-                    .output()
-                    .expect("client");
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let result = stdout
-                    .lines()
-                    .find_map(|line| line.strip_prefix("RESULT "))
-                    .unwrap_or_else(|| panic!("{} printed no result: {}", mode, stdout));
-                let fields: Vec<u64> = result
-                    .split_whitespace()
-                    .skip(1)
-                    .map(|field| field.parse().unwrap())
-                    .collect();
-                let (requests, cpu, wall) = (fields[0], fields[1], fields[2]);
+                let (requests, cpu, wall) =
+                    run_client(command(cores(0, options.workers)), mode, &options)
+                        .unwrap_or_else(|e| panic!("{}", e));
                 eprintln!(
                     "run {run} {mode}: {requests} requests, {:.2} µs CPU each, {:.0}/s",
                     cpu as f64 / requests as f64,
@@ -618,6 +616,76 @@ mod bench {
                 median(&mut busy),
             );
         }
+    }
+
+    /// Runs `mode` in a client process from `command`, and returns its requests,
+    /// CPU µs and wall µs; an error if the process failed, as it does when a request
+    /// fails or returns another body, even after it printed its measurement.
+    fn run_client(
+        mut command: Command,
+        mode: &str,
+        options: &Options,
+    ) -> Result<(u64, u64, u64), String> {
+        let output = command
+            .arg("run")
+            .arg(mode)
+            .args(options.client_args())
+            .stderr(Stdio::inherit())
+            .output()
+            .map_err(|e| format!("{} did not start: {}", mode, e))?;
+        if !output.status.success() {
+            return Err(format!("{} failed: {}", mode, output.status));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let result = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("RESULT "))
+            .ok_or_else(|| format!("{} printed no result: {}", mode, stdout))?;
+        let fields: Vec<u64> = result
+            .split_whitespace()
+            .skip(1)
+            .map(|field| field.parse().unwrap())
+            .collect();
+        Ok((fields[0], fields[1], fields[2]))
+    }
+
+    /// Starts a server answering a body other than `BODY`, and checks that every
+    /// client mode fails against it, so no run with a failed or short exchange is
+    /// ever counted.
+    fn self_check(mut options: Options) {
+        let exe = std::env::current_exe().unwrap();
+        let mut server = Command::new(&exe)
+            .args(["server", "--body", "wrong"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("server");
+        let mut line = String::new();
+        BufReader::new(server.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        options.addr = line
+            .trim()
+            .strip_prefix("LISTENING ")
+            .expect("server address")
+            .to_string();
+        options.warmup = 0;
+        options.seconds = 1;
+        let mut accepted = Vec::new();
+        for mode in &options.modes {
+            match run_client(Command::new(&exe), mode, &options) {
+                Ok(_) => accepted.push(mode.clone()),
+                Err(e) => eprintln!("rejected, as it should be: {}", e),
+            }
+        }
+        let _ = server.kill();
+        let _ = server.wait();
+        assert!(
+            accepted.is_empty(),
+            "these modes counted requests that returned the wrong body: {:?}",
+            accepted
+        );
+        println!("self-check passed: every mode rejects a wrong body");
     }
 
     /// The median of `values`, which this sorts.

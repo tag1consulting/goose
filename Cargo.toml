@@ -121,11 +121,6 @@ dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 # MCP Controller: Model Context Protocol tools for every Controller command,
 # for AI agents. Opt-in, and off at run time until --mcp.
 mcp = ["dep:rmcp", "axum", "hyper", "hyper-util"]
-# The raw hyper client: GooseUser::raw_get, and GooseRequest's raw(true), send
-# over one plain HTTP/1.1 hyper connection per user, skipping reqwest's layer
-# (no cookies, redirects, decompression, proxies or TLS). hyper and hyper-util
-# are already in the tree through reqwest. See the Book's raw hyper page.
-raw-hyper = ["hyper", "hyper/client", "hyper-util"]
 # Distributed load tests (Gaggle): a manager and workers, over gRPC.
 gaggle = ["dep:http-body", "dep:libc", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 

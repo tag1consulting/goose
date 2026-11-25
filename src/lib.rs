@@ -53,8 +53,6 @@ mod graph;
 pub mod logger;
 pub mod metrics;
 pub mod prelude;
-#[cfg(feature = "raw-hyper")]
-mod raw_hyper;
 mod report;
 mod run_shape;
 mod runs;
