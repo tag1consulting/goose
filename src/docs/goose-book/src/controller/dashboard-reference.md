@@ -224,6 +224,7 @@ Under `--dashboard-no-auth`, off loopback the server also checks `Host` on every
 | `GET /api/v1/health` | **Public** | Liveness and timing counters; includes `control_enabled` and the Controller addresses (no load-test metrics); see [Health endpoint exception](#health-endpoint-exception) |
 | `GET /api/v1/snapshot` | **Required** | |
 | `GET /api/v1/events` (SSE) | **Required** | |
+| `GET /api/v1/metrics` | **Required** | The metrics in the Prometheus text format; see [Prometheus metrics endpoint](#prometheus-metrics-endpoint) |
 | `GET /api/v1/series` | **Required** | One request's response time heatmap; see [Request heatmap endpoint](#request-heatmap-endpoint) |
 | `GET /api/v1/reports` and `/api/v1/reports/*` | **Required** | The runs panel's reports; see [Report endpoints](#report-endpoints) |
 | `POST /api/v1/control/*` | **Required** when control is enabled, unless `--dashboard-no-auth` | Even on loopback; **404** when control is off |
@@ -801,6 +802,24 @@ curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" \
   "http://127.0.0.1:5118/api/v1/series?method=GET&name=%2F"
 ```
 
+### Prometheus metrics endpoint
+
+`GET /api/v1/metrics` returns the latest snapshot in the Prometheus text exposition format, version 0.0.4, with `Content-Type: text/plain; version=0.0.4; charset=utf-8`. It needs the token when one is configured, as an `Authorization: Bearer` header or `?token=`, as `GET /api/v1/snapshot` does; Prometheus sends it with `authorization: { credentials: ... }` in its scrape job. [Prometheus and Grafana](dashboard.md#prometheus-and-grafana) lists the metrics and has a scrape job and queries.
+
+The body is rendered from the snapshot the dashboard already builds about once a second, and the same body is answered for one second, so a scrape costs the same however many requests the load test makes, and scrapes that arrive together while the body is stale wait for one render and share it. A scrape counts as a poll: the dashboard builds snapshots while scrapes keep coming, as it does for an open page.
+
+Label values are escaped as the format requires (`\` as `\\`, `"` as `\"`, a newline as `\n`). The `goose_run_` series are the snapshot's `aggregate` and cover every request. The series by `method` and `name` are the rows of the snapshot's `requests`, at most 100 names by count: with `flags.requests_truncated` the names left out have no series, and nothing is summed by subtraction, so no counter goes down while the run's metrics stand. Counters start again from 0 when Goose resets its metrics, after the ramp up unless `--no-reset-metrics` and at each new run. `_count` and `_sum` cover the measured response times, without coordinated omission mitigation's synthetic ones, which the request counters include; quantiles are over every measured time since the reset, from the same times as the Requests table. Transactions are absent under `--no-transaction-metrics`, and under `--no-metrics` every request and transaction figure is 0 or absent.
+
+| Status | Body |
+|--------|------|
+| `200` | The metrics |
+| `401` | Empty: the token is missing or wrong |
+| `503` | Empty: no snapshot arrived within five seconds, or the dashboard is shutting down |
+
+```bash
+curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" http://127.0.0.1:5118/api/v1/metrics
+```
+
 ### Metrics disabled
 
 If Goose is started with `--no-metrics`, the dashboard still serves the shell and health endpoint, but snapshots report `flags.metrics_disabled: true` with empty request/error tables and empty series. The UI surfaces an honest empty state rather than fabricating data.
@@ -928,7 +947,7 @@ Semver covers it: within 1.x no field, endpoint or error code is removed, rename
 
 ### The routes and the snapshot
 
-In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
+In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`. 0.20 adds `GET /api/v1/metrics`.
 
 ### What the contract is
 
