@@ -278,7 +278,9 @@ function setViewButtons(): void {
 
 /**
  * The card's summary and data table from the heatmap shown: the mean of the
- * last 10 drawn seconds' percentiles, and whether p95 is rising or falling.
+ * last 10 drawn seconds' percentiles, and whether p95 is rising or falling;
+ * over the whole run, the slowest column's p95 and the newest column's
+ * percentiles.
  */
 function showData(view: HeatmapView): void {
   const seconds = Array.from(view.percentiles.values());
@@ -287,6 +289,23 @@ function showData(view: HeatmapView): void {
   );
   if (seconds.length === 0) {
     setLatencySummary("No data yet.");
+    return;
+  }
+  if (wholeMode) {
+    // Over the whole run a trend of the last 10 columns says little: name
+    // the slowest column's p95 and the newest column's percentiles.
+    const width = view.width || 1;
+    let peak = seconds[0];
+    for (const p of seconds) if (p.p95 > peak.p95) peak = p;
+    const last = seconds[seconds.length - 1];
+    setLatencySummary(
+      "Whole run: p95 peaked at " + rowMs(peak.p95) + " ms (" +
+        (width === 1
+          ? "second " + peak.second
+          : "seconds " + peak.second + " to " + (peak.second + width - 1)) +
+        "); last column p50 " + rowMs(last.p50) + " ms, p95 " + rowMs(last.p95) +
+        " ms, p99 " + rowMs(last.p99) + " ms."
+    );
     return;
   }
   const p50 = recentTrend(seconds.map((p) => p.p50));

@@ -1085,6 +1085,10 @@ test("Whole run switches every time chart, asks once a second, and is kept for t
   assert.match(el(page, "heatmap-note").textContent, /^Whole run: each column is 2 seconds\./);
   assert.match(el(page, "chart-rps-summary").textContent, /^Whole run: RPS 10\.40, peak 12\.00/);
   assert.equal(el(page, "chart-users-summary").textContent, "Whole run: up to 3 users.");
+  assert.match(
+    el(page, "chart-latency-summary").textContent,
+    /^Whole run: p95 peaked at 0\.5 ms \(seconds 0 to 1\); last column p50 0\.5 ms, p95 0\.5 ms, p99 0\.5 ms\.$/
+  );
   const rows = Array.from(el(page, "chart-rps-rows").querySelectorAll("tr")).map(
     (tr) => tr.firstElementChild.textContent
   );
