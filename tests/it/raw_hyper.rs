@@ -340,6 +340,7 @@ async fn raw_get_ftp_recording_failure(user: &mut GooseUser) -> TransactionResul
     Ok(())
 }
 
+#[cfg(feature = "cookies")]
 /// Logs in over reqwest, then requests a page raw, then another over reqwest.
 async fn login_then_raw(user: &mut GooseUser) -> TransactionResult {
     let _ = user.get("/login").await?.discard_body().await;
@@ -348,6 +349,7 @@ async fn login_then_raw(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
+#[cfg(feature = "cookies")]
 /// The mocks for [`login_then_raw`]: `/login` sets `session`; `/page` answers only
 /// with that cookie, and sets `raw`; `/after` answers only with both.
 fn cookie_mocks(server: &MockServer) -> [httpmock::Mock<'_>; 3] {
@@ -390,14 +392,10 @@ async fn raw_requests_share_the_users_cookies() {
     assert_eq!(metrics.requests.get("GET /after").unwrap().fail_count, 0);
 }
 
+#[cfg(feature = "cookies")]
 /// Replaces the user's reqwest client with one the test builds, with cookies.
 async fn replace_client(user: &mut GooseUser) -> TransactionResult {
-    #[allow(unused_mut)]
-    let mut builder = reqwest::Client::builder();
-    #[cfg(feature = "cookies")]
-    {
-        builder = builder.cookie_store(true);
-    }
+    let builder = reqwest::Client::builder().cookie_store(true);
     user.set_client_builder(builder).await?;
     Ok(())
 }
@@ -446,6 +444,7 @@ async fn raw_requests_send_no_cookies_after_set_client_builder() {
     page.assert_calls(ITERATIONS);
 }
 
+#[cfg(feature = "cookies")]
 async fn login_then_page(user: &mut GooseUser) -> TransactionResult {
     let _ = user.get("/login").await?.discard_body().await;
     let _ = user.raw_get("/page").await?.discard_body().await;

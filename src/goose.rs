@@ -4514,6 +4514,17 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .build();
     ///     let _ = user.request(goose_request).await?.discard_body().await;
     ///
+    ///     // A PUT with a header and a body of its own.
+    ///     let request_builder = user
+    ///         .get_request_builder(&GooseMethod::Put, "api/item/1")?
+    ///         .header("content-type", "application/json")
+    ///         .body(r#"{"title":"Goose"}"#);
+    ///     let goose_request = GooseRequest::builder()
+    ///         .set_request_builder(request_builder)
+    ///         .raw(true)
+    ///         .build();
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
+    ///
     ///     Ok(())
     /// }
     /// ```

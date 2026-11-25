@@ -4,11 +4,15 @@
 //!
 //! ```text
 //! # Every client mode, 5 runs each, interleaved, with a median and spread:
-//! cargo bench --bench client_overhead -- suite
+//! cargo bench --bench client_overhead --features raw-hyper -- suite
 //! # Options, with their defaults:
-//! cargo bench --bench client_overhead -- suite --users 16 --workers 4 \
-//!     --server-threads 8 --warmup 2 --seconds 10 --runs 5 [--modes a,b,...] [--pin]
+//! cargo bench --bench client_overhead --features raw-hyper -- suite --users 16 \
+//!     --workers 4 --server-threads 8 --warmup 2 --seconds 10 --runs 5 \
+//!     [--modes a,b,...] [--pin] [--tls]
 //! ```
+//!
+//! Without `--features raw-hyper` the `goose-raw` modes are left out of the
+//! default list, and fail when named.
 //!
 //! The server, a hyper HTTP/1.1 server answering every request with the same
 //! 13 byte body, runs in a process of its own, and each run of a client mode in a
@@ -24,6 +28,15 @@
 //!   `discard_body()`, as a load test does today.
 //! - `goose-tuned`: the same, each user's client replaced at start with the tuned
 //!   reqwest client below, through `GooseUser::set_client_builder`.
+//! - `goose-raw`: the same, each request sent with `user.raw_get("/")` over the
+//!   raw hyper client; build with `--features raw-hyper`.
+//! - `goose-post`, `goose-raw-post`: `user.post("/", body)` and
+//!   `user.raw_post("/", body)` of a 32 byte body.
+//! - `+headers` after a Goose mode: each GET built on a reqwest `RequestBuilder`
+//!   with two headers of the test's own (`GooseRequestBuilder::raw` for
+//!   `goose-raw`).
+//! - `+cookie` after a Goose mode: each user first requests `/login` over reqwest,
+//!   which sets a cookie, so every request after it carries that cookie.
 //! - `reqwest`: a bare loop over a reqwest client per user, built as Goose builds
 //!   each user's client (user agent, 60 s timeout, cookie store, Goose's own
 //!   `Accept-Encoding: gzip`, reqwest's own decompression off).
@@ -40,6 +53,12 @@
 //!
 //! `--pin` runs the server and each client under `taskset` with fixed cores,
 //! on Linux; macOS has no way to pin a thread to a core.
+//!
+//! `--tls` serves HTTPS, with the test certificate in `tests/fixtures/tls`,
+//! offering HTTP/1.1 by ALPN, for the Goose modes only; each runs with
+//! `--accept-invalid-certs`, as the certificate's CA is not trusted. The
+//! handshake happens once per user; what is measured is each request's cost
+//! over an open TLS connection.
 
 #[cfg(not(unix))]
 fn main() {
@@ -71,6 +90,8 @@ mod bench {
 
     /// What the server answers every request with.
     const BODY: &[u8] = b"Hello, world!";
+    /// What the POST modes send.
+    const POST_BODY: &str = "name=goose&value=0123456789abcdef";
     /// The user agent Goose sends.
     const GOOSE_USER_AGENT: &str = concat!("goose/", env!("CARGO_PKG_VERSION"));
     /// Goose's default request timeout.
@@ -97,6 +118,7 @@ mod bench {
         addr: String,
         pin: bool,
         body: Option<String>,
+        tls: bool,
     }
 
     impl Options {
@@ -111,6 +133,8 @@ mod bench {
                 modes: [
                     "goose",
                     "goose-tuned",
+                    #[cfg(feature = "raw-hyper")]
+                    "goose-raw",
                     "reqwest",
                     "reqwest-tuned",
                     "reqwest-tuned+no-timeout",
@@ -125,6 +149,7 @@ mod bench {
                 addr: String::new(),
                 pin: false,
                 body: None,
+                tls: false,
             };
             let mut args = args.iter();
             while let Some(arg) = args.next() {
@@ -148,6 +173,7 @@ mod bench {
                     "--addr" => options.addr = value(),
                     "--pin" => options.pin = true,
                     "--body" => options.body = Some(value()),
+                    "--tls" => options.tls = true,
                     // cargo bench passes --bench to every bench target.
                     "--bench" => {}
                     other => panic!("unknown option {}", other),
@@ -158,7 +184,7 @@ mod bench {
 
         /// This process's options as arguments for a client process.
         fn client_args(&self) -> Vec<String> {
-            vec![
+            let mut args = vec![
                 "--addr".into(),
                 self.addr.clone(),
                 "--users".into(),
@@ -169,7 +195,24 @@ mod bench {
                 self.warmup.to_string(),
                 "--seconds".into(),
                 self.seconds.to_string(),
-            ]
+            ];
+            if self.tls {
+                args.push("--tls".into());
+            }
+            args
+        }
+
+        /// The server's arguments, as this process's options ask for it.
+        fn server_args(&self) -> Vec<String> {
+            let mut args = vec![
+                "server".into(),
+                "--server-threads".into(),
+                self.server_threads.to_string(),
+            ];
+            if self.tls {
+                args.push("--tls".into());
+            }
+            args
         }
     }
 
@@ -183,6 +226,7 @@ mod bench {
             }
             Some("suite") => suite(Options::parse(&args[1..])),
             Some("self-check") => self_check(Options::parse(&args[1..])),
+            Some("cookie-cost") => cookie_cost(),
             // `cargo bench` with no arguments runs every bench target, this one
             // with only --bench: a short suite, so it ends in a reasonable time.
             Some("--bench") | None => suite(Options::parse(&[
@@ -194,7 +238,7 @@ mod bench {
                 "1".into(),
             ])),
             Some(other) => panic!(
-                "unknown subcommand {}: use suite, self-check, server or run",
+                "unknown subcommand {}: use suite, self-check, cookie-cost, server or run",
                 other
             ),
         }
@@ -221,8 +265,33 @@ mod bench {
             .expect("tokio runtime")
     }
 
-    /// Serves `BODY`, or the `--body` given, over HTTP/1.1 with keep-alive, and
-    /// prints the address it listens on.
+    /// The server's TLS config, with `--tls`: the test certificate for
+    /// `localhost`, offering HTTP/1.1 by ALPN.
+    fn tls_acceptor() -> tokio_rustls::TlsAcceptor {
+        use rustls::pki_types::pem::PemObject;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+        let certs =
+            CertificateDer::pem_slice_iter(include_bytes!("../tests/fixtures/tls/localhost.pem"))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+        let key =
+            PrivateKeyDer::from_pem_slice(include_bytes!("../tests/fixtures/tls/localhost.key"))
+                .unwrap();
+        let mut config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .unwrap();
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config))
+    }
+
+    /// Serves `BODY`, or the `--body` given, over HTTP/1.1 with keep-alive, plain
+    /// or with `--tls` over TLS, and prints the address it listens on. It reads
+    /// each request's body before it answers, and sets a cookie on `/login`.
     fn server(options: Options) {
         let body: &'static [u8] = match options.body.clone() {
             Some(body) => Box::leak(body.into_bytes().into_boxed_slice()),
@@ -236,20 +305,47 @@ mod bench {
             };
             let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
             println!("LISTENING {}", listener.local_addr().unwrap());
+            let acceptor = if options.tls {
+                Some(tls_acceptor())
+            } else {
+                None
+            };
             loop {
                 let (stream, _) = match listener.accept().await {
                     Ok(accepted) => accepted,
                     Err(_) => continue,
                 };
                 let _ = stream.set_nodelay(true);
+                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
                     let service =
-                        service_fn(move |_request: Request<hyper::body::Incoming>| async move {
-                            Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(body))))
+                        service_fn(move |request: Request<hyper::body::Incoming>| async move {
+                            let login = request.uri().path() == "/login";
+                            let _ = request.into_body().collect().await;
+                            let mut response = Response::new(Full::new(Bytes::from_static(body)));
+                            if login {
+                                response.headers_mut().insert(
+                                    hyper::header::SET_COOKIE,
+                                    HeaderValue::from_static("session=bench; Path=/"),
+                                );
+                            }
+                            Ok::<_, Infallible>(response)
                         });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), service)
-                        .await;
+                    let builder = hyper::server::conn::http1::Builder::new();
+                    match acceptor {
+                        Some(acceptor) => {
+                            if let Ok(stream) = acceptor.accept(stream).await {
+                                let _ = builder
+                                    .serve_connection(TokioIo::new(stream), service)
+                                    .await;
+                            }
+                        }
+                        None => {
+                            let _ = builder
+                                .serve_connection(TokioIo::new(stream), service)
+                                .await;
+                        }
+                    }
                 });
             }
         });
@@ -301,8 +397,13 @@ mod bench {
         });
 
         let rt = runtime(options.workers);
+        if options.tls && !base.starts_with("goose") {
+            panic!("--tls measures the Goose modes only, not {}", mode);
+        }
         match base.as_str() {
-            "goose" | "goose-tuned" => rt.block_on(run_goose(&base, &options)),
+            "goose" | "goose-tuned" | "goose-raw" | "goose-post" | "goose-raw-post" => {
+                rt.block_on(run_goose(&base, &knobs, &options))
+            }
             "reqwest" | "reqwest-tuned" => rt.block_on(users(options.users, || {
                 let client = reqwest_client(&knobs);
                 let url = reqwest::Url::parse(&base_url).unwrap();
@@ -437,11 +538,15 @@ mod bench {
 
     /// Runs a Goose load test for the warm up and measured seconds and a second more.
     /// It writes no files: no option asks for a report or a log.
-    async fn run_goose(mode: &str, options: &Options) {
-        let host = format!("http://{}/", options.addr);
+    async fn run_goose(mode: &str, knobs: &[String], options: &Options) {
+        let host = format!(
+            "{}://{}/",
+            if options.tls { "https" } else { "http" },
+            options.addr
+        );
         let users = options.users.to_string();
         let run_time = (options.warmup + options.seconds + 1).to_string();
-        let args = [
+        let mut args = vec![
             "--host",
             &host,
             "--users",
@@ -456,10 +561,33 @@ mod bench {
             "--no-print-metrics",
             "--no-telnet",
         ];
+        if options.tls {
+            args.push("--accept-invalid-certs");
+        }
         let configuration = GooseConfiguration::parse_args_default(&args).expect("options");
-        let mut scenario = scenario!("Bench").register_transaction(transaction!(get_index));
+        let headers = knobs.iter().any(|knob| knob == "headers");
+        let transaction = match (mode, headers) {
+            ("goose", false) | ("goose-tuned", false) => transaction!(get_index),
+            ("goose", true) | ("goose-tuned", true) => transaction!(get_index_with_headers),
+            ("goose-post", false) => transaction!(post_index),
+            #[cfg(feature = "raw-hyper")]
+            ("goose-raw", false) => transaction!(raw_get_index),
+            #[cfg(feature = "raw-hyper")]
+            ("goose-raw", true) => transaction!(raw_get_index_with_headers),
+            #[cfg(feature = "raw-hyper")]
+            ("goose-raw-post", false) => transaction!(raw_post_index),
+            #[cfg(not(feature = "raw-hyper"))]
+            ("goose-raw", _) | ("goose-raw-post", _) => {
+                panic!("{} needs --features raw-hyper", mode)
+            }
+            _ => panic!("unknown Goose mode {}+{}", mode, knobs.join("+")),
+        };
+        let mut scenario = scenario!("Bench").register_transaction(transaction);
         if mode == "goose-tuned" {
             scenario = scenario.register_transaction(transaction!(tune_client).set_on_start());
+        }
+        if knobs.iter().any(|knob| knob == "cookie") {
+            scenario = scenario.register_transaction(transaction!(login).set_on_start());
         }
         GooseAttack::initialize_with_config(configuration)
             .expect("goose")
@@ -476,8 +604,7 @@ mod bench {
 
     /// Counts the request as completed only as the bare loops do: a success, with
     /// the whole body read. Anything else is counted as failed, which fails the run.
-    async fn get_index(user: &mut GooseUser) -> TransactionResult {
-        let goose = user.get("/").await?;
+    async fn count(goose: goose::goose::GooseResponse) {
         let success = goose.request.success;
         match goose.discard_body().await {
             Ok(read) if success && read == BODY.len() as u64 => {
@@ -487,6 +614,60 @@ mod bench {
                 FAILED.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+
+    async fn get_index(user: &mut GooseUser) -> TransactionResult {
+        count(user.get("/").await?).await;
+        Ok(())
+    }
+
+    /// A GET built on a reqwest `RequestBuilder`, with two headers of its own.
+    fn with_headers(user: &GooseUser) -> Result<reqwest::RequestBuilder, Box<TransactionError>> {
+        Ok(user
+            .get_request_builder(&GooseMethod::Get, "/")?
+            .header("x-bench-one", "one")
+            .header("x-bench-two", "two"))
+    }
+
+    async fn get_index_with_headers(user: &mut GooseUser) -> TransactionResult {
+        let request = GooseRequest::builder()
+            .set_request_builder(with_headers(user)?)
+            .build();
+        count(user.request(request).await?).await;
+        Ok(())
+    }
+
+    async fn post_index(user: &mut GooseUser) -> TransactionResult {
+        count(user.post("/", POST_BODY).await?).await;
+        Ok(())
+    }
+
+    #[cfg(feature = "raw-hyper")]
+    async fn raw_get_index(user: &mut GooseUser) -> TransactionResult {
+        count(user.raw_get("/").await?).await;
+        Ok(())
+    }
+
+    #[cfg(feature = "raw-hyper")]
+    async fn raw_get_index_with_headers(user: &mut GooseUser) -> TransactionResult {
+        let request = GooseRequest::builder()
+            .set_request_builder(with_headers(user)?)
+            .raw(true)
+            .build();
+        count(user.request(request).await?).await;
+        Ok(())
+    }
+
+    #[cfg(feature = "raw-hyper")]
+    async fn raw_post_index(user: &mut GooseUser) -> TransactionResult {
+        count(user.raw_post("/", POST_BODY).await?).await;
+        Ok(())
+    }
+
+    /// Requests `/login` over reqwest, which sets a cookie, before the user's
+    /// other transactions: not counted.
+    async fn login(user: &mut GooseUser) -> TransactionResult {
+        let _ = user.get("/login").await?.discard_body().await;
         Ok(())
     }
 
@@ -528,11 +709,7 @@ mod bench {
         }
 
         let server = command(cores(options.workers, options.server_threads))
-            .args([
-                "server",
-                "--server-threads",
-                &options.server_threads.to_string(),
-            ])
+            .args(options.server_args())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -556,9 +733,10 @@ mod bench {
             .expect("server address")
             .to_string();
         eprintln!(
-            "server on {}; {} users, {} client worker threads, {} server threads, {} s \
+            "server on {}{}; {} users, {} client worker threads, {} server threads, {} s \
              warm up, {} s measured, {} runs{}",
             options.addr,
+            if options.tls { " (TLS)" } else { "" },
             options.users,
             options.workers,
             options.server_threads,
@@ -655,7 +833,8 @@ mod bench {
     fn self_check(mut options: Options) {
         let exe = std::env::current_exe().unwrap();
         let mut server = Command::new(&exe)
-            .args(["server", "--body", "wrong"])
+            .args(options.server_args())
+            .args(["--body", "wrong"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -686,6 +865,57 @@ mod bench {
             accepted
         );
         println!("self-check passed: every mode rejects a wrong body");
+    }
+
+    /// What the cookie path adds to each raw request, on one thread: reading the
+    /// `Cookie` header for the URL from a reqwest cookie jar, empty and holding one
+    /// cookie, and the check for `Set-Cookie` on a response that sets none. Prints
+    /// the CPU time of each, per request, the median of 9 runs of a million.
+    #[cfg(feature = "cookies")]
+    fn cookie_cost() {
+        use reqwest::cookie::{CookieStore, Jar};
+        let url = reqwest::Url::parse("http://127.0.0.1:8080/").unwrap();
+        let empty = Jar::default();
+        let one = Jar::default();
+        one.add_cookie_str("session=bench; Path=/", &url);
+        let headers = hyper::HeaderMap::new();
+        const N: u32 = 1_000_000;
+        let time = |f: &dyn Fn() -> bool| {
+            let mut runs: Vec<f64> = (0..9)
+                .map(|_| {
+                    let start = cpu_time();
+                    let mut hits = 0u32;
+                    for _ in 0..N {
+                        hits += std::hint::black_box(f()) as u32;
+                    }
+                    std::hint::black_box(hits);
+                    (cpu_time() - start).as_nanos() as f64 / f64::from(N) / 1000.0
+                })
+                .collect();
+            median(&mut runs)
+        };
+        let lookup_empty = time(&|| empty.cookies(std::hint::black_box(&url)).is_some());
+        let lookup_one = time(&|| one.cookies(std::hint::black_box(&url)).is_some());
+        let set_cookie_check = time(&|| {
+            std::hint::black_box(&headers)
+                .get_all(hyper::header::SET_COOKIE)
+                .iter()
+                .next()
+                .is_some()
+        });
+        println!("| Cookie path step | CPU µs per request, median of 9 |");
+        println!("|---|---:|");
+        println!("| `Cookie` from an empty jar | {:.3} |", lookup_empty);
+        println!(
+            "| `Cookie` from a jar holding one cookie | {:.3} |",
+            lookup_one
+        );
+        println!("| `Set-Cookie` check, none set | {:.3} |", set_cookie_check);
+    }
+
+    #[cfg(not(feature = "cookies"))]
+    fn cookie_cost() {
+        panic!("cookie-cost needs Goose's cookies feature");
     }
 
     /// The median of `values`, which this sorts.

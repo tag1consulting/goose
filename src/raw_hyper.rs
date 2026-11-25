@@ -9,7 +9,9 @@
 //! "Raw Hyper Client" page has the measurements behind it.
 
 use bytes::Bytes;
-use http::header::{HeaderMap, HeaderValue, ACCEPT, COOKIE, HOST, SET_COOKIE, USER_AGENT};
+use http::header::{HeaderMap, HeaderValue, ACCEPT, HOST, USER_AGENT};
+#[cfg(feature = "cookies")]
+use http::header::{COOKIE, SET_COOKIE};
 use http::{Method, Request, Response, Uri};
 use hyper::body::Incoming;
 use hyper::body::{Body, Frame, SizeHint};
@@ -91,7 +93,7 @@ impl RawBody {
         match body {
             None => RawBody::Empty,
             Some(body) => match body.as_bytes() {
-                Some(bytes) if bytes.is_empty() => RawBody::Empty,
+                Some([]) => RawBody::Empty,
                 Some(bytes) => RawBody::Bytes(Bytes::copy_from_slice(bytes)),
                 None => RawBody::Stream(Some(body)),
             },
@@ -300,8 +302,6 @@ impl RawConnection {
                 }
             }
         }
-        #[cfg(not(feature = "cookies"))]
-        let _ = COOKIE;
 
         // Drop a connection to another origin.
         if let Some(connection) = &self.connection {
@@ -365,8 +365,6 @@ impl RawConnection {
                             jar.set_cookies(&mut set_cookies, url);
                         }
                     }
-                    #[cfg(not(feature = "cookies"))]
-                    let _ = SET_COOKIE;
                     return Ok(response);
                 }
                 Err(e) => {
@@ -627,7 +625,7 @@ mod tests {
         let read = tokio::time::timeout(Duration::from_secs(10), response.into_body().collect())
             .await
             .expect("the body read ends with the request's timeout");
-        let error = read.err().expect("the body is never finished");
+        let error = read.expect_err("the body is never finished");
         assert!(
             error.to_string().contains("timed out after 300 ms"),
             "{}",
