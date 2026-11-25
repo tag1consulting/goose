@@ -16,7 +16,7 @@ Source: https://github.com/tag1consulting/goose. API documentation: https://docs
 
 - [Controllers](https://www.goose.rs/controller/overview.html): the four ways to watch or change a running load test: the Live Dashboard and three Controllers
 - [MCP Controller](https://www.goose.rs/controller/mcp.html): every Controller command as a Model Context Protocol tool for AI agents (`--features mcp`, `--mcp`), its options, tools, limits and security
-- [Live Dashboard](https://www.goose.rs/controller/dashboard.html): a web UI with live metrics and optional control (`--features dashboard`, `--dashboard`)
+- [Live Dashboard](https://www.goose.rs/controller/dashboard.html): a web UI with live metrics and optional control (`--dashboard`; built in with the default features)
 - [Telnet Controller](https://www.goose.rs/controller/telnet.html): the default Controller, its commands and their grammar
 - [WebSocket Controller](https://www.goose.rs/controller/websocket.html): the same commands as JSON over WebSocket (`--websocket`)
 

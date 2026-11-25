@@ -96,8 +96,8 @@ http-body = { version = "1", optional = true }
 sha1 = { version = "0.10", optional = true }
 
 [features]
-# Include cookies by default for backward compatibility and expected behavior in web load testing
-default = ["cookies"]
+# Cookies, for the behavior web load tests expect, and the live dashboard.
+default = ["cookies", "dashboard"]
 # reqwest >==0.13 already defaults to rustls
 rustls-tls = ["tokio-tungstenite/rustls"]
 # Native TLS: every client Goose builds uses reqwest's native-tls backend, the
@@ -113,7 +113,10 @@ native-tls = ["reqwest/native-tls"]
 cookies = ["reqwest/cookies"]
 pdf-reports = ["headless_chrome"]
 # Live web dashboard HTTP server (axum). DTO/builder always compiled; only HTTP is gated.
-# Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
+# A default feature: the server is built in, but starts only with --dashboard.
+# To leave axum out of the build, turn off Goose's default features
+# (`default-features = false`, with `features = ["cookies"]` to keep cookies);
+# tower-http stays, as reqwest's gzip feature needs it.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 # MCP Controller: Model Context Protocol tools for every Controller command,
 # for AI agents. Opt-in, and off at run time until --mcp.

@@ -1,6 +1,9 @@
 //! Live web dashboard HTTP server.
 //!
-//! Compiled only with the `dashboard` crate feature. Runs an HTTP/1 accept
+//! Compiled only with the `dashboard` crate feature, one of Goose's default
+//! features; the server starts only with `--dashboard`. A load test that sets
+//! `default-features = false` on Goose, with `features = ["cookies"]` to keep
+//! cookies, builds without it, and without axum. Runs an HTTP/1 accept
 //! loop over an axum router that serves a minimal static shell, a one-shot
 //! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
 //! `--dashboard-control` is set) authenticated Start/Stop/Users/Quit control
@@ -50,6 +53,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, watch, Notify};
 use tower_http::set_header::SetResponseHeaderLayer;
+
+mod prometheus;
 
 /// Embedded SPA shell and assets (no inline scripts — CSP-friendly).
 const INDEX_HTML: &str = include_str!("dashboard/static/index.html");
@@ -108,6 +113,10 @@ const MAX_SERIES_QUERY_LEN: usize = 2048;
 /// How long a `GET /api/v1/series` answer is served from the cache, so
 /// several viewers polling one request cost one export a second.
 const SERIES_CACHE_TTL: Duration = Duration::from_secs(1);
+
+/// How long a `GET /api/v1/metrics` body is reused, so many scrapers cost
+/// one render a second.
+const METRICS_CACHE_TTL: Duration = Duration::from_secs(1);
 
 /// Result of a successful dashboard server spawn.
 #[derive(Debug)]
@@ -890,6 +899,8 @@ struct DashboardState {
     /// Recent `GET /api/v1/series` 200 answers by method and name, with when
     /// each was built.
     series_cache: Arc<Mutex<SeriesCache>>,
+    /// The latest `GET /api/v1/metrics` body.
+    metrics_cache: Arc<MetricsCache>,
     /// The folder run folders go in, which the report routes read, and only
     /// them; the folder of the run in progress, which Delete refuses and the
     /// runs panel shows as running; and the listing cache. Shared with the
@@ -992,8 +1003,8 @@ struct HealthControllers {
 /// Binds to `configuration.dashboard_host`:`configuration.dashboard_port` and
 /// returns the parent end of the request channel. Logs the listening URL.
 ///
-/// When `--dashboard` is set, bind failure is a hard error (opt-in server must
-/// not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
+/// When `--dashboard` is set, bind failure is a hard error (a server asked for
+/// must not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
 /// `control_tx`, given only with dashboard control, registers the control routes.
 ///
 /// A Gaggle worker never serves the dashboard: it refuses `--dashboard`, and
@@ -1002,7 +1013,7 @@ pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
     control_tx: Option<flume::Sender<ControlRequest>>,
     listening: ListeningControllers,
-    saved_runs: runs::SavedRuns,
+    saved_runs: &runs::SavedRuns,
 ) -> Result<Option<DashboardSetup>, GooseError> {
     if !configuration.dashboard {
         return Ok(None);
@@ -1064,7 +1075,9 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
-        saved_runs,
+        metrics_cache: Arc::new(MetricsCache::default()),
+        // Cloned only here, once the dashboard is on.
+        saved_runs: saved_runs.clone(),
         log_folder: log_folder.clone(),
         controllers: HealthControllers {
             telnet: listening.telnet.then(|| {
@@ -1286,6 +1299,7 @@ fn build_router(state: DashboardState, host: &str) -> Router {
         .route("/static/app.css", get(app_css_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
+        .route("/api/v1/metrics", get(metrics_handler))
         .route("/api/v1/series", get(series_handler))
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/reports", get(reports_handler))
@@ -1531,6 +1545,58 @@ async fn snapshot_handler(
     let cursor = heatmap_cursor(query.heatmap_generation, query.heatmap_since);
     let bytes = state.hub.snapshot_bytes_since(cursor).await?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
+}
+
+/// The latest `GET /api/v1/metrics` body, with when it was rendered.
+#[derive(Default)]
+struct MetricsCache {
+    /// Held while a body is rendered, so scrapes that find the body stale
+    /// together wait for one render and share it.
+    body: tokio::sync::Mutex<Option<(Instant, Bytes)>>,
+    /// Bodies rendered (tests).
+    renders: AtomicU64,
+}
+
+impl MetricsCache {
+    /// A body no older than [`METRICS_CACHE_TTL`], rendered from the hub's
+    /// latest snapshot when the cached one is older.
+    async fn body(&self, hub: &SnapshotHub) -> Result<Bytes, StatusCode> {
+        let mut cached = self.body.lock().await;
+        if let Some((built, body)) = cached.as_ref() {
+            if built.elapsed() < METRICS_CACHE_TTL {
+                // Keep the hub building while scrapes keep coming.
+                hub.mark_poll();
+                return Ok(body.clone());
+            }
+        }
+        // Waits for a snapshot no older than the hub's cadence.
+        hub.snapshot_bytes().await?;
+        let body = {
+            let view = hub.inner.view.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(snapshot) = view.snapshot.as_ref() else {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            };
+            Bytes::from(prometheus::render(snapshot))
+        };
+        self.renders.fetch_add(1, Ordering::Relaxed);
+        *cached = Some((Instant::now(), body.clone()));
+        Ok(body)
+    }
+}
+
+/// `GET /api/v1/metrics`: the latest snapshot in the Prometheus text format.
+/// Authorized as `GET /api/v1/snapshot` is. The body is rendered from the
+/// snapshot the hub keeps and reused for [`METRICS_CACHE_TTL`].
+async fn metrics_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let body = state.metrics_cache.body(&state.hub).await?;
+    Ok(([(header::CONTENT_TYPE, prometheus::CONTENT_TYPE)], body))
 }
 
 /// A `GET /api/v1/series` error: the status and `{"error":"<code>"}`.
@@ -2756,6 +2822,8 @@ mod tests {
                 response_time_us: None,
                 co_active: false,
                 co_adjusted: None,
+                measured_count: 0,
+                measured_total_us: 0,
             },
             requests: vec![],
             errors: vec![],
@@ -2967,7 +3035,7 @@ mod tests {
             &config,
             bind.control,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("bind")
@@ -3453,7 +3521,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("localhost bind should succeed")
@@ -3476,7 +3544,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         {
@@ -3490,6 +3558,45 @@ mod tests {
                 eprintln!("skipping ::1 bind assertion: {msg}");
             }
         }
+    }
+
+    /// Without `--dashboard`, setup returns before it binds or spawns
+    /// anything: here the port it is given is taken, which would be a hard
+    /// error if it tried to bind it, and the runtime has as many live tasks
+    /// after it as before. `tests/it/dashboard_off.rs` checks the port
+    /// through a whole run on the default port.
+    #[tokio::test]
+    async fn setup_dashboard_without_the_option_binds_nothing() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("occupy port");
+        let port = occupied.local_addr().unwrap().port();
+
+        let config = GooseConfiguration {
+            dashboard: false,
+            dashboard_host: Some("127.0.0.1".to_string()),
+            dashboard_port: Some(port),
+            ..Default::default()
+        };
+        let metrics = tokio::runtime::Handle::current().metrics();
+        let tasks_before = metrics.num_alive_tasks();
+        let setup = setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            &runs::SavedRuns::new(&config),
+        )
+        .await
+        .expect("no dashboard to set up is not an error");
+        assert!(setup.is_none(), "no dashboard without --dashboard");
+        // A task spawned and still running, such as a server, shows here.
+        tokio::task::yield_now().await;
+        assert_eq!(
+            metrics.num_alive_tasks(),
+            tasks_before,
+            "no task spawned without --dashboard"
+        );
+        drop(occupied);
     }
 
     #[tokio::test]
@@ -3511,7 +3618,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect_err("second bind on same port must fail hard");
@@ -3776,6 +3883,31 @@ mod tests {
         (hub, request_rx)
     }
 
+    /// Scrapes that find the cached body stale at the same time share one
+    /// render.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_scrapes_share_one_render() {
+        let (hub, request_rx) = bare_hub();
+        let parent = spawn_mock_parent(request_rx, Arc::new(AtomicU64::new(0)));
+        let cache = Arc::new(MetricsCache::default());
+        let scrapes: Vec<_> = (0..16)
+            .map(|_| {
+                let (cache, hub) = (Arc::clone(&cache), hub.clone());
+                tokio::spawn(async move { cache.body(&hub).await })
+            })
+            .collect();
+        let mut bodies = Vec::new();
+        for scrape in scrapes {
+            bodies.push(scrape.await.expect("join").expect("body"));
+        }
+        assert_eq!(cache.renders.load(Ordering::Relaxed), 1);
+        assert!(bodies.iter().all(|body| body == &bodies[0]));
+        assert!(std::str::from_utf8(&bodies[0])
+            .expect("utf-8")
+            .contains("\ngoose_users 1\n"));
+        parent.abort();
+    }
+
     #[tokio::test]
     async fn build_records_processor_time_and_round_trip() {
         let (hub, request_rx) = bare_hub();
@@ -3928,7 +4060,7 @@ mod tests {
             };
             let mut listening = ListeningControllers::configured(&config);
             listening.telnet &= telnet_bound;
-            let setup = setup_dashboard(&config, None, listening, runs::SavedRuns::new(&config))
+            let setup = setup_dashboard(&config, None, listening, &runs::SavedRuns::new(&config))
                 .await
                 .expect("bind")
                 .expect("enabled");
@@ -3978,7 +4110,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("bind")
@@ -4007,7 +4139,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("bind")
@@ -5646,7 +5778,7 @@ mod tests {
                 &config,
                 None,
                 ListeningControllers::configured(&config),
-                runs::SavedRuns::new(&config),
+                &runs::SavedRuns::new(&config),
             )
             .await
             .expect("bind")

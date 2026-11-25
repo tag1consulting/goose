@@ -159,4 +159,4 @@ Here `checkout_flow` stands for a transaction function of your own that makes se
 
 **Use when:** a transaction is a multistep flow, such as a login or a checkout, and you want its requests counted together under one name.
 
-[Running A Load Test](running.md) runs the load test; to watch a run live in your browser, turn on the `dashboard` feature and add `--dashboard` (see [Live Dashboard](../controller/dashboard.md)).
+[Running A Load Test](running.md) runs the load test; to watch a run live in your browser, add `--dashboard` (see [Live Dashboard](../controller/dashboard.md)).

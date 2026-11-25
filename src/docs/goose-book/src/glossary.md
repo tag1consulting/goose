@@ -84,7 +84,7 @@ One run of a [GooseUser](#gooseuser) through its whole [scenario](#scenario). `-
 A way to stop a running load test from your own code, by calling `goose::trigger_killswitch` with a reason. Goose stops the run as it does for `ctrl-c`, writes every report, and records the run as canceled with that reason. See [Killswitch](./getting-started/killswitch.md).
 
 ## Live Dashboard
-The web page Goose serves while a load test runs with `--dashboard`. Goose must be built with the `dashboard` feature, which is off by default. The page shows users, requests, response times and errors second by second. See [Live Dashboard](./controller/dashboard.md).
+The web page Goose serves while a load test runs with `--dashboard`. It needs the `dashboard` feature, one of Goose's default features. The page shows users, requests, response times and errors second by second. See [Live Dashboard](./controller/dashboard.md).
 
 ## Logs
 Files that record what happens during a run, each turned on with its own option, such as `--request-log`. The [request](#request), [transaction](#transaction), [scenario](#scenario) and error logs record each one as it ends. The debug log holds what the load test writes with `log_debug()`, such as a failed request and its response. See [Logging](./logging/overview.md).

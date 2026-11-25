@@ -41,8 +41,8 @@ The crate is edition 2018. Its features:
 
 | Feature | What it adds |
 |---|---|
-| `cookies` | Cookie support in each user's client. The only default feature; `--no-default-features` drops it. |
-| `dashboard` | The live dashboard's HTTP server: `--dashboard` serves it on `127.0.0.1:5118`. |
+| `cookies` | Cookie support in each user's client. A default feature; `--no-default-features` drops it. |
+| `dashboard` | The live dashboard's HTTP server: `--dashboard` serves it on `127.0.0.1:5118`, and nothing starts without it. A default feature since 0.20; `--no-default-features` drops it, and axum with it. |
 | `mcp` | The MCP Controller, `--mcp`. |
 | `gaggle` | Distributed load tests: `--manager` and `--worker`. |
 | `pdf-reports` | PDF reports through headless Chrome; Goose uses an installed Chrome or Chromium, or downloads Chrome for Testing. |
@@ -58,12 +58,21 @@ CI runs the tests with [cargo-nextest](https://nexte.st/) (`cargo install cargo-
 cargo fmt -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 
+# Default features (cookies and dashboard): build, lint and the whole suite
+cargo build --verbose
+cargo clippy --all-targets -- -D warnings
+cargo nextest run --verbose
+
 # Build and test, once per feature set: "" (none), cookies, dashboard, mcp, gaggle, rustls-tls, native-tls
 cargo build --verbose --no-default-features --features "<feature>"
-cargo nextest run --verbose --no-default-features --features "<feature>"
-cargo test --verbose --no-default-features --features "<feature>" --doc
-# With no features, the same commands without --features.
-# With gaggle, also:
+# "": the whole suite and the doc tests
+cargo nextest run --verbose --no-default-features
+cargo test --verbose --no-default-features --doc
+# cookies, dashboard, mcp, rustls-tls and native-tls: only the feature's `tests` filter in CI.yml
+cargo nextest run --verbose --no-default-features --features "<feature>" -E '<the tests filter>'
+# gaggle: only the tests the feature adds, GAGGLE_JOB_TESTS in CI.yml and every test
+# the gaggle build has that the no feature build lacks (the `Test (gaggle)` step lists them)
+cargo nextest run --verbose --no-default-features --features gaggle -E '(<GAGGLE_JOB_TESTS>) | <the tests it adds>'
 cargo clippy --all-targets --no-default-features --features gaggle -- -D warnings
 cargo run --locked --manifest-path proto/gen/Cargo.toml -- --check
 
@@ -71,8 +80,9 @@ cargo run --locked --manifest-path proto/gen/Cargo.toml -- --check
 cargo build --verbose --all-features
 cargo tree --all-features -i zip   # must find no zip package
 RUSTDOCFLAGS="-D warnings" cargo rustdoc --lib --all-features --examples
-# Every test but the Gaggle process tests, which the gaggle job runs
-cargo nextest run --verbose --all-features -E 'not binary_id(goose::gaggle)'
+# Every test but the Gaggle process and library tests, which the gaggle job runs
+# (GAGGLE_JOB_TESTS in CI.yml); locally, the whole suite:
+cargo nextest run --verbose --all-features
 cargo test --verbose --all-features --doc
 cargo nextest run --verbose --all-features --run-ignored all -E 'binary_id(goose::it) & test(/^pdf_chrome::/)'
 TZ=Asia/Kolkata cargo nextest run --verbose --all-features -E 'test(graph) | binary_id(goose::metrics_print_unlocked)'
@@ -95,6 +105,8 @@ cd src/dashboard/static && npm ci && npm run check && npm run build
 git diff --exit-code -- app.js   # must show nothing
 npm test
 ```
+
+CI runs the core suite, every test that exists with no feature, in two jobs: `""` (no features) and `all-features`, which runs it with every feature on at once. Those two are also the only jobs that run the doc tests, whose list is the same for every feature set. The `default` job builds, lints and runs every test, but no doc test, with Goose's default features, the build a load test that names no features gets. Every other job in the `build` matrix runs only a nextest filter of the tests its feature adds or whose code path it changes, and every test not in that filter runs with the feature on in `all-features`. The `gaggle` job runs the tests the `gaggle` feature adds: `GAGGLE_JOB_TESTS`, at the top of the `build` job, which names the Gaggle process tests (`tests/gaggle.rs`) and the Gaggle library tests, and every other test its build has that the no feature build lacks, such as `tests/it/gaggle_shadow.rs`, which it lists rather than names, so a test that exists with `gaggle` alone runs there wherever it sits; it also runs clippy with `gaggle` alone and the protocol check. `cookies`, `rustls-tls`, `native-tls`, `dashboard` and `mcp` each run the filter named `tests` in the matrix, which names the modules to run: library tests by their module path (`client::` for `src/client.rs`, `controller::`, `tests::` for `src/lib.rs`) and integration tests by their file in `tests/it/`. `cookies` runs the tests that build or configure a client or check what a request carries; `rustls-tls` and `native-tls` the tests that build a client, check its TLS or HTTP version, or make an HTTPS connection, and `rustls-tls` also the WebSocket Controller tests. A new test in a module a filter names is picked up on its own. To mark a new feature specific test: put it behind `#[cfg(feature = "...")]` in a module the feature's filter names, or add its module (or its file in `tests/it/`) to that filter; likewise a new `cfg(feature = "...")` in a file whose tests the filter does not run means adding that file's module. A new Gaggle library test outside `gaggle::` goes into the names `GAGGLE_JOB_TESTS` lists, or it runs in `all-features` only. The comment above the filters in `CI.yml` says how all of them are derived. The `all-features` job leaves out the Gaggle tests the `gaggle` job runs (`GAGGLE_JOB_TESTS`); a Gaggle test that also needs another feature, `#[cfg(feature = "dashboard")]` in `src/gaggle/` say, exists only with all features, so add its name to the list there that keeps it: the `all-features` job fails, naming the test, until you do.
 
 CI also fails if a test leaves a `goose-runs/` folder in the checkout: a test that writes reports gives `--output-dir` a temporary folder.
 

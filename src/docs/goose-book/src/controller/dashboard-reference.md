@@ -2,16 +2,16 @@
 
 This page holds every flag, rule and endpoint of the [Live Dashboard](dashboard.md), and the snapshot fields a client most needs. Start there for what the dashboard shows and how to use it.
 
-> The dashboard is an opt in crate feature: build Goose with `--features dashboard`. [Stability](#stability) says what the dashboard and its `/api/v1` endpoints promise from one release to the next.
+> The dashboard is a default crate feature, `dashboard`, and starts only with `--dashboard`. [Stability](#stability) says what the dashboard and its `/api/v1` endpoints promise from one release to the next.
 
 Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
 
 ## Enabling the dashboard
 
-The dashboard is off by default. Compile Goose with the `dashboard` crate feature, then enable observation with `--dashboard`:
+The dashboard is off by default at run time. Goose's default features build it in; enable observation with `--dashboard`:
 
 ```bash
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard \
   -H https://staging.example.com \
   -u 50 -t 10m
@@ -40,7 +40,7 @@ The dashboard port opens when the Controllers' ports do, once Goose has built a 
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardNoAuth`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients`, and `GooseDefault::NoPercentilesOverTime`.
 
-> **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
+> **Feature flag:** the HTTP server is compiled behind the `dashboard` crate feature, one of Goose's default features. Without `--dashboard` it binds no port and spawns no task of its own. A build with `default-features = false` leaves it out, along with axum, unless it lists `dashboard` in `features`, as in `features = ["cookies", "dashboard"]`; such a build rejects `--dashboard` at startup with a hint to turn the feature on. In a checkout of Goose, `--no-default-features --features dashboard` builds the dashboard without cookies.
 
 The server lives as long as the load test, with one exception: see [Waiting after an autostarted run](#waiting-after-an-autostarted-run). When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
 
@@ -166,7 +166,7 @@ Read-only with `--dashboard-no-auth`, the listening line reads `(read-only, no t
 `--dashboard-no-auth` lets the dashboard start, stop, quit and change users, the run settings and the report switches, save the report now, and delete saved reports and logs, with no token and no `?token=` URL:
 
 ```bash
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard --dashboard-control --dashboard-no-auth \
   -H https://staging.example.com \
   -u 50 -t 10m
@@ -224,6 +224,7 @@ Under `--dashboard-no-auth`, off loopback the server also checks `Host` on every
 | `GET /api/v1/health` | **Public** | Liveness and timing counters; includes `control_enabled` and the Controller addresses (no load-test metrics); see [Health endpoint exception](#health-endpoint-exception) |
 | `GET /api/v1/snapshot` | **Required** | |
 | `GET /api/v1/events` (SSE) | **Required** | |
+| `GET /api/v1/metrics` | **Required** | The metrics in the Prometheus text format; see [Prometheus metrics endpoint](#prometheus-metrics-endpoint) |
 | `GET /api/v1/series` | **Required** | One request's response time heatmap; see [Request heatmap endpoint](#request-heatmap-endpoint) |
 | `GET /api/v1/reports` and `/api/v1/reports/*` | **Required** | The runs panel's reports; see [Report endpoints](#report-endpoints) |
 | `POST /api/v1/control/*` | **Required** when control is enabled, unless `--dashboard-no-auth` | Even on loopback; **404** when control is off |
@@ -277,7 +278,7 @@ curl -H "Authorization: Bearer SECRET" \
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
 
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard \
   --dashboard-host 0.0.0.0 \
   --dashboard-auth-token "$DASHBOARD_TOKEN" \
@@ -333,7 +334,7 @@ Control is **off by default**. Enable it with `--dashboard-control` and a token,
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
 
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard \
   --dashboard-control \
   --dashboard-auth-token "$DASHBOARD_TOKEN" \
@@ -350,7 +351,7 @@ Open `http://127.0.0.1:5118/?token=<token>`, with the token's value in place of 
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
 
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --no-autostart \
   --no-telnet \
   --dashboard \
@@ -801,6 +802,24 @@ curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" \
   "http://127.0.0.1:5118/api/v1/series?method=GET&name=%2F"
 ```
 
+### Prometheus metrics endpoint
+
+`GET /api/v1/metrics` returns the latest snapshot in the Prometheus text exposition format, version 0.0.4, with `Content-Type: text/plain; version=0.0.4; charset=utf-8`. It needs the token when one is configured, as an `Authorization: Bearer` header or `?token=`, as `GET /api/v1/snapshot` does; Prometheus sends it with `authorization: { credentials: ... }` in its scrape job. [Prometheus and Grafana](dashboard.md#prometheus-and-grafana) lists the metrics and has a scrape job and queries.
+
+The body is rendered from the snapshot the dashboard already builds about once a second, and the same body is answered for one second, so a scrape costs the same however many requests the load test makes, and scrapes that arrive together while the body is stale wait for one render and share it. A scrape counts as a poll: the dashboard builds snapshots while scrapes keep coming, as it does for an open page.
+
+Label values are escaped as the format requires (`\` as `\\`, `"` as `\"`, a newline as `\n`). The `goose_run_` series are the snapshot's `aggregate` and cover every request. The series by `method` and `name` are the rows of the snapshot's `requests`, at most 100 names by count: with `flags.requests_truncated` the names left out have no series, and nothing is summed by subtraction, so no counter goes down while the run's metrics stand. Counters start again from 0 when Goose resets its metrics, after the ramp up unless `--no-reset-metrics` and at each new run. `_count` and `_sum` cover the measured response times, without coordinated omission mitigation's synthetic ones, which the request counters include; quantiles are over every measured time since the reset, from the same times as the Requests table. Transactions are absent under `--no-transaction-metrics`, and under `--no-metrics` every request and transaction figure is 0 or absent.
+
+| Status | Body |
+|--------|------|
+| `200` | The metrics |
+| `401` | Empty: the token is missing or wrong |
+| `503` | Empty: no snapshot arrived within five seconds, or the dashboard is shutting down |
+
+```bash
+curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" http://127.0.0.1:5118/api/v1/metrics
+```
+
 ### Metrics disabled
 
 If Goose is started with `--no-metrics`, the dashboard still serves the shell and health endpoint, but snapshots report `flags.metrics_disabled: true` with empty request/error tables and empty series. The UI surfaces an honest empty state rather than fabricating data.
@@ -916,7 +935,7 @@ For full Controller documentation, see [Controlling A Running Goose Load Test](o
 
 ### Building it in
 
-In 0.19 and 0.20 the dashboard is an opt in crate feature: build with `--features dashboard`. The goal is to make it a default feature in 1.0, a decision to be made on the feedback from 0.19 and 0.20.
+From 0.20 the dashboard is a default crate feature, built into every load test that keeps Goose's default features, and still off at run time until `--dashboard`. In 0.19 it is an opt in feature: build with `features = ["dashboard"]`. A load test that sets `default-features = false` leaves it out, unless it lists `dashboard` in `features`.
 
 ### `/api/v1` in 0.19 and 0.20
 
@@ -928,7 +947,7 @@ Semver covers it: within 1.x no field, endpoint or error code is removed, rename
 
 ### The routes and the snapshot
 
-In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
+In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`. 0.20 adds `GET /api/v1/metrics`.
 
 ### What the contract is
 
@@ -986,9 +1005,9 @@ npm run build
 That runs esbuild and overwrites `app.js` in the same directory. Then rebuild Goose so the new script is embedded:
 
 ```bash
-cargo build --features dashboard
+cargo build
 # or exercise the dashboard:
-cargo run --release --features dashboard --example simple -- --dashboard ...
+cargo run --release --example simple -- --dashboard ...
 ```
 
 ### Snapshot types

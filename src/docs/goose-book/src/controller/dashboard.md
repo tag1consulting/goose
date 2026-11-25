@@ -6,10 +6,10 @@ The live dashboard is a web page Goose serves while a load test runs. It shows t
 
 *The first screen of a run with control on, explained section by section below, with the truncation notice under [The tables](#the-tables).*
 
-Build Goose with the `dashboard` feature, add `--dashboard`, and open `http://127.0.0.1:5118/`. In a checkout of Goose, against your own [Umami](../example/umami.md) site:
+Add `--dashboard` to a load test built with Goose's default features, and open `http://127.0.0.1:5118/`. In a checkout of Goose, against your own [Umami](../example/umami.md) site:
 
 ```bash
-cargo run --release --features dashboard --example umami -- \
+cargo run --release --example umami -- \
   --dashboard -H http://umami.example.com -u 100 -r 1
 ```
 
@@ -17,19 +17,21 @@ Most images on this page come from one run of the command above, against a local
 
 ## Turning it on
 
-The dashboard is an opt in crate feature. In your own load test crate, turn it on in `Cargo.toml`, as [Requirements](../requirements.md) shows:
-
-```toml
-goose = { version = "^0.19", features = ["dashboard"] }
-```
-
-Then run your load test with `--dashboard`, like any other option:
+The dashboard is the `dashboard` crate feature, one of Goose's default features, so a load test whose `goose` dependency keeps the default features has it built in. Run your load test with `--dashboard`, like any other option:
 
 ```bash
 cargo run --release -- --dashboard -H https://staging.example.com
 ```
 
-A build without the feature refuses `--dashboard` at startup. The dashboard listens on `127.0.0.1:5118`; [Dashboard Reference](dashboard-reference.md#related-flags) lists the flags that change that.
+Without `--dashboard` the dashboard is off: Goose binds no port for it and starts no server.
+
+To leave it out of the build, and with it axum, turn off Goose's default features, keeping `cookies` if you want it, as [Requirements](../requirements.md#features) shows. A build without the feature refuses `--dashboard` at startup; add `"dashboard"` to `features` to bring it back:
+
+```toml
+goose = { version = "^0.20", default-features = false, features = ["cookies", "dashboard"] }
+```
+
+In Goose 0.19 the dashboard is not a default feature: turn it on with `goose = { version = "^0.19", features = ["dashboard"] }`. The dashboard listens on `127.0.0.1:5118`; [Dashboard Reference](dashboard-reference.md#related-flags) lists the flags that change that.
 
 `--dashboard` alone gives a read-only dashboard. Its Control card says so, names the two ways to get control, and points to the telnet Controller, which Goose starts by default and which takes no authentication:
 
@@ -137,6 +139,49 @@ The **Runs** panel at the foot of the page lists the saved reports in `goose-run
 
 Each row downloads its HTML, Markdown or JSON report; a format the run did not save is rendered from its JSON report. Check **Compare** on two rows and **Download comparison** gives a Markdown report of the newer run against the older. With control on, **Delete** removes a run's reports and logs. See [Saving the report](dashboard-reference.md#saving-the-report) and [The runs panel](dashboard-reference.md#the-runs-panel).
 
+## Prometheus and Grafana
+
+While the dashboard runs it also serves the run's metrics in the Prometheus text format at `/api/v1/metrics`, for example `http://127.0.0.1:5118/api/v1/metrics`. Prometheus, Grafana Agent, VictoriaMetrics and InfluxDB 2's Prometheus scraper can all read it, so Grafana can graph a load test as it runs. It takes the dashboard's token as the snapshot does, and is open only where the dashboard needs no token.
+
+It serves:
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `goose_info` | gauge, always 1 | `version` |
+| `goose_users` | gauge: users running now | |
+| `goose_run_requests_total`, `goose_run_request_failures_total` | counter: every request name together | |
+| `goose_run_response_time_seconds` | summary of every request: `_sum`, `_count`, and quantiles `0.5`, `0.95` and `0.99` | |
+| `goose_requests_total`, `goose_request_failures_total` | counter | `method`, `name` |
+| `goose_response_time_seconds` | summary: `_sum`, `_count`, and quantiles `0.5`, `0.95` and `0.99` | `method`, `name` |
+| `goose_transactions_total`, `goose_transaction_failures_total` | counter | `scenario`, `name`, `transaction` (its number, such as `1.2`) |
+
+The figures are those of the dashboard, so they count from the last time Goose reset its metrics: by default, once every user of the run has started, which drops what the ramp up counted, unless Goose runs with `--no-reset-metrics`; and again when the next run starts. Prometheus reads each reset as a counter reset, so `rate()` carries on through it. With coordinated omission mitigation the request counters include its synthetic requests, as the Requests table does, while the summaries hold only the response times Goose measured.
+
+The series by `method` and `name` are those of the dashboard's Requests table: at most 100 names, the ones with the most requests. A name left out has no series until it is back in the table, and its counters then go on from where they were. So with more than 100 names a sum over `goose_requests_total`, by `method` or not, counts only the names in the table; `goose_run_requests_total` and the other `goose_run_` series count every request.
+
+A Prometheus scrape job that reads it every 5 seconds:
+
+```yaml
+scrape_configs:
+  - job_name: goose
+    scrape_interval: 5s
+    metrics_path: /api/v1/metrics
+    authorization:
+      credentials: SECRET   # the dashboard token; leave this out with no token
+    static_configs:
+      - targets: ["127.0.0.1:5118"]
+```
+
+Queries for Grafana:
+
+| Panel | Query |
+|-------|-------|
+| Requests per second | `rate(goose_run_requests_total[30s])`, or by request `sum by (name) (rate(goose_requests_total[30s]))` |
+| Failures per second | `rate(goose_run_request_failures_total[30s])`, or by request `sum by (name) (rate(goose_request_failures_total[30s]))` |
+| Mean response time | `rate(goose_response_time_seconds_sum[30s]) / rate(goose_response_time_seconds_count[30s])` |
+
+The endpoint lives only while the dashboard does, from Goose's start until it exits, so a short test may end after only a few scrapes. To scrape from another machine, bind the dashboard off loopback with a token, as [Watching from another machine](#watching-from-another-machine) says. [Prometheus metrics endpoint](dashboard-reference.md#prometheus-metrics-endpoint) has the details.
+
 ## When the run ends
 
 When a run Goose started on its own (without `--no-autostart`) reaches its end, Goose exits. That is when its run time and any ramp down are over, its test plan finishes, or every user exits. If a page is connected at that moment and the report was saved, Goose stays up instead, so the report can still be downloaded, and prints:
@@ -151,4 +196,4 @@ A Stop leaves Goose in Idle with the page up, ready for the next run, and a run 
 
 ## Reference
 
-[Dashboard Reference](dashboard-reference.md) lists every flag and default, the bind and token rules, the control endpoints, the snapshot and health endpoints, and how to build the page from its TypeScript sources.
+[Dashboard Reference](dashboard-reference.md) lists every flag and default, the bind and token rules, the control endpoints, the snapshot, Prometheus and health endpoints, and how to build the page from its TypeScript sources.
