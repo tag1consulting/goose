@@ -76,28 +76,32 @@ async fn login_page(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-When the pattern is built from an argument, give each value your test uses a static of its own, and build the pattern for any other value on each call, as the Umami example's `get_form_value` does:
+When the pattern is built from an argument, compile it once for each value: keep the regexes in a map, and build one only for a value not seen before. Pass the value through `regex::escape`, so a form name such as `user[id]` matches itself and not a character class. The lock is held only to look a regex up, and cloning a `Regex` is cheap, as clones share the compiled program:
 
 ```rust,ignore
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 fn form_value_regex(name: &str) -> Regex {
-    Regex::new(&format!(r#"name="{name}" value=['"](.*?)['"]"#)).unwrap()
+    static BY_NAME: LazyLock<Mutex<HashMap<String, Regex>>> = LazyLock::new(Default::default);
+    let mut by_name = BY_NAME.lock().unwrap();
+    if let Some(re) = by_name.get(name) {
+        return re.clone();
+    }
+    let pattern = format!(r#"name="{}" value=['"](.*?)['"]"#, regex::escape(name));
+    let re = Regex::new(&pattern).unwrap();
+    by_name.insert(name.to_string(), re.clone());
+    re
 }
 
 fn get_form_value(html: &str, name: &str) -> Option<String> {
-    static FORM_BUILD_ID: LazyLock<Regex> = LazyLock::new(|| form_value_regex("form_build_id"));
-    static FORM_TOKEN: LazyLock<Regex> = LazyLock::new(|| form_value_regex("form_token"));
-    let other;
-    let re = match name {
-        "form_build_id" => &*FORM_BUILD_ID,
-        "form_token" => &*FORM_TOKEN,
-        _ => {
-            other = form_value_regex(name);
-            &other
-        }
-    };
-    re.captures(html).map(|value| value[1].to_string())
+    form_value_regex(name)
+        .captures(html)
+        .map(|value| value[1].to_string())
 }
 ```
+
+When a test only ever asks for a few fixed values, a `LazyLock` static for each, as the Umami example's `get_form_value` keeps for `form_build_id` and `form_token`, does the same without a lock.
 
 ### Name requests that carry an ID
 
