@@ -3,12 +3,15 @@
 //! scrapes it, such as Grafana Agent or VictoriaMetrics.
 //!
 //! Rendered from the snapshot the hub already built, so a scrape costs the
-//! same however many requests the load test makes. Requests are the
-//! snapshot's request rows, the dashboard's table of at most
+//! same however many requests the load test makes. The `goose_run_*` series
+//! cover every request. The series by `method` and `name` are the snapshot's
+//! request rows, the dashboard's table of at most
 //! [`MAX_REQUEST_ROWS`](crate::metrics::dashboard_snapshot::MAX_REQUEST_ROWS)
-//! names by count; past it, the rest are folded into one series labelled
-//! `name="other"` with no `method` label.
+//! names by count: a name outside it has no series until it is back in it,
+//! and its counters then go on from where they were, so no counter ever
+//! goes down within a run.
 
+use crate::metrics::dashboard_snapshot::MicrosecondTimes;
 use crate::metrics::DashboardSnapshot;
 use std::fmt::Write;
 
@@ -41,61 +44,49 @@ fn seconds(us: u64) -> f64 {
     us as f64 / 1_000_000.0
 }
 
-/// One request series: its labels, as written between braces, and figures.
-struct RequestSeries {
-    labels: String,
-    requests: u64,
-    failures: u64,
-    sum_seconds: f64,
-    /// p50, p95 and p99 in microseconds; `None` for the folded series and a
-    /// request without times.
-    quantiles: Option<[u64; 3]>,
+/// The samples of one response time summary: its quantiles, when there are
+/// times, then `_sum` and `_count` of the measured times. `labels` are as
+/// written between braces, empty for none.
+fn summary(
+    out: &mut String,
+    name: &str,
+    labels: &str,
+    times: Option<&MicrosecondTimes>,
+    count: u64,
+    total_us: u64,
+) {
+    let (open, close, comma) = if labels.is_empty() {
+        ("", "", "")
+    } else {
+        ("{", "}", ",")
+    };
+    if let Some(times) = times {
+        for (quantile, us) in [("0.5", times.p50), ("0.95", times.p95), ("0.99", times.p99)] {
+            let _ = writeln!(
+                out,
+                "{name}{{{labels}{comma}quantile=\"{quantile}\"}} {}",
+                seconds(us)
+            );
+        }
+    }
+    let _ = writeln!(out, "{name}_sum{open}{labels}{close} {}", seconds(total_us));
+    let _ = writeln!(out, "{name}_count{open}{labels}{close} {count}");
 }
 
 /// `snapshot` in the Prometheus text format.
 pub(super) fn render(snapshot: &DashboardSnapshot) -> String {
-    let mut requests: Vec<RequestSeries> = snapshot
+    let labels: Vec<String> = snapshot
         .requests
         .iter()
-        .map(|row| RequestSeries {
-            labels: format!(
+        .map(|row| {
+            format!(
                 "method=\"{}\",name=\"{}\"",
                 escape(&row.method),
                 escape(&row.name)
-            ),
-            requests: row.request_count,
-            failures: row.failure_count,
-            sum_seconds: row.response_time_avg_ms * row.request_count as f64 / 1000.0,
-            quantiles: row
-                .response_time_us
-                .as_ref()
-                .map(|us| [us.p50, us.p95, us.p99]),
+            )
         })
         .collect();
-    if snapshot.flags.requests_truncated {
-        let aggregate = &snapshot.aggregate;
-        let listed = |figure: fn(&RequestSeries) -> u64| {
-            requests
-                .iter()
-                .fold(0u64, |total, row| total.saturating_add(figure(row)))
-        };
-        let listed_sum: f64 = requests.iter().map(|row| row.sum_seconds).sum();
-        let total_sum = aggregate.response_time_avg_ms * aggregate.total_requests as f64 / 1000.0;
-        let other = RequestSeries {
-            labels: "name=\"other\"".to_string(),
-            requests: aggregate
-                .total_requests
-                .saturating_sub(listed(|row| row.requests)),
-            failures: aggregate
-                .total_failures
-                .saturating_sub(listed(|row| row.failures)),
-            sum_seconds: (total_sum - listed_sum).max(0.0),
-            quantiles: None,
-        };
-        requests.push(other);
-    }
-
-    let mut out = String::with_capacity(512 + requests.len() * 512);
+    let mut out = String::with_capacity(1024 + labels.len() * 512);
 
     header(&mut out, "goose_info", "gauge", "Goose version, always 1.");
     let _ = writeln!(
@@ -107,17 +98,51 @@ pub(super) fn render(snapshot: &DashboardSnapshot) -> String {
     header(&mut out, "goose_users", "gauge", "Users currently running.");
     let _ = writeln!(out, "goose_users {}", snapshot.active_users);
 
+    let aggregate = &snapshot.aggregate;
+    header(
+        &mut out,
+        "goose_run_requests_total",
+        "counter",
+        "Requests of every name since metrics were last reset.",
+    );
+    let _ = writeln!(out, "goose_run_requests_total {}", aggregate.total_requests);
+    header(
+        &mut out,
+        "goose_run_request_failures_total",
+        "counter",
+        "Failed requests of every name since metrics were last reset.",
+    );
+    let _ = writeln!(
+        out,
+        "goose_run_request_failures_total {}",
+        aggregate.total_failures
+    );
+    header(
+        &mut out,
+        "goose_run_response_time_seconds",
+        "summary",
+        "Measured response times of every request since metrics were last reset.",
+    );
+    summary(
+        &mut out,
+        "goose_run_response_time_seconds",
+        "",
+        aggregate.response_time_us.as_ref(),
+        aggregate.measured_count,
+        aggregate.measured_total_us,
+    );
+
     header(
         &mut out,
         "goose_requests_total",
         "counter",
-        "Requests made since the run started.",
+        "Requests since metrics were last reset.",
     );
-    for row in &requests {
+    for (row, labels) in snapshot.requests.iter().zip(&labels) {
         let _ = writeln!(
             out,
-            "goose_requests_total{{{}}} {}",
-            row.labels, row.requests
+            "goose_requests_total{{{labels}}} {}",
+            row.request_count
         );
     }
 
@@ -125,13 +150,13 @@ pub(super) fn render(snapshot: &DashboardSnapshot) -> String {
         &mut out,
         "goose_request_failures_total",
         "counter",
-        "Failed requests since the run started.",
+        "Failed requests since metrics were last reset.",
     );
-    for row in &requests {
+    for (row, labels) in snapshot.requests.iter().zip(&labels) {
         let _ = writeln!(
             out,
-            "goose_request_failures_total{{{}}} {}",
-            row.labels, row.failures
+            "goose_request_failures_total{{{labels}}} {}",
+            row.failure_count
         );
     }
 
@@ -139,28 +164,16 @@ pub(super) fn render(snapshot: &DashboardSnapshot) -> String {
         &mut out,
         "goose_response_time_seconds",
         "summary",
-        "Response times since the run started.",
+        "Measured response times since metrics were last reset.",
     );
-    for row in &requests {
-        if let Some(quantiles) = row.quantiles {
-            for (quantile, us) in ["0.5", "0.95", "0.99"].iter().zip(quantiles) {
-                let _ = writeln!(
-                    out,
-                    "goose_response_time_seconds{{{},quantile=\"{quantile}\"}} {}",
-                    row.labels,
-                    seconds(us)
-                );
-            }
-        }
-        let _ = writeln!(
-            out,
-            "goose_response_time_seconds_sum{{{}}} {}",
-            row.labels, row.sum_seconds
-        );
-        let _ = writeln!(
-            out,
-            "goose_response_time_seconds_count{{{}}} {}",
-            row.labels, row.requests
+    for (row, labels) in snapshot.requests.iter().zip(&labels) {
+        summary(
+            &mut out,
+            "goose_response_time_seconds",
+            labels,
+            row.response_time_us.as_ref(),
+            row.measured_count,
+            row.measured_total_us,
         );
     }
 
@@ -184,7 +197,7 @@ pub(super) fn render(snapshot: &DashboardSnapshot) -> String {
             &mut out,
             "goose_transactions_total",
             "counter",
-            "Transactions run since the run started.",
+            "Transactions run since metrics were last reset.",
         );
         for (row, labels) in snapshot.transactions.iter().zip(&labels) {
             let _ = writeln!(
@@ -197,7 +210,7 @@ pub(super) fn render(snapshot: &DashboardSnapshot) -> String {
             &mut out,
             "goose_transaction_failures_total",
             "counter",
-            "Failed transactions since the run started.",
+            "Failed transactions since metrics were last reset.",
         );
         for (row, labels) in snapshot.transactions.iter().zip(&labels) {
             let _ = writeln!(
@@ -215,11 +228,23 @@ pub(super) fn render(snapshot: &DashboardSnapshot) -> String {
 mod tests {
     use super::*;
     use crate::metrics::dashboard_snapshot::{
-        AggregateMetrics, MicrosecondTimes, Percentiles, RequestRow, SeriesWindow, SnapshotFlags,
-        SnapshotReport, SnapshotSettings, TransactionRow,
+        AggregateMetrics, Percentiles, RequestRow, SeriesWindow, SnapshotFlags, SnapshotReport,
+        SnapshotSettings, TransactionRow,
     };
 
+    fn times() -> MicrosecondTimes {
+        MicrosecondTimes {
+            min: 1_000,
+            max: 90_000,
+            p50: 2_000,
+            p95: 15_000,
+            p99: 80_000,
+        }
+    }
+
+    /// A snapshot holding `requests`, its aggregate their totals.
     fn snapshot(requests: Vec<RequestRow>, truncated: bool) -> DashboardSnapshot {
+        let sum = |figure: fn(&RequestRow) -> u64| requests.iter().map(figure).sum::<u64>();
         DashboardSnapshot {
             version: 1,
             generated_at: jiff::Timestamp::now(),
@@ -233,8 +258,8 @@ mod tests {
             total_users: 0,
             hosts: vec![],
             aggregate: AggregateMetrics {
-                total_requests: 0,
-                total_failures: 0,
+                total_requests: sum(|row| row.request_count),
+                total_failures: sum(|row| row.failure_count),
                 requests_per_second: 0.0,
                 failures_per_second: 0.0,
                 failure_rate: 0.0,
@@ -246,9 +271,11 @@ mod tests {
                     p95: 0,
                     p99: 0,
                 },
-                response_time_us: None,
+                response_time_us: (!requests.is_empty()).then(times),
                 co_active: false,
                 co_adjusted: None,
+                measured_count: sum(|row| row.measured_count),
+                measured_total_us: sum(|row| row.measured_total_us),
             },
             requests,
             errors: vec![],
@@ -273,7 +300,9 @@ mod tests {
         }
     }
 
-    fn request(method: &str, name: &str, count: u64, failures: u64, avg_ms: f64) -> RequestRow {
+    /// A request counted `count` times, `failures` of them failed, with
+    /// `count` measured times totalling `total_us`.
+    fn request(method: &str, name: &str, count: u64, failures: u64, total_us: u64) -> RequestRow {
         RequestRow {
             method: method.into(),
             name: name.into(),
@@ -281,7 +310,7 @@ mod tests {
             failure_count: failures,
             requests_per_second: 0.0,
             failures_per_second: 0.0,
-            response_time_avg_ms: avg_ms,
+            response_time_avg_ms: 0.0,
             response_time_min_ms: 0,
             response_time_max_ms: 0,
             percentile_ms: Percentiles {
@@ -289,16 +318,12 @@ mod tests {
                 p95: 0,
                 p99: 0,
             },
-            response_time_us: Some(MicrosecondTimes {
-                min: 1_000,
-                max: 90_000,
-                p50: 2_000,
-                p95: 15_000,
-                p99: 80_000,
-            }),
+            response_time_us: Some(times()),
             status_codes: vec![],
             co_adjusted: None,
             has_series: false,
+            measured_count: count,
+            measured_total_us: total_us,
         }
     }
 
@@ -334,8 +359,8 @@ mod tests {
     fn renders_two_requests() {
         let mut snapshot = snapshot(
             vec![
-                request("GET", "/", 40, 2, 12.5),
-                request("POST", "login", 10, 0, 100.0),
+                request("GET", "/", 40, 2, 500_000),
+                request("POST", "login", 10, 0, 1_000_000),
             ],
             false,
         );
@@ -351,15 +376,28 @@ goose_info{version=\"0.20.0-dev\"} 1
 # HELP goose_users Users currently running.
 # TYPE goose_users gauge
 goose_users 5
-# HELP goose_requests_total Requests made since the run started.
+# HELP goose_run_requests_total Requests of every name since metrics were last reset.
+# TYPE goose_run_requests_total counter
+goose_run_requests_total 50
+# HELP goose_run_request_failures_total Failed requests of every name since metrics were last reset.
+# TYPE goose_run_request_failures_total counter
+goose_run_request_failures_total 2
+# HELP goose_run_response_time_seconds Measured response times of every request since metrics were last reset.
+# TYPE goose_run_response_time_seconds summary
+goose_run_response_time_seconds{quantile=\"0.5\"} 0.002
+goose_run_response_time_seconds{quantile=\"0.95\"} 0.015
+goose_run_response_time_seconds{quantile=\"0.99\"} 0.08
+goose_run_response_time_seconds_sum 1.5
+goose_run_response_time_seconds_count 50
+# HELP goose_requests_total Requests since metrics were last reset.
 # TYPE goose_requests_total counter
 goose_requests_total{method=\"GET\",name=\"/\"} 40
 goose_requests_total{method=\"POST\",name=\"login\"} 10
-# HELP goose_request_failures_total Failed requests since the run started.
+# HELP goose_request_failures_total Failed requests since metrics were last reset.
 # TYPE goose_request_failures_total counter
 goose_request_failures_total{method=\"GET\",name=\"/\"} 2
 goose_request_failures_total{method=\"POST\",name=\"login\"} 0
-# HELP goose_response_time_seconds Response times since the run started.
+# HELP goose_response_time_seconds Measured response times since metrics were last reset.
 # TYPE goose_response_time_seconds summary
 goose_response_time_seconds{method=\"GET\",name=\"/\",quantile=\"0.5\"} 0.002
 goose_response_time_seconds{method=\"GET\",name=\"/\",quantile=\"0.95\"} 0.015
@@ -371,11 +409,11 @@ goose_response_time_seconds{method=\"POST\",name=\"login\",quantile=\"0.95\"} 0.
 goose_response_time_seconds{method=\"POST\",name=\"login\",quantile=\"0.99\"} 0.08
 goose_response_time_seconds_sum{method=\"POST\",name=\"login\"} 1
 goose_response_time_seconds_count{method=\"POST\",name=\"login\"} 10
-# HELP goose_transactions_total Transactions run since the run started.
+# HELP goose_transactions_total Transactions run since metrics were last reset.
 # TYPE goose_transactions_total counter
 goose_transactions_total{scenario=\"Website\",name=\"login\",transaction=\"1.1\"} 10
 goose_transactions_total{scenario=\"Website\",name=\"\",transaction=\"1.2\"} 40
-# HELP goose_transaction_failures_total Failed transactions since the run started.
+# HELP goose_transaction_failures_total Failed transactions since metrics were last reset.
 # TYPE goose_transaction_failures_total counter
 goose_transaction_failures_total{scenario=\"Website\",name=\"login\",transaction=\"1.1\"} 0
 goose_transaction_failures_total{scenario=\"Website\",name=\"\",transaction=\"1.2\"} 2
@@ -385,7 +423,7 @@ goose_transaction_failures_total{scenario=\"Website\",name=\"\",transaction=\"1.
 
     #[test]
     fn escapes_label_values() {
-        let snapshot = snapshot(vec![request("GET", "a\\b\"c\nd", 1, 0, 1.0)], false);
+        let snapshot = snapshot(vec![request("GET", "a\\b\"c\nd", 1, 0, 1_000)], false);
         let text = render(&snapshot);
         assert!(
             text.contains("goose_requests_total{method=\"GET\",name=\"a\\\\b\\\"c\\nd\"} 1\n"),
@@ -402,47 +440,77 @@ goose_transaction_failures_total{scenario=\"Website\",name=\"\",transaction=\"1.
         }
     }
 
+    /// Past the table's cap, the names it leaves out have no series of
+    /// their own and are not summed by subtraction, which would make a
+    /// counter go down when a name moves in or out of the table; the
+    /// `goose_run_*` series count them.
     #[test]
-    fn folds_names_past_the_cap_into_other() {
-        let mut snapshot = snapshot(
-            vec![
-                request("GET", "/a", 50, 5, 10.0),
-                request("GET", "/b", 30, 1, 20.0),
-            ],
-            true,
-        );
+    fn names_past_the_cap_are_counted_in_the_run_totals() {
+        let listed = vec![
+            request("GET", "/a", 50, 5, 500_000),
+            request("GET", "/b", 30, 1, 600_000),
+        ];
+        let mut snapshot = snapshot(listed, true);
         // Two more names the snapshot does not list: 20 requests, 4 failed,
         // 2 s of response time between them.
-        snapshot.aggregate.total_requests = 100;
-        snapshot.aggregate.total_failures = 10;
-        snapshot.aggregate.response_time_avg_ms = 31.0;
+        snapshot.aggregate.total_requests += 20;
+        snapshot.aggregate.total_failures += 4;
+        snapshot.aggregate.measured_count += 20;
+        snapshot.aggregate.measured_total_us += 2_000_000;
         let text = render(&snapshot);
         assert!(
-            text.contains("goose_requests_total{name=\"other\"} 20\n"),
+            text.contains("\ngoose_run_requests_total 100\n"),
             "{}",
             text
         );
         assert!(
-            text.contains("goose_request_failures_total{name=\"other\"} 4\n"),
+            text.contains("\ngoose_run_request_failures_total 10\n"),
             "{}",
             text
         );
         assert!(
-            text.contains("goose_response_time_seconds_sum{name=\"other\"} 2\n"),
+            text.contains("\ngoose_run_response_time_seconds_sum 3.1\n"),
             "{}",
             text
         );
         assert!(
-            text.contains("goose_response_time_seconds_count{name=\"other\"} 20\n"),
+            text.contains("\ngoose_run_response_time_seconds_count 100\n"),
+            "{}",
+            text
+        );
+        assert!(!text.contains("other"), "{}", text);
+        assert_eq!(text.matches("\ngoose_requests_total{").count(), 2);
+    }
+
+    /// Coordinated omission mitigation counts its synthetic requests, as
+    /// the dashboard's tables do, but the summary holds only the times that
+    /// were measured.
+    #[test]
+    fn summary_holds_only_measured_times() {
+        let mut row = request("GET", "/", 15, 0, 50_000);
+        row.measured_count = 10;
+        let snapshot = snapshot(vec![row], false);
+        let text = render(&snapshot);
+        assert!(
+            text.contains("goose_requests_total{method=\"GET\",name=\"/\"} 15\n"),
             "{}",
             text
         );
         assert!(
-            !text.contains("{name=\"other\",quantile="),
-            "the folded series has no quantiles: {}",
+            text.contains("goose_response_time_seconds_count{method=\"GET\",name=\"/\"} 10\n"),
+            "{}",
             text
         );
-        assert_eq!(text.matches("goose_requests_total{").count(), 3);
+        assert!(
+            text.contains("goose_response_time_seconds_sum{method=\"GET\",name=\"/\"} 0.05\n"),
+            "{}",
+            text
+        );
+        assert!(
+            text.contains("\ngoose_run_response_time_seconds_count 10\n"),
+            "{}",
+            text
+        );
     }
 
     #[test]
@@ -450,6 +518,9 @@ goose_transaction_failures_total{scenario=\"Website\",name=\"\",transaction=\"1.
         let text = render(&snapshot(vec![], false));
         assert!(text.contains("\ngoose_users 0\n"), "{}", text);
         assert!(text.contains("goose_info{version=\"0.20.0-dev\"} 1\n"));
+        assert!(text.contains("\ngoose_run_requests_total 0\n"));
+        assert!(text.contains("\ngoose_run_response_time_seconds_count 0\n"));
+        assert!(!text.contains("quantile"), "no quantiles without times");
         assert!(!text.contains("goose_transactions_total"));
         for line in text.lines() {
             let mut parts = line.split(' ');

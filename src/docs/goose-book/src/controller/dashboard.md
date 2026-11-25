@@ -147,11 +147,15 @@ It serves:
 |--------|------|--------|
 | `goose_info` | gauge, always 1 | `version` |
 | `goose_users` | gauge: users running now | |
+| `goose_run_requests_total`, `goose_run_request_failures_total` | counter: every request name together | |
+| `goose_run_response_time_seconds` | summary of every request: `_sum`, `_count`, and quantiles `0.5`, `0.95` and `0.99` | |
 | `goose_requests_total`, `goose_request_failures_total` | counter | `method`, `name` |
-| `goose_response_time_seconds` | summary: `_sum`, `_count`, and quantiles `0.5`, `0.95` and `0.99` over the whole run | `method`, `name` |
+| `goose_response_time_seconds` | summary: `_sum`, `_count`, and quantiles `0.5`, `0.95` and `0.99` | `method`, `name` |
 | `goose_transactions_total`, `goose_transaction_failures_total` | counter | `scenario`, `name`, `transaction` (its number, such as `1.2`) |
 
-The counters count from the start of the run and start again at 0 with the next one, which Prometheus reads as a counter reset. Requests are those of the dashboard's Requests table, at most 100 names by count; past that the rest are counted together under `name="other"`, with no `method` and no quantiles.
+The figures are those of the dashboard, so they count from the last time Goose reset its metrics: by default, once every user of the run has started, which drops what the ramp up counted, unless Goose runs with `--no-reset-metrics`; and again when the next run starts. Prometheus reads each reset as a counter reset, so `rate()` carries on through it. With coordinated omission mitigation the request counters include its synthetic requests, as the Requests table does, while the summaries hold only the response times Goose measured.
+
+The series by `method` and `name` are those of the dashboard's Requests table: at most 100 names, the ones with the most requests. A name left out has no series until it is back in the table, and its counters then go on from where they were. So with more than 100 names a sum over `goose_requests_total`, by `method` or not, counts only the names in the table; `goose_run_requests_total` and the other `goose_run_` series count every request.
 
 A Prometheus scrape job that reads it every 5 seconds:
 
@@ -170,8 +174,8 @@ Queries for Grafana:
 
 | Panel | Query |
 |-------|-------|
-| Requests per second | `sum by (name) (rate(goose_requests_total[30s]))` |
-| Failures per second | `sum by (name) (rate(goose_request_failures_total[30s]))` |
+| Requests per second | `rate(goose_run_requests_total[30s])`, or by request `sum by (name) (rate(goose_requests_total[30s]))` |
+| Failures per second | `rate(goose_run_request_failures_total[30s])`, or by request `sum by (name) (rate(goose_request_failures_total[30s]))` |
 | Mean response time | `rate(goose_response_time_seconds_sum[30s]) / rate(goose_response_time_seconds_count[30s])` |
 
 The endpoint lives only while the dashboard does, from Goose's start until it exits, so a short test may end after only a few scrapes. To scrape from another machine, bind the dashboard off loopback with a token, as [Watching from another machine](#watching-from-another-machine) says. [Prometheus metrics endpoint](dashboard-reference.md#prometheus-metrics-endpoint) has the details.

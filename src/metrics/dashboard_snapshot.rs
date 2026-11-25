@@ -404,6 +404,13 @@ pub(crate) struct AggregateMetrics {
     /// at least one CO event (or synthetic request).
     pub co_active: bool,
     pub co_adjusted: Option<CoAdjusted>,
+    /// How many measured response times there are, and their total in
+    /// microseconds; coordinated omission mitigation's synthetic times are
+    /// not among them. Not part of the JSON.
+    #[serde(skip)]
+    pub measured_count: u64,
+    #[serde(skip)]
+    pub measured_total_us: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -427,6 +434,13 @@ pub(crate) struct RequestRow {
     /// they are kept for the first 100 request names seen since metrics were
     /// last reset.
     pub has_series: bool,
+    /// How many measured response times there are, and their total in
+    /// microseconds; coordinated omission mitigation's synthetic times are
+    /// not among them. Not part of the JSON.
+    #[serde(skip)]
+    pub measured_count: u64,
+    #[serde(skip)]
+    pub measured_total_us: u64,
 }
 
 /// Metrics for one registered scenario.
@@ -788,6 +802,8 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 response_time_us: None,
                 co_active: false,
                 co_adjusted: None,
+                measured_count: 0,
+                measured_total_us: 0,
             },
             requests: Vec::new(),
             errors: Vec::new(),
@@ -971,6 +987,8 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             response_time_us,
             co_active,
             co_adjusted: co_aggregate.as_ref().map(CoAdjusted::from_timing_data),
+            measured_count: aggregate.counter as u64,
+            measured_total_us: aggregate.total_time_us,
         },
         requests: request_rows,
         errors: error_rows,
@@ -1040,6 +1058,8 @@ fn request_row_from_aggregate(
             None
         },
         has_series,
+        measured_count: request.raw_data.counter as u64,
+        measured_total_us: request.raw_data.total_time_us,
     }
 }
 

@@ -896,8 +896,8 @@ struct DashboardState {
     /// Recent `GET /api/v1/series` 200 answers by method and name, with when
     /// each was built.
     series_cache: Arc<Mutex<SeriesCache>>,
-    /// The latest `GET /api/v1/metrics` body, with when it was rendered.
-    metrics_cache: Arc<Mutex<Option<(Instant, Bytes)>>>,
+    /// The latest `GET /api/v1/metrics` body.
+    metrics_cache: Arc<MetricsCache>,
     /// The folder run folders go in, which the report routes read, and only
     /// them; the folder of the run in progress, which Delete refuses and the
     /// runs panel shows as running; and the listing cache. Shared with the
@@ -1072,7 +1072,7 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
-        metrics_cache: Arc::new(Mutex::new(None)),
+        metrics_cache: Arc::new(MetricsCache::default()),
         saved_runs,
         log_folder: log_folder.clone(),
         controllers: HealthControllers {
@@ -1543,6 +1543,43 @@ async fn snapshot_handler(
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
 }
 
+/// The latest `GET /api/v1/metrics` body, with when it was rendered.
+#[derive(Default)]
+struct MetricsCache {
+    /// Held while a body is rendered, so scrapes that find the body stale
+    /// together wait for one render and share it.
+    body: tokio::sync::Mutex<Option<(Instant, Bytes)>>,
+    /// Bodies rendered (tests).
+    renders: AtomicU64,
+}
+
+impl MetricsCache {
+    /// A body no older than [`METRICS_CACHE_TTL`], rendered from the hub's
+    /// latest snapshot when the cached one is older.
+    async fn body(&self, hub: &SnapshotHub) -> Result<Bytes, StatusCode> {
+        let mut cached = self.body.lock().await;
+        if let Some((built, body)) = cached.as_ref() {
+            if built.elapsed() < METRICS_CACHE_TTL {
+                // Keep the hub building while scrapes keep coming.
+                hub.mark_poll();
+                return Ok(body.clone());
+            }
+        }
+        // Waits for a snapshot no older than the hub's cadence.
+        hub.snapshot_bytes().await?;
+        let body = {
+            let view = hub.inner.view.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(snapshot) = view.snapshot.as_ref() else {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            };
+            Bytes::from(prometheus::render(snapshot))
+        };
+        self.renders.fetch_add(1, Ordering::Relaxed);
+        *cached = Some((Instant::now(), body.clone()));
+        Ok(body)
+    }
+}
+
 /// `GET /api/v1/metrics`: the latest snapshot in the Prometheus text format.
 /// Authorized as `GET /api/v1/snapshot` is. The body is rendered from the
 /// snapshot the hub keeps and reused for [`METRICS_CACHE_TTL`].
@@ -1554,40 +1591,8 @@ async fn metrics_handler(
     if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let response = |body: Bytes| ([(header::CONTENT_TYPE, prometheus::CONTENT_TYPE)], body);
-
-    let cached = state
-        .metrics_cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .filter(|(built, _)| built.elapsed() < METRICS_CACHE_TTL)
-        .map(|(_, body)| body.clone());
-    if let Some(body) = cached {
-        // Keep the hub building while scrapes keep coming.
-        state.hub.mark_poll();
-        return Ok(response(body));
-    }
-
-    // Waits for a snapshot no older than the hub's cadence.
-    state.hub.snapshot_bytes().await?;
-    let body = {
-        let view = state
-            .hub
-            .inner
-            .view
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let Some(snapshot) = view.snapshot.as_ref() else {
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
-        };
-        Bytes::from(prometheus::render(snapshot))
-    };
-    *state
-        .metrics_cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), body.clone()));
-    Ok(response(body))
+    let body = state.metrics_cache.body(&state.hub).await?;
+    Ok(([(header::CONTENT_TYPE, prometheus::CONTENT_TYPE)], body))
 }
 
 /// A `GET /api/v1/series` error: the status and `{"error":"<code>"}`.
@@ -2813,6 +2818,8 @@ mod tests {
                 response_time_us: None,
                 co_active: false,
                 co_adjusted: None,
+                measured_count: 0,
+                measured_total_us: 0,
             },
             requests: vec![],
             errors: vec![],
@@ -3831,6 +3838,31 @@ mod tests {
             Arc::new(AtomicUsize::new(0)),
         );
         (hub, request_rx)
+    }
+
+    /// Scrapes that find the cached body stale at the same time share one
+    /// render.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_scrapes_share_one_render() {
+        let (hub, request_rx) = bare_hub();
+        let parent = spawn_mock_parent(request_rx, Arc::new(AtomicU64::new(0)));
+        let cache = Arc::new(MetricsCache::default());
+        let scrapes: Vec<_> = (0..16)
+            .map(|_| {
+                let (cache, hub) = (Arc::clone(&cache), hub.clone());
+                tokio::spawn(async move { cache.body(&hub).await })
+            })
+            .collect();
+        let mut bodies = Vec::new();
+        for scrape in scrapes {
+            bodies.push(scrape.await.expect("join").expect("body"));
+        }
+        assert_eq!(cache.renders.load(Ordering::Relaxed), 1);
+        assert!(bodies.iter().all(|body| body == &bodies[0]));
+        assert!(std::str::from_utf8(&bodies[0])
+            .expect("utf-8")
+            .contains("\ngoose_users 1\n"));
+        parent.abort();
     }
 
     #[tokio::test]

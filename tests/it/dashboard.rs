@@ -1916,7 +1916,10 @@ async fn test_dashboard_prometheus_metrics() {
     let port = reserve_port();
     let base_v4 = format!("http://127.0.0.1:{}", port);
 
-    let configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    // Goose resets its metrics once every user has started, which would set
+    // the counters back to 0 between the two scrapes.
+    configuration.no_reset_metrics = true;
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
