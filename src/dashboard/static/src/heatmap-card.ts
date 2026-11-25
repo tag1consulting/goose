@@ -14,6 +14,7 @@ import { formatInt, formatMs, formatPct } from "./format";
 import {
   ADJUSTED_NOTE,
   ARIA_LABEL,
+  NOTE,
   OFF_NOTE,
   TITLE,
   applyHeatmap,
@@ -21,18 +22,22 @@ import {
   drawHeatmap,
   heatmapCursor,
   heatmapView,
+  reportHeatmapView,
   rowMs,
   scaleColor,
   tooltipText,
   type HeatmapLayout,
   type HeatmapState,
   type HeatmapView,
+  type ReportHeatmap,
   type SelectedRequest,
 } from "./heatmap";
 import { chartDataTable } from "./tables";
 
 /** The card's title when it shows the average latency chart, as before #713. */
 const AVERAGE_TITLE = "Average latency (ms)";
+/** The card's title over the whole run. */
+const WHOLE_TITLE = "Response times over the whole run";
 
 const titleEl = requireElement("chart-latency-title", HTMLElement);
 const noteEl = requireElement("chart-latency-note", HTMLElement);
@@ -100,6 +105,23 @@ let layout: HeatmapLayout | null = null;
  */
 let provisionalFrom: number | null = null;
 let shownAdjusted = false;
+/** The card shows the whole run, from `GET /api/v1/whole-run`, not the live window. */
+let wholeMode = false;
+/** The whole run heatmap of the current choice, and the newest second it covers. */
+let wholeHeatmap: ReportHeatmap | null = null;
+let wholeEnd = 0;
+/** Called when the choice of request changes while the card shows the whole run. */
+let onWholeChoice: (() => void) | null = null;
+
+/** The card's note under the title over the whole run, `width` seconds a column. */
+export function wholeRunNote(width: number): string {
+  const each = width === 1 ? "one second" : width + " seconds";
+  return (
+    "Whole run: each column is " +
+    each +
+    ". Color shows how many requests took that long; the lines are each column's p50, p95 and p99."
+  );
+}
 
 function sameRequest(a: SelectedRequest | null, b: SelectedRequest): boolean {
   return a !== null && a.method === b.method && a.name === b.name;
@@ -159,11 +181,53 @@ function selectRequest(request: SelectedRequest | null): void {
   selectedState = null;
   selectedFull = true;
   selectEl.value = request === null ? "" : optionValue(request);
-  if (request !== null) {
+  if (wholeMode) {
+    // The whole run view fetches the choice's heatmap with its lines.
+    wholeHeatmap = null;
+    if (onWholeChoice) onWholeChoice();
+  } else if (request !== null) {
     seriesTimer = setInterval(pollSelected, 1000);
     pollSelected();
   }
   draw();
+}
+
+/** The request the card shows alone, or null for all requests. */
+export function chosenRequest(): SelectedRequest | null {
+  return selected;
+}
+
+/**
+ * Shows the whole run (`whole`) or the live window. Over the whole run the
+ * card draws what setWholeRunHeatmap gives it and asks for nothing itself;
+ * back on the live window it draws the window it kept from snapshots, and
+ * polls the chosen request's again.
+ */
+export function setHeatmapWholeRun(whole: boolean, onChoice: () => void): void {
+  if (whole === wholeMode) return;
+  wholeMode = whole;
+  onWholeChoice = onChoice;
+  stopPolling();
+  wholeHeatmap = null;
+  if (!whole && selected !== null) {
+    selectedState = null;
+    selectedFull = true;
+    seriesTimer = setInterval(pollSelected, 1000);
+    pollSelected();
+  }
+  if (percentilesOn) draw();
+}
+
+/** The whole run heatmap of the current choice, through second `endSecond`. */
+export function setWholeRunHeatmap(heatmap: ReportHeatmap | null, endSecond: number): void {
+  wholeHeatmap = heatmap;
+  wholeEnd = endSecond;
+  if (wholeMode && percentilesOn) draw();
+}
+
+/** Whether the card shows the average latency chart: percentiles over time are off. */
+export function showsAverage(): boolean {
+  return !percentilesOn;
 }
 
 /** A snapshot's requests with a heatmap of their own, by method then name. */
@@ -214,7 +278,9 @@ function setViewButtons(): void {
 
 /**
  * The card's summary and data table from the heatmap shown: the mean of the
- * last 10 drawn seconds' percentiles, and whether p95 is rising or falling.
+ * last 10 drawn seconds' percentiles, and whether p95 is rising or falling;
+ * over the whole run, the slowest column's p95 and the newest column's
+ * percentiles.
  */
 function showData(view: HeatmapView): void {
   const seconds = Array.from(view.percentiles.values());
@@ -223,6 +289,23 @@ function showData(view: HeatmapView): void {
   );
   if (seconds.length === 0) {
     setLatencySummary("No data yet.");
+    return;
+  }
+  if (wholeMode) {
+    // Over the whole run a trend of the last 10 columns says little: name
+    // the slowest column's p95 and the newest column's percentiles.
+    const width = view.width || 1;
+    let peak = seconds[0];
+    for (const p of seconds) if (p.p95 > peak.p95) peak = p;
+    const last = seconds[seconds.length - 1];
+    setLatencySummary(
+      "Whole run: p95 peaked at " + rowMs(peak.p95) + " ms (" +
+        (width === 1
+          ? "second " + peak.second
+          : "seconds " + peak.second + " to " + (peak.second + width - 1)) +
+        "); last column p50 " + rowMs(last.p50) + " ms, p95 " + rowMs(last.p95) +
+        " ms, p99 " + rowMs(last.p99) + " ms."
+    );
     return;
   }
   const p50 = recentTrend(seconds.map((p) => p.p50));
@@ -244,9 +327,13 @@ function draw(): void {
   const adjusted = coActive && adjustedView;
   shownAdjusted = adjusted;
   const state = selected === null ? allState : selectedState;
-  const view = heatmapView(state, adjusted);
+  const view = wholeMode
+    ? reportHeatmapView(wholeHeatmap, adjusted, wholeEnd)
+    : heatmapView(state, adjusted);
+  const title = wholeMode ? WHOLE_TITLE : TITLE;
   titleEl.textContent =
-    selected === null ? TITLE : TITLE + ": " + selected.method + " " + selected.name;
+    selected === null ? title : title + ": " + selected.method + " " + selected.name;
+  alwaysNoteEl.textContent = wholeMode ? wholeRunNote(view.width) : NOTE;
   noteEl.textContent = ADJUSTED_NOTE;
   noteEl.hidden = !adjusted;
   canvas.setAttribute("aria-label", ARIA_LABEL);
@@ -289,7 +376,7 @@ function showAverage(metricsDisabled: boolean): void {
   selectEl.value = "";
   allState = null;
   layout = null;
-  titleEl.textContent = AVERAGE_TITLE;
+  titleEl.textContent = wholeMode ? AVERAGE_TITLE + ", whole run" : AVERAGE_TITLE;
   noteEl.textContent = OFF_NOTE;
   noteEl.hidden = metricsDisabled;
   alwaysNoteEl.hidden = true;
@@ -339,8 +426,9 @@ export function updateHeatmapCard(snap: DashboardSnapshot): boolean {
   }
   listed = selectableRequests(snap);
   updateSelect();
-  // The chosen request redraws when its own heatmap arrives.
-  if (selected === null) draw();
+  // The chosen request redraws when its own heatmap arrives, and the whole
+  // run when its view does.
+  if (selected === null && !wholeMode) draw();
   return false;
 }
 

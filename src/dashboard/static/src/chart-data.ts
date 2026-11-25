@@ -107,7 +107,11 @@ export function setLatencySummary(text: string): void {
  * need a canvas, so they are written even where the charts cannot draw.
  * `targetUsers` is the users summary's "of".
  */
-export function updateChartData(series: SeriesWindow, averageLatency: boolean, targetUsers: number): void {
+export function updateChartData(
+  series: SeriesWindow,
+  averageLatency: boolean,
+  targetUsers: number
+): void {
   const start = series.start_second;
   // Left in, the newest second would lean every summary to "falling".
   const rpsDrawn = completeSeconds(series.rps);
@@ -167,5 +171,91 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
         .filter((row) => provisional === null || row.at < provisional || row.avg > 0)
         .map(({ second, avg }) => ({ second, avg }))
     );
+  }
+}
+
+/**
+ * The seconds each whole run point covers: `width`, but the newest point
+ * only as far as `end_second`, so it can cover fewer.
+ */
+export function pointSeconds(lines: WholeRunLines): number[] {
+  const width = lines.width || 1;
+  return lines.rps.map((_, i) => {
+    const from = lines.start_second + i * width;
+    return Math.min(width, Math.max(1, lines.end_second + 1 - from));
+  });
+}
+
+/**
+ * The whole run's figures from its points: requests and failures a second
+ * as each total over the seconds covered, so a short newest point weighs
+ * as little as it covers; the average weighted by each point's requests;
+ * the most users of any second, which a point's level can leave out.
+ */
+export function wholeRunFigures(lines: WholeRunLines): {
+  rps: number;
+  peakRps: number;
+  fps: number;
+  avgMs: number;
+  maxUsers: number;
+} {
+  const seconds = pointSeconds(lines);
+  let covered = 0;
+  let requests = 0;
+  let failures = 0;
+  let latency = 0;
+  lines.rps.forEach((rate, i) => {
+    covered += seconds[i];
+    requests += rate * seconds[i];
+    failures += (lines.fps[i] || 0) * seconds[i];
+    latency += (lines.avg_latency_ms[i] || 0) * rate * seconds[i];
+  });
+  return {
+    rps: covered > 0 ? requests / covered : 0,
+    peakRps: lines.rps.length ? Math.max(...lines.rps) : 0,
+    fps: covered > 0 ? failures / covered : 0,
+    avgMs: requests > 0 ? latency / requests : 0,
+    maxUsers: lines.max_users,
+  };
+}
+
+/**
+ * The summaries and data tables of the whole run's lines: each summary over
+ * the whole run, each table row a point, by the second it begins at. The
+ * average latency's only when `averageLatency`.
+ */
+export function updateWholeRunChartData(lines: WholeRunLines, averageLatency: boolean): void {
+  const width = lines.width || 1;
+  const second = (i: number): number => lines.start_second + i * width;
+  const figures = wholeRunFigures(lines);
+  setNote(rpsProvisionalNote, "");
+  setNote(latencyProvisionalNote, "");
+  setSummary(
+    rpsSummary,
+    lines.rps.length === 0
+      ? "No data yet."
+      : "Whole run: RPS " +
+          formatRate(figures.rps) +
+          ", peak " +
+          formatRate(figures.peakRps) +
+          "; failures " +
+          formatRate(figures.fps) +
+          "/s."
+  );
+  showRpsData(lines.rps.map((rps, i) => ({ second: second(i), rps, fps: lines.fps[i] || 0 })));
+  setSummary(
+    usersSummary,
+    lines.users.length === 0
+      ? "No data yet."
+      : "Whole run: up to " + formatInt(figures.maxUsers) + " users."
+  );
+  showUsersData(lines.users.map((users, i) => ({ second: second(i), users })));
+  if (averageLatency) {
+    setLatencySummary(
+      lines.avg_latency_ms.length === 0
+        ? "No data yet."
+        : "Whole run: average " + formatMs(figures.avgMs) + " ms."
+    );
+    showLatencyData(lines.avg_latency_ms.map((avg, i) => ({ second: second(i), avg })));
   }
 }

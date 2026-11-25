@@ -532,6 +532,131 @@ async fn a_path_report_has_its_heatmap() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The heatmap's JSON as the HTML report embeds it.
+fn embedded_heatmap(html: &str) -> serde_json::Value {
+    let start = html
+        .find("id=\"graph-latency-heatmap-data\">")
+        .expect("the heatmap's JSON")
+        + "id=\"graph-latency-heatmap-data\">".len();
+    let end = start + html[start..].find("</script>").unwrap();
+    serde_json::from_str(&html[start..end]).unwrap()
+}
+
+/// Rendered from `json` with `--render-report`: the JSON report written
+/// again.
+async fn render_json(json: &Path, again: &Path) -> serde_json::Value {
+    let configuration = GooseConfiguration::parse_args_default(&[
+        "--render-report",
+        &json.to_string_lossy(),
+        "--report-file",
+        &again.to_string_lossy(),
+    ])
+    .unwrap();
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario())
+        .execute()
+        .await
+        .unwrap();
+    read_json(again)
+}
+
+/// #764: the JSON report lists each whole run column's p50, p95 and p99,
+/// without `--report-graph-data`, and they are the percentiles the HTML
+/// report's heatmap draws for the same run; the table survives
+/// `--render-report`, a JSON report from before it still renders, and
+/// `--no-percentiles-over-time` writes no table.
+#[tokio::test]
+#[serial(output_files)]
+async fn the_json_report_has_the_heatmaps_percentiles() {
+    let server = MockServer::start();
+    let _mock = setup_mock_server_endpoints(&server);
+    let dir = temp_dir("percentiles");
+    let html = dir.join("run.html");
+    let json = dir.join("run.json");
+    run(
+        &server,
+        vec![
+            "--report-file",
+            &html.to_string_lossy(),
+            "--report-file",
+            &json.to_string_lossy(),
+        ],
+    )
+    .await;
+    let report = read_json(&json);
+    assert!(report.get("graphs").is_none());
+    let table = report["percentiles_over_time_ms"]
+        .as_array()
+        .expect("percentiles_over_time_ms");
+    let heatmap = embedded_heatmap(&std::fs::read_to_string(&html).unwrap());
+    let drawn = heatmap["series"].as_array().unwrap();
+    assert_eq!(table.len(), drawn.len());
+    assert_eq!(table[0]["name"], "All requests");
+    assert_eq!(table[1]["name"], "GET /");
+    let origin = heatmap["origin"].as_u64().unwrap();
+    let mut rows = 0;
+    for (series, drawn) in table.iter().zip(drawn) {
+        assert_eq!(series["name"], drawn["name"]);
+        assert_eq!(series["width_secs"], drawn["width"]);
+        assert_eq!(series["origin_second"].as_u64(), Some(origin));
+        assert!(series.get("adjusted_columns").is_none());
+        let width = drawn["width"].as_u64().unwrap();
+        // Each heatmap column is [index, p50, p95, p99 in microseconds, cells...].
+        let expected: Vec<serde_json::Value> = drawn["measured"]["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|column| {
+                let at = |i: usize| column[i].as_u64().unwrap();
+                serde_json::json!([
+                    origin + at(0) * width,
+                    at(1) as f64 / 1000.0,
+                    at(2) as f64 / 1000.0,
+                    at(3) as f64 / 1000.0
+                ])
+            })
+            .collect();
+        assert!(!expected.is_empty());
+        assert_eq!(series["columns"].as_array().unwrap(), &expected);
+        rows += expected.len();
+    }
+    assert!(rows > 0);
+
+    // Read back and written again, the table is the same.
+    let again = render_json(&json, &dir.join("again.json")).await;
+    assert_eq!(
+        again["percentiles_over_time_ms"],
+        report["percentiles_over_time_ms"]
+    );
+
+    // A JSON report from before the table loads, and gets none.
+    let old = render_json(
+        Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/report-0.19.0.json"
+        )),
+        &dir.join("old.json"),
+    )
+    .await;
+    assert!(old.get("percentiles_over_time_ms").is_none());
+    assert!(old["raw_request_metrics"].is_array());
+
+    // Percentiles over time off: no table.
+    let off = dir.join("off.json");
+    run(
+        &server,
+        vec![
+            "--no-percentiles-over-time",
+            "--report-file",
+            &off.to_string_lossy(),
+        ],
+    )
+    .await;
+    assert!(read_json(&off).get("percentiles_over_time_ms").is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A baseline that no longer loads when the run ends fails the run, and the
 /// run's folder still gets its report, written without the baseline.
 #[tokio::test]

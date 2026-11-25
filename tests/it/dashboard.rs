@@ -2059,6 +2059,125 @@ async fn test_dashboard_latency_by_second() {
     let _metrics = load.join().await.expect("load test execute");
 }
 
+/// `GET /api/v1/whole-run`: refused without the token or with a wrong one;
+/// with it, the line charts over the whole run and the heatmap of all
+/// requests, or of one request, in the HTML report's shape. With
+/// `--no-percentiles-over-time` the heatmap is null and the lines remain.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial(dashboard)]
+async fn test_dashboard_whole_run_view() {
+    for percentiles in [true, false] {
+        let server = MockServer::start();
+        let _mocks = setup_mock_endpoints(&server);
+        let port = reserve_port();
+        let base_v4 = format!("http://127.0.0.1:{port}");
+        let mut configuration =
+            build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
+        configuration.run_time = Some("6".to_string());
+        configuration.no_percentiles_over_time = !percentiles;
+        let goose_attack =
+            common::build_load_test(configuration, vec![get_transactions()], None, None);
+        let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+        let (base, _health) = wait_for_health(&[&base_v4], 80).await;
+        let client = reqwest::Client::new();
+        let url = format!("{base}/api/v1/whole-run");
+
+        for refused in [
+            client.get(&url),
+            client.get(format!("{url}?token=wrong")),
+            client.get(&url).header("Authorization", "Bearer wrong"),
+        ] {
+            let resp = refused.send().await.expect("whole run GET");
+            assert_eq!(resp.status(), 401);
+            assert!(!resp.text().await.unwrap().contains("lines"));
+        }
+        let only_method = client
+            .get(format!("{url}?method=GET"))
+            .bearer_auth(AUTH_TOKEN)
+            .send()
+            .await
+            .expect("whole run GET");
+        assert_eq!(only_method.status(), 400);
+
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        let resp = client
+            .get(&url)
+            .bearer_auth(AUTH_TOKEN)
+            .send()
+            .await
+            .expect("whole run GET");
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers()["content-type"].to_str().unwrap(),
+            "application/json"
+        );
+        let body: serde_json::Value = resp.json().await.expect("whole run json");
+        let lines = &body["lines"];
+        assert_eq!(lines["start_second"], 0);
+        assert_eq!(lines["width"], 1);
+        let rps = lines["rps"].as_array().expect("rps");
+        assert!(!rps.is_empty() && rps.len() <= 600);
+        for key in ["fps", "users", "avg_latency_ms"] {
+            assert_eq!(lines[key].as_array().unwrap().len(), rps.len(), "{}", key);
+        }
+        assert!(json_sum(&lines["rps"]) > 0.0);
+        assert!(lines["users"].as_array().unwrap().iter().any(|u| u == 1));
+        assert_eq!(lines["max_users"], 1);
+
+        if !percentiles {
+            assert!(body["heatmap"].is_null());
+        } else {
+            let heatmap = &body["heatmap"];
+            let series = heatmap["series"].as_array().expect("series");
+            assert_eq!(series.len(), 1);
+            assert_eq!(series[0]["name"], "All requests");
+            assert!(heatmap["buckets_us"].as_array().unwrap().len() >= 237);
+            let columns = series[0]["measured"]["columns"].as_array().unwrap();
+            assert!(!columns.is_empty());
+            // [index, p50, p95, p99, then index, count, level per cell].
+            assert_eq!((columns[0].as_array().unwrap().len() - 4) % 3, 0);
+
+            let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+                .await
+                .expect("snapshot");
+            assert!(snap["series"].get("lines").is_none());
+            let row = &snap["requests"][0];
+            let one = client
+                .get(
+                    reqwest::Url::parse_with_params(
+                        &url,
+                        &[
+                            ("method", row["method"].as_str().unwrap()),
+                            ("name", row["name"].as_str().unwrap()),
+                        ],
+                    )
+                    .unwrap(),
+                )
+                .bearer_auth(AUTH_TOKEN)
+                .send()
+                .await
+                .expect("whole run GET");
+            let one: serde_json::Value = one.json().await.unwrap();
+            let name = format!(
+                "{} {}",
+                row["method"].as_str().unwrap(),
+                row["name"].as_str().unwrap()
+            );
+            assert_eq!(one["heatmap"]["series"][0]["name"], name.as_str());
+            let unknown = client
+                .get(format!("{url}?method=GET&name=/nothing-here"))
+                .bearer_auth(AUTH_TOKEN)
+                .send()
+                .await
+                .expect("whole run GET");
+            let unknown: serde_json::Value = unknown.json().await.unwrap();
+            assert!(unknown["heatmap"].is_null());
+            assert!(unknown["lines"]["rps"].is_array());
+        }
+        let _metrics = load.join().await.expect("load test execute");
+    }
+}
+
 /// With `--no-transaction-metrics --no-scenario-metrics` the snapshot says
 /// both tables are off, while request metrics still flow.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

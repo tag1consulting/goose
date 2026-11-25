@@ -991,19 +991,6 @@ impl LatencyRing {
         }
     }
 
-    /// Fold every packed second from `from` on into the columns; open
-    /// seconds fold in as they pack.
-    fn fold_packed(&mut self, from: usize, sink: &mut ColumnSink<'_>) {
-        let (slots, columns) = (&self.slots, &mut self.columns);
-        for slot in slots.iter().flatten() {
-            if slot.second >= from && slot.data.open.is_none() {
-                sink.feed(columns.as_mut(), slot.second, |column| {
-                    column.merge(&slot.data)
-                });
-            }
-        }
-    }
-
     /// [`Self::slot`], to build and keep its heatmap cells.
     fn slot_at_mut(&mut self, second: usize) -> Option<&mut RingSlot> {
         self.slots[second % SERIES_WINDOW_SECS as usize]
@@ -1475,47 +1462,6 @@ impl LatencyHistograms {
         }
     }
 
-    /// Start or stop keeping whole run columns for the report's heatmap
-    /// while the run goes on, `now` being the current second. Started, the
-    /// columns count from the oldest second the rings can hold and take every
-    /// second they hold; stopped, the columns go.
-    fn keep_columns(&mut self, keep: bool, now: usize) {
-        if keep == self.all_columns.is_some() {
-            return;
-        }
-        let columns = || keep.then(Columns::default);
-        self.all_columns = columns();
-        for ring in self.rings.iter_mut() {
-            ring.columns = columns();
-        }
-        if let Some((all, by_request)) = self.synthetic.as_mut() {
-            all.columns = columns();
-            for ring in by_request.values_mut() {
-                ring.columns = columns();
-            }
-        }
-        self.origin = now.saturating_sub(SERIES_WINDOW_SECS as usize - 1);
-        self.all_width = 1;
-        self.request_width = 1;
-        self.set_limit();
-        if !keep {
-            return;
-        }
-        self.fit_columns(now);
-        let origin = self.origin;
-        for index in (0..self.rings.len()).map(Some).chain([None]) {
-            let (ring, mut sink) = self.ring(index);
-            ring.fold_packed(origin, &mut sink);
-        }
-        let (all_width, request_width) = (self.all_width, self.request_width);
-        if let Some((all, by_request)) = self.synthetic.as_mut() {
-            all.fold_packed(origin, &mut ColumnSink::own(origin, all_width));
-            for ring in by_request.values_mut() {
-                ring.fold_packed(origin, &mut ColumnSink::own(origin, request_width));
-            }
-        }
-    }
-
     /// Clear every ring and its columns and forget every name, so names are
     /// admitted again, and start a new generation. Columns count from
     /// `origin`, the series second of the reset, one second wide.
@@ -1734,45 +1680,63 @@ struct ReportView {
     columns: Vec<Vec<usize>>,
 }
 
+/// Call `each` with every column of `measured` that has requests, by index,
+/// or, when `synthetic` is given, of `measured` and `synthetic` added
+/// together: the columns of one view of a series, for the report's heatmap
+/// and the JSON report's percentiles over time alike.
+fn view_columns(
+    measured: &Columns,
+    synthetic: Option<&Columns>,
+    mut each: impl FnMut(usize, &SecondHistogram),
+) {
+    let mut adjusted;
+    let len = measured
+        .columns
+        .len()
+        .max(synthetic.map_or(0, |columns| columns.columns.len()));
+    for index in 0..len {
+        let measured = measured.columns.get(index);
+        let column = match synthetic.and_then(|columns| columns.columns.get(index)) {
+            Some(added) => {
+                adjusted = measured.cloned().unwrap_or_default();
+                adjusted.merge(added);
+                &adjusted
+            }
+            None => match measured {
+                Some(measured) => measured,
+                None => continue,
+            },
+        };
+        if column.counter > 0 {
+            each(index, column);
+        }
+    }
+}
+
+/// A column's p50, p95 and p99 in microseconds: the one place both the
+/// report heatmap's lines and the JSON report's percentiles over time come
+/// from, so the two never disagree.
+fn column_percentiles_us(column: &SecondHistogram) -> [u64; 3] {
+    [
+        column.percentile_us(0.5),
+        column.percentile_us(0.95),
+        column.percentile_us(0.99),
+    ]
+}
+
 impl ReportView {
     /// The view of `measured` and, when given, `synthetic` columns added to
     /// them.
     fn new(measured: &Columns, synthetic: Option<&Columns>) -> Self {
         let mut columns = Vec::new();
-        let mut adjusted;
-        let synthetic_column =
-            |index: usize| synthetic.and_then(|columns| columns.columns.get(index));
-        let len = measured
-            .columns
-            .len()
-            .max(synthetic.map_or(0, |columns| columns.columns.len()));
-        for index in 0..len {
-            let measured = measured.columns.get(index);
-            let column = match synthetic_column(index) {
-                Some(added) => {
-                    adjusted = measured.cloned().unwrap_or_default();
-                    adjusted.merge(added);
-                    &adjusted
-                }
-                None => match measured {
-                    Some(measured) => measured,
-                    None => continue,
-                },
-            };
-            if column.counter == 0 {
-                continue;
-            }
-            let mut flat = vec![
-                index,
-                column.percentile_us(0.5) as usize,
-                column.percentile_us(0.95) as usize,
-                column.percentile_us(0.99) as usize,
-            ];
+        view_columns(measured, synthetic, |index, column| {
+            let [p50, p95, p99] = column_percentiles_us(column);
+            let mut flat = vec![index, p50 as usize, p95 as usize, p99 as usize];
             for pair in column.heat_cells().chunks(2) {
                 flat.extend([pair[0] as usize, pair[1] as usize, 0]);
             }
             columns.push(flat);
-        }
+        });
         let counts = || {
             columns
                 .iter()
@@ -1835,20 +1799,53 @@ impl LatencyHistograms {
         series: S,
     ) -> Option<ReportHeatmap<S>> {
         self.all_columns.as_ref()?;
-        let last = self
-            .report_sources(co_active)
+        Some(self.report_heatmap_of(self.report_sources(co_active), started, series))
+    }
+
+    /// The report's heatmap with `series` as its series, its bucket table
+    /// reaching the slowest bucket of `sources`, where they come from.
+    fn report_heatmap_of<'a, S>(
+        &'a self,
+        sources: impl Iterator<Item = ReportSource<'a>>,
+        started: jiff::Timestamp,
+        series: S,
+    ) -> ReportHeatmap<S> {
+        let last = sources
             .flat_map(|(_, _, measured, added)| [Some(measured), added])
             .flatten()
             .filter_map(Columns::last_bucket)
             .max()
             .unwrap_or(0);
-        Some(ReportHeatmap {
+        ReportHeatmap {
             start: started.as_second() * 1000,
             offset: i64::from(jiff::tz::TimeZone::system().to_offset(started).seconds()) * 1000,
             origin: self.origin,
             buckets_us: bucket_table_us(last),
             series,
-        })
+        }
+    }
+
+    /// The report's heatmap with one series: all requests when `key` is
+    /// `None`, otherwise the request `key` names (`METHOD name`); `None`
+    /// without whole run columns, or when `key` has none.
+    fn report_heatmap_one(
+        &self,
+        key: Option<&str>,
+        co_active: bool,
+        started: jiff::Timestamp,
+    ) -> Option<ReportHeatmap<Vec<ReportSeries<'_>>>> {
+        self.all_columns.as_ref()?;
+        let mut sources = self.report_sources(co_active);
+        let source = match key {
+            // All requests come first.
+            None => sources.next()?,
+            Some(key) => sources.skip(1).find(|(name, ..)| *name == key)?,
+        };
+        Some(self.report_heatmap_of(
+            std::iter::once(source),
+            started,
+            vec![ReportSeries::new(source)],
+        ))
     }
 
     /// The report's heatmap with every series built (unit tests).
@@ -1863,6 +1860,71 @@ impl LatencyHistograms {
             .map(ReportSeries::new)
             .collect();
         self.report_heatmap_with(co_active, started, series)
+    }
+}
+
+/// The JSON report's percentiles over time, its `percentiles_over_time_ms`
+/// key: for all requests and each request name with whole run columns,
+/// each column's p50, p95 and p99, from the columns the report's heatmap
+/// draws and by the same code. Built one series at a time as it is
+/// written, so only one series' rows are held at once.
+pub(crate) struct PercentilesOverTime<'a> {
+    latency: &'a LatencyHistograms,
+    co_active: bool,
+}
+
+impl Serialize for PercentilesOverTime<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let origin = self.latency.origin;
+        serializer.collect_seq(
+            self.latency
+                .report_sources(self.co_active)
+                .map(|source| PercentilesSeries::new(origin, source)),
+        )
+    }
+}
+
+/// One series of the JSON report's percentiles over time.
+#[derive(Serialize)]
+struct PercentilesSeries<'a> {
+    /// `All requests`, or a request's `METHOD name`.
+    name: &'a str,
+    /// Seconds in each column.
+    width_secs: usize,
+    /// The second, from the start, column 0 begins at: 0, or the second of
+    /// the last metrics reset.
+    origin_second: usize,
+    /// Each column with requests, oldest first, as `[start second, p50,
+    /// p95, p99]`: the second, from the start, the column begins at, then
+    /// its percentiles in milliseconds, to the microsecond.
+    columns: Vec<PercentilesRow>,
+    /// The same with coordinated omission mitigation's synthetic times
+    /// added, when it recorded any for this series: the report heatmap's
+    /// Adjusted view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    adjusted_columns: Option<Vec<PercentilesRow>>,
+}
+
+/// `[start second, p50, p95, p99]`, the times in milliseconds.
+type PercentilesRow = (usize, f64, f64, f64);
+
+impl<'a> PercentilesSeries<'a> {
+    fn new(origin: usize, (name, width, measured, added): ReportSource<'a>) -> Self {
+        let rows = |synthetic: Option<&Columns>| {
+            let mut rows = Vec::new();
+            view_columns(measured, synthetic, |index, column| {
+                let [p50, p95, p99] = column_percentiles_us(column).map(|us| us as f64 / 1000.0);
+                rows.push((origin + index * width, p50, p95, p99));
+            });
+            rows
+        };
+        PercentilesSeries {
+            name,
+            width_secs: width,
+            origin_second: origin,
+            columns: rows(None),
+            adjusted_columns: added.map(|added| rows(Some(added))),
+        }
     }
 }
 
@@ -2048,6 +2110,7 @@ impl RecordedGraphs {
             users_per_second: self.users_per_second,
             latency: None,
             provisional_from: None,
+            whole_run: None,
         };
         (graph_data, self.heatmap)
     }
@@ -2078,6 +2141,10 @@ pub(crate) struct GraphData {
     /// arrived so far. `None` on one process, and once every worker finished
     /// or was lost.
     provisional_from: Option<usize>,
+    /// On a dashboard only run, what the dashboard's window pruned, folded
+    /// for its whole run view; `None` until the window first prunes, and on
+    /// a run that keeps its graph data whole.
+    whole_run: Option<Box<whole_run::WholeRunLines>>,
 }
 
 impl GraphData {
@@ -2093,6 +2160,7 @@ impl GraphData {
             users_per_second: TimeSeries::new(),
             latency: None,
             provisional_from: None,
+            whole_run: None,
         }
     }
 
@@ -2136,6 +2204,7 @@ impl GraphData {
         self.average_response_time_per_second = HashMap::new();
         self.transactions_per_second = TimeSeries::with_origin(origin);
         self.scenarios_per_second = TimeSeries::with_origin(origin);
+        self.reset_whole_run_rates();
         if let Some(latency) = self.latency.as_mut() {
             latency.clear(series_elapsed_secs);
         }
@@ -2276,20 +2345,6 @@ impl GraphData {
             .is_some_and(|latency| latency.all_columns.is_some())
     }
 
-    /// Start or stop keeping the report heatmap's whole run columns while the
-    /// run goes on, as Save report is turned on or off; `now` is the current
-    /// second on the series clock.
-    pub(crate) fn keep_latency_columns(&mut self, keep: bool, now: usize) {
-        if keep {
-            // Every response time held moves to its ring first, so the
-            // columns take it.
-            self.move_pending_latency();
-        }
-        if let Some(histograms) = self.latency.as_mut() {
-            histograms.keep_columns(keep, now);
-        }
-    }
-
     /// At the end of the run: move every pending response time to its ring
     /// and pack every open second, so the heatmap's whole run columns hold
     /// every time recorded.
@@ -2378,6 +2433,79 @@ impl GraphData {
                     .map(ReportGraphsHeatmap::Live),
             },
         }
+    }
+
+    /// The JSON report's percentiles over time, when whole run columns are
+    /// kept. `co_active` says coordinated omission mitigation recorded
+    /// synthetic times, so series that have them get adjusted rows too.
+    pub(crate) fn percentiles_over_time(&self, co_active: bool) -> Option<PercentilesOverTime<'_>> {
+        let latency = self.latency.as_ref()?;
+        latency.all_columns.as_ref()?;
+        Some(PercentilesOverTime { latency, co_active })
+    }
+
+    /// The body of `GET /api/v1/whole-run`, as JSON: the line charts over
+    /// the whole run through the newest complete second, the one before
+    /// the last the live window ends at (`end_second_hint` as there), and
+    /// on a Gaggle manager before the first still arriving from the
+    /// workers; and the response time heatmap
+    /// over the whole run of all requests, or of the request `key` names
+    /// (`METHOD name`), as the HTML report embeds it but with that one
+    /// series; the heatmap is null without whole run columns (percentiles
+    /// over time off) or when `key` has none. `co_active` says coordinated
+    /// omission mitigation recorded synthetic times; `started` is when the
+    /// test started. Built only when asked for.
+    pub(crate) fn whole_run_json(
+        &mut self,
+        key: Option<&str>,
+        end_second_hint: Option<usize>,
+        co_active: bool,
+        started: jiff::Timestamp,
+    ) -> serde_json::Result<Vec<u8>> {
+        // Every response time held moves to its ring, which folds it into
+        // the columns as its second packs.
+        self.move_pending_latency();
+        let mut last = self
+            .series_window_bounds(1, end_second_hint)
+            .map_or(0, |(_, end)| end.saturating_sub(1));
+        if let Some(from) = self.provisional_from {
+            last = last.min(from.saturating_sub(1));
+        }
+        #[derive(Serialize)]
+        struct Body<'a> {
+            lines: crate::metrics::dashboard_snapshot::WholeRunLines,
+            heatmap: Option<ReportHeatmap<Vec<ReportSeries<'a>>>>,
+        }
+        let body = Body {
+            lines: self.whole_run_lines(last),
+            heatmap: self
+                .latency
+                .as_ref()
+                .and_then(|latency| latency.report_heatmap_one(key, co_active, started)),
+        };
+        serde_json::to_vec(&body)
+    }
+
+    /// [`Self::whole_run_json`] for `GET /api/v1/whole-run`: `request` is
+    /// the request's method label and name, `None` for all requests, and
+    /// `series_elapsed_secs` the series clock's now. `None`, logged, when
+    /// it can't be written.
+    pub(crate) fn whole_run_body(
+        &mut self,
+        request: Option<(String, String)>,
+        series_elapsed_secs: usize,
+        co_active: bool,
+        started: jiff::Timestamp,
+    ) -> Option<Vec<u8>> {
+        let key = request.map(|(method, name)| format!("{method} {name}"));
+        self.whole_run_json(
+            key.as_deref(),
+            Some(series_elapsed_secs),
+            co_active,
+            started,
+        )
+        .map_err(|e| warn!("[dashboard]: failed to write the whole run view: {e}"))
+        .ok()
     }
 
     /// Whether response times are kept by second for the heatmaps.
@@ -2890,30 +3018,35 @@ impl GraphData {
         if keep == 0 {
             return;
         }
+        // Every request, failure, average and users sample dropped is folded
+        // into the whole run lines first, for the dashboard's whole run view.
+        let lines = self.whole_run.get_or_insert_with(Default::default);
         for series in self.requests_per_second.series.values_mut() {
-            series.prune_to_window(keep);
+            series.prune_to_window_with(keep, |second, sample| lines.add_requests(second, sample));
         }
         for series in self.errors_per_second.series.values_mut() {
-            series.prune_to_window(keep);
+            series.prune_to_window_with(keep, |second, sample| lines.add_errors(second, sample));
         }
         for series in self.average_response_time_per_second.values_mut() {
-            series.prune_to_window(keep);
+            series.prune_to_window_with(keep, |second, sample| lines.add_average(second, sample));
         }
         self.transactions_per_second.prune_to_window(keep);
         self.scenarios_per_second.prune_to_window(keep);
-        self.users_per_second.prune_to_window(keep);
+        self.users_per_second
+            .prune_to_window_with(keep, |second, &users| lines.add_users(second, users));
 
         // Align every series (and the ItemsPerSecond new-key origin) to the
         // retained users window so idle keys cannot re-expand from second 0.
         let origin = self.users_per_second.origin;
         for series in self.requests_per_second.series.values_mut() {
-            series.align_origin_to(origin);
+            series
+                .align_origin_to_with(origin, |second, sample| lines.add_requests(second, sample));
         }
         for series in self.errors_per_second.series.values_mut() {
-            series.align_origin_to(origin);
+            series.align_origin_to_with(origin, |second, sample| lines.add_errors(second, sample));
         }
         for series in self.average_response_time_per_second.values_mut() {
-            series.align_origin_to(origin);
+            series.align_origin_to_with(origin, |second, sample| lines.add_average(second, sample));
         }
         self.transactions_per_second.align_origin_to(origin);
         self.scenarios_per_second.align_origin_to(origin);
@@ -3489,12 +3622,20 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// series still has a stale low `origin` (idle keys). Callers that need a
     /// shared window must follow up with [`Self::align_origin_to`].
     fn prune_to_window(&mut self, keep_secs: usize) {
+        self.prune_to_window_with(keep_secs, |_, _| {});
+    }
+
+    /// [`Self::prune_to_window`], handing each sample it drops to `dropped`
+    /// with its second first.
+    fn prune_to_window_with(&mut self, keep_secs: usize, mut dropped: impl FnMut(usize, &T)) {
         if keep_secs == 0 || self.data.len() <= keep_secs {
             return;
         }
         let drop = self.data.len() - keep_secs;
-        for _ in 0..drop {
-            self.data.pop_front();
+        for second in self.origin..self.origin + drop {
+            if let Some(sample) = self.data.pop_front() {
+                dropped(second, &sample);
+            }
         }
         self.origin = self.origin.saturating_add(drop);
         // `total` still reflects historical increments (including dropped samples).
@@ -3508,23 +3649,22 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// reappearance at absolute second *S* would expand from the stale origin.
     /// No-op when `target_origin <= self.origin`.
     fn align_origin_to(&mut self, target_origin: usize) {
+        self.align_origin_to_with(target_origin, |_, _| {});
+    }
+
+    /// [`Self::align_origin_to`], handing each sample it drops to `dropped`
+    /// with its second first.
+    fn align_origin_to_with(&mut self, target_origin: usize, mut dropped: impl FnMut(usize, &T)) {
         if target_origin <= self.origin {
             return;
         }
-        if self.data.is_empty() {
-            self.origin = target_origin;
-            return;
-        }
-        let last = self.origin + self.data.len() - 1;
-        if last < target_origin {
-            // Entire series is before the retained window.
-            self.data.clear();
-            self.origin = target_origin;
-            return;
-        }
-        let drop = target_origin - self.origin;
-        for _ in 0..drop {
-            self.data.pop_front();
+        // Every sample before the target, or the whole series when it ends
+        // before the retained window.
+        let drop = (target_origin - self.origin).min(self.data.len());
+        for second in self.origin..self.origin + drop {
+            if let Some(sample) = self.data.pop_front() {
+                dropped(second, &sample);
+            }
         }
         self.origin = target_origin;
     }
@@ -3898,6 +4038,9 @@ impl Eq for MovingAverage {}
 /// rebuilds graph data from.
 #[cfg(feature = "gaggle")]
 mod gaggle;
+
+/// The dashboard's whole run view of its line charts.
+mod whole_run;
 #[cfg(feature = "gaggle")]
 pub(crate) use gaggle::{gaggle_max_row, GraphSettings, MergedUsers};
 
@@ -7098,13 +7241,29 @@ mod test {
         check(&again);
     }
 
-    /// Without whole run columns, as for the dashboard with Save report off,
-    /// the rings work as before and the report has no heatmap.
+    /// Without whole run columns the rings work as before and the report
+    /// has no heatmap. The dashboard alone keeps them, for its whole run
+    /// view, whether Save report is on or off (see `GooseAttack`'s
+    /// `records_latency_columns`); only `--no-percentiles-over-time` keeps
+    /// none.
     #[test]
     fn no_columns_without_a_report() {
+        for args in [
+            vec!["--dashboard"],
+            vec!["--dashboard", "--dashboard-control"],
+        ] {
+            let configuration = crate::GooseConfiguration::parse_args_default(&args).unwrap();
+            assert!(configuration.records_latency_series(), "{:?}", args);
+            assert!(configuration.records_latency_columns(), "{:?}", args);
+            let graph = GraphData::for_metrics_processor(
+                configuration.records_latency_series(),
+                configuration.records_synthetic_latency(),
+                configuration.records_latency_columns(),
+            );
+            assert!(graph.has_latency_columns_for_test(), "{:?}", args);
+        }
         let configuration =
             crate::GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
-        assert!(configuration.records_latency_series());
         let mut graph = GraphData::for_metrics_processor(
             configuration.records_latency_series(),
             configuration.records_synthetic_latency(),
@@ -7135,6 +7294,7 @@ mod test {
                 configuration.records_latency_columns(),
             );
             assert!(!graph.records_latency(), "{:?}", args);
+            assert!(!configuration.records_latency_columns(), "{:?}", args);
         }
     }
 
@@ -7206,6 +7366,65 @@ mod test {
         assert_eq!((a.name, a.width), ("GET /a", 8));
         check(&a.measured, &measured, 8);
         check(a.adjusted.as_ref().unwrap(), &both, 8);
+    }
+
+    /// The JSON report's percentiles over time are the report heatmap's,
+    /// column for column, measured and adjusted, at each column's start
+    /// second, in milliseconds; without columns there is no table.
+    #[test]
+    fn percentiles_over_time_are_the_heatmaps() {
+        let mut graph = GraphData::with_latency_budgets(true, 8, 4);
+        let mut state = 764;
+        for second in 0..30 {
+            for name in ["GET /a", "GET /b"] {
+                graph.record_request_per_second_and_latency(
+                    name,
+                    second,
+                    Some(seeded_time(&mut state)),
+                );
+            }
+            if second % 5 == 0 {
+                graph.record_synthetic_latency("GET /a", second, 3_000);
+            }
+        }
+        graph.finish_latency_columns();
+        let heatmap = latency(&graph)
+            .report_heatmap(true, jiff::Timestamp::now())
+            .unwrap();
+        let table = serde_json::to_value(graph.percentiles_over_time(true).unwrap()).unwrap();
+        let table = table.as_array().unwrap();
+        assert_eq!(table.len(), heatmap.series.len());
+        let rows = |view: &ReportView, width: usize| -> serde_json::Value {
+            view.columns
+                .iter()
+                .map(|column| {
+                    json!([
+                        heatmap.origin + column[0] * width,
+                        column[1] as f64 / 1000.0,
+                        column[2] as f64 / 1000.0,
+                        column[3] as f64 / 1000.0
+                    ])
+                })
+                .collect()
+        };
+        for (series, drawn) in table.iter().zip(&heatmap.series) {
+            assert_eq!(series["name"], drawn.name);
+            assert_eq!(series["width_secs"], drawn.width);
+            assert_eq!(series["origin_second"], heatmap.origin);
+            assert_eq!(series["columns"], rows(&drawn.measured, drawn.width));
+            match &drawn.adjusted {
+                Some(adjusted) => {
+                    assert_eq!(series["adjusted_columns"], rows(adjusted, drawn.width))
+                }
+                None => assert!(series.get("adjusted_columns").is_none()),
+            }
+        }
+        assert!(table[0]["adjusted_columns"].is_array());
+        assert!(table[2].get("adjusted_columns").is_none(), "GET /b");
+
+        let none = GraphData::for_metrics_processor(true, false, false);
+        assert!(none.percentiles_over_time(false).is_none());
+        assert!(GraphData::new().percentiles_over_time(false).is_none());
     }
 
     /// The card's JSON, written one series at a time, is the heatmap with

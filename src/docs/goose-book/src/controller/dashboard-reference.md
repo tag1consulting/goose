@@ -36,7 +36,7 @@ The dashboard port opens when the Controllers' ports do, once Goose has built a 
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; required when `--dashboard-control` is set (even on loopback), and for any bind off loopback, unless `--dashboard-no-auth` is. Visible in process listings (`ps`) like any CLI flag; set it in the load test's code with `GooseDefault::DashboardAuthToken` to keep it out of them. |
 | `--dashboard-no-auth` | off | Allow dashboard access and control without a token. Anyone who can reach the port can watch the test and download saved reports, and with `--dashboard-control` start, stop and point the load at any host, and delete saved reports and logs; Goose warns at startup with control on loopback, and on anything but loopback. Needs `--dashboard`; refused with `--dashboard-auth-token`. See [Control without a token](#control-without-a-token). |
 | `--dashboard-max-clients N` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. `0` is refused at startup (`must be at least 1`). The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
-| `--no-percentiles-over-time` | off | Turn off the response time heatmap and the histograms behind it; the card shows the average latency chart instead. It also turns off the HTML report's response time heatmap, and works without `--dashboard`. See [The response time heatmap](#the-response-time-heatmap). |
+| `--no-percentiles-over-time` | off | Turn off the response time heatmap and the histograms behind it; the card shows the average latency chart instead, over the last 5 minutes or the whole run like the other charts. It also turns off the HTML report's response time heatmap and the JSON report's `percentiles_over_time_ms`, and works without `--dashboard`. See [The response time heatmap](#the-response-time-heatmap). |
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardNoAuth`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients`, and `GooseDefault::NoPercentilesOverTime`.
 
@@ -225,13 +225,14 @@ Under `--dashboard-no-auth`, off loopback the server also checks `Host` on every
 | `GET /api/v1/snapshot` | **Required** | |
 | `GET /api/v1/events` (SSE) | **Required** | |
 | `GET /api/v1/series` | **Required** | One request's response time heatmap; see [Request heatmap endpoint](#request-heatmap-endpoint) |
+| `GET /api/v1/whole-run` | **Required** | The charts' whole run view; see [Whole run endpoint](#whole-run-endpoint) |
 | `GET /api/v1/reports` and `/api/v1/reports/*` | **Required** | The runs panel's reports; see [Report endpoints](#report-endpoints) |
 | `POST /api/v1/control/*` | **Required** when control is enabled, unless `--dashboard-no-auth` | Even on loopback; **404** when control is off |
 | `DELETE /api/v1/reports/{name}` | **Required** when control is enabled, unless `--dashboard-no-auth` | Control token, as for `POST /api/v1/control/*`; **404** when control is off |
 
 Under `--dashboard-no-auth` no token is configured, so no route needs one: the metric and report routes are open as on a loopback bind with no token, and the control routes take a request without a token and refuse a cross site one instead; see [Control without a token](#control-without-a-token).
 
-The shell and static assets stay public because classic `<script src>` loads cannot forward a document `?token=` query (or an in-memory secret). Sensitive data lives only in the snapshot, event stream, series and report APIs; mutation lives only on the control routes (the control POSTs and `DELETE /api/v1/reports/{name}`).
+The shell and static assets stay public because classic `<script src>` loads cannot forward a document `?token=` query (or an in-memory secret). Sensitive data lives only in the snapshot, event stream, series, whole run and report APIs; mutation lives only on the control routes (the control POSTs and `DELETE /api/v1/reports/{name}`).
 
 #### Browser bootstrap with `?token=`
 
@@ -241,7 +242,7 @@ Browsers' `EventSource` cannot set `Authorization` headers. For remote or token-
 http://{host}:{port}/?token=SECRET
 ```
 
-The embedded UI reads `token` from the URL on load, strips it from the address bar with `history.replaceState`, and attaches `?token=` to `/api/v1/snapshot`, `/api/v1/events` and `/api/v1/series` requests.
+The embedded UI reads `token` from the URL on load, strips it from the address bar with `history.replaceState`, and attaches `?token=` to `/api/v1/snapshot`, `/api/v1/events`, `/api/v1/series` and `/api/v1/whole-run` requests.
 
 The UI keeps the token in the tab's `sessionStorage`, so reloading the page keeps it. A new tab or window opened on the bare URL does not get it and needs `?token=` again, and the token goes away with the tab. A tab duplicated from the browser menu gets a copy, since browsers copy `sessionStorage` when duplicating a tab, and a browser that restores closed tabs may restore it with the tab. It is never written to `localStorage`. A token in the URL replaces a stored one. When the server answers **401** to a snapshot, event stream or series request, or to a start, stop, users, quit or settings request, the UI removes the stored token (a 401 on the report switches, Save report now, a Delete or a report route only shows the error), so a stale token (for example after Goose restarts with a new one) is not sent again on the next reload.
 
@@ -668,7 +669,7 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **Phase badge**: `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
 - **Connection indicator**: green for SSE, yellow for poll fallback, red when disconnected, gray once Goose has exited
 - **KPI strip**: users, RPS, fail %, and the whole run p95 and average latency. The tiles share the row, and each value is sized to its tile, so it stays on one line. The users tile shows the active users, then the target, smaller. RPS shows whole requests a second at 100 and above, and two decimals below 100; hover the tile for the two decimals the tables show.
-- **Charts**: trailing series window (300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. On a [Gaggle](../gaggle/overview.md) manager the seconds from `series.provisional_from` on are still arriving from the workers: the charts draw them lighter and dashed, the heatmap's columns half as strong, with the note `last N s still arriving`, and a second with nothing yet as a gap, never 0; the summaries read the complete seconds. Their colors follow the system's light or dark theme, and change with it while the page is open.
+- **Charts**: trailing series window (300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). **Last 5 minutes** and **Whole run** above them switch every chart to the whole run and back; see [Last 5 minutes or the whole run](#last-5-minutes-or-the-whole-run). The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. On a [Gaggle](../gaggle/overview.md) manager the seconds from `series.provisional_from` on are still arriving from the workers: the charts draw them lighter and dashed, the heatmap's columns half as strong, with the note `last N s still arriving`, and a second with nothing yet as a gap, never 0; the summaries read the complete seconds. Their colors follow the system's light or dark theme, and change with it while the page is open.
 - **Whole run** card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times
 - **Sortable tables**: Scenarios, Transactions, Requests, Errors and Transaction errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request, error and transaction error tables show the top rows, 100 requests ranked by count and 50 of each kind of error ranked by occurrences (truncated server-side for large runs). The Transaction errors table counts each error a transaction returned that is not a request error, by transaction (numbered from 1), scenario, name and error. The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 503 44 · 500 40 · +2`, with every code on hover (empty with `--no-status-codes`)
 - **Hosts** in the header: the current or last run's hosts. In Idle, when the next Start would load test other hosts, they read `Last run: …`.
@@ -758,7 +759,17 @@ Choose a request in the select at the top of the card to see that request alone,
 
 When coordinated omission mitigation is on and has recorded an event, two buttons choose what the heatmap counts: **Adjusted**, the default, as in the KPI strip and the tables, adds the synthetic times mitigation adds for requests a stalled user could not send, and **Measured** leaves them out. Synthetic times belong to the seconds of the stall, which Goose only learns about when it ends, so cells in seconds already drawn can change.
 
-`--no-percentiles-over-time` turns the heatmap and the histograms behind it off, and the card shows the average latency chart instead. The same flag turns off the HTML report's heatmap.
+`--no-percentiles-over-time` turns the heatmap and the histograms behind it off, and the card shows the average latency chart instead. The same flag turns off the HTML report's heatmap and the JSON report's [`percentiles_over_time_ms`](../getting-started/metrics.md#percentiles-over-time). The **Whole run** view then shows the average latency chart over the whole run, and the heatmap stays off.
+
+### Last 5 minutes or the whole run
+
+Above the charts, **Last 5 minutes** and **Whole run** choose what every time chart shows: the RPS and failures chart, the users chart, and the response time card, whether it shows the heatmap or the average latency chart. **Last 5 minutes**, the default, is the trailing window described above, updated with each snapshot. **Whole run** shows the run from its start, or from the last metrics reset, to the last complete second. The two are buttons with `aria-pressed`, reached with Tab and pressed with Enter or Space. The choice lasts for the browser tab's session: a reload keeps it, a new tab starts on **Last 5 minutes**.
+
+While **Whole run** is chosen the page asks [`GET /api/v1/whole-run`](#whole-run-endpoint) once a second, never while an earlier request is still waiting, and stops asking as soon as **Last 5 minutes** is chosen again. The whole run is never part of the snapshot or the live stream.
+
+The line charts hold at most 600 points. A point covers one second until the run is longer than 600 seconds; then each point covers twice as many seconds, 2, 4, 8 and so on, as often as needed. The RPS and failures lines show each point's requests and failures divided by the seconds it covers, the users line the users at the end of the point's last second (as each second of the live chart shows the users at its end), and the average line the mean of the point's response times, each second weighted by its requests. The summary under each chart covers the whole run, such as `Whole run: RPS 1,950, peak 2,104; failures 0/s.`: its requests and failures a second are the run's totals over the seconds covered, so a newest point that covers fewer seconds weighs only as much as it covers, its average weighs each point by its requests, and `up to N users` is the most users of any second, which a point's level can leave out. Each data table row is a point, by the second it begins at. On a Gaggle manager the RPS chart shows the total only.
+
+The heatmap shows the HTML report's columns: up to 600 for all requests and 60 for each of the first 100 request names, each covering 1, 2, 4 or more seconds as the run grows, with the p50, p95 and p99 of each column, worked out by the same code as the HTML report's and the JSON report's. The tooltip, the summary and the data table show those values; the lines go through the middle of the row each falls in. Hovering a cell names its seconds, such as `Seconds 120 to 239`, and the summary under it gives the slowest column's p95 and the newest column's percentiles, such as `Whole run: p95 peaked at 312 ms (seconds 480 to 481); last column p50 8 ms, p95 66 ms, p99 78 ms.` The request select and the **Adjusted** and **Measured** buttons work as in the trailing window.
 
 ## Snapshot data
 
@@ -881,11 +892,41 @@ Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Ctr
 
 The phase goes back to `idle`, and the test does not start again. Goose exits on Quit in the dashboard, on Ctrl-C, or on a Controller `shutdown`; there is no exit timer, so closing the tab does not end the wait. Nothing is written or printed again, and `test_stop` does not run again. Any client on `/api/v1/events` counts, not only browser tabs: a script tailing the event stream when the run ends keeps Goose up until Goose is told to quit. With no client connected when the run ends, Goose exits at once, as it does without the dashboard. A run stopped from the dashboard or a Controller prints no `Run finished` line; Goose stays up in Idle, as after any Stop. A run canceled with Ctrl-C or aborted by a `--threshold` exits with no wait.
 
+### Whole run endpoint
+
+`GET /api/v1/whole-run` returns the whole run, as the **Whole run** view draws it. With no parameters it returns all requests; with `method=<method>&name=<request name>`, URL encoded as for `GET /api/v1/series`, one request's heatmap, beside the same lines. It needs the token when one is configured, as `GET /api/v1/snapshot` does, and shares the four requests in flight and the one second cache of `GET /api/v1/series`. Its size does not grow with the run: at most 600 points a line and 600 heatmap columns.
+
+```json
+{
+  "lines": {
+    "start_second": 0, "width": 2, "end_second": 1080,
+    "rps": [1950.5, ...], "fps": [0, ...], "users": [100, ...], "avg_latency_ms": [12.4, ...],
+    "max_users": 120
+  },
+  "heatmap": { "start": ..., "offset": ..., "origin": 0, "buckets_us": [...], "series": [...] }
+}
+```
+
+`lines` covers the seconds from `start_second` to `end_second`, `width` seconds a point; the newest point can cover fewer, up to `end_second`, and its rates are over the seconds it covers. `max_users` is the most users of any second. `heatmap` is the HTML report's heatmap with one series, all requests or the request asked for, or `null` when percentiles over time are off or the request has no heatmap of its own.
+
+| Status | Body |
+|--------|------|
+| `200` | `{ "lines", "heatmap" }` |
+| `400` | `{"error":"bad_request"}`: only one of `method` and `name` is given, or the two together are longer than 2,048 bytes |
+| `401` | Empty: the token is missing or wrong |
+| `500` | Empty: the answer could not be written (logged) |
+| `503` | `{"error":"busy"}`, `{"error":"timeout"}` or `{"error":"unavailable"}`, as for `GET /api/v1/series` |
+
+```bash
+curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  "http://127.0.0.1:5118/api/v1/whole-run?method=GET&name=%2F"
+```
+
 ## GraphData memory cost
 
 Enabling `--dashboard` turns on the same per second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file` and `--pdf-print-html`). Goose keeps every second of the whole run while a report will be written at the end of it: to a `--report-file` or `--pdf-print-html` path, or by [Save report](#saving-the-report), which is on by default with `--dashboard`. With Save report off and no `--report-file` or `--pdf-print-html` path, the dashboard keeps only twice its chart window (10 minutes). Without `--dashboard`, `--report-file` or `--pdf-print-html` nothing is recorded. The recording costs memory even when no browser is connected:
 
-- Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise.
+- Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise. Seconds dropped from those 10 minutes are folded into the whole run view's lines, at most 600 points each, so they stop growing too.
 - While a report will be written, memory grows with unique request names × run length, the same cost as generating HTML graphs; otherwise it stays flat.
 - Request, error and transaction error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` / `flags.transaction_errors_truncated` when capped); series charts use a fixed trailing window (5 minutes).
 
@@ -893,7 +934,7 @@ With no SSE client connected and no `GET /api/v1/snapshot` in the last two secon
 
 Each snapshot build (while clients are connected or polling) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate, up to 100 request rows, and one row per scenario and transaction, a number fixed by the load test's code. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
 
-With `--dashboard`, and also for a `--report-file` or `--pdf-print-html`, Goose keeps one response time histogram per second for the last 300 seconds, for all requests together and for each of the first 100 request names, plus the same for synthetic times while coordinated omission mitigation is on. It does not grow with run length. Its size depends on how many request names there are and how many distinct response times occur: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, and up to 30 MB in the worst case at the default 60 second timeout, more with a longer `--timeout`. Filling it costs little. In a test of 1,000 users at about 21,800 requests a second over 25 request names, the heatmap added no measurable CPU or instructions per request: the difference from the dashboard without it was within the runs' spread of about 1%. It added 3.1 MiB of peak memory. Each user's batch of metrics is still sent every 100 requests or 250 ms, as without the heatmap; a batch keeps each request name's response times for the second it is filling and the next one, and a request from any other second sends it early. For the HTML report's heatmap, while a report will be written, each second is also added once to whole run columns: up to 600 for all requests and 60 for each of those 100 names. The columns merge in pairs as they fill, so they too stop growing. `--no-percentiles-over-time` turns all of it off, along with the small per request cost of filling it.
+With `--dashboard`, and also for a `--report-file` or `--pdf-print-html`, Goose keeps one response time histogram per second for the last 300 seconds, for all requests together and for each of the first 100 request names, plus the same for synthetic times while coordinated omission mitigation is on. It does not grow with run length. Its size depends on how many request names there are and how many distinct response times occur: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, and up to 30 MB in the worst case at the default 60 second timeout, more with a longer `--timeout`. Filling it costs little. In a test of 1,000 users at about 21,800 requests a second over 25 request names, the heatmap added no measurable CPU or instructions per request: the difference from the dashboard without it was within the runs' spread of about 1%. It added 3.1 MiB of peak memory. Each user's batch of metrics is still sent every 100 requests or 250 ms, as without the heatmap; a batch keeps each request name's response times for the second it is filling and the next one, and a request from any other second sends it early. For the HTML report's heatmap, the JSON report's `percentiles_over_time_ms` and the dashboard's **Whole run** view, each second is also added once to whole run columns: up to 600 for all requests and 60 for each of those 100 names, with Save report on or off. The columns merge in pairs as they fill, so they too stop growing. In a 35 minute dashboard only run (Save report off) of 100 users over 100 request names at 5,000 requests a second, the whole run columns and lines added about 3.8 MiB of resident memory against Goose without them. `--no-percentiles-over-time` turns all of it off, along with the small per request cost of filling it.
 
 For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard for the least overhead, just as you can turn off the telnet Controller with `--no-telnet` (the WebSocket Controller is off unless `--websocket` turns it on).
 
@@ -993,7 +1034,7 @@ cargo run --release --features dashboard --example simple -- --dashboard ...
 
 ### Snapshot types
 
-`snapshot.d.ts` declares `DashboardSnapshot` and every struct it holds, and `RequestSeries`, the `/api/v1/series` body, generated by [`ts-rs`](https://crates.io/crates/ts-rs) from the Rust structs, so `tsc` rejects a read of a field the structs do not have. Every `u64` is declared as `number`, which is what `JSON.parse` returns. After changing a snapshot struct, regenerate the file, then type check the client (and run `npm run build` if a module in `src/` changed). `tsconfig.json` sets `skipLibCheck` to false so `tsc` also checks the generated file:
+`snapshot.d.ts` declares `DashboardSnapshot` and every struct it holds, `RequestSeries`, the `/api/v1/series` body, and `WholeRunLines`, the `lines` of the `/api/v1/whole-run` body, generated by [`ts-rs`](https://crates.io/crates/ts-rs) from the Rust structs, so `tsc` rejects a read of a field the structs do not have. Every `u64` is declared as `number`, which is what `JSON.parse` returns. After changing a snapshot struct, regenerate the file, then type check the client (and run `npm run build` if a module in `src/` changed). `tsconfig.json` sets `skipLibCheck` to false so `tsc` also checks the generated file:
 
 ```bash
 GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib dashboard_types_match_rust

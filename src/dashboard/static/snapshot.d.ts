@@ -530,3 +530,22 @@ run_count: number, failure_count: number, runs_per_second: number, failures_per_
  * The same times to the microsecond, all 0 without times.
  */
 response_time_us: MicrosecondTimes, };
+
+type WholeRunLines = {
+/**
+ * The second, from the test start, point 0 begins at.
+ */
+start_second: number,
+/**
+ * Seconds in each point.
+ */
+width: number,
+/**
+ * The newest second the points cover: the newest complete one.
+ */
+end_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>,
+/**
+ * The most users of any second, which a point's level, its last
+ * second's, can leave out.
+ */
+max_users: number, };

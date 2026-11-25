@@ -26,6 +26,8 @@ import {
   secondStep,
   tooltipText,
   provisionalAlpha,
+  reportHeatmapView,
+  rowOf,
 } from "./test-build/heatmap.mjs";
 import { formatMs } from "./test-build/format.mjs";
 import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
@@ -963,4 +965,250 @@ test("a Gaggle manager's provisional seconds are drawn half as strong", () => {
   assert.equal(provisionalAlpha(9, 10), 1);
   assert.equal(provisionalAlpha(10, 10), 0.5);
   assert.equal(provisionalAlpha(11, 10), 0.5);
+});
+
+// #764: the whole run view.
+
+/** A report heatmap with one series of `columns`, `width` seconds each, from `origin`. */
+function reportHeatmap(columns, { width = 4, origin = 10, adjusted = null, name = "All requests" } = {}) {
+  const buckets_us = [];
+  for (let i = 0; i < 237; i++) buckets_us.push([i * 1000 + 500, i * 1000, i * 1000 + 999]);
+  return {
+    start: 0,
+    offset: 0,
+    origin,
+    buckets_us,
+    series: [{ name, width, measured: { min: 1, max: 9, columns }, adjusted }],
+  };
+}
+
+test("the whole run heatmap is drawn from the report's columns, width seconds each", () => {
+  // Column 0 and column 2: [index, p50, p95, p99 in us, then bucket, count, level].
+  const heatmap = reportHeatmap([
+    [0, 3_500, 5_200, 5_900, 3, 4, 0, 5, 1, 1000],
+    [2, 7_100, 7_100, 7_100, 7, 9, 1000],
+  ]);
+  const view = reportHeatmapView(heatmap, false, 40);
+  assert.equal(view.width, 4);
+  assert.equal(view.startSecond, 10);
+  // Seconds 10 to 40 are 8 columns of 4.
+  assert.equal(view.columns, 8);
+  assert.deepEqual(
+    view.cells.map((c) => [c.column, c.second, c.bucket, c.count]),
+    [
+      [0, 10, 3, 4],
+      [0, 10, 5, 1],
+      [2, 18, 7, 9],
+    ]
+  );
+  assert.equal(view.minCount, 1);
+  assert.equal(view.maxCount, 9);
+  assert.equal(view.secondTotals.get(10), 5);
+  // Each percentile is the one the HTML and JSON reports state, in ms, not
+  // its row's middle; the line is drawn through the row it falls in.
+  assert.deepEqual(view.percentiles.get(10), { second: 10, p50: 3.5, p95: 5.2, p99: 5.9 });
+  assert.deepEqual(view.percentiles.get(18), { second: 18, p50: 7.1, p95: 7.1, p99: 7.1 });
+  assert.equal(rowOf(view.rows, 5.2).bucket, 5);
+  assert.equal(rowOf(view.rows, 5.999).bucket, 5);
+  assert.equal(rowOf(view.rows, 6).bucket, 6);
+  assert.equal(rowOf(view.rows, 5.5).bucket, 5, "a live percentile, a row's middle");
+  assert.equal(view.rows[0].bucket, 3);
+  assert.equal(view.rows[view.rows.length - 1].bucket, 7);
+  // The tooltip names the column's seconds.
+  const text = tooltipText(view, view.cells[2], view.rows[4], false, { int: String, pct: (f) => f });
+  assert.match(text, /^Seconds 18 to 21: /);
+  assert.match(text, /of the column's 9\)/);
+});
+
+test("the whole run heatmap shows the adjusted view when asked and there is one", () => {
+  const adjusted = { min: 2, max: 2, columns: [[1, 1_500, 1_500, 1_500, 1, 2, 1000]] };
+  const heatmap = reportHeatmap([[0, 500, 500, 500, 0, 1, 1000]], { adjusted });
+  assert.deepEqual(reportHeatmapView(heatmap, true, 20).cells.map((c) => c.second), [14]);
+  assert.deepEqual(reportHeatmapView(heatmap, false, 20).cells.map((c) => c.second), [10]);
+  const measuredOnly = reportHeatmap([[0, 500, 500, 500, 0, 1, 1000]]);
+  assert.deepEqual(reportHeatmapView(measuredOnly, true, 20).cells.map((c) => c.second), [10]);
+});
+
+test("a whole run heatmap with no columns, or none at all, draws nothing", () => {
+  const empty = reportHeatmapView(reportHeatmap([]), false, 100);
+  assert.equal(empty.cells.length, 0);
+  assert.equal(empty.width, 4);
+  const none = reportHeatmapView(null, false, 100);
+  assert.equal(none.cells.length, 0);
+  assert.equal(none.width, 1);
+});
+
+test("second labels over the whole run step in whole minutes and hours", () => {
+  assert.deepEqual(secondLabels(0, 600, 1), [0, 120, 240, 360, 480]);
+  assert.deepEqual(secondLabels(0, 450, 8), [0, 600, 1200, 1800, 2400, 3000]);
+  assert.equal(secondStep(86_400), 14_400);
+});
+
+function wholeRunRequests(page) {
+  return page.requests.filter((r) => r.path === "/api/v1/whole-run");
+}
+
+test("Whole run switches every time chart, asks once a second, and is kept for the session", async () => {
+  const lines = {
+    start_second: 0,
+    width: 2,
+    end_second: 9,
+    rps: [10, 12, 11, 9, 10],
+    fps: [0, 1, 0, 0, 0],
+    users: [1, 2, 3, 3, 3],
+    avg_latency_ms: [5, 6, 5, 5, 6],
+    max_users: 3,
+  };
+  const heatmap = reportHeatmap([[0, 500, 500, 500, 0, 3, 1000]], { width: 2, origin: 0 });
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", true, 5)]),
+    wholeRun: (url) => ({
+      lines,
+      heatmap: url.searchParams.has("name")
+        ? { ...heatmap, series: [{ ...heatmap.series[0], name: "GET /a" }] }
+        : heatmap,
+    }),
+  });
+  const recent = el(page, "range-recent");
+  const whole = el(page, "range-whole");
+  assert.equal(recent.getAttribute("aria-pressed"), "true");
+  assert.equal(whole.getAttribute("aria-pressed"), "false");
+  assert.equal(recent.tagName, "BUTTON", "keyboard operable");
+  assert.equal(el(page, "chart-range").getAttribute("role"), "group");
+  assert.equal(wholeRunRequests(page).length, 0, "nothing asked for on the live window");
+
+  const details = el(page, "chart-rps-details");
+  details.open = true;
+  details.dispatchEvent(new page.window.Event("toggle"));
+  whole.click();
+  await settle(page.window);
+  assert.equal(whole.getAttribute("aria-pressed"), "true");
+  assert.equal(recent.getAttribute("aria-pressed"), "false");
+  assert.equal(page.window.sessionStorage.getItem("goose-dashboard-chart-range"), "whole");
+  const asked = wholeRunRequests(page);
+  assert.equal(asked.length, 1);
+  assert.equal(new URL(asked[0].url).searchParams.get("token"), TOKEN);
+  assert.equal(el(page, "chart-latency-title").textContent, "Response times over the whole run");
+  assert.match(el(page, "heatmap-note").textContent, /^Whole run: each column is 2 seconds\./);
+  assert.match(el(page, "chart-rps-summary").textContent, /^Whole run: RPS 10\.40, peak 12\.00/);
+  assert.equal(el(page, "chart-users-summary").textContent, "Whole run: up to 3 users.");
+  assert.match(
+    el(page, "chart-latency-summary").textContent,
+    /^Whole run: p95 peaked at 0\.5 ms \(seconds 0 to 1\); last column p50 0\.5 ms, p95 0\.5 ms, p99 0\.5 ms\.$/
+  );
+  const rows = Array.from(el(page, "chart-rps-rows").querySelectorAll("tr")).map(
+    (tr) => tr.firstElementChild.textContent
+  );
+  assert.deepEqual(rows.slice().sort((a, b) => a - b), ["0", "2", "4", "6", "8"]);
+
+  // A snapshot leaves the whole run's charts alone.
+  await wait(page.window, 1_100);
+  await settle(page.window);
+  assert.match(el(page, "chart-rps-summary").textContent, /^Whole run:/);
+  assert.ok(wholeRunRequests(page).length >= 2, "asked again a second later");
+
+  // One request: its whole run heatmap, by name in the query.
+  const select = el(page, "heatmap-request");
+  select.value = "GET\n/a";
+  select.dispatchEvent(new page.window.Event("change"));
+  // Asked for within a second of the last ask.
+  await wait(page.window, 1_100);
+  await settle(page.window);
+  const last = wholeRunRequests(page).pop();
+  assert.equal(new URL(last.url).searchParams.get("name"), "/a");
+  assert.equal(seriesRequests(page).length, 0, "no live series polled over the whole run");
+  assert.equal(
+    el(page, "chart-latency-title").textContent,
+    "Response times over the whole run: GET /a"
+  );
+
+  // Back to the live window: nothing more is asked for, and the choice goes.
+  recent.click();
+  await settle(page.window);
+  const count = wholeRunRequests(page).length;
+  await wait(page.window, 1_100);
+  await settle(page.window);
+  assert.equal(wholeRunRequests(page).length, count);
+  assert.equal(page.window.sessionStorage.getItem("goose-dashboard-chart-range"), null);
+  assert.doesNotMatch(el(page, "chart-rps-summary").textContent, /^Whole run/);
+  assert.equal(el(page, "chart-latency-title").textContent, TITLE + ": GET /a");
+});
+
+test("a tab that chose Whole run opens on it again", async () => {
+  const page = await openPage(
+    "/?token=" + TOKEN,
+    { session: { "goose-dashboard-chart-range": "whole" }, local: {} },
+    TOKEN,
+    { snapshot: snapshotWith([requestRow("/a", true, 5)]) }
+  );
+  await settle(page.window);
+  assert.equal(el(page, "range-whole").getAttribute("aria-pressed"), "true");
+  assert.ok(wholeRunRequests(page).length >= 1);
+});
+
+test("with percentiles off, Whole run shows the whole run's average line", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", false, 5)], {}, { percentiles_over_time: false }),
+    wholeRun: {
+      lines: {
+        start_second: 0,
+        width: 1,
+        end_second: 1,
+        rps: [2, 2],
+        fps: [0, 0],
+        users: [1, 1],
+        avg_latency_ms: [4, 6],
+      },
+      heatmap: null,
+    },
+  });
+  el(page, "range-whole").click();
+  await settle(page.window);
+  assert.equal(el(page, "chart-latency-wrap").hidden, false);
+  assert.equal(el(page, "heatmap-wrap").hidden, true);
+  assert.equal(el(page, "chart-latency-summary").textContent, "Whole run: average 5 ms.");
+});
+
+test("the whole run summaries weigh each point by the seconds it covers, and give the most users", async () => {
+  // Two points of 2 seconds and a newest of 1: seconds 0 to 4.
+  const lines = {
+    start_second: 0,
+    width: 2,
+    end_second: 4,
+    rps: [10, 10, 40],
+    fps: [0, 1, 4],
+    users: [5, 5, 5],
+    avg_latency_ms: [10, 10, 25],
+    // Second 1 had 20 users; its point ends at 5.
+    max_users: 20,
+  };
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", true, 5)]),
+    wholeRun: { lines, heatmap: null },
+  });
+  el(page, "range-whole").click();
+  await settle(page.window);
+  // 20 + 20 + 40 requests over 5 seconds, not the mean of the three rates.
+  assert.match(el(page, "chart-rps-summary").textContent, /^Whole run: RPS 16\.00, peak 40\.00; failures 1\.20\/s\.$/);
+  assert.equal(el(page, "chart-users-summary").textContent, "Whole run: up to 20 users.");
+});
+
+test("a new request asked for over the whole run waits a second after the last ask", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", true, 5)]),
+  });
+  el(page, "range-whole").click();
+  await settle(page.window);
+  assert.equal(wholeRunRequests(page).length, 1);
+  const select = el(page, "heatmap-request");
+  select.value = "GET\n/a";
+  select.dispatchEvent(new page.window.Event("change"));
+  await settle(page.window);
+  await wait(page.window, 500);
+  assert.equal(wholeRunRequests(page).length, 1, "not again within the second");
+  await wait(page.window, 700);
+  await settle(page.window);
+  const asked = wholeRunRequests(page);
+  assert.equal(asked.length, 2, "once the second is up");
+  assert.equal(new URL(asked[1].url).searchParams.get("name"), "/a");
 });

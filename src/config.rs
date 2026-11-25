@@ -789,7 +789,7 @@ pub struct GooseConfiguration {
     ///
     /// Leaves out the response time percentiles for each second behind the dashboard's
     /// response time heatmap, which saves memory. Also turns off the report's response
-    /// time heatmap.
+    /// time heatmap and the JSON report's percentiles_over_time_ms.
     ///
     /// Set in code with GooseDefault::NoPercentilesOverTime.
     #[arg(help_heading = "Dashboard", long)]
@@ -4943,12 +4943,13 @@ impl GooseConfiguration {
     }
 
     /// Whether the per second histograms also fold into whole run columns,
-    /// for the report's response time heatmap, when the run starts with
-    /// Save report as configured: what `GooseAttack::records_latency_columns`
-    /// gives at the start of a run, for unit tests that build no GooseAttack.
+    /// for the report's response time heatmap, the JSON report's
+    /// percentiles over time and the dashboard's whole run view: whenever
+    /// they are kept, as `GooseAttack::records_latency_columns` gives, for
+    /// unit tests that build no GooseAttack.
     #[cfg(test)]
     pub(crate) fn records_latency_columns(&self) -> bool {
-        self.keeps_full_graph(self.save_report_at_start()) && self.records_latency_series()
+        self.records_latency_series()
     }
 
     /// Whether the heatmap also keeps coordinated omission mitigation's

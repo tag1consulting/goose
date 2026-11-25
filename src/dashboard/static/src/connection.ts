@@ -252,6 +252,35 @@ export function fetchRequestSeries(
 }
 
 /**
+ * The whole run view from `GET /api/v1/whole-run`: the line charts over the
+ * whole run, and the heatmap of all requests or, given `method` and `name`,
+ * of that request. A 401 shows the missing token banner, as for snapshots;
+ * null when it failed.
+ */
+export function fetchWholeRun(
+  request: { method: string; name: string } | null
+): Promise<unknown | null> {
+  if (authBlocked) return Promise.resolve(null);
+  const path =
+    request === null
+      ? "/api/v1/whole-run"
+      : "/api/v1/whole-run?method=" +
+        encodeURIComponent(request.method) +
+        "&name=" +
+        encodeURIComponent(request.name);
+  return fetch(withToken(path))
+    .then((res): Promise<unknown> | null => {
+      if (res.status === 401) {
+        showAuthMissing();
+        return null;
+      }
+      if (!res.ok) return null;
+      return res.json();
+    })
+    .catch(() => null);
+}
+
+/**
  * Fetches a snapshot now with the page's heatmap cursor and renders it, when
  * an SSE snapshot's heatmap followed on from another than the one held. At
  * most one such fetch at a time.

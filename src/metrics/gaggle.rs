@@ -172,14 +172,8 @@ impl MetricsProcessor {
                 merge.accumulator.set_max_users(max_users);
                 false
             }
-            // Save report: the merge builds the report heatmap's columns, or
-            // stops, from now on.
-            MetricsCommand::KeepGraph { keep, now } => {
-                merge.accumulator.set_columns(keep);
-                merge.dirty = true;
-                merge.built_at = None;
-                self.dispatch_command(MetricsCommand::KeepGraph { keep, now })
-            }
+            // Save report: the merge keeps the heatmap's columns either way.
+            cmd @ MetricsCommand::KeepGraph { .. } => self.dispatch_command(cmd),
             // Recorded on the manager's own state, read until the next
             // build, which puts back the users the merge built.
             cmd @ (MetricsCommand::UserStarted { .. } | MetricsCommand::RecordUsers { .. }) => {

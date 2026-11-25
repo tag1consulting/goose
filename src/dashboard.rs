@@ -160,6 +160,13 @@ pub(crate) enum DashboardRequest {
         since: Option<HeatmapCursor>,
         respond: tokio::sync::oneshot::Sender<Option<RequestSeries>>,
     },
+    /// The whole run view (`GET /api/v1/whole-run`), as JSON: the line
+    /// charts, and the heatmap of all requests or of `request`, its method
+    /// and name. `None` when it could not be written.
+    WholeRun {
+        request: Option<(String, String)>,
+        respond: tokio::sync::oneshot::Sender<Option<Vec<u8>>>,
+    },
 }
 
 /// JSON body returned by control endpoints after the main loop answers.
@@ -890,6 +897,9 @@ struct DashboardState {
     /// Recent `GET /api/v1/series` 200 answers by method and name, with when
     /// each was built.
     series_cache: Arc<Mutex<SeriesCache>>,
+    /// Recent `GET /api/v1/whole-run` answers by the request asked for, with
+    /// when each was built.
+    whole_run_cache: Arc<Mutex<WholeRunCache>>,
     /// The folder run folders go in, which the report routes read, and only
     /// them; the folder of the run in progress, which Delete refuses and the
     /// runs panel shows as running; and the listing cache. Shared with the
@@ -940,6 +950,43 @@ type SeriesKey = (String, String, Option<(u64, u64)>);
 
 /// Cached `GET /api/v1/series` bodies, by what they depend on.
 type SeriesCache = HashMap<SeriesKey, (Instant, Bytes)>;
+
+/// Query of `GET /api/v1/whole-run`: the token and, for one request's
+/// heatmap in place of all requests', its method and name.
+#[derive(Debug, Deserialize)]
+struct WholeRunQuery {
+    method: Option<String>,
+    name: Option<String>,
+    token: Option<String>,
+}
+
+/// Cached `GET /api/v1/whole-run` bodies, by the request asked for, `None`
+/// for all requests.
+type WholeRunCache = HashMap<Option<(String, String)>, (Instant, Bytes)>;
+
+/// Most whole run answers cached at once: all requests and a few request
+/// names, enough for several viewers. A name with no heatmap of its own
+/// still gets an answer (the lines), so without a cap a run of made up
+/// names could each leave a copy of the lines for a second.
+const MAX_WHOLE_RUN_CACHED: usize = 8;
+
+/// Cache a whole run body, dropping every entry older than
+/// [`SERIES_CACHE_TTL`], and the oldest when [`MAX_WHOLE_RUN_CACHED`] are
+/// held.
+fn cache_whole_run(cache: &mut WholeRunCache, key: Option<(String, String)>, body: Bytes) {
+    cache.retain(|_, (built, _)| built.elapsed() < SERIES_CACHE_TTL);
+    while cache.len() >= MAX_WHOLE_RUN_CACHED && !cache.contains_key(&key) {
+        let Some(oldest) = cache
+            .iter()
+            .min_by_key(|(_, (built, _))| *built)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        cache.remove(&oldest);
+    }
+    cache.insert(key, (Instant::now(), body));
+}
 
 /// Liveness plus lightweight operational counters (no load-test metrics).
 ///
@@ -1064,6 +1111,7 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
+        whole_run_cache: Arc::new(Mutex::new(HashMap::new())),
         saved_runs,
         log_folder: log_folder.clone(),
         controllers: HealthControllers {
@@ -1287,6 +1335,7 @@ fn build_router(state: DashboardState, host: &str) -> Router {
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
         .route("/api/v1/series", get(series_handler))
+        .route("/api/v1/whole-run", get(whole_run_handler))
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/reports", get(reports_handler))
         .route("/api/v1/reports/{name}/{file}", get(report_file_handler));
@@ -1637,6 +1686,78 @@ async fn series_handler(
             }
         },
         Ok(Ok(None)) => series_error(StatusCode::NOT_FOUND, "not_found"),
+        Ok(Err(_)) => series_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+        Err(_) => series_error(StatusCode::SERVICE_UNAVAILABLE, "timeout"),
+    }
+}
+
+/// `GET /api/v1/whole-run`: the whole run view of the dashboard's charts,
+/// which the page asks for only while "Whole run" is selected: the line
+/// charts over the whole run, and the response time heatmap over the whole
+/// run, of all requests, or with `method` and `name` of that request, in
+/// the shape the HTML report's heatmap reads, its one series the one asked
+/// for (null when percentiles over time are off or the request has no
+/// columns). Behind the same token check and in flight limit as `GET
+/// /api/v1/series`, and like it served from a cache for a second, so
+/// several viewers cost one build a second. Its size is bounded by the
+/// column budgets: at most 600 points a line and 600 heatmap columns. 400
+/// `bad_request` with only one of `method` and `name`, or when they are too
+/// long together; 503 `busy`, `timeout` or `unavailable` when the main loop
+/// cannot answer.
+async fn whole_run_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<WholeRunQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let request = match (query.method, query.name) {
+        (None, None) => None,
+        (Some(method), Some(name)) if method.len() + name.len() <= MAX_SERIES_QUERY_LEN => {
+            Some((method, name))
+        }
+        _ => return series_error(StatusCode::BAD_REQUEST, "bad_request"),
+    };
+    let cached = {
+        let cache = state
+            .whole_run_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cache
+            .get(&request)
+            .filter(|(built, _)| built.elapsed() < SERIES_CACHE_TTL)
+            .map(|(_, body)| body.clone())
+    };
+    if let Some(body) = cached {
+        return ([(header::CONTENT_TYPE, "application/json")], body).into_response();
+    }
+
+    let Some(_slot) = try_acquire_series_slot(&state) else {
+        return series_error(StatusCode::SERVICE_UNAVAILABLE, "busy");
+    };
+    let (respond, respond_rx) = oneshot::channel();
+    let ask = DashboardRequest::WholeRun {
+        request: request.clone(),
+        respond,
+    };
+    if state.request_tx.send(ask).is_err() {
+        return series_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    }
+    match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
+        Ok(Ok(Some(body))) => {
+            let body = Bytes::from(body);
+            cache_whole_run(
+                &mut state
+                    .whole_run_cache
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()),
+                request,
+                body.clone(),
+            );
+            ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+        }
+        Ok(Ok(None)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Ok(Err(_)) => series_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
         Err(_) => series_error(StatusCode::SERVICE_UNAVAILABLE, "timeout"),
     }
@@ -2719,12 +2840,32 @@ async fn control_report_now_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::config::GooseConfiguration;
     use crate::metrics::dashboard_snapshot::{
         AggregateMetrics, Percentiles, SeriesWindow, SnapshotFlags,
     };
     use crate::serve::{HEADER_READ_TIMEOUT, SERVER_DRAIN_TIMEOUT};
     use std::time::Instant;
+
+    /// Made up request names, each answered with the lines, keep at most
+    /// [`MAX_WHOLE_RUN_CACHED`] answers cached, the newest.
+    #[test]
+    fn the_whole_run_cache_holds_a_few_answers() {
+        let mut cache = WholeRunCache::new();
+        cache_whole_run(&mut cache, None, Bytes::from_static(b"all"));
+        for n in 0..100 {
+            let key = Some(("GET".to_string(), format!("/made-up/{n}")));
+            cache_whole_run(&mut cache, key, Bytes::from(vec![0u8; 1024]));
+            assert!(cache.len() <= MAX_WHOLE_RUN_CACHED);
+        }
+        assert_eq!(cache.len(), MAX_WHOLE_RUN_CACHED);
+        assert!(cache.contains_key(&Some(("GET".to_string(), "/made-up/99".to_string()))));
+        // The same key again replaces its entry and evicts nothing.
+        let key = Some(("GET".to_string(), "/made-up/99".to_string()));
+        cache_whole_run(&mut cache, key, Bytes::from_static(b"again"));
+        assert_eq!(cache.len(), MAX_WHOLE_RUN_CACHED);
+    }
 
     fn dummy_snapshot(seq: u64) -> DashboardSnapshot {
         DashboardSnapshot {
@@ -2794,6 +2935,9 @@ mod tests {
                     }
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
+                    }
+                    DashboardRequest::WholeRun { respond, .. } => {
+                        let _ = respond.send(Some(b"{}".to_vec()));
                     }
                 }
             }
@@ -2891,6 +3035,9 @@ mod tests {
                     }
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
+                    }
+                    DashboardRequest::WholeRun { respond, .. } => {
+                        let _ = respond.send(Some(b"{}".to_vec()));
                     }
                 }
             }
@@ -4089,6 +4236,9 @@ mod tests {
                     }
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
+                    }
+                    DashboardRequest::WholeRun { respond, .. } => {
+                        let _ = respond.send(Some(b"{}".to_vec()));
                     }
                 }
             }

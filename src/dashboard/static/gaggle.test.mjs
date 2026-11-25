@@ -98,7 +98,9 @@ test("the header, banner, KPI row and workers panel", async () => {
   assert.equal(charts.children[0].id, "workers-panel");
   assert.ok(charts.children[1].contains($(page, "#chart-rps")));
   assert.equal($$(page, "canvas#chart-rps").length, 1);
-  assert.equal(charts.previousElementSibling.id, "kpis");
+  // Between them, the charts' Last 5 minutes / Whole run toggle.
+  assert.ok(charts.previousElementSibling.classList.contains("charts-head"));
+  assert.equal(charts.previousElementSibling.previousElementSibling.id, "kpis");
   assert.ok($(page, "#chart-users").closest(".chart-card").classList.contains("chart-wide"));
 });
 

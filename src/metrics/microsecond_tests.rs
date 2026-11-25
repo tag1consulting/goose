@@ -1503,6 +1503,7 @@ fn report_source<'a>(
         graph_data,
         graphs: true,
         heatmap: None,
+        percentiles: None,
         loaded: None,
         record,
         graph_data_in_json: false,
