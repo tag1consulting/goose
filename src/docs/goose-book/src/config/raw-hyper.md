@@ -116,7 +116,7 @@ A body read that fails, a timeout part way through the body for example, fails a
 
 ## Measurements
 
-`benches/client_overhead.rs` runs a hyper HTTP/1.1 server in a process of its own, answering every request with the same 13 byte body, and each client in a fresh process. Each of 16 users is a task with one keep-alive connection, sending its next request as soon as it has read the last response. The figure is the client process's CPU time, user plus system, from `getrusage`, over 10 seconds after a 2 second warm up, divided by the requests it completed. The runs of the clients in a suite are interleaved. Every mode counts a request only when it succeeded and its whole body was read; a run in which any request failed, or returned another body, is thrown out. `self-check` checks this for every mode, against a server that answers another body.
+`benches/client_overhead.rs` runs a hyper HTTP/1.1 server in a process of its own, answering every request with the same 13 byte body, and each client in a fresh process. Each of 16 users is a task with one keep-alive connection, sending its next request as soon as it has read the last response. The figure is the client process's CPU time, user plus system, from `getrusage`, over 10 seconds after a 2 second warm up, divided by the requests it completed. The runs of the clients in a suite are interleaved. Every mode counts a request only when it succeeded and its whole body was read and matched the server's, byte for byte; a run in which any request failed, a raw request that got no response included, or returned another body, is thrown out. `self-check` checks this for every mode: each must first complete requests against the right server, so a mode that can't run fails the check, and then each must be rejected against a server answering another body of the same length, one answering a shorter body, and an address where nothing listens.
 
 | Client | What it is |
 |---|---|
@@ -124,34 +124,37 @@ A body read that fails, a timeout part way through the body for example, fails a
 | `goose-tuned` | The same, each user's client replaced with a tuned reqwest client (no cookie store, redirects, retries, proxies or `Referer`) through `set_client_builder` |
 | `goose-raw` | The same, each request `user.raw_get("/")` |
 | `+headers` | Each GET built on a reqwest `RequestBuilder` with two headers of its own, raw with `.raw(true)` |
-| `+cookie` | Each user first requests `/login` over reqwest, which sets a cookie, so every request after it carries the cookie |
+| `+cookie` | Each user first requests `/login` over reqwest, which sets a cookie, so every request after it carries the cookie; `+headers+cookie` does both |
 | `goose-post`, `goose-raw-post` | `user.post("/", body)` and `user.raw_post("/", body)` of a 32 byte body |
 | `reqwest-tuned+no-timeout` | A bare loop over the tuned reqwest client, with no timeout either: the cheapest reqwest |
 | `hyper-conn+timeout` | A bare loop over one `hyper::client::conn::http1` connection per user, each request under a 60 s timeout: the floor a raw client in Goose works toward |
 
-Measured on an Apple M3 Ultra (24 performance and 8 efficiency cores), macOS, 4 client worker threads, 8 server threads, 9 runs of each, the load average from other work on the machine between 10 and 19:
+Measured on an Apple M3 Ultra (24 performance and 8 efficiency cores), macOS, 4 client worker threads, 8 server threads, 9 runs of each, the load average from other work on the machine between 9 and 12:
 
 ```bash
 cargo bench --bench client_overhead --features raw-hyper -- suite --runs 9 \
     --modes goose,goose-tuned,goose-raw,goose+headers,goose-raw+headers,goose+cookie,\
-goose-raw+cookie,goose-post,goose-raw-post,reqwest-tuned+no-timeout,hyper-conn+timeout
+goose-raw+cookie,goose+headers+cookie,goose-raw+headers+cookie,goose-post,goose-raw-post,\
+reqwest-tuned+no-timeout,hyper-conn+timeout
 ```
 
 Plain HTTP:
 
 | Client | CPU µs per request, median | lowest | highest | requests/s, median |
 |---|---:|---:|---:|---:|
-| `goose` | 33.39 | 30.68 | 35.51 | 86,246 |
-| `goose-tuned` | 32.69 | 31.96 | 34.73 | 87,325 |
-| `goose-raw` | 25.47 | 21.08 | 28.97 | 98,693 |
-| `goose+headers` | 35.13 | 33.48 | 38.16 | 84,227 |
-| `goose-raw+headers` | 27.23 | 26.70 | 28.23 | 94,153 |
-| `goose+cookie` | 33.98 | 33.47 | 35.10 | 85,434 |
-| `goose-raw+cookie` | 26.90 | 25.37 | 28.05 | 95,206 |
-| `goose-post` | 34.05 | 33.12 | 35.97 | 84,787 |
-| `goose-raw-post` | 28.04 | 26.53 | 28.43 | 91,758 |
-| `reqwest-tuned+no-timeout` | 28.22 | 24.33 | 30.71 | 93,654 |
-| `hyper-conn+timeout` | 21.43 | 18.45 | 21.90 | 105,982 |
+| `goose` | 33.05 | 32.48 | 36.26 | 86,831 |
+| `goose-tuned` | 32.27 | 32.15 | 38.88 | 87,726 |
+| `goose-raw` | 25.28 | 25.03 | 36.52 | 99,905 |
+| `goose+headers` | 33.78 | 33.59 | 46.89 | 85,101 |
+| `goose-raw+headers` | 26.84 | 26.63 | 28.31 | 95,737 |
+| `goose+cookie` | 33.57 | 33.17 | 36.27 | 85,564 |
+| `goose-raw+cookie` | 26.49 | 26.25 | 27.04 | 97,260 |
+| `goose+headers+cookie` | 34.61 | 34.14 | 36.18 | 84,618 |
+| `goose-raw+headers+cookie` | 27.37 | 27.09 | 29.36 | 95,123 |
+| `goose-post` | 33.31 | 33.16 | 35.04 | 86,043 |
+| `goose-raw-post` | 26.56 | 26.45 | 36.93 | 95,368 |
+| `reqwest-tuned+no-timeout` | 27.63 | 27.34 | 35.40 | 95,131 |
+| `hyper-conn+timeout` | 20.93 | 20.81 | 22.61 | 108,932 |
 
 HTTPS, the same server over rustls with the test certificate in `tests/fixtures/tls`, offering HTTP/1.1 by ALPN, both clients run with `--accept-invalid-certs` as the certificate's CA is not trusted (the handshake happens once per user, so what this measures is each request over an open TLS connection):
 
@@ -162,27 +165,28 @@ cargo bench --bench client_overhead --features raw-hyper -- suite --runs 9 --tls
 
 | Client | CPU µs per request, median | lowest | highest | requests/s, median |
 |---|---:|---:|---:|---:|
-| `goose` | 34.49 | 31.02 | 38.80 | 85,905 |
-| `goose-raw` | 27.21 | 26.13 | 30.11 | 94,014 |
-| `goose-post` | 35.66 | 34.07 | 38.63 | 84,731 |
-| `goose-raw-post` | 27.79 | 27.28 | 29.54 | 91,823 |
+| `goose` | 33.75 | 33.41 | 34.14 | 85,318 |
+| `goose-raw` | 26.31 | 26.21 | 26.75 | 95,895 |
+| `goose-post` | 34.35 | 34.20 | 36.44 | 84,904 |
+| `goose-raw-post` | 27.63 | 27.39 | 29.79 | 91,768 |
 
 The cut in CPU per request, raw against reqwest in Goose, from the medians:
 
 | Request | reqwest | raw | Cut |
 |---|---:|---:|---:|
-| GET, plain HTTP | 33.39 | 25.47 | 23.7% |
-| GET, against `goose-tuned` | 32.69 | 25.47 | 22.1% |
-| GET with two headers | 35.13 | 27.23 | 22.5% |
-| GET with a cookie | 33.98 | 26.90 | 20.8% |
-| POST, 32 byte body | 34.05 | 28.04 | 17.7% |
-| GET, HTTPS | 34.49 | 27.21 | 21.1% |
-| POST, HTTPS | 35.66 | 27.79 | 22.1% |
-| Bare loops: `hyper-conn+timeout` against `reqwest-tuned+no-timeout` | 28.22 | 21.43 | 24.1% |
+| GET, plain HTTP | 33.05 | 25.28 | 23.5% |
+| GET, against `goose-tuned` | 32.27 | 25.28 | 21.7% |
+| GET with two headers | 33.78 | 26.84 | 20.5% |
+| GET with a cookie | 33.57 | 26.49 | 21.1% |
+| GET with two headers and a cookie | 34.61 | 27.37 | 20.9% |
+| POST, 32 byte body | 33.31 | 26.56 | 20.3% |
+| GET, HTTPS | 33.75 | 26.31 | 22.0% |
+| POST, HTTPS | 34.35 | 27.63 | 19.6% |
+| Bare loops: `hyper-conn+timeout` against `reqwest-tuned+no-timeout` | 27.63 | 20.93 | 24.2% |
 
 The cookie path's own cost, timed apart from the network with `cargo bench --bench client_overhead --features raw-hyper -- cookie-cost` (a million lookups, median of 9 runs): reading `Cookie` for the URL from an empty jar, 0.019 µs per request; from a jar holding one cookie, 0.288 µs; checking a response for `Set-Cookie` when it sets none, 0.003 µs. That is well under 1 µs, so raw requests always use the user's cookies, with no switch to turn them off.
 
-macOS cannot pin a thread to a core, so none of these runs was pinned, on a machine with two kinds of core and other work on it; the spread is the lowest and highest of the runs, and in the plain HTTP `goose-raw` row it is wide. On Linux, `--pin` runs the server and each client under `taskset` with fixed cores. Run it on a quiet machine: other load on the cores widens the spread, and changes the medians.
+macOS cannot pin a thread to a core, so none of these runs was pinned, on a machine with two kinds of core and other work on it; the spread is the lowest and highest of the runs, and a few rows have one slow run as their highest. On Linux, `--pin` runs the server and each client under `taskset` with fixed cores. Run it on a quiet machine: other load on the cores widens the spread, and changes the medians.
 
 To reproduce, and the options with their defaults:
 
@@ -195,7 +199,7 @@ cargo bench --bench client_overhead --features raw-hyper -- suite --users 16 --w
 
 ### Earlier measurements
 
-Before the raw client was added, a prototype (plain HTTP GET only, no headers, body, cookies or TLS, a timeout that ended at the response head) measured in the quietest of four suites, 9 runs each: `goose` 33.94 µs, `goose-tuned` 33.32 µs, `goose-raw` 24.85 µs (a 26.8% cut against `goose`), `reqwest-tuned+no-timeout` 27.99 µs and `hyper-conn+timeout` 21.45 µs (a 23.4% cut in bare loops). The bar then was 25%, so the prototype was not added; a cut of over 20% was later judged worth offering as an opt in. The raw client above does more per request than the prototype (headers, cookies, a deadline over the body), and keeps a 23.7% cut on a plain GET.
+Before the raw client was added, a prototype (plain HTTP GET only, no headers, body, cookies or TLS, a timeout that ended at the response head) measured in the quietest of four suites, 9 runs each: `goose` 33.94 µs, `goose-tuned` 33.32 µs, `goose-raw` 24.85 µs (a 26.8% cut against `goose`), `reqwest-tuned+no-timeout` 27.99 µs and `hyper-conn+timeout` 21.45 µs (a 23.4% cut in bare loops). The bar then was 25%, so the prototype was not added; a cut of over 20% was later judged worth offering as an opt in. The raw client above does more per request than the prototype (headers, cookies, a deadline over the body), and keeps a 23.5% cut on a plain GET.
 
 ## Where reqwest's time goes
 

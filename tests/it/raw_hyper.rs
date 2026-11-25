@@ -131,7 +131,8 @@ async fn raw_get_dropped(user: &mut GooseUser) -> TransactionResult {
 /// `raw_get` records each request as `get` does, returns its body through the same
 /// `GooseResponse`, and sends every request on one connection, with `Host`,
 /// Goose's `User-Agent` and `Accept: */*` as reqwest sends them, no
-/// `Accept-Encoding`, and from the second request on, the cookie the server set.
+/// `Accept-Encoding`, and from the second request on, with Goose's `cookies`
+/// feature, the cookie the server set.
 async fn raw_get_records_metrics_on_one_connection() {
     READ_BYTES.store(0, Ordering::SeqCst);
     let (host, connections, heads) = start_server(false).await;
@@ -167,9 +168,10 @@ async fn raw_get_records_metrics_on_one_connection() {
             head
         );
         assert!(lower.contains("accept: */*\r\n"), "{}", head);
+        // Without Goose's cookies feature there are no cookies to send.
         assert_eq!(
             lower.contains("cookie: session=raw\r\n"),
-            i > 0,
+            i > 0 && cfg!(feature = "cookies"),
             "request {}: {}",
             i,
             head

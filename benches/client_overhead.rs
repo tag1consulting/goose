@@ -3,6 +3,9 @@
 //! The Goose Book's "Raw Hyper Client" page explains the numbers this prints.
 //!
 //! ```text
+//! # Every mode completes requests, and rejects a body of the same length but
+//! # other bytes, a shorter body, and requests that fail (add --tls for HTTPS):
+//! cargo bench --bench client_overhead --features raw-hyper -- self-check
 //! # Every client mode, 5 runs each, interleaved, with a median and spread:
 //! cargo bench --bench client_overhead --features raw-hyper -- suite
 //! # Options, with their defaults:
@@ -25,7 +28,8 @@
 //! Client modes:
 //!
 //! - `goose`: a Goose load test, each user's transaction `user.get("/")` and
-//!   `discard_body()`, as a load test does today.
+//!   its body read to the end, as `discard_body()` reads it, and compared with
+//!   the body the server sends.
 //! - `goose-tuned`: the same, each user's client replaced at start with the tuned
 //!   reqwest client below, through `GooseUser::set_client_builder`.
 //! - `goose-raw`: the same, each request sent with `user.raw_get("/")` over the
@@ -102,6 +106,8 @@ mod bench {
     /// Requests a Goose mode saw fail, or return a body other than `BODY`; any
     /// fails the run. A bare loop panics on such a request instead.
     static FAILED: AtomicU64 = AtomicU64::new(0);
+    /// Set with `--tls`, for a client a Goose mode builds itself.
+    static ACCEPT_INVALID_CERTS: AtomicBool = AtomicBool::new(false);
     /// Set when the measured seconds are over, to stop a bare loop.
     static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -119,6 +125,8 @@ mod bench {
         pin: bool,
         body: Option<String>,
         tls: bool,
+        /// Whether `--modes` was given; `self-check` checks every mode otherwise.
+        modes_given: bool,
     }
 
     impl Options {
@@ -150,6 +158,7 @@ mod bench {
                 pin: false,
                 body: None,
                 tls: false,
+                modes_given: false,
             };
             let mut args = args.iter();
             while let Some(arg) = args.next() {
@@ -169,6 +178,7 @@ mod bench {
                     "--runs" => options.runs = value().parse().expect("--runs"),
                     "--modes" => {
                         options.modes = value().split(',').map(str::to_string).collect();
+                        options.modes_given = true;
                     }
                     "--addr" => options.addr = value(),
                     "--pin" => options.pin = true,
@@ -416,7 +426,7 @@ mod bench {
                             .await
                             .expect("reqwest request");
                         let body = response.bytes().await.expect("reqwest body");
-                        assert_eq!(body.len(), BODY.len());
+                        assert_eq!(&body[..], BODY);
                         COMPLETED.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -443,7 +453,7 @@ mod bench {
                             } else {
                                 exchange.await
                             };
-                            assert_eq!(body.len(), BODY.len());
+                            assert_eq!(&body[..], BODY);
                             COMPLETED.fetch_add(1, Ordering::Relaxed);
                         }
                     }
@@ -480,7 +490,7 @@ mod bench {
                             } else {
                                 exchange.await
                             };
-                            assert_eq!(body.len(), BODY.len());
+                            assert_eq!(&body[..], BODY);
                             COMPLETED.fetch_add(1, Ordering::Relaxed);
                         }
                     }
@@ -563,6 +573,7 @@ mod bench {
         ];
         if options.tls {
             args.push("--accept-invalid-certs");
+            ACCEPT_INVALID_CERTS.store(true, Ordering::Relaxed);
         }
         let configuration = GooseConfiguration::parse_args_default(&args).expect("options");
         let headers = knobs.iter().any(|knob| knob == "headers");
@@ -603,21 +614,43 @@ mod bench {
     }
 
     /// Counts the request as completed only as the bare loops do: a success, with
-    /// the whole body read. Anything else is counted as failed, which fails the run.
-    async fn count(goose: goose::goose::GooseResponse) {
-        let success = goose.request.success;
-        match goose.discard_body().await {
-            Ok(read) if success && read == BODY.len() as u64 => {
-                COMPLETED.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => {
-                FAILED.fetch_add(1, Ordering::Relaxed);
+    /// the whole body read and equal to `BODY`. Anything else, a request that got
+    /// no response included, is counted as failed, which fails the run.
+    async fn count(result: Result<goose::goose::GooseResponse, Box<TransactionError>>) {
+        let completed = match result {
+            Ok(goose) if goose.request.success => match goose.response {
+                Ok(mut response) => body_is_expected(&mut response).await,
+                Err(_) => false,
+            },
+            _ => false,
+        };
+        if completed {
+            COMPLETED.fetch_add(1, Ordering::Relaxed);
+        } else {
+            FAILED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Reads the body chunk by chunk, as `discard_body` does, and compares it with
+    /// `BODY` as it goes, with no copy.
+    async fn body_is_expected(response: &mut goose::goose::GooseHttpResponse) -> bool {
+        let mut read = 0;
+        loop {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    if BODY.get(read..read + chunk.len()) != Some(&chunk[..]) {
+                        return false;
+                    }
+                    read += chunk.len();
+                }
+                Ok(None) => return read == BODY.len(),
+                Err(_) => return false,
             }
         }
     }
 
     async fn get_index(user: &mut GooseUser) -> TransactionResult {
-        count(user.get("/").await?).await;
+        count(user.get("/").await).await;
         Ok(())
     }
 
@@ -633,18 +666,18 @@ mod bench {
         let request = GooseRequest::builder()
             .set_request_builder(with_headers(user)?)
             .build();
-        count(user.request(request).await?).await;
+        count(user.request(request).await).await;
         Ok(())
     }
 
     async fn post_index(user: &mut GooseUser) -> TransactionResult {
-        count(user.post("/", POST_BODY).await?).await;
+        count(user.post("/", POST_BODY).await).await;
         Ok(())
     }
 
     #[cfg(feature = "raw-hyper")]
     async fn raw_get_index(user: &mut GooseUser) -> TransactionResult {
-        count(user.raw_get("/").await?).await;
+        count(user.raw_get("/").await).await;
         Ok(())
     }
 
@@ -654,13 +687,13 @@ mod bench {
             .set_request_builder(with_headers(user)?)
             .raw(true)
             .build();
-        count(user.request(request).await?).await;
+        count(user.request(request).await).await;
         Ok(())
     }
 
     #[cfg(feature = "raw-hyper")]
     async fn raw_post_index(user: &mut GooseUser) -> TransactionResult {
-        count(user.raw_post("/", POST_BODY).await?).await;
+        count(user.raw_post("/", POST_BODY).await).await;
         Ok(())
     }
 
@@ -682,7 +715,11 @@ mod bench {
         .iter()
         .map(|knob| knob.to_string())
         .collect();
-        user.set_client_builder(reqwest_builder(&knobs)).await?;
+        // With --tls, accept the test certificate, as Goose's own client does with
+        // --accept-invalid-certs.
+        let builder = reqwest_builder(&knobs)
+            .danger_accept_invalid_certs(ACCEPT_INVALID_CERTS.load(Ordering::Relaxed));
+        user.set_client_builder(builder).await?;
         Ok(())
     }
 
@@ -827,14 +864,48 @@ mod bench {
         Ok((fields[0], fields[1], fields[2]))
     }
 
-    /// Starts a server answering a body other than `BODY`, and checks that every
-    /// client mode fails against it, so no run with a failed or short exchange is
-    /// ever counted.
-    fn self_check(mut options: Options) {
+    /// Every client mode this build can run, for `self-check` with no `--modes`.
+    fn every_mode(tls: bool) -> Vec<String> {
+        let mut modes = vec![
+            "goose",
+            "goose-tuned",
+            "goose+headers",
+            "goose+cookie",
+            "goose+headers+cookie",
+            "goose-post",
+        ];
+        #[cfg(feature = "raw-hyper")]
+        modes.extend([
+            "goose-raw",
+            "goose-raw+headers",
+            "goose-raw+cookie",
+            "goose-raw+headers+cookie",
+            "goose-raw-post",
+        ]);
+        if !tls {
+            modes.extend([
+                "reqwest",
+                "reqwest-tuned",
+                "reqwest-tuned+no-timeout",
+                "hyper",
+                "hyper+timeout",
+                "hyper-conn",
+                "hyper-conn+timeout",
+            ]);
+        }
+        modes.into_iter().map(str::to_string).collect()
+    }
+
+    /// Starts a server answering `body`, or `BODY`, as `options` ask, and returns
+    /// it with the address it listens on.
+    fn start_server(options: &Options, body: Option<&str>) -> (std::process::Child, String) {
         let exe = std::env::current_exe().unwrap();
-        let mut server = Command::new(&exe)
-            .args(options.server_args())
-            .args(["--body", "wrong"])
+        let mut command = Command::new(&exe);
+        command.args(options.server_args());
+        if let Some(body) = body {
+            command.args(["--body", body]);
+        }
+        let mut server = command
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -843,28 +914,98 @@ mod bench {
         BufReader::new(server.stdout.take().unwrap())
             .read_line(&mut line)
             .unwrap();
-        options.addr = line
+        let addr = line
             .trim()
             .strip_prefix("LISTENING ")
             .expect("server address")
             .to_string();
+        (server, addr)
+    }
+
+    /// Checks that every mode counts only what it should. Each mode must first run
+    /// against the right server, so a mode that can't run at all fails the check
+    /// here rather than passing below. Then each must reject a run against a server
+    /// answering another body of `BODY`'s length, one answering a shorter body, and
+    /// an address where nothing listens, so no run with a failed request, or a
+    /// short or wrong body, is ever counted. With no `--modes`, it checks every mode
+    /// this build can run.
+    fn self_check(mut options: Options) {
+        let exe = std::env::current_exe().unwrap();
+        if !options.modes_given {
+            options.modes = every_mode(options.tls);
+        }
         options.warmup = 0;
         options.seconds = 1;
-        let mut accepted = Vec::new();
+
+        let (mut server, addr) = start_server(&options, None);
+        options.addr = addr;
+        let mut broken = Vec::new();
         for mode in &options.modes {
             match run_client(Command::new(&exe), mode, &options) {
-                Ok(_) => accepted.push(mode.clone()),
-                Err(e) => eprintln!("rejected, as it should be: {}", e),
+                Ok((requests, _, _)) if requests > 0 => {
+                    eprintln!("runs, as it should: {mode}, {requests} requests")
+                }
+                Ok(_) => broken.push(format!("{mode}: no request completed")),
+                Err(e) => broken.push(e),
             }
         }
         let _ = server.kill();
         let _ = server.wait();
         assert!(
+            broken.is_empty(),
+            "these modes failed against a server answering the right body: {:?}",
+            broken
+        );
+
+        // The same length as BODY, so only a check of its bytes rejects it.
+        let same_length: String = String::from_utf8(BODY.to_vec())
+            .unwrap()
+            .chars()
+            .rev()
+            .collect();
+        assert_eq!(same_length.len(), BODY.len());
+        let mut accepted = Vec::new();
+        for (what, body) in [
+            (
+                "another body of the same length",
+                Some(same_length.as_str()),
+            ),
+            ("a shorter body", Some("wrong")),
+            ("no server", None),
+        ] {
+            let server = match body {
+                Some(body) => {
+                    let (server, addr) = start_server(&options, Some(body));
+                    options.addr = addr;
+                    Some(server)
+                }
+                None => {
+                    // A port nothing listens on: bound, then closed.
+                    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                    options.addr = listener.local_addr().unwrap().to_string();
+                    None
+                }
+            };
+            for mode in &options.modes {
+                match run_client(Command::new(&exe), mode, &options) {
+                    Ok(_) => accepted.push(format!("{mode} against {what}")),
+                    Err(e) => eprintln!("rejected against {what}, as it should be: {e}"),
+                }
+            }
+            if let Some(mut server) = server {
+                let _ = server.kill();
+                let _ = server.wait();
+            }
+        }
+        assert!(
             accepted.is_empty(),
-            "these modes counted requests that returned the wrong body: {:?}",
+            "these runs counted requests that failed or returned the wrong body: {:?}",
             accepted
         );
-        println!("self-check passed: every mode rejects a wrong body");
+        println!(
+            "self-check passed: every mode runs, and rejects a wrong body, a short body \
+             and failed requests"
+        );
     }
 
     /// What the cookie path adds to each raw request, on one thread: reading the
