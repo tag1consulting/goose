@@ -53,6 +53,8 @@ mod graph;
 pub mod logger;
 pub mod metrics;
 pub mod prelude;
+#[cfg(feature = "raw-hyper")]
+mod raw_hyper;
 mod report;
 mod run_shape;
 mod runs;
@@ -1491,9 +1493,17 @@ impl GooseAttack {
                 }
                 // Users ask for gzip as the builder resolved it: see GooseUser::gzip.
                 let gzip = config.gzip;
+                #[cfg(feature = "raw-hyper")]
+                let raw = raw_hyper::RawSettings::new(
+                    &config,
+                    #[cfg(feature = "cookies")]
+                    None,
+                );
                 Some(client::BuilderClients {
                     strategy: config.into_strategy()?,
                     gzip,
+                    #[cfg(feature = "raw-hyper")]
+                    raw,
                 })
             }
             None => None,

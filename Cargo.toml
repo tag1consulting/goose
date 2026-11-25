@@ -78,6 +78,9 @@ axum = { version = "0.8", optional = true }
 hyper = { version = "1", optional = true, features = ["http1", "server"] }
 hyper-util = { version = "0.1", optional = true, features = ["service", "tokio"] }
 tower-http = { version = "0.6", optional = true, features = ["set-header"] }
+# TLS for the raw hyper client, with the `raw-hyper` feature: the version
+# reqwest's rustls already pulls in.
+tokio-rustls = { version = "0.26", optional = true, default-features = false }
 # The MCP Controller, with the `mcp` feature: Model Context Protocol tools
 # over Streamable HTTP, served by axum.
 rmcp = { version = "3.8", optional = true, default-features = false, features = ["server", "transport-streamable-http-server"] }
@@ -121,6 +124,12 @@ dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 # MCP Controller: Model Context Protocol tools for every Controller command,
 # for AI agents. Opt-in, and off at run time until --mcp.
 mcp = ["dep:rmcp", "axum", "hyper", "hyper-util"]
+# The raw hyper client: GooseUser::raw_get and raw_post, and GooseRequest's
+# raw(true), send over one HTTP/1.1 hyper connection per user, plain or over
+# rustls, skipping reqwest's layer (no redirects, decompression, proxies or
+# HTTP/2). hyper, hyper-util and tokio-rustls are already in the tree through
+# reqwest. See the Book's raw hyper page.
+raw-hyper = ["hyper", "hyper/client", "hyper-util", "dep:tokio-rustls"]
 # Distributed load tests (Gaggle): a manager and workers, over gRPC.
 gaggle = ["dep:http-body", "dep:libc", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 
@@ -143,6 +152,12 @@ tokio-rustls = { version = "0.26", default-features = false }
 # the pin, run `GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib
 # dashboard_types_match_rust`, review the diff, and run `npm run check`.
 ts-rs = "=12.0.1"
+# benches/client_overhead.rs: a local HTTP/1.1 server and a bare hyper client
+# to compare with reqwest. All three are already in the tree through reqwest,
+# with these features.
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 
 # A Gaggle worker reads its own CPU time with getrusage, with the `gaggle`
 # feature. Already in the tree, through tokio.
@@ -153,11 +168,19 @@ libc = { version = "0.2", optional = true }
 # as are those tests.
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.30", features = ["signal"] }
+# benches/client_overhead.rs reads the process's CPU time with getrusage.
+libc = "0.2"
 
 # Without the test harness, which captures stdout: the test checks no
 # thread holds stdout while the metrics are formatted.
 [[test]]
 name = "metrics_print_unlocked"
+harness = false
+
+# CPU time per request of Goose, reqwest and bare hyper against a local server:
+# `cargo bench --bench client_overhead -- suite`. See the Book's raw hyper page.
+[[bench]]
+name = "client_overhead"
 harness = false
 
 # `cargo test` builds examples but runs no tests inside them by default; this runs

@@ -1412,6 +1412,9 @@ pub struct GooseUser {
     /// The run's totals of unread bodies read, shared by every user; `None` outside a
     /// load test.
     pub(crate) unread_body_totals: Option<Arc<UnreadBodyTotals>>,
+    /// The connection raw requests go over, with the `raw-hyper` feature.
+    #[cfg(feature = "raw-hyper")]
+    raw_connection: crate::raw_hyper::RawConnection,
 }
 
 impl Clone for GooseUser {
@@ -1461,6 +1464,9 @@ impl Clone for GooseUser {
             unread_bodies: UnreadBodies::default(),
             reading_bodies: Vec::new(),
             unread_body_totals: self.unread_body_totals.clone(),
+            // A clone is another user, with a connection of its own.
+            #[cfg(feature = "raw-hyper")]
+            raw_connection: self.raw_connection.clone(),
         }
     }
 }
@@ -1483,6 +1489,16 @@ impl GooseUser {
     ) -> Result<Self, GooseError> {
         // A client given here handles gzip as it was built to.
         let gzip = reqwest_client.is_none() && !configuration.no_gzip;
+        // Goose can't see a given client's cookie jar: raw requests send no cookies.
+        let reqwest_client = reqwest_client.map(|client| crate::client::UserClient {
+            client,
+            #[cfg(feature = "raw-hyper")]
+            raw: crate::raw_hyper::RawSettings::new(
+                &crate::client::GooseClientConfig::from(configuration),
+                #[cfg(feature = "cookies")]
+                None,
+            ),
+        });
         Self::with_gzip(
             scenarios_index,
             scenario_name,
@@ -1502,12 +1518,12 @@ impl GooseUser {
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
-        reqwest_client: Option<Client>,
+        reqwest_client: Option<crate::client::UserClient>,
         gzip: bool,
     ) -> Result<Self, GooseError> {
         trace!("new GooseUser");
 
-        let client = match reqwest_client {
+        let user_client = match reqwest_client {
             Some(c) => c,
             // Use the new unified client creation function for consistency
             None => {
@@ -1515,6 +1531,7 @@ impl GooseUser {
                 crate::client::create_reqwest_client_with_cookies(&config)?
             }
         };
+        let client = user_client.client;
 
         let record_graph_data = configuration.records_graph_data();
         let record_latency_series = configuration.records_latency_series();
@@ -1558,6 +1575,8 @@ impl GooseUser {
             unread_bodies: UnreadBodies::default(),
             reading_bodies: Vec::new(),
             unread_body_totals: None,
+            #[cfg(feature = "raw-hyper")]
+            raw_connection: crate::raw_hyper::RawConnection::new(user_client.raw),
         })
     }
 
@@ -1573,7 +1592,7 @@ impl GooseUser {
     pub(crate) fn single_with_client(
         base_url: Url,
         configuration: &GooseConfiguration,
-        reqwest_client: Option<Client>,
+        reqwest_client: Option<crate::client::UserClient>,
         gzip: bool,
     ) -> Result<Self, GooseError> {
         let mut single_user = GooseUser::with_gzip(
@@ -1878,6 +1897,110 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
+        self.request(goose_request).await
+    }
+
+    /// [`get`](Self::get) over the user's raw hyper connection instead of its reqwest
+    /// client, with Goose's `raw-hyper` feature: a cheaper request, for a load test
+    /// that has to get the most requests out of one machine.
+    ///
+    /// Each user opens one HTTP/1.1 connection with its first raw request, plain or
+    /// over rustls, and keeps it alive. A raw request carries the user's cookies and
+    /// stores the cookies the server sets, in the jar the user's reqwest client uses,
+    /// unless the load test built that client itself. It sends `Host`,
+    /// `User-Agent` and `Accept: */*`, as reqwest does, but no `Accept-Encoding`:
+    /// there is no decompression. It follows no redirect, uses no proxy, and never
+    /// speaks HTTP/2. Goose's request timeout covers the whole exchange, the body
+    /// included.
+    ///
+    /// It records the same request metrics as [`get`](Self::get), and returns the
+    /// same [`GooseResponse`], so the test reads the response as it reads any other,
+    /// and Goose reads a body the test drops unread. One difference: when the
+    /// request gets no response at all (the connection can't be opened or fails, or
+    /// the timeout passes), Goose records the failed request and returns
+    /// [`TransactionError::RequestFailed`] instead of a `GooseResponse` holding the
+    /// error, as there is no [`reqwest::Error`] to hold.
+    ///
+    /// [`GooseRequestBuilder::raw`] sends any request built with a
+    /// [`GooseRequest`] over the raw connection: with a name, another method, an
+    /// expected status code, or headers and a body set on a reqwest
+    /// [`RequestBuilder`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut transaction = transaction!(get_function);
+    ///
+    /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
+    ///     let _ = user.raw_get("path/to/foo/").await?.discard_body().await;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "raw-hyper")]
+    pub async fn raw_get(&mut self, path: &str) -> Result<GooseResponse, Box<TransactionError>> {
+        let goose_request = GooseRequest::builder().path(path).raw(true).build();
+        self.request(goose_request).await
+    }
+
+    /// [`raw_get`](Self::raw_get), naming the request in the metrics as
+    /// [`get_named`](Self::get_named) does.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut transaction = transaction!(get_function);
+    ///
+    /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
+    ///     let _ = user.raw_get_named("path/to/foo/", "foo").await?.discard_body().await;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "raw-hyper")]
+    pub async fn raw_get_named(
+        &mut self,
+        path: &str,
+        name: &str,
+    ) -> Result<GooseResponse, Box<TransactionError>> {
+        let goose_request = GooseRequest::builder()
+            .path(path)
+            .name(name)
+            .raw(true)
+            .build();
+        self.request(goose_request).await
+    }
+
+    /// [`post`](Self::post) over the user's raw hyper connection: see
+    /// [`raw_get`](Self::raw_get). A body that is a stream, rather than in memory, is
+    /// sent once, never again on a new connection.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut transaction = transaction!(post_function);
+    ///
+    /// async fn post_function(user: &mut GooseUser) -> TransactionResult {
+    ///     let _ = user.raw_post("path/to/foo/", "BODY BEING POSTED").await?.discard_body().await;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "raw-hyper")]
+    pub async fn raw_post<T: Into<reqwest::Body>>(
+        &mut self,
+        path: &str,
+        body: T,
+    ) -> Result<GooseResponse, Box<TransactionError>> {
+        let mut goose_request = GooseRequest::builder()
+            .method(GooseMethod::Post)
+            .path(path)
+            .raw(true)
+            .build();
+        goose_request.raw_body = Some(body.into());
         self.request(goose_request).await
     }
 
@@ -2339,6 +2462,11 @@ impl GooseUser {
         // before the request is started, so it is not part of the request's time.
         self.read_unread_bodies().await;
 
+        #[cfg(feature = "raw-hyper")]
+        if request.raw {
+            return self.raw_request(request).await;
+        }
+
         // If the RequestBuilder is already defined in the GooseRequest use it.
         let request_builder = if request.request_builder.is_some() {
             request.request_builder.take().unwrap()
@@ -2350,18 +2478,7 @@ impl GooseUser {
         // Determine the name for this request.
         let request_name = self.get_request_name(&request);
 
-        // If throttle-requests is enabled...
-        if self.is_throttled && self.throttle.is_some() {
-            // ...wait until there's room to add a token to the throttle channel before proceeding.
-            debug!(
-                "[user {}]: waiting on throttle",
-                self.weighted_users_index + 1
-            );
-            // Will result in TransactionError::RequestCanceled if this fails.
-            if let Err(e) = self.throttle.clone().unwrap().send_async(true).await {
-                return Err(Box::new(e.into()));
-            }
-        };
+        self.wait_for_throttle().await?;
 
         // Once past the throttle, the request is officially started.
         let started = Instant::now();
@@ -2410,25 +2527,8 @@ impl GooseUser {
             body,
         );
 
-        // Provide details about the current transaction for logging.
-        let transaction_detail = TransactionDetail {
-            scenario_index: self.scenarios_index,
-            scenario_name: self.scenario_name.clone(),
-            transaction_index: self.transaction_index,
-            transaction_name: self
-                .transaction_name
-                .clone()
-                .unwrap_or(TransactionName::default_value()),
-        };
-
         // Record information about the request.
-        let mut request_metric = GooseRequestMetric::new(
-            raw_request,
-            transaction_detail,
-            request_name,
-            self.started.elapsed().as_millis(),
-            self.weighted_users_index,
-        );
+        let mut request_metric = self.new_request_metric(raw_request, request_name);
 
         // Ask for gzip unless the test set its own Accept-Encoding; after the headers
         // are copied for the logs, which never showed the header reqwest added.
@@ -2501,21 +2601,8 @@ impl GooseUser {
                 );
 
                 // Update the request_metric object.
-                request_metric.set_status_code(Some(status_code));
                 request_metric.set_final_url(r.url().as_str());
-
-                // Check if we were expecting a specific status code.
-                if let Some(expect_status_code) = request.expect_status_code {
-                    // Record a failure if the expected status code was not returned.
-                    if status_code != expect_status_code {
-                        request_metric.success = false;
-                        request_metric.error = format!("{status_code}: {}", request_metric.name);
-                    }
-                // Otherwise record a failure if the returned status code was not a success.
-                } else if !status_code.is_success() {
-                    request_metric.success = false;
-                    request_metric.error = format!("{status_code}: {}", request_metric.name);
-                }
+                check_status(&mut request_metric, status_code, request.expect_status_code);
 
                 // Load test user was redirected.
                 if self.config.sticky_follow && request_metric.raw.url != request_metric.final_url {
@@ -2547,6 +2634,209 @@ impl GooseUser {
             }
         };
 
+        let request_metric = self
+            .record_request_metric(request_metric, request.error_on_fail)
+            .await?;
+
+        Ok(GooseResponse {
+            request: request_metric,
+            response,
+        })
+    }
+
+    /// [`request`](Self::request) for a request built with
+    /// [`GooseRequestBuilder::raw`]: sent over the user's raw hyper connection, and
+    /// recorded as any other request is.
+    #[cfg(feature = "raw-hyper")]
+    async fn raw_request(
+        &mut self,
+        mut request: GooseRequest<'_>,
+    ) -> Result<GooseResponse, Box<TransactionError>> {
+        use crate::raw_hyper::{RawBody, RawRequest};
+
+        // What to send: the test's reqwest request, or the path and method.
+        let raw = if let Some(request_builder) = request.request_builder.take() {
+            let mut built = request_builder.build().map_err(|e| Box::new(e.into()))?;
+            // Every builder call a raw request can't honour is refused, never ignored.
+            if built.version() != http::Version::HTTP_11 {
+                return Err(Box::new(TransactionError::Custom(format!(
+                    "a raw request is sent over HTTP/1.1, not {:?}: leave the version \
+                     unset, or send this request without raw(true)",
+                    built.version()
+                ))));
+            }
+            RawRequest {
+                method: built.method().clone(),
+                url: built.url().clone(),
+                headers: std::mem::take(built.headers_mut()),
+                body: RawBody::from_reqwest(built.body_mut().take()),
+                timeout: built.timeout().copied(),
+            }
+        } else {
+            let method = match request.method {
+                GooseMethod::Delete => Method::DELETE,
+                GooseMethod::Get => Method::GET,
+                GooseMethod::Head => Method::HEAD,
+                GooseMethod::Patch => Method::PATCH,
+                GooseMethod::Post => Method::POST,
+                GooseMethod::Put => Method::PUT,
+                GooseMethod::Custom => {
+                    return Err(Box::new(TransactionError::Custom(
+                        "GooseMethod::Custom cannot be used with a raw request; \
+                         use record_custom_request() instead"
+                            .to_string(),
+                    )))
+                }
+            };
+            RawRequest {
+                method,
+                url: self.request_url(request.path)?,
+                headers: header::HeaderMap::new(),
+                body: RawBody::from_reqwest(request.raw_body.take()),
+                timeout: None,
+            }
+        };
+        let method = goose_method_from_method(raw.method.clone())?;
+        let request_name = self.get_request_name(&request);
+
+        self.wait_for_throttle().await?;
+
+        // Once past the throttle, the request is officially started.
+        let started = Instant::now();
+
+        // The headers and body for the logs, as on the reqwest path.
+        let headers: Vec<String> = if self.config.request_log().is_some()
+            || self.config.debug_log().is_some()
+            || self.config.error_log().is_some()
+        {
+            raw.headers
+                .iter()
+                .map(|header| format!("{header:?}"))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let body = match (&raw.body, self.config.request_body) {
+            (RawBody::Bytes(bytes), true) => str::from_utf8(bytes).unwrap_or(""),
+            _ => "",
+        };
+        let raw_request = GooseRawRequest::new(method, raw.url.as_str(), headers, body);
+        let mut request_metric = self.new_request_metric(raw_request, request_name);
+
+        let url = raw.url.clone();
+        let sent = self.raw_connection.send(raw).await;
+        if sent.resent {
+            if let Some(resends) = &self.resends {
+                resends.fetch_add(1, AtomicOrdering::Relaxed);
+            }
+        }
+
+        // Time to the response head, as for any other request.
+        request_metric.set_response_duration(started.elapsed());
+        let response = match sent.response {
+            Ok(response) => {
+                debug!(
+                    "{:?}: status_code {}",
+                    request_log_path(&request_metric.raw.url),
+                    response.status()
+                );
+                request_metric.set_final_url(url.as_str());
+                check_status(
+                    &mut request_metric,
+                    response.status(),
+                    request.expect_status_code,
+                );
+                let response = crate::raw_hyper::into_reqwest_response(response, &url);
+                Some(if self.config.drop_unread_bodies {
+                    GooseHttpResponse::untracked(response, false)
+                } else {
+                    GooseHttpResponse::tracked(
+                        response,
+                        &self.unread_bodies,
+                        &request_metric.name,
+                        false,
+                    )
+                })
+            }
+            Err(e) => {
+                warn!("{:?}: {}", request_log_path(&request_metric.raw.url), e);
+                request_metric.success = false;
+                request_metric.set_status_code(None);
+                request_metric.error = format!("{e}: {}", request_metric.name);
+                None
+            }
+        };
+
+        // A request that got no response fails the transaction: GooseResponse holds
+        // reqwest's errors only.
+        let request_metric = self
+            .record_request_metric(request_metric, request.error_on_fail || response.is_none())
+            .await?;
+        match response {
+            Some(response) => Ok(GooseResponse {
+                request: request_metric,
+                response: Ok(response),
+            }),
+            None => Err(Box::new(TransactionError::RequestFailed {
+                raw_request: Box::new(request_metric),
+            })),
+        }
+    }
+
+    /// With `--throttle-requests`, waits until the throttle lets this user's next
+    /// request go. Test start and stop transactions are not throttled.
+    async fn wait_for_throttle(&mut self) -> Result<(), Box<TransactionError>> {
+        // If throttle-requests is enabled...
+        if self.is_throttled && self.throttle.is_some() {
+            // ...wait until there's room to add a token to the throttle channel before proceeding.
+            debug!(
+                "[user {}]: waiting on throttle",
+                self.weighted_users_index + 1
+            );
+            // Will result in TransactionError::RequestCanceled if this fails.
+            if let Err(e) = self.throttle.clone().unwrap().send_async(true).await {
+                return Err(Box::new(e.into()));
+            }
+        };
+        Ok(())
+    }
+
+    /// The metric of a request named `request_name`, made by this user in its current
+    /// transaction.
+    fn new_request_metric(
+        &self,
+        raw_request: GooseRawRequest,
+        request_name: Arc<str>,
+    ) -> GooseRequestMetric {
+        // Provide details about the current transaction for logging.
+        let transaction_detail = TransactionDetail {
+            scenario_index: self.scenarios_index,
+            scenario_name: self.scenario_name.clone(),
+            transaction_index: self.transaction_index,
+            transaction_name: self
+                .transaction_name
+                .clone()
+                .unwrap_or(TransactionName::default_value()),
+        };
+
+        GooseRequestMetric::new(
+            raw_request,
+            transaction_detail,
+            request_name,
+            self.started.elapsed().as_millis(),
+            self.weighted_users_index,
+        )
+    }
+
+    /// Records a finished request's metric: its cadence for coordinated omission
+    /// mitigation, then the metric itself, unless metrics are off. Returns the metric,
+    /// or with `error_on_fail` and a failed request, the error that fails the
+    /// transaction.
+    async fn record_request_metric(
+        &mut self,
+        mut request_metric: GooseRequestMetric,
+        error_on_fail: bool,
+    ) -> Result<GooseRequestMetric, Box<TransactionError>> {
         // If enabled, track the cadence between each time the same request is made while
         // this GooseUser is running. If requests are blocked by the upstream server, this
         // allows Goose to backfill the requests that should have been made based on
@@ -2565,7 +2855,7 @@ impl GooseUser {
             // before the parent processes the buffered request.
         }
 
-        if request.error_on_fail && !request_metric.success {
+        if error_on_fail && !request_metric.success {
             error!(
                 "{:?} {}",
                 request_log_path(&request_metric.raw.url),
@@ -2576,10 +2866,7 @@ impl GooseUser {
             }));
         }
 
-        Ok(GooseResponse {
-            request: request_metric,
-            response,
-        })
+        Ok(request_metric)
     }
 
     /// Reads to the end every response body this user's requests returned and the
@@ -4030,6 +4317,9 @@ impl GooseUser {
     ) -> Result<(), TransactionError> {
         self.client = builder.build()?;
         self.gzip = false;
+        // Goose no longer holds the client's cookie jar.
+        #[cfg(feature = "raw-hyper")]
+        self.raw_connection.client_replaced();
 
         Ok(())
     }
@@ -4131,6 +4421,12 @@ pub struct GooseRequest<'a> {
     error_on_fail: bool,
     // Defaults to [`None`].
     request_builder: Option<RequestBuilder>,
+    // Defaults to `false`.
+    #[cfg(feature = "raw-hyper")]
+    raw: bool,
+    // The body `GooseUser::raw_post` sends. Defaults to [`None`].
+    #[cfg(feature = "raw-hyper")]
+    raw_body: Option<reqwest::Body>,
 }
 impl<'a> GooseRequest<'a> {
     /// Convenience function to bring [`GooseRequestBuilder`] into scope.
@@ -4175,6 +4471,8 @@ pub struct GooseRequestBuilder<'a> {
     expect_status_code: Option<u16>,
     error_on_fail: bool,
     request_builder: Option<RequestBuilder>,
+    #[cfg(feature = "raw-hyper")]
+    raw: bool,
 }
 impl<'a> GooseRequestBuilder<'a> {
     // Internal method to build a [`GooseRequest`] from a [`GooseRequestBuilder`].
@@ -4186,7 +4484,54 @@ impl<'a> GooseRequestBuilder<'a> {
             expect_status_code: None,
             error_on_fail: false,
             request_builder: None,
+            #[cfg(feature = "raw-hyper")]
+            raw: false,
         }
+    }
+
+    /// With `true`, send the request over the user's raw hyper connection instead of
+    /// its reqwest client: one HTTP/1.1 connection per user, with the user's
+    /// cookies, but no redirects, decompression, proxies or HTTP/2. Only with
+    /// Goose's `raw-hyper` feature. See [`GooseUser::raw_get`].
+    ///
+    /// Headers, a body, query parameters and a timeout of the request's own come
+    /// from a reqwest [`RequestBuilder`] given with
+    /// [`set_request_builder`](Self::set_request_builder), as on the reqwest path.
+    /// A request set to an HTTP version other than HTTP/1.1 is refused with an
+    /// error.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut a_transaction = transaction!(transaction_function);
+    ///
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
+    ///     let goose_request = GooseRequest::builder()
+    ///         .path("about")
+    ///         .name("About page")
+    ///         .raw(true)
+    ///         .build();
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
+    ///
+    ///     // A PUT with a header and a body of its own.
+    ///     let request_builder = user
+    ///         .get_request_builder(&GooseMethod::Put, "api/item/1")?
+    ///         .header("content-type", "application/json")
+    ///         .body(r#"{"title":"Goose"}"#);
+    ///     let goose_request = GooseRequest::builder()
+    ///         .set_request_builder(request_builder)
+    ///         .raw(true)
+    ///         .build();
+    ///     let _ = user.request(goose_request).await?.discard_body().await;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "raw-hyper")]
+    pub fn raw(mut self, raw: bool) -> Self {
+        self.raw = raw;
+        self
     }
 
     /// Set the path to request.
@@ -4412,6 +4757,8 @@ impl<'a> GooseRequestBuilder<'a> {
             expect_status_code,
             error_on_fail,
             request_builder,
+            #[cfg(feature = "raw-hyper")]
+            raw,
         } = self;
         GooseRequest {
             path,
@@ -4420,7 +4767,34 @@ impl<'a> GooseRequestBuilder<'a> {
             expect_status_code,
             error_on_fail,
             request_builder,
+            #[cfg(feature = "raw-hyper")]
+            raw,
+            #[cfg(feature = "raw-hyper")]
+            raw_body: None,
         }
+    }
+}
+
+/// Records `status_code` in `request_metric`, and marks the request failed when the
+/// status is not `expect_status_code`, or with none expected, not a success.
+fn check_status(
+    request_metric: &mut GooseRequestMetric,
+    status_code: http::StatusCode,
+    expect_status_code: Option<u16>,
+) {
+    request_metric.set_status_code(Some(status_code));
+
+    // Check if we were expecting a specific status code.
+    if let Some(expect_status_code) = expect_status_code {
+        // Record a failure if the expected status code was not returned.
+        if status_code != expect_status_code {
+            request_metric.success = false;
+            request_metric.error = format!("{status_code}: {}", request_metric.name);
+        }
+    // Otherwise record a failure if the returned status code was not a success.
+    } else if !status_code.is_success() {
+        request_metric.success = false;
+        request_metric.error = format!("{status_code}: {}", request_metric.name);
     }
 }
 
