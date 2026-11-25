@@ -14,7 +14,7 @@ The Goose port is kept here as an example of a real load test.
 
 ## Details
 
-The load test defines two scenarios. `AnonBrowsingUser` has a weight of 4 and `AuthBrowsingUser` a weight of 1, so four of every five users browse anonymously. Each scenario loads the front page (weight 15), a random node from `/node/1` to `/node/9999` (weight 10) and a random user profile from `/user/2` to `/user/5000` (weight 3); the authenticated scenario also posts comments (weight 3). The front page transaction then loads each image and script the page references whose path contains `/misc` or `/themes`, as requests named `static asset`. Transactions are named `(Anon) front page`, `(Auth) node page` and so on.
+The load test defines two scenarios. `AnonBrowsingUser` has a weight of 4 and `AuthBrowsingUser` a weight of 1, so four of every five users browse anonymously. Each scenario loads the front page (weight 15), a random node from `/node/1` to `/node/9999` (weight 10) and a random user profile from `/user/2` to `/user/5000` (weight 3); the authenticated scenario also posts comments (weight 3). The front page transaction then loads each image and script the page references whose path contains `/misc` or `/themes`, as requests named `static asset`. It reads the asset paths and form values with regular expressions, each compiled once and shared by every user; see [Compile regular expressions once](../getting-started/tips.md#compile-regular-expressions-once). Transactions are named `(Anon) front page`, `(Auth) node page` and so on.
 
 Users of the `AuthBrowsingUser` scenario log in once, when each starts:
 ```rust,ignore

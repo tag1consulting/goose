@@ -44,7 +44,7 @@ Goose resets its metrics once all users have started (unless `--no-reset-metrics
 
 The load test is split into the following files:
  - `main.rs`: This file contains the main() function and defines the actual load test;
- - `common.rs`: This file contains helper functions used by the transaction functions, the lists of the site's nodes and terms, and the tests of its asset parsing, entity decoding and form value parsing;
+ - `common.rs`: This file contains helper functions used by the transaction functions, the lists of the site's nodes and terms, and the tests of its asset parsing, entity decoding and form value parsing; the regular expressions it parses pages with are each compiled once, as `LazyLock` statics shared by every user, as the Goose Book's [Compile regular expressions once](https://www.goose.rs/getting-started/tips.html#compile-regular-expressions-once) explains;
  - `english.rs`: This file contains all transaction functions loading pages in English;
  - `spanish.rs`: This file contains all transaction functions loading pages in Spanish;
  - `admin.rs`: This file contains all transaction functions specific to simulating an admin user;
