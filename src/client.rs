@@ -334,10 +334,14 @@ pub enum ClientStrategy {
 
 impl ClientStrategy {
     /// A client for one user: a new one for `Individual`, or a clone of the shared
-    /// client, which shares its connection pool, for `Shared`.
+    /// client, which shares its connection pool, for `Shared`. Users get theirs
+    /// through [`BuilderClients::user_client`].
+    #[cfg(test)]
     pub(crate) fn user_client(&self) -> Result<Client, reqwest::Error> {
         match self {
-            ClientStrategy::Individual(config) => create_reqwest_client_with_cookies(config),
+            ClientStrategy::Individual(config) => {
+                create_reqwest_client_with_cookies(config).map(|user| user.client)
+            }
             ClientStrategy::Shared(shared) => Ok(Client::clone(shared)),
         }
     }
@@ -351,13 +355,32 @@ pub(crate) struct BuilderClients {
     pub(crate) strategy: ClientStrategy,
     /// The resolved [`GooseClientConfig::gzip`].
     pub(crate) gzip: bool,
+    /// What raw requests take from the resolved settings, with the `raw-hyper`
+    /// feature, for a shared client: no cookie jar.
+    #[cfg(feature = "raw-hyper")]
+    pub(crate) raw: crate::raw_hyper::RawSettings,
 }
 
 impl BuilderClients {
     /// A client for one user, as [`ClientStrategy::user_client`] gives it.
-    pub(crate) fn user_client(&self) -> Result<Client, reqwest::Error> {
-        self.strategy.user_client()
+    pub(crate) fn user_client(&self) -> Result<UserClient, reqwest::Error> {
+        match &self.strategy {
+            ClientStrategy::Individual(config) => create_reqwest_client_with_cookies(config),
+            ClientStrategy::Shared(shared) => Ok(UserClient {
+                client: Client::clone(shared),
+                #[cfg(feature = "raw-hyper")]
+                raw: self.raw.clone(),
+            }),
+        }
     }
+}
+
+/// A user's reqwest client and, with the `raw-hyper` feature, what the user's raw
+/// requests take from it, its cookie jar included.
+pub(crate) struct UserClient {
+    pub(crate) client: Client,
+    #[cfg(feature = "raw-hyper")]
+    pub(crate) raw: crate::raw_hyper::RawSettings,
 }
 
 /// Type-safe builder for configuring Goose HTTP clients.
@@ -628,13 +651,99 @@ pub(crate) fn create_reqwest_client_without_cookies(
 /// Create a reqwest client with cookie support.
 pub(crate) fn create_reqwest_client_with_cookies(
     config: &GooseClientConfig,
-) -> Result<Client, reqwest::Error> {
+) -> Result<UserClient, reqwest::Error> {
     let builder = client_builder(config, shared_tls(config));
 
-    #[cfg(feature = "cookies")]
+    // With the raw-hyper feature, Goose holds the client's cookie jar, for the
+    // user's raw requests to read and fill: the jar `cookie_store(true)` would
+    // build, so the client sends the same cookies.
+    #[cfg(all(feature = "cookies", feature = "raw-hyper"))]
+    let (builder, jar) = {
+        let jar = Arc::new(reqwest::cookie::Jar::default());
+        (builder.cookie_provider(jar.clone()), jar)
+    };
+    #[cfg(all(feature = "cookies", not(feature = "raw-hyper")))]
     let builder = builder.cookie_store(true);
 
-    builder.build()
+    Ok(UserClient {
+        client: builder.build()?,
+        #[cfg(feature = "raw-hyper")]
+        raw: crate::raw_hyper::RawSettings::new(
+            config,
+            #[cfg(feature = "cookies")]
+            Some(jar),
+        ),
+    })
+}
+
+/// The TLS config of a user's raw HTTPS connections, with the `raw-hyper` feature:
+/// rustls, as reqwest's is, over the verifier every client shares (rustls even
+/// with Goose's `native-tls` feature), or with `accept_invalid_certs` one that
+/// accepts any certificate, as reqwest's `danger_accept_invalid_certs` does. ALPN
+/// offers HTTP/1.1 only. Built once per user, so each user has a TLS session cache
+/// of its own. `None` if the shared verifier could not be built.
+#[cfg(feature = "raw-hyper")]
+pub(crate) fn raw_tls_config(accept_invalid_certs: bool) -> Option<ClientConfig> {
+    if accept_invalid_certs {
+        let provider = reqwest_default_provider();
+        let mut config = ClientConfig::builder_with_provider(provider.clone())
+            .with_protocol_versions(rustls::ALL_VERSIONS)
+            .ok()?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAnyCertificate(provider)))
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        return Some(config);
+    }
+    SHARED_TLS
+        .get_or_init(|| {
+            #[cfg(test)]
+            SHARED_TLS_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            SharedTls::new()
+        })
+        .as_ref()
+        .map(|shared| shared.client_config(true))
+}
+
+/// Accepts any server certificate, for raw requests with `accept_invalid_certs`.
+#[cfg(feature = "raw-hyper")]
+#[derive(Debug)]
+struct AcceptAnyCertificate(Arc<CryptoProvider>);
+
+#[cfg(feature = "raw-hyper")]
+impl ServerCertVerifier for AcceptAnyCertificate {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 #[cfg(test)]
@@ -825,7 +934,7 @@ mod tests {
 
         let (url, _handshakes) = tls_server();
         let checked = GooseClientConfig::default();
-        let goose = create_reqwest_client_with_cookies(&checked).unwrap();
+        let goose = create_reqwest_client_with_cookies(&checked).unwrap().client;
         let reqwest = Client::builder().build().unwrap();
         let goose_error = goose.get(&url).send().await.unwrap_err();
         let reqwest_error = reqwest.get(&url).send().await.unwrap_err();
@@ -842,7 +951,9 @@ mod tests {
             accept_invalid_certs: true,
             ..GooseClientConfig::default()
         };
-        let goose = create_reqwest_client_with_cookies(&unchecked).unwrap();
+        let goose = create_reqwest_client_with_cookies(&unchecked)
+            .unwrap()
+            .client;
         let reqwest = Client::builder()
             .danger_accept_invalid_certs(true)
             .build()
@@ -939,7 +1050,7 @@ mod tests {
         }
         let (url, _handshakes) = tls_server();
         let config = GooseClientConfig::default();
-        let goose = create_reqwest_client_with_cookies(&config).unwrap();
+        let goose = create_reqwest_client_with_cookies(&config).unwrap().client;
         let reqwest = Client::builder().build().unwrap();
         let goose_error = error_chain(&goose.get(&url).send().await.unwrap_err());
         let reqwest_error = error_chain(&reqwest.get(&url).send().await.unwrap_err());

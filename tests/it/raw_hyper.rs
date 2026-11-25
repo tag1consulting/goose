@@ -1,9 +1,13 @@
-//! The raw hyper client, with the `raw-hyper` feature: `GooseUser::raw_get` and
-//! `GooseRequestBuilder::raw` record the same request metrics as the reqwest
-//! path, return the same `GooseResponse`, and send over one kept alive connection
-//! per user, with no cookies, redirects or gzip.
+//! The raw hyper client, with the `raw-hyper` feature: `GooseUser::raw_get`,
+//! `raw_post` and `GooseRequestBuilder::raw` record the same request metrics as
+//! the reqwest path, return the same `GooseResponse`, and send over one kept alive
+//! connection per user, plain or over TLS, with the user's cookies, the test's
+//! headers and body, and no redirects or gzip.
 
-use httpmock::{Method::GET, MockServer};
+use httpmock::{
+    Method::{DELETE, GET, HEAD, PATCH, POST, PUT},
+    MockServer,
+};
 use serial_test::serial;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -79,8 +83,13 @@ async fn start_server(close_after_one: bool) -> (String, Arc<AtomicUsize>, Heads
 
 /// Runs one user, `ITERATIONS` times, through `transaction` against `host`.
 async fn run(host: &str, transaction: Transaction) -> GooseMetrics {
+    run_with(host, transaction, &[]).await
+}
+
+/// [`run`], with the options `extra` as well.
+async fn run_with(host: &str, transaction: Transaction, extra: &[&str]) -> GooseMetrics {
     let iterations = ITERATIONS.to_string();
-    let args = [
+    let mut args = vec![
         "--host",
         host,
         "--users",
@@ -92,7 +101,9 @@ async fn run(host: &str, transaction: Transaction) -> GooseMetrics {
         "--co-mitigation",
         "disabled",
         "--quiet",
+        "--no-telnet",
     ];
+    args.extend_from_slice(extra);
     let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
     let scenario = scenario!("Raw").register_transaction(transaction);
     common::build_load_test(configuration, vec![scenario], None, None)
@@ -118,8 +129,9 @@ async fn raw_get_dropped(user: &mut GooseUser) -> TransactionResult {
 #[tokio::test]
 #[serial(raw_hyper)]
 /// `raw_get` records each request as `get` does, returns its body through the same
-/// `GooseResponse`, and sends every request on one connection, with `Host` and
-/// Goose's `User-Agent` and no cookie, though the server sets one.
+/// `GooseResponse`, and sends every request on one connection, with `Host`,
+/// Goose's `User-Agent` and `Accept: */*` as reqwest sends them, no
+/// `Accept-Encoding`, and from the second request on, the cookie the server set.
 async fn raw_get_records_metrics_on_one_connection() {
     READ_BYTES.store(0, Ordering::SeqCst);
     let (host, connections, heads) = start_server(false).await;
@@ -138,7 +150,7 @@ async fn raw_get_records_metrics_on_one_connection() {
     let heads = heads.lock().unwrap();
     assert_eq!(heads.len(), ITERATIONS);
     let port = host.rsplit(':').next().unwrap();
-    for head in heads.iter() {
+    for (i, head) in heads.iter().enumerate() {
         let lower = head.to_ascii_lowercase();
         assert!(lower.starts_with("get / http/1.1\r\n"), "{}", head);
         assert!(
@@ -154,7 +166,14 @@ async fn raw_get_records_metrics_on_one_connection() {
             "{}",
             head
         );
-        assert!(!lower.contains("cookie"), "{}", head);
+        assert!(lower.contains("accept: */*\r\n"), "{}", head);
+        assert_eq!(
+            lower.contains("cookie: session=raw\r\n"),
+            i > 0,
+            "request {}: {}",
+            i,
+            head
+        );
         assert!(!lower.contains("accept-encoding"), "{}", head);
     }
 }
@@ -280,7 +299,7 @@ async fn raw_connect_failure_is_recorded() {
     let request = metrics.requests.get("GET /").expect("GET / recorded");
     assert_eq!(request.success_count, 0);
     assert_eq!(request.fail_count, ITERATIONS);
-    let failed = FAILED.lock().unwrap();
+    let failed = FAILED.lock().unwrap().clone();
     assert_eq!(failed.len(), ITERATIONS);
     for error in failed.iter() {
         assert!(error.starts_with("error connecting: "), "{}", error);
@@ -290,24 +309,436 @@ async fn raw_connect_failure_is_recorded() {
 
 #[tokio::test]
 #[serial(raw_hyper)]
-/// The raw client has no TLS: an https URL fails without a connection.
-async fn raw_https_is_refused() {
+/// A scheme other than http or https fails without a connection.
+async fn raw_other_schemes_are_refused() {
     FAILED.lock().unwrap().clear();
     let metrics = run(
-        "https://127.0.0.1:9",
-        transaction!(raw_get_recording_failure),
+        "http://127.0.0.1:9",
+        transaction!(raw_get_ftp_recording_failure),
     )
     .await;
 
-    let request = metrics.requests.get("GET /").expect("GET / recorded");
+    let request = metrics.requests.get("GET ftp").expect("GET ftp recorded");
     assert_eq!(request.fail_count, ITERATIONS);
-    let failed = FAILED.lock().unwrap();
+    let failed = FAILED.lock().unwrap().clone();
+    assert_eq!(failed.len(), ITERATIONS);
+    for error in failed.iter() {
+        assert!(error.contains("not ftp://"), "{}", error);
+    }
+}
+
+async fn raw_get_ftp_recording_failure(user: &mut GooseUser) -> TransactionResult {
+    match user.raw_get_named("ftp://127.0.0.1:9/", "ftp").await {
+        Ok(_) => FAILED.lock().unwrap().push("no error".to_string()),
+        Err(e) => match *e {
+            TransactionError::RequestFailed { ref raw_request } => {
+                FAILED.lock().unwrap().push(raw_request.error.clone())
+            }
+            ref other => FAILED.lock().unwrap().push(format!("other: {other}")),
+        },
+    }
+    Ok(())
+}
+
+/// Logs in over reqwest, then requests a page raw, then another over reqwest.
+async fn login_then_raw(user: &mut GooseUser) -> TransactionResult {
+    let _ = user.get("/login").await?.discard_body().await;
+    let _ = user.raw_get("/page").await?.discard_body().await;
+    let _ = user.get("/after").await?.discard_body().await;
+    Ok(())
+}
+
+/// The mocks for [`login_then_raw`]: `/login` sets `session`; `/page` answers only
+/// with that cookie, and sets `raw`; `/after` answers only with both.
+fn cookie_mocks(server: &MockServer) -> [httpmock::Mock<'_>; 3] {
+    let login = server.mock(|when, then| {
+        when.method(GET).path("/login");
+        then.status(200)
+            .header("Set-Cookie", "session=abc; Path=/")
+            .body("in");
+    });
+    let page = server.mock(|when, then| {
+        when.method(GET).path("/page").cookie("session", "abc");
+        then.status(200)
+            .header("Set-Cookie", "raw=1; Path=/")
+            .body("page");
+    });
+    let after = server.mock(|when, then| {
+        when.method(GET)
+            .path("/after")
+            .cookie("session", "abc")
+            .cookie("raw", "1");
+        then.status(200).body("after");
+    });
+    [login, page, after]
+}
+
+#[cfg(feature = "cookies")]
+#[tokio::test]
+#[serial(raw_hyper)]
+/// A user logs in over reqwest, and its raw request carries the session cookie;
+/// the cookie the raw response sets goes back to the user's reqwest client.
+async fn raw_requests_share_the_users_cookies() {
+    let server = MockServer::start();
+    let [login, page, after] = cookie_mocks(&server);
+
+    let metrics = run(&server.base_url(), transaction!(login_then_raw)).await;
+    login.assert_calls(ITERATIONS);
+    page.assert_calls(ITERATIONS);
+    after.assert_calls(ITERATIONS);
+    assert_eq!(metrics.requests.get("GET /page").unwrap().fail_count, 0);
+    assert_eq!(metrics.requests.get("GET /after").unwrap().fail_count, 0);
+}
+
+/// Replaces the user's reqwest client with one the test builds, with cookies.
+async fn replace_client(user: &mut GooseUser) -> TransactionResult {
+    #[allow(unused_mut)]
+    let mut builder = reqwest::Client::builder();
+    #[cfg(feature = "cookies")]
+    {
+        builder = builder.cookie_store(true);
+    }
+    user.set_client_builder(builder).await?;
+    Ok(())
+}
+
+#[cfg(feature = "cookies")]
+#[tokio::test]
+#[serial(raw_hyper)]
+/// A client the load test built holds a jar Goose can't see: its raw requests
+/// send no cookies, while its reqwest requests still do.
+async fn raw_requests_send_no_cookies_after_set_client_builder() {
+    let server = MockServer::start();
+    let login = server.mock(|when, then| {
+        when.method(GET).path("/login");
+        then.status(200).header("Set-Cookie", "session=abc; Path=/");
+    });
+    let page = server.mock(|when, then| {
+        when.method(GET).path("/page").cookie_missing("session");
+        then.status(200);
+    });
+
+    let iterations = ITERATIONS.to_string();
+    let host = server.base_url();
+    let args = [
+        "--host",
+        &host,
+        "--users",
+        "1",
+        "--increase-rate",
+        "1",
+        "--iterations",
+        &iterations,
+        "--co-mitigation",
+        "disabled",
+        "--quiet",
+        "--no-telnet",
+    ];
+    let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+    let scenario = scenario!("Raw")
+        .register_transaction(transaction!(replace_client).set_on_start())
+        .register_transaction(transaction!(login_then_page));
+    common::build_load_test(configuration, vec![scenario], None, None)
+        .execute()
+        .await
+        .unwrap();
+    login.assert_calls(ITERATIONS);
+    page.assert_calls(ITERATIONS);
+}
+
+async fn login_then_page(user: &mut GooseUser) -> TransactionResult {
+    let _ = user.get("/login").await?.discard_body().await;
+    let _ = user.raw_get("/page").await?.discard_body().await;
+    Ok(())
+}
+
+/// Every method, with headers and a body set on a reqwest `RequestBuilder`, and
+/// `raw_post`.
+async fn raw_methods_with_headers_and_bodies(user: &mut GooseUser) -> TransactionResult {
+    let _ = user.raw_post("/post", "posted").await?.discard_body().await;
+
+    for (method, path) in [
+        (GooseMethod::Put, "/put"),
+        (GooseMethod::Patch, "/patch"),
+        (GooseMethod::Delete, "/delete"),
+        (GooseMethod::Post, "/json"),
+    ] {
+        let mut builder = user
+            .get_request_builder(&method, path)?
+            .header("x-one", "1")
+            .header("x-two", "2");
+        builder = if path == "/json" {
+            builder.json(&serde_json::json!({ "a": 1 }))
+        } else {
+            builder.body(format!("{} body", &path[1..]))
+        };
+        let request = GooseRequest::builder()
+            .set_request_builder(builder)
+            .raw(true)
+            .build();
+        let _ = user.request(request).await?.discard_body().await;
+    }
+
+    let builder = user
+        .get_request_builder(&GooseMethod::Head, "/head")?
+        .header("user-agent", "custom");
+    let request = GooseRequest::builder()
+        .set_request_builder(builder)
+        .name("head")
+        .raw(true)
+        .build();
+    let _ = user.request(request).await?.discard_body().await;
+
+    let _ = user.raw_get("/get?q=1").await?.discard_body().await;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(raw_hyper)]
+/// A raw request sends the method, headers and body the test set, and a
+/// `User-Agent` of the test's own in place of Goose's.
+async fn raw_requests_send_headers_and_bodies() {
+    let server = MockServer::start();
+    let post = server.mock(|when, then| {
+        when.method(POST)
+            .path("/post")
+            .header("content-length", "6")
+            .body("posted");
+        then.status(201);
+    });
+    let mut with_body = Vec::new();
+    for (method, path, body) in [
+        (PUT, "/put", "put body"),
+        (PATCH, "/patch", "patch body"),
+        (DELETE, "/delete", "delete body"),
+    ] {
+        with_body.push(server.mock(|when, then| {
+            when.method(method)
+                .path(path)
+                .header("x-one", "1")
+                .header("x-two", "2")
+                .body(body);
+            then.status(200);
+        }));
+    }
+    let json = server.mock(|when, then| {
+        when.method(POST)
+            .path("/json")
+            .header("x-one", "1")
+            .header("content-type", "application/json")
+            .body(r#"{"a":1}"#);
+        then.status(200);
+    });
+    let head = server.mock(|when, then| {
+        when.method(HEAD)
+            .path("/head")
+            .header("user-agent", "custom");
+        then.status(200);
+    });
+    let get = server.mock(|when, then| {
+        when.method(GET).path("/get").query_param("q", "1");
+        then.status(200);
+    });
+
+    let metrics = run(
+        &server.base_url(),
+        transaction!(raw_methods_with_headers_and_bodies),
+    )
+    .await;
+    post.assert_calls(ITERATIONS);
+    for mock in &with_body {
+        mock.assert_calls(ITERATIONS);
+    }
+    json.assert_calls(ITERATIONS);
+    head.assert_calls(ITERATIONS);
+    get.assert_calls(ITERATIONS);
+    for (name, request) in &metrics.requests {
+        assert_eq!(request.fail_count, 0, "{}", name);
+    }
+    assert_eq!(
+        metrics.requests.get("POST /post").unwrap().success_count,
+        ITERATIONS
+    );
+    assert_eq!(
+        metrics.requests.get("HEAD head").unwrap().success_count,
+        ITERATIONS
+    );
+}
+
+/// A raw request set to HTTP/2, which a raw request can't honour.
+async fn raw_http2_recording_error(user: &mut GooseUser) -> TransactionResult {
+    let builder = user
+        .get_request_builder(&GooseMethod::Get, "/")?
+        .version(reqwest::Version::HTTP_2);
+    let request = GooseRequest::builder()
+        .set_request_builder(builder)
+        .raw(true)
+        .build();
+    match user.request(request).await {
+        Ok(_) => FAILED.lock().unwrap().push("no error".to_string()),
+        Err(e) => FAILED.lock().unwrap().push(e.to_string()),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(raw_hyper)]
+/// A builder call a raw request can't honour is refused before anything is sent,
+/// not ignored.
+async fn raw_refuses_what_it_cannot_honour() {
+    FAILED.lock().unwrap().clear();
+    let server = MockServer::start();
+    let any = server.mock(|when, then| {
+        when.any_request();
+        then.status(200);
+    });
+    let _ = run(&server.base_url(), transaction!(raw_http2_recording_error)).await;
+    any.assert_calls(0);
+    let failed = FAILED.lock().unwrap().clone();
     assert_eq!(failed.len(), ITERATIONS);
     for error in failed.iter() {
         assert!(
-            error.contains("http:// requests only, not https://"),
+            error.contains("sent over HTTP/1.1, not HTTP/2"),
             "{}",
             error
         );
     }
+}
+
+/// Reads a raw HTTPS response's body.
+async fn raw_get_https(user: &mut GooseUser) -> TransactionResult {
+    match user.raw_get("/").await {
+        Ok(goose) => {
+            let text = goose.response?.text().await?;
+            FAILED.lock().unwrap().push(format!("body: {text}"));
+        }
+        Err(e) => match *e {
+            TransactionError::RequestFailed { ref raw_request } => {
+                FAILED.lock().unwrap().push(raw_request.error.clone())
+            }
+            ref other => FAILED.lock().unwrap().push(format!("other: {other}")),
+        },
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(raw_hyper)]
+/// Over HTTPS a raw request checks the certificate as the user's reqwest client
+/// does: a certificate from an unknown CA fails the handshake, unless
+/// `--accept-invalid-certs` is set, and then the request goes through, over
+/// HTTP/1.1 by ALPN.
+async fn raw_https_checks_certificates_as_reqwest_does() {
+    use crate::tls_server::{alpn_server, Offer};
+
+    let (url, protocols) = alpn_server(Offer::Http1, None);
+    FAILED.lock().unwrap().clear();
+    let _ = run(&url, transaction!(raw_get_https)).await;
+    for error in FAILED.lock().unwrap().clone().iter() {
+        assert!(
+            error.starts_with("error in the TLS handshake: "),
+            "{}",
+            error
+        );
+    }
+    assert!(protocols.try_recv().is_err(), "no handshake completed");
+
+    FAILED.lock().unwrap().clear();
+    let _ = run_with(
+        &url,
+        transaction!(raw_get_https),
+        &["--accept-invalid-certs"],
+    )
+    .await;
+    let failed = FAILED.lock().unwrap().clone();
+    assert_eq!(failed.len(), ITERATIONS);
+    for result in failed.iter() {
+        assert_eq!(result, "body: ok");
+    }
+    let negotiated: Vec<String> = protocols.try_iter().collect();
+    assert_eq!(negotiated.len(), ITERATIONS);
+    assert!(
+        negotiated.iter().all(|p| p == "http/1.1"),
+        "{:?}",
+        negotiated
+    );
+}
+
+/// Starts a server that answers each request with a head promising 100 bytes, then
+/// sends 7 and stalls. Returns its base URL and the connections it accepted.
+async fn start_stalling_server() -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let accepted = connections.clone();
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            accepted.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut buffer).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial")
+                    .await;
+                // Holds the connection open until the client closes it.
+                while let Ok(read) = socket.read(&mut buffer).await {
+                    if read == 0 {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    (format!("http://{address}"), connections)
+}
+
+/// Reads the body, which never ends, and records how the read ended.
+async fn raw_get_stalled_text(user: &mut GooseUser) -> TransactionResult {
+    let goose = user.raw_get("/").await?;
+    match goose.response?.text().await {
+        Ok(text) => FAILED.lock().unwrap().push(format!("read: {text}")),
+        Err(e) => FAILED.lock().unwrap().push(format!("{e:?}")),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(raw_hyper)]
+/// A server that sends a head and stalls: the request timeout covers the body, so
+/// the test's read of it fails, and Goose's read of a body the test dropped unread
+/// ends too, and the user goes on, with a new connection each time.
+async fn raw_timeout_covers_the_body_goose_reads() {
+    let run_both = async {
+        let (host, connections) = start_stalling_server().await;
+        let metrics = run_with(&host, transaction!(raw_get_dropped), &["--timeout", "0.3"]).await;
+        let request = metrics.requests.get("GET dropped").expect("named request");
+        // Each head came in time.
+        assert_eq!(request.success_count, ITERATIONS);
+        assert_eq!(connections.load(Ordering::SeqCst), ITERATIONS);
+
+        FAILED.lock().unwrap().clear();
+        let (host, _) = start_stalling_server().await;
+        let _ = run_with(
+            &host,
+            transaction!(raw_get_stalled_text),
+            &["--timeout", "0.3"],
+        )
+        .await;
+        let failed = FAILED.lock().unwrap().clone();
+        assert_eq!(failed.len(), ITERATIONS);
+        for error in failed.iter() {
+            // The error reqwest wraps the raw body's timeout in.
+            assert!(error.contains("source: Timeout(300ms)"), "{}", error);
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(60), run_both)
+        .await
+        .expect("no user waits for good on a stalled body");
 }

@@ -1493,9 +1493,17 @@ impl GooseAttack {
                 }
                 // Users ask for gzip as the builder resolved it: see GooseUser::gzip.
                 let gzip = config.gzip;
+                #[cfg(feature = "raw-hyper")]
+                let raw = raw_hyper::RawSettings::new(
+                    &config,
+                    #[cfg(feature = "cookies")]
+                    None,
+                );
                 Some(client::BuilderClients {
                     strategy: config.into_strategy()?,
                     gzip,
+                    #[cfg(feature = "raw-hyper")]
+                    raw,
                 })
             }
             None => None,

@@ -1489,6 +1489,16 @@ impl GooseUser {
     ) -> Result<Self, GooseError> {
         // A client given here handles gzip as it was built to.
         let gzip = reqwest_client.is_none() && !configuration.no_gzip;
+        // Goose can't see a given client's cookie jar: raw requests send no cookies.
+        let reqwest_client = reqwest_client.map(|client| crate::client::UserClient {
+            client,
+            #[cfg(feature = "raw-hyper")]
+            raw: crate::raw_hyper::RawSettings::new(
+                &crate::client::GooseClientConfig::from(configuration),
+                #[cfg(feature = "cookies")]
+                None,
+            ),
+        });
         Self::with_gzip(
             scenarios_index,
             scenario_name,
@@ -1508,12 +1518,12 @@ impl GooseUser {
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
-        reqwest_client: Option<Client>,
+        reqwest_client: Option<crate::client::UserClient>,
         gzip: bool,
     ) -> Result<Self, GooseError> {
         trace!("new GooseUser");
 
-        let client = match reqwest_client {
+        let user_client = match reqwest_client {
             Some(c) => c,
             // Use the new unified client creation function for consistency
             None => {
@@ -1521,6 +1531,7 @@ impl GooseUser {
                 crate::client::create_reqwest_client_with_cookies(&config)?
             }
         };
+        let client = user_client.client;
 
         let record_graph_data = configuration.records_graph_data();
         let record_latency_series = configuration.records_latency_series();
@@ -1565,7 +1576,7 @@ impl GooseUser {
             reading_bodies: Vec::new(),
             unread_body_totals: None,
             #[cfg(feature = "raw-hyper")]
-            raw_connection: Default::default(),
+            raw_connection: crate::raw_hyper::RawConnection::new(user_client.raw),
         })
     }
 
@@ -1581,7 +1592,7 @@ impl GooseUser {
     pub(crate) fn single_with_client(
         base_url: Url,
         configuration: &GooseConfiguration,
-        reqwest_client: Option<Client>,
+        reqwest_client: Option<crate::client::UserClient>,
         gzip: bool,
     ) -> Result<Self, GooseError> {
         let mut single_user = GooseUser::with_gzip(
@@ -1891,12 +1902,16 @@ impl GooseUser {
 
     /// [`get`](Self::get) over the user's raw hyper connection instead of its reqwest
     /// client, with Goose's `raw-hyper` feature: a cheaper request, for a load test
-    /// that has to get the most requests out of one machine against a simple target.
+    /// that has to get the most requests out of one machine.
     ///
-    /// Each user opens one plain HTTP/1.1 connection with its first raw request, and
-    /// keeps it alive. A raw request sends only `Host` and `User-Agent`, and has no
-    /// cookies, redirects, decompression, proxies or TLS: an `https://` URL fails.
-    /// Goose's request timeout covers the time to the response head, not the body.
+    /// Each user opens one HTTP/1.1 connection with its first raw request, plain or
+    /// over rustls, and keeps it alive. A raw request carries the user's cookies and
+    /// stores the cookies the server sets, in the jar the user's reqwest client uses,
+    /// unless the load test built that client itself. It sends `Host`,
+    /// `User-Agent` and `Accept: */*`, as reqwest does, but no `Accept-Encoding`:
+    /// there is no decompression. It follows no redirect, uses no proxy, and never
+    /// speaks HTTP/2. Goose's request timeout covers the whole exchange, the body
+    /// included.
     ///
     /// It records the same request metrics as [`get`](Self::get), and returns the
     /// same [`GooseResponse`], so the test reads the response as it reads any other,
@@ -1907,8 +1922,9 @@ impl GooseUser {
     /// error, as there is no [`reqwest::Error`] to hold.
     ///
     /// [`GooseRequestBuilder::raw`] sends any request built with a
-    /// [`GooseRequest`] over the raw connection, with a name, another method or an
-    /// expected status code, but never a body.
+    /// [`GooseRequest`] over the raw connection: with a name, another method, an
+    /// expected status code, or headers and a body set on a reqwest
+    /// [`RequestBuilder`].
     ///
     /// # Example
     /// ```rust
@@ -1954,6 +1970,37 @@ impl GooseUser {
             .name(name)
             .raw(true)
             .build();
+        self.request(goose_request).await
+    }
+
+    /// [`post`](Self::post) over the user's raw hyper connection: see
+    /// [`raw_get`](Self::raw_get). A body that is a stream, rather than in memory, is
+    /// sent once, never again on a new connection.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut transaction = transaction!(post_function);
+    ///
+    /// async fn post_function(user: &mut GooseUser) -> TransactionResult {
+    ///     let _ = user.raw_post("path/to/foo/", "BODY BEING POSTED").await?.discard_body().await;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "raw-hyper")]
+    pub async fn raw_post<T: Into<reqwest::Body>>(
+        &mut self,
+        path: &str,
+        body: T,
+    ) -> Result<GooseResponse, Box<TransactionError>> {
+        let mut goose_request = GooseRequest::builder()
+            .method(GooseMethod::Post)
+            .path(path)
+            .raw(true)
+            .build();
+        goose_request.raw_body = Some(body.into());
         self.request(goose_request).await
     }
 
@@ -2603,29 +2650,53 @@ impl GooseUser {
     #[cfg(feature = "raw-hyper")]
     async fn raw_request(
         &mut self,
-        request: GooseRequest<'_>,
+        mut request: GooseRequest<'_>,
     ) -> Result<GooseResponse, Box<TransactionError>> {
-        if request.request_builder.is_some() {
-            return Err(Box::new(TransactionError::Custom(
-                "a raw request has no reqwest RequestBuilder: build it without one".to_string(),
-            )));
-        }
-        let method = match request.method {
-            GooseMethod::Delete => Method::DELETE,
-            GooseMethod::Get => Method::GET,
-            GooseMethod::Head => Method::HEAD,
-            GooseMethod::Patch => Method::PATCH,
-            GooseMethod::Post => Method::POST,
-            GooseMethod::Put => Method::PUT,
-            GooseMethod::Custom => {
-                return Err(Box::new(TransactionError::Custom(
-                    "GooseMethod::Custom cannot be used with a raw request; \
-                     use record_custom_request() instead"
-                        .to_string(),
-                )))
+        use crate::raw_hyper::{RawBody, RawRequest};
+
+        // What to send: the test's reqwest request, or the path and method.
+        let raw = if let Some(request_builder) = request.request_builder.take() {
+            let mut built = request_builder.build().map_err(|e| Box::new(e.into()))?;
+            // Every builder call a raw request can't honour is refused, never ignored.
+            if built.version() != http::Version::HTTP_11 {
+                return Err(Box::new(TransactionError::Custom(format!(
+                    "a raw request is sent over HTTP/1.1, not {:?}: leave the version \
+                     unset, or send this request without raw(true)",
+                    built.version()
+                ))));
+            }
+            RawRequest {
+                method: built.method().clone(),
+                url: built.url().clone(),
+                headers: std::mem::take(built.headers_mut()),
+                body: RawBody::from_reqwest(built.body_mut().take()),
+                timeout: built.timeout().copied(),
+            }
+        } else {
+            let method = match request.method {
+                GooseMethod::Delete => Method::DELETE,
+                GooseMethod::Get => Method::GET,
+                GooseMethod::Head => Method::HEAD,
+                GooseMethod::Patch => Method::PATCH,
+                GooseMethod::Post => Method::POST,
+                GooseMethod::Put => Method::PUT,
+                GooseMethod::Custom => {
+                    return Err(Box::new(TransactionError::Custom(
+                        "GooseMethod::Custom cannot be used with a raw request; \
+                         use record_custom_request() instead"
+                            .to_string(),
+                    )))
+                }
+            };
+            RawRequest {
+                method,
+                url: self.request_url(request.path)?,
+                headers: header::HeaderMap::new(),
+                body: RawBody::from_reqwest(request.raw_body.take()),
+                timeout: None,
             }
         };
-        let url = self.request_url(request.path)?;
+        let method = goose_method_from_method(raw.method.clone())?;
         let request_name = self.get_request_name(&request);
 
         self.wait_for_throttle().await?;
@@ -2633,14 +2704,27 @@ impl GooseUser {
         // Once past the throttle, the request is officially started.
         let started = Instant::now();
 
-        // The request log shows the headers a test set, and a raw request has none.
-        let raw_request = GooseRawRequest::new(request.method, url.as_str(), Vec::new(), "");
+        // The headers and body for the logs, as on the reqwest path.
+        let headers: Vec<String> = if self.config.request_log().is_some()
+            || self.config.debug_log().is_some()
+            || self.config.error_log().is_some()
+        {
+            raw.headers
+                .iter()
+                .map(|header| format!("{header:?}"))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let body = match (&raw.body, self.config.request_body) {
+            (RawBody::Bytes(bytes), true) => str::from_utf8(bytes).unwrap_or(""),
+            _ => "",
+        };
+        let raw_request = GooseRawRequest::new(method, raw.url.as_str(), headers, body);
         let mut request_metric = self.new_request_metric(raw_request, request_name);
 
-        let sent = self
-            .raw_connection
-            .send(method, &url, self.config.request_timeout())
-            .await;
+        let url = raw.url.clone();
+        let sent = self.raw_connection.send(raw).await;
         if sent.resent {
             if let Some(resends) = &self.resends {
                 resends.fetch_add(1, AtomicOrdering::Relaxed);
@@ -4233,6 +4317,9 @@ impl GooseUser {
     ) -> Result<(), TransactionError> {
         self.client = builder.build()?;
         self.gzip = false;
+        // Goose no longer holds the client's cookie jar.
+        #[cfg(feature = "raw-hyper")]
+        self.raw_connection.client_replaced();
 
         Ok(())
     }
@@ -4337,6 +4424,9 @@ pub struct GooseRequest<'a> {
     // Defaults to `false`.
     #[cfg(feature = "raw-hyper")]
     raw: bool,
+    // The body `GooseUser::raw_post` sends. Defaults to [`None`].
+    #[cfg(feature = "raw-hyper")]
+    raw_body: Option<reqwest::Body>,
 }
 impl<'a> GooseRequest<'a> {
     /// Convenience function to bring [`GooseRequestBuilder`] into scope.
@@ -4400,9 +4490,15 @@ impl<'a> GooseRequestBuilder<'a> {
     }
 
     /// With `true`, send the request over the user's raw hyper connection instead of
-    /// its reqwest client: one plain HTTP/1.1 connection per user, with no cookies,
-    /// redirects, decompression, proxies or TLS, and no body. Only with Goose's
-    /// `raw-hyper` feature. See [`GooseUser::raw_get`].
+    /// its reqwest client: one HTTP/1.1 connection per user, with the user's
+    /// cookies, but no redirects, decompression, proxies or HTTP/2. Only with
+    /// Goose's `raw-hyper` feature. See [`GooseUser::raw_get`].
+    ///
+    /// Headers, a body, query parameters and a timeout of the request's own come
+    /// from a reqwest [`RequestBuilder`] given with
+    /// [`set_request_builder`](Self::set_request_builder), as on the reqwest path.
+    /// A request set to an HTTP version other than HTTP/1.1 is refused with an
+    /// error.
     ///
     /// # Example
     /// ```rust
@@ -4662,6 +4758,8 @@ impl<'a> GooseRequestBuilder<'a> {
             request_builder,
             #[cfg(feature = "raw-hyper")]
             raw,
+            #[cfg(feature = "raw-hyper")]
+            raw_body: None,
         }
     }
 }
