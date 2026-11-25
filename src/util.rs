@@ -501,14 +501,17 @@ pub(crate) fn warning_block(tag: &str, text: &str) {
 /// timestamp. When the zone cannot be read, such as a `TZ` jiff cannot parse,
 /// this warns once per process and returns UTC.
 pub(crate) fn local_zone() -> jiff::tz::TimeZone {
-    zone_or_utc(jiff::tz::TimeZone::try_system())
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    zone_or_utc(jiff::tz::TimeZone::try_system(), &WARNED)
 }
 
-/// Returns the zone a lookup found, or warns once per process and returns UTC.
-fn zone_or_utc(zone: Result<jiff::tz::TimeZone, jiff::Error>) -> jiff::tz::TimeZone {
-    static WARNED: std::sync::Once = std::sync::Once::new();
+/// Returns the zone a lookup found, or warns once per `warned` and returns UTC.
+fn zone_or_utc(
+    zone: Result<jiff::tz::TimeZone, jiff::Error>,
+    warned: &std::sync::Once,
+) -> jiff::tz::TimeZone {
     zone.unwrap_or_else(|error| {
-        WARNED.call_once(|| match std::env::var_os("TZ") {
+        warned.call_once(|| match std::env::var_os("TZ") {
             Some(tz) => warn!(
                 "[system]: cannot read the time zone TZ={:?} ({error}), times are shown in UTC",
                 tz.to_string_lossy()
@@ -744,13 +747,19 @@ mod tests {
     }
 
     /// A zone jiff cannot read gives UTC, and a real one gives that zone.
+    /// The test brings its own `Once`, so it leaves the warning `local_zone`
+    /// gives once per process for a real failure later in the same process.
     #[test]
     fn local_zone_falls_back_to_utc() {
+        let warned = std::sync::Once::new();
         let unreadable = jiff::tz::TimeZone::get("std +5");
         assert!(unreadable.is_err());
-        assert_eq!(zone_or_utc(unreadable), jiff::tz::TimeZone::UTC);
+        assert_eq!(zone_or_utc(unreadable, &warned), jiff::tz::TimeZone::UTC);
+        assert!(warned.is_completed());
 
-        let kolkata = zone_or_utc(jiff::tz::TimeZone::get("Asia/Kolkata"));
+        let found = std::sync::Once::new();
+        let kolkata = zone_or_utc(jiff::tz::TimeZone::get("Asia/Kolkata"), &found);
+        assert!(!found.is_completed());
         let at = "2026-01-15T12:00:00Z".parse::<jiff::Timestamp>().unwrap();
         assert_eq!(kolkata.iana_name(), Some("Asia/Kolkata"));
         assert_eq!(kolkata.to_offset(at).seconds(), 5 * 3600 + 30 * 60);
