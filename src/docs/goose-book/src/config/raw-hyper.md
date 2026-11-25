@@ -118,6 +118,7 @@ The bar for adding a raw client was a cut of at least 25% in CPU per request aga
 |---|---:|
 | **The bar:** `hyper-conn+timeout` against `reqwest-tuned+no-timeout`, bare loops, quietest run | **23.4%** |
 | The same, in the three other suites: 27.1%, 23.7% (the noisiest) and 25.0% | 23.4% to 27.1% |
+| The same, the 9 run command above run again with the benchmark's checks on every request (`goose` 33.94, `goose-tuned` 33.00, `reqwest-tuned+no-timeout` 28.14, `hyper-conn+timeout` 21.34) | 24.2% |
 | Bare loops, both with a timeout: `hyper-conn+timeout` against `reqwest-tuned` | 27% to 32% |
 | Prototype in Goose, both with a timeout: `goose-raw` against `goose-tuned` | 25.4% |
 | Prototype in Goose: `goose-raw` against `goose`, Goose as it is | 26.8% |
