@@ -164,6 +164,13 @@ name = "umami"
 path = "examples/umami/main.rs"
 test = true
 
+# Runs examples/sse's tests: its event splitting, and load tests against local
+# event stream servers that never end a response.
+[[example]]
+name = "sse"
+path = "examples/sse.rs"
+test = true
+
 # `.cookie_store(true)` needs Reqwest's `cookies` feature, which Goose's
 # `cookies` feature turns on.
 [[example]]

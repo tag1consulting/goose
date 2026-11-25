@@ -320,7 +320,7 @@ jobs:
     # Everything but what the gaggle job runs and needs no other feature: the Gaggle
     # process tests and the Gaggle library tests, GAGGLE_JOB_TESTS at the top of this
     # job. Every test target, tests/gaggle.rs among them, is still built here. The
-    # examples that run tests are those with `test = true` in Cargo.toml, umami only.
+    # examples that run tests are those with `test = true` in Cargo.toml, umami and sse.
     - name: 🔎 Test (all features)
       if: ${{ matrix.features == 'all-features' }}
       run: |
