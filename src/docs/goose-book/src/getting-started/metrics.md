@@ -93,7 +93,7 @@ A graph of the average response time each second, then the response time heatmap
 
 *The p50 line holds near 9 ms throughout; the p95 line sits near 80 ms for the first half minute, then near 25 ms with spikes to 80 ms and more.*
 
-The heatmap uses the [dashboard's](../controller/dashboard-reference.md#the-response-time-heatmap) rows and percentiles, with p50, p95 and p99 drawn as colored lines, but covers the whole run since the metrics reset, while the dashboard's heatmap shows the last 5 minutes. A column starts one second wide. Once a series holds 600 columns for all requests, or 60 for one request name, adjacent pairs merge, and the heatmap says how wide each column is. This 3 minute run kept one second columns for all requests, while each request name's columns merged to 4 seconds. A menu picks all requests or one of the first 100 request names Goose recorded. `--no-percentiles-over-time` leaves the heatmap out.
+The heatmap uses the [dashboard's](../controller/dashboard-reference.md#the-response-time-heatmap) rows and percentiles, with p50, p95 and p99 drawn as colored lines, but covers the whole run since the metrics reset, while the dashboard's heatmap shows the last 5 minutes unless its **Whole run** view, which draws these same columns, is chosen. A column starts one second wide. Once a series holds 600 columns for all requests, or 60 for one request name, adjacent pairs merge, and the heatmap says how wide each column is. This 3 minute run kept one second columns for all requests, while each request name's columns merged to 4 seconds. A menu picks all requests or one of the first 100 request names Goose recorded. `--no-percentiles-over-time` leaves the heatmap out, and the JSON report's `percentiles_over_time_ms` with it.
 
 ### Status Code Metrics
 
@@ -166,7 +166,8 @@ jq 'map_values(if type == "array" then "\(length) rows" elif type == "object" th
   "transaction_metrics": "27 rows",
   "status_code_metrics": "143 rows",
   "errors": null,
-  "coordinated_omission_metrics": null
+  "coordinated_omission_metrics": null,
+  "percentiles_over_time_ms": "101 rows"
 }
 ```
 
@@ -177,10 +178,39 @@ The JSON report's times, which end `Z`, are UTC, as are the log's; the run's fol
 - `errors` is `null` without errors, and `transaction_errors` appears only when a transaction returned an error that is not a request error.
 - The `co_` keys are `null` until coordinated omission mitigation adds synthetic times, and `coordinated_omission_metrics` is `null` with mitigation off.
 - `graphs`, with the per second data behind the graphs and the heatmap, appears only when the run had `--report-graph-data` or the dashboard's Include graph data switch on.
+- `percentiles_over_time_ms` holds the p50, p95 and p99 of each column of the response time heatmap; see [Percentiles over time](#percentiles-over-time). It does not need `--report-graph-data`.
 
 Each time in `raw_request_metrics`, `raw_response_metrics` and the other tables, every minimum, maximum, percentile and average and the coordinated omission standard deviation, is written once, as a whole number of microseconds, in its field ending `_us`, such as `percentile_50_us`, `response_time_minimum_us` and `response_time_average_us`, so a 37.999 ms time, which the other reports show as `38`, is `37999`, and a 0.59 ms time is `590`. An average is the mean of the microseconds measured, rounded to the nearest microsecond, so the 31.861 ms average of `GET /` is `31861`. A request or scenario average with no times to average is `0`, and each scenario's heading row in `transaction_metrics` has `null` averages and rates. The raw timing data in `raw_metrics` holds microseconds only: each request's `raw_data` has its `counter`, its buckets in `times_us`, and `minimum_time_us`, `maximum_time_us` and `total_time_us`, and each transaction and scenario the same as `counter`, `times_us`, `min_time_us`, `max_time_us` and `total_time_us`. The Controller's `metrics-json` also holds their whole milliseconds; see [Controller Commands](../controller/telnet.md#controller-commands). A JSON report loads as a baseline with [`--baseline-file`](common.md#comparing-against-a-baseline) (see [Baselines from older Goose releases](common.md#baselines-from-older-goose-releases)), and `--render-report` writes the other reports from it.
 
 Goose 0.20 removed the whole millisecond row fields that Goose 0.19.1 deprecated, `percentile_*`, `response_time_minimum` and `response_time_maximum` without `_us`. It writes `response_time_average_us` in place of the millisecond `response_time_average` and, in `co_request_metrics`, `response_time_standard_deviation_us` in place of `response_time_standard_deviation`, and its raw timing data no longer holds the whole millisecond `minimum_time`, `maximum_time` and `total_time`, or `min_time`, `max_time` and `total_time` for transactions and scenarios.
+
+### Percentiles over time {#percentiles-over-time}
+
+`percentiles_over_time_ms` lists, for all requests and for each of the first 100 request names, the p50, p95 and p99 of each column of the HTML report's [response time heatmap](#html-report), worked out by the same code, so the two always agree. It is written whenever the run kept the heatmap: with `--report-file`, `--pdf-print-html` or `--dashboard`, unless `--no-percentiles-over-time` is given, which leaves the key out. Each entry is one series:
+
+```json
+{
+  "name": "GET /search",
+  "width_secs": 16,
+  "origin_second": 0,
+  "columns": [
+    [0, 51.199, 76.799, 79.871],
+    [16, 50.687, 76.287, 79.359]
+  ]
+}
+```
+
+- `name` is `All requests`, first, or a request's method and name, as the Requests table shows them.
+- `width_secs` is how many seconds each column covers. Goose keeps up to 600 columns for all requests and 60 for each request name, so a column covers one second until the run outgrows them, then 2, 4, 8 seconds and so on.
+- `origin_second` is the second, from the start of the run, the first column begins at: `0`, or the second of the last metrics reset.
+- `columns` has one row for each column with requests, oldest first: `[start second, p50, p95, p99]`, the second from the start of the run the column begins at, then the three percentiles in milliseconds, to the microsecond. A column with no requests has no row.
+- `adjusted_columns`, in the same form, is there when coordinated omission mitigation added synthetic times to the series: the heatmap's Adjusted view.
+
+The percentiles come from the column's counts, by the rule the heatmap uses: each is the middle of the heatmap row it falls in, kept between the column's fastest and slowest time, so it can differ slightly from the whole run's percentiles in `raw_request_metrics`. `--render-report` and the dashboard's Runs panel keep the table of the JSON report they read, and a JSON report without it, from Goose 0.19 or a run under `--no-percentiles-over-time`, still loads. To list the slowest columns of all requests:
+
+```bash
+jq -r '.percentiles_over_time_ms[0].columns | sort_by(-.[3]) | .[:5][] | @tsv' report.json
+```
 
 ### Converting older reports
 

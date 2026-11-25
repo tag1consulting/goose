@@ -584,7 +584,8 @@ Dashboard:
 
           Leaves out the response time percentiles for each second behind the
           dashboard's response time heatmap, which saves memory. Also turns off
-          the report's response time heatmap.
+          the report's response time heatmap and the JSON report's
+          percentiles_over_time_ms.
 
           Set in code with GooseDefault::NoPercentilesOverTime.
 

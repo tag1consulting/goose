@@ -42,7 +42,7 @@ The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightl
 
 **5. A report's tables always count every request since the metrics reset, or from the start of the run when there is none.** Its graphs, all but User Metrics, also start at the metrics reset, and cover the seconds Goose still kept when the report was written; when Save report's window cut them shorter, the report says when its graphs start and why.
 
-While Save report is off and no `--report-file` path or `--pdf-print-html` is given, Goose keeps only the last 10 minutes of graph data and 5 minutes of heatmap (rule 10). A report written later, after Save report is turned on or by Save report now, still has every request in its tables, and says when its graphs start and why.
+While Save report is off and no `--report-file` path or `--pdf-print-html` is given, Goose keeps only the last 10 minutes of graph data (rule 10). A report written later, after Save report is turned on or by Save report now, still has every request in its tables and the heatmap of the whole run, and says when its graphs start and why.
 
 **6. `--notes "text"` is shown in the dashboard and at the top of the PDF, HTML and Markdown reports, and stored in the JSON report.** It needs `--report-file`, `--pdf-print-html` or `--dashboard`.
 
@@ -91,7 +91,7 @@ When only `--dashboard` asks for the run's folder, with no output flag given wit
 cargo run --release --features dashboard --example simple -- --host http://localhost:8080 --dashboard
 ```
 
-**10. Save report can be turned on or off at any time.** While it is on, Goose keeps all of the run's graph data and heatmap since the metrics reset. While it is off and no `--report-file` path or `--pdf-print-html` is given, Goose keeps only the last 10 minutes of graph data and the last 5 minutes of heatmap. Either way, the dashboard's charts show only the last 5 minutes. Turning it on during a run keeps graph data and heatmap from that point on, plus up to 10 minutes of graph data and 5 minutes of heatmap before it, and rule 5 labels the report.
+**10. Save report can be turned on or off at any time.** While it is on, Goose keeps all of the run's graph data and heatmap since the metrics reset. While it is off and no `--report-file` path or `--pdf-print-html` is given, Goose keeps only the last 10 minutes of graph data, and folds older seconds into the dashboard's [Whole run](../controller/dashboard-reference.md#last-5-minutes-or-the-whole-run) view, at most 600 points a chart. The heatmap's whole run columns, which stop growing once they fill, are kept either way, so the dashboard's Whole run view and any report written later have the heatmap of the whole run. Turning Save report on during a run keeps graph data from that point on, plus up to 10 minutes before it, and rule 5 labels the report.
 
 On a long soak test with `--dashboard-control`, no `--report-file` path and no `--pdf-print-html`, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed. Without `--dashboard-control`, Save report stays on, and memory grows slowly. In a 60 minute run, the process's resident memory grew by 544 KiB, from 35,264 KiB at 5 minutes to 35,808 KiB at 60. The run was `examples/simple` with 300 users against a local test server that answered `/` after 10 ms and every other request at once: each user logged in once during the ramp up, then the users made about 30 requests a second over 2 request names. Its command:
 
