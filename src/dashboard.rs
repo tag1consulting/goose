@@ -1,6 +1,9 @@
 //! Live web dashboard HTTP server.
 //!
-//! Compiled only with the `dashboard` crate feature. Runs an HTTP/1 accept
+//! Compiled only with the `dashboard` crate feature, one of Goose's default
+//! features; the server starts only with `--dashboard`. A load test that sets
+//! `default-features = false` on Goose, with `features = ["cookies"]` to keep
+//! cookies, builds without it, and without axum. Runs an HTTP/1 accept
 //! loop over an axum router that serves a minimal static shell, a one-shot
 //! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
 //! `--dashboard-control` is set) authenticated Start/Stop/Users/Quit control
@@ -1000,8 +1003,8 @@ struct HealthControllers {
 /// Binds to `configuration.dashboard_host`:`configuration.dashboard_port` and
 /// returns the parent end of the request channel. Logs the listening URL.
 ///
-/// When `--dashboard` is set, bind failure is a hard error (opt-in server must
-/// not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
+/// When `--dashboard` is set, bind failure is a hard error (a server asked for
+/// must not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
 /// `control_tx`, given only with dashboard control, registers the control routes.
 ///
 /// A Gaggle worker never serves the dashboard: it refuses `--dashboard`, and
@@ -1010,7 +1013,7 @@ pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
     control_tx: Option<flume::Sender<ControlRequest>>,
     listening: ListeningControllers,
-    saved_runs: runs::SavedRuns,
+    saved_runs: &runs::SavedRuns,
 ) -> Result<Option<DashboardSetup>, GooseError> {
     if !configuration.dashboard {
         return Ok(None);
@@ -1073,7 +1076,8 @@ pub(crate) async fn setup_dashboard(
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
         metrics_cache: Arc::new(MetricsCache::default()),
-        saved_runs,
+        // Cloned only here, once the dashboard is on.
+        saved_runs: saved_runs.clone(),
         log_folder: log_folder.clone(),
         controllers: HealthControllers {
             telnet: listening.telnet.then(|| {
@@ -3031,7 +3035,7 @@ mod tests {
             &config,
             bind.control,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("bind")
@@ -3517,7 +3521,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("localhost bind should succeed")
@@ -3540,7 +3544,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         {
@@ -3554,6 +3558,45 @@ mod tests {
                 eprintln!("skipping ::1 bind assertion: {msg}");
             }
         }
+    }
+
+    /// Without `--dashboard`, setup returns before it binds or spawns
+    /// anything: here the port it is given is taken, which would be a hard
+    /// error if it tried to bind it, and the runtime has as many live tasks
+    /// after it as before. `tests/it/dashboard_off.rs` checks the port
+    /// through a whole run on the default port.
+    #[tokio::test]
+    async fn setup_dashboard_without_the_option_binds_nothing() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("occupy port");
+        let port = occupied.local_addr().unwrap().port();
+
+        let config = GooseConfiguration {
+            dashboard: false,
+            dashboard_host: Some("127.0.0.1".to_string()),
+            dashboard_port: Some(port),
+            ..Default::default()
+        };
+        let metrics = tokio::runtime::Handle::current().metrics();
+        let tasks_before = metrics.num_alive_tasks();
+        let setup = setup_dashboard(
+            &config,
+            None,
+            ListeningControllers::configured(&config),
+            &runs::SavedRuns::new(&config),
+        )
+        .await
+        .expect("no dashboard to set up is not an error");
+        assert!(setup.is_none(), "no dashboard without --dashboard");
+        // A task spawned and still running, such as a server, shows here.
+        tokio::task::yield_now().await;
+        assert_eq!(
+            metrics.num_alive_tasks(),
+            tasks_before,
+            "no task spawned without --dashboard"
+        );
+        drop(occupied);
     }
 
     #[tokio::test]
@@ -3575,7 +3618,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect_err("second bind on same port must fail hard");
@@ -4017,7 +4060,7 @@ mod tests {
             };
             let mut listening = ListeningControllers::configured(&config);
             listening.telnet &= telnet_bound;
-            let setup = setup_dashboard(&config, None, listening, runs::SavedRuns::new(&config))
+            let setup = setup_dashboard(&config, None, listening, &runs::SavedRuns::new(&config))
                 .await
                 .expect("bind")
                 .expect("enabled");
@@ -4067,7 +4110,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("bind")
@@ -4096,7 +4139,7 @@ mod tests {
             &config,
             None,
             ListeningControllers::configured(&config),
-            runs::SavedRuns::new(&config),
+            &runs::SavedRuns::new(&config),
         )
         .await
         .expect("bind")
@@ -5735,7 +5778,7 @@ mod tests {
                 &config,
                 None,
                 ListeningControllers::configured(&config),
-                runs::SavedRuns::new(&config),
+                &runs::SavedRuns::new(&config),
             )
             .await
             .expect("bind")

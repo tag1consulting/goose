@@ -7,7 +7,7 @@ With [coordinated omission mitigation](mitigation.md) on, Goose keeps two sets o
 Every image and excerpt on this page comes from runs against a small local server that answers each request after a random delay of about 5 to 15 ms, and stalls every 1,000th request, counted across all connections, for one second. The [GraphQL example](../example/graphql.md) ran 10 users for two minutes against it, with no wait between requests:
 
 ```bash
-cargo run --release --features dashboard --example graphql_loadtest -- \
+cargo run --release --example graphql_loadtest -- \
   -H http://127.0.0.1:18900 --dashboard -u 10 -r 10 -t 2m --co-mitigation average \
   --report-file report.html --report-file report.md --report-file report.json
 ```

@@ -97,7 +97,7 @@ goose-eggs = "0.7"
 tokio = "^1"
 ```
 
-goose-eggs turns on Goose's default features, which in Goose 0.19 is the `cookies` feature. To build without cookies, set `default-features = false` on both `goose` and `goose-eggs`.
+goose-eggs turns on Goose's default features, which in Goose 0.19 is the `cookies` feature, and from Goose 0.20 `cookies` and `dashboard`. To build without cookies, set `default-features = false` on both `goose` and `goose-eggs`.
 
 To validate a page, bring the `Validate` structure and either the `validate_page` or the `validate_and_load_static_assets` function into scope:
 

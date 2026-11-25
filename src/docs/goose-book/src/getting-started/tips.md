@@ -127,10 +127,10 @@ Ctrl-C stops the run cleanly: users stop, every report is written and the final 
 
 ### Start the run from the dashboard
 
-With the `dashboard` feature, `--no-autostart` starts Goose idle, so you can check the settings in the dashboard, at `http://127.0.0.1:5118/`, before you press Start. Pressing Start needs `--dashboard-control`, which in turn needs `--dashboard-auth-token` or `--dashboard-no-auth`; the command below uses `--dashboard-no-auth`, which suits a test on your own machine only. See [Live Dashboard](../controller/dashboard.md).
+With `--dashboard`, `--no-autostart` starts Goose idle, so you can check the settings in the dashboard, at `http://127.0.0.1:5118/`, before you press Start. Pressing Start needs `--dashboard-control`, which in turn needs `--dashboard-auth-token` or `--dashboard-no-auth`; the command below uses `--dashboard-no-auth`, which suits a test on your own machine only. See [Live Dashboard](../controller/dashboard.md).
 
 ```bash
-cargo run --release --features goose/dashboard -- -H http://localhost:8080 \
+cargo run --release -- -H http://localhost:8080 \
   --dashboard --dashboard-control --dashboard-no-auth --no-autostart
 ```
 

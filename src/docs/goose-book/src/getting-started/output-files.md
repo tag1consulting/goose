@@ -88,7 +88,7 @@ The JSON report also holds the run's test plan history, so a Markdown report ren
 When only `--dashboard` asks for the run's folder, with no output flag given without a path and no `--output-dir`, a folder Goose can't write to does not stop the run. Goose prints a warning naming the folder and the reason before any load, and runs with Save report off. A banner at the top of the dashboard says why, and stays for the whole run.
 
 ```bash
-cargo run --release --features dashboard --example simple -- --host http://localhost:8080 --dashboard
+cargo run --release --example simple -- --host http://localhost:8080 --dashboard
 ```
 
 **10. Save report can be turned on or off at any time.** While it is on, Goose keeps all of the run's graph data and heatmap since the metrics reset. While it is off and no `--report-file` path or `--pdf-print-html` is given, Goose keeps only the last 10 minutes of graph data and the last 5 minutes of heatmap. Either way, the dashboard's charts show only the last 5 minutes. Turning it on during a run keeps graph data and heatmap from that point on, plus up to 10 minutes of graph data and 5 minutes of heatmap before it, and rule 5 labels the report.
@@ -96,7 +96,7 @@ cargo run --release --features dashboard --example simple -- --host http://local
 On a long soak test with `--dashboard-control`, no `--report-file` path and no `--pdf-print-html`, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed. Without `--dashboard-control`, Save report stays on, and memory grows slowly. In a 60 minute run, the process's resident memory grew by 544 KiB, from 35,264 KiB at 5 minutes to 35,808 KiB at 60. The run was `examples/simple` with 300 users against a local test server that answered `/` after 10 ms and every other request at once: each user logged in once during the ramp up, then the users made about 30 requests a second over 2 request names. Its command:
 
 ```bash
-cargo run --release --example simple --features dashboard,pdf-reports -- -H http://127.0.0.1:19870 \
+cargo run --release --example simple --features pdf-reports -- -H http://127.0.0.1:19870 \
     -u 300 -r 50 -t 60m --dashboard --dashboard-port 19871 --no-telnet
 ```
 
@@ -110,7 +110,7 @@ With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-ru
 
 ```bash
 TOKEN=$(openssl rand -hex 16)
-cargo run --release --features dashboard --example simple -- --host http://localhost:8080 \
+cargo run --release --example simple -- --host http://localhost:8080 \
   --dashboard --dashboard-control --dashboard-auth-token "$TOKEN"
 ```
 
@@ -152,7 +152,7 @@ cargo run --release --example simple -- --host http://localhost:8080 -t 5m \
 Later, start the dashboard from the same working directory:
 
 ```bash
-cargo run --release --features dashboard --example simple -- --host http://localhost:8080 --dashboard --no-autostart
+cargo run --release --example simple -- --host http://localhost:8080 --dashboard --no-autostart
 ```
 
 Its Runs panel lists `nightly`. With `--no-autostart`, Goose runs no new load test until a [Controller](../controller/overview.md) starts one, because without `--dashboard-control` the dashboard has no Start button.

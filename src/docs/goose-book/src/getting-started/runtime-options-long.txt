@@ -519,7 +519,7 @@ Dashboard:
 
           Serves a page that charts the load test as it runs, on 127.0.0.1 port
           5118 unless --dashboard-host or --dashboard-port say otherwise. Needs
-          Goose built with the dashboard feature.
+          the dashboard feature, one of Goose's default features.
 
           Set in code with GooseDefault::Dashboard.
 

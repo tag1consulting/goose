@@ -114,6 +114,7 @@ mod dashboard;
 mod dashboard_goose_log;
 #[cfg(all(unix, feature = "dashboard"))]
 mod dashboard_no_folder;
+mod dashboard_off;
 mod defaults;
 mod discard_body;
 mod error;

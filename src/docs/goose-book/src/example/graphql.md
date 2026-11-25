@@ -6,7 +6,7 @@ Goose 0.19 adds two helper methods that send GraphQL queries and mutations.
 
 <img src="graphql-requests.png" width="703" alt="The dashboard's Requests table cut after its avg ms column: POST /graphql, POST get user by id, POST complex user posts query and POST create post, each about 1,809,936 requests at about 18,099 a second, with 0 fails">
 
-*`cargo run --release --features dashboard --example graphql_loadtest -- --host http://127.0.0.1:4400 -u 5 -r 5 -t 3m --no-reset-metrics --dashboard -q`, against a local Node server that answers each of the example's four operations at `POST /graphql` with a 200 and a JSON `data` body without delay, 100 seconds in.*
+*`cargo run --release --example graphql_loadtest -- --host http://127.0.0.1:4400 -u 5 -r 5 -t 3m --no-reset-metrics --dashboard -q`, against a local Node server that answers each of the example's four operations at `POST /graphql` with a 200 and a JSON `data` body without delay, 100 seconds in.*
 
 The transactions are named with `set_name()`, and three of their requests with `post_graphql_named()`. Simple Query's request is sent with `post_graphql()`, which names it by its path, `POST /graphql`. No transaction waits, and this server answers without delay, so 5 users send about 72,000 requests a second; the [Sample Output](#sample-output) below comes from a slower server. With `-q` Goose does not print the dashboard's address when it starts: open `http://127.0.0.1:5118` while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.
 

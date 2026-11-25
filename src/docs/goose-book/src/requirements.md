@@ -30,18 +30,20 @@ Goose has these Cargo features:
 
 | Feature | Default | What it adds |
 |-|-|-|
-| `cookies` | on | Each `GooseUser` keeps its own cookies; see [Cookies](./config/cookie.html). Build with `default-features = false` to leave it out. |
-| `dashboard` | off | The [live web dashboard](./controller/dashboard.html), served with `--dashboard`. |
+| `cookies` | on | Each `GooseUser` keeps its own cookies; see [Cookies](./config/cookie.html). |
+| `dashboard` | on | The [live web dashboard](./controller/dashboard.html), served only with `--dashboard`. Off in Goose 0.19. |
 | `pdf-reports` | off | PDF reports, written with a `.pdf` `--report-file`. |
 | `native-tls` | off | The clients Goose builds use the platform's TLS library in place of rustls; see [Native TLS](./config/tls.html#native-tls). |
 | `rustls-tls` | off | Kept so that older `Cargo.toml` files build; see [TLS](#tls). |
 
-For example, to build a load test with the dashboard:
+`default-features = false` turns off both default features. To leave the dashboard, and with it axum, out of the build but keep cookies:
 
 ```toml
 [dependencies]
-goose = { version = "^0.19", features = ["dashboard"] }
+goose = { version = "^0.20", default-features = false, features = ["cookies"] }
 ```
+
+In Goose 0.19, where `cookies` is the only default feature, build a load test with the dashboard with `goose = { version = "^0.19", features = ["dashboard"] }`.
 
 ## Chrome for PDF reports
 

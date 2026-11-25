@@ -2,16 +2,16 @@
 
 This page holds every flag, rule and endpoint of the [Live Dashboard](dashboard.md), and the snapshot fields a client most needs. Start there for what the dashboard shows and how to use it.
 
-> The dashboard is an opt in crate feature: build Goose with `--features dashboard`. [Stability](#stability) says what the dashboard and its `/api/v1` endpoints promise from one release to the next.
+> The dashboard is a default crate feature, `dashboard`, and starts only with `--dashboard`. [Stability](#stability) says what the dashboard and its `/api/v1` endpoints promise from one release to the next.
 
 Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
 
 ## Enabling the dashboard
 
-The dashboard is off by default. Compile Goose with the `dashboard` crate feature, then enable observation with `--dashboard`:
+The dashboard is off by default at run time. Goose's default features build it in; enable observation with `--dashboard`:
 
 ```bash
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard \
   -H https://staging.example.com \
   -u 50 -t 10m
@@ -40,7 +40,7 @@ The dashboard port opens when the Controllers' ports do, once Goose has built a 
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardNoAuth`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients`, and `GooseDefault::NoPercentilesOverTime`.
 
-> **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
+> **Feature flag:** the HTTP server is compiled behind the `dashboard` crate feature, one of Goose's default features. Without `--dashboard` it binds no port and spawns no task of its own. A build with `default-features = false` leaves it out, along with axum, unless it lists `dashboard` in `features`, as in `features = ["cookies", "dashboard"]`; such a build rejects `--dashboard` at startup with a hint to turn the feature on. In a checkout of Goose, `--no-default-features --features dashboard` builds the dashboard without cookies.
 
 The server lives as long as the load test, with one exception: see [Waiting after an autostarted run](#waiting-after-an-autostarted-run). When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
 
@@ -166,7 +166,7 @@ Read-only with `--dashboard-no-auth`, the listening line reads `(read-only, no t
 `--dashboard-no-auth` lets the dashboard start, stop, quit and change users, the run settings and the report switches, save the report now, and delete saved reports and logs, with no token and no `?token=` URL:
 
 ```bash
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard --dashboard-control --dashboard-no-auth \
   -H https://staging.example.com \
   -u 50 -t 10m
@@ -278,7 +278,7 @@ curl -H "Authorization: Bearer SECRET" \
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
 
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard \
   --dashboard-host 0.0.0.0 \
   --dashboard-auth-token "$DASHBOARD_TOKEN" \
@@ -334,7 +334,7 @@ Control is **off by default**. Enable it with `--dashboard-control` and a token,
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
 
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --dashboard \
   --dashboard-control \
   --dashboard-auth-token "$DASHBOARD_TOKEN" \
@@ -351,7 +351,7 @@ Open `http://127.0.0.1:5118/?token=<token>`, with the token's value in place of 
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
 
-cargo run --release --features dashboard --example simple -- \
+cargo run --release --example simple -- \
   --no-autostart \
   --no-telnet \
   --dashboard \
@@ -935,7 +935,7 @@ For full Controller documentation, see [Controlling A Running Goose Load Test](o
 
 ### Building it in
 
-In 0.19 and 0.20 the dashboard is an opt in crate feature: build with `--features dashboard`. The goal is to make it a default feature in 1.0, a decision to be made on the feedback from 0.19 and 0.20.
+From 0.20 the dashboard is a default crate feature, built into every load test that keeps Goose's default features, and still off at run time until `--dashboard`. In 0.19 it is an opt in feature: build with `features = ["dashboard"]`. A load test that sets `default-features = false` leaves it out, unless it lists `dashboard` in `features`.
 
 ### `/api/v1` in 0.19 and 0.20
 
@@ -1005,9 +1005,9 @@ npm run build
 That runs esbuild and overwrites `app.js` in the same directory. Then rebuild Goose so the new script is embedded:
 
 ```bash
-cargo build --features dashboard
+cargo build
 # or exercise the dashboard:
-cargo run --release --features dashboard --example simple -- --dashboard ...
+cargo run --release --example simple -- --dashboard ...
 ```
 
 ### Snapshot types

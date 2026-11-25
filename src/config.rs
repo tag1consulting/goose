@@ -728,8 +728,8 @@ pub struct GooseConfiguration {
     /// Serve the live web dashboard
     ///
     /// Serves a page that charts the load test as it runs, on 127.0.0.1 port 5118 unless
-    /// --dashboard-host or --dashboard-port say otherwise. Needs Goose built with the
-    /// dashboard feature.
+    /// --dashboard-host or --dashboard-port say otherwise. Needs the dashboard feature,
+    /// one of Goose's default features.
     ///
     /// Set in code with GooseDefault::Dashboard.
     #[arg(help_heading = "Dashboard", long)]
@@ -2069,7 +2069,8 @@ pub enum GooseDefault {
     McpReadOnly,
     /// An optional default for listing the MCP `set_host` tool, which is off by default.
     McpSetHost,
-    /// An optional default for enabling the live web dashboard.
+    /// An optional default for enabling the live web dashboard. Needs the
+    /// `dashboard` feature, one of Goose's default features.
     Dashboard,
     /// An optional default for enabling dashboard control endpoints.
     DashboardControl,
@@ -5552,10 +5553,14 @@ impl GooseConfiguration {
         }
 
         // Feature requires the HTTP server feature (DTO/builder always compile).
+        // It is a default feature, so only a build that turned Goose's default
+        // features off lacks it.
         if !cfg!(feature = "dashboard") {
             return Err(GooseError::FeatureNotEnabled {
                 feature: "dashboard".to_string(),
-                detail: "rebuild with `--features dashboard`".to_string(),
+                detail: "keep Goose's default features, \
+                         or turn the feature on"
+                    .to_string(),
             });
         }
 
@@ -6638,7 +6643,17 @@ mod test {
             dashboard_host: Some("127.0.0.1".to_string()),
             ..Default::default()
         };
-        assert!(config.validate_dashboard_config().is_err());
+        match config.validate_dashboard_config() {
+            Err(GooseError::FeatureNotEnabled { feature, detail }) => {
+                assert_eq!(feature, "dashboard");
+                assert_eq!(
+                    detail,
+                    "keep Goose's default features, \
+                     or turn the feature on"
+                );
+            }
+            other => panic!("--dashboard without the feature: {:?}", other),
+        }
         // Control without feature also fails when dashboard is on.
         config.dashboard_control = true;
         config.dashboard_auth_token = Some("s3cret".to_string());

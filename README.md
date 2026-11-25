@@ -11,7 +11,7 @@ Load testing is a critical step in ensuring your web application can handle real
 
 * Realistic User Behavior Simulation: Goes beyond just sending requests; simulates user behaviors like logging in, filling out forms, and navigating through your application.
 
-* **Live Dashboard:** Opt-in web UI (compile with `--features dashboard`, run with `--dashboard`) streams live metrics (RPS, users, latency charts) over SSE while a test runs. Optional authenticated control lets you Start, Stop, and set target users from the browser—see [Live Dashboard](https://www.goose.rs/controller/dashboard.html) in the Goose Book.
+* **Live Dashboard:** A web UI, built in with Goose's default features and started with `--dashboard`, streams live metrics (RPS, users, latency charts) over SSE while a test runs. Optional authenticated control lets you Start, Stop, and set target users from the browser—see [Live Dashboard](https://www.goose.rs/controller/dashboard.html) in the Goose Book. To leave it out of the build, set `default-features = false` on the `goose` dependency, with `features = ["cookies"]` to keep cookies. In Goose 0.19 it is not a default feature: build with `features = ["dashboard"]`.
 
 * **MCP Controller:** Opt-in Model Context Protocol tools for AI agents (compile with `--features mcp`, run with `--mcp`) serve every Controller command at `http://127.0.0.1:5119/mcp`, so an agent can read a running test's metrics and start, stop and change it; see [MCP Controller](https://www.goose.rs/controller/mcp.html) in the Goose Book (published with 0.20; until then [its source](https://github.com/tag1consulting/goose/blob/main/src/docs/goose-book/src/controller/mcp.md)).
 
@@ -24,7 +24,7 @@ You may find the following resources helpful:
 
 * [**The Goose Book**](https://www.goose.rs/) A comprehensive guide to getting started with Goose.
 
-* [**Live Dashboard**](https://www.goose.rs/controller/dashboard.html) Observe (and optionally control) a running load test from the browser (`--features dashboard`, `--dashboard`, `--dashboard-control` with a token or [`--dashboard-no-auth`](https://www.goose.rs/controller/dashboard.html#control-without-a-token)).
+* [**Live Dashboard**](https://www.goose.rs/controller/dashboard.html) Observe (and optionally control) a running load test from the browser (`--dashboard`, `--dashboard-control` with a token or [`--dashboard-no-auth`](https://www.goose.rs/controller/dashboard.html#control-without-a-token)).
 
 * [**Developer Documentation**](https://docs.rs/goose/) Detailed API information and tutorials.
 

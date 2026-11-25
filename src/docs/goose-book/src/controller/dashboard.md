@@ -6,10 +6,10 @@ The live dashboard is a web page Goose serves while a load test runs. It shows t
 
 *The first screen of a run with control on, explained section by section below, with the truncation notice under [The tables](#the-tables).*
 
-Build Goose with the `dashboard` feature, add `--dashboard`, and open `http://127.0.0.1:5118/`. In a checkout of Goose, against your own [Umami](../example/umami.md) site:
+Add `--dashboard` to a load test built with Goose's default features, and open `http://127.0.0.1:5118/`. In a checkout of Goose, against your own [Umami](../example/umami.md) site:
 
 ```bash
-cargo run --release --features dashboard --example umami -- \
+cargo run --release --example umami -- \
   --dashboard -H http://umami.example.com -u 100 -r 1
 ```
 
@@ -17,19 +17,21 @@ Most images on this page come from one run of the command above, against a local
 
 ## Turning it on
 
-The dashboard is an opt in crate feature. In your own load test crate, turn it on in `Cargo.toml`, as [Requirements](../requirements.md) shows:
-
-```toml
-goose = { version = "^0.19", features = ["dashboard"] }
-```
-
-Then run your load test with `--dashboard`, like any other option:
+The dashboard is the `dashboard` crate feature, one of Goose's default features, so a load test whose `goose` dependency keeps the default features has it built in. Run your load test with `--dashboard`, like any other option:
 
 ```bash
 cargo run --release -- --dashboard -H https://staging.example.com
 ```
 
-A build without the feature refuses `--dashboard` at startup. The dashboard listens on `127.0.0.1:5118`; [Dashboard Reference](dashboard-reference.md#related-flags) lists the flags that change that.
+Without `--dashboard` the dashboard is off: Goose binds no port for it and starts no server.
+
+To leave it out of the build, and with it axum, turn off Goose's default features, keeping `cookies` if you want it, as [Requirements](../requirements.md#features) shows. A build without the feature refuses `--dashboard` at startup; add `"dashboard"` to `features` to bring it back:
+
+```toml
+goose = { version = "^0.20", default-features = false, features = ["cookies", "dashboard"] }
+```
+
+In Goose 0.19 the dashboard is not a default feature: turn it on with `goose = { version = "^0.19", features = ["dashboard"] }`. The dashboard listens on `127.0.0.1:5118`; [Dashboard Reference](dashboard-reference.md#related-flags) lists the flags that change that.
 
 `--dashboard` alone gives a read-only dashboard. Its Control card says so, names the two ways to get control, and points to the telnet Controller, which Goose starts by default and which takes no authentication:
 
