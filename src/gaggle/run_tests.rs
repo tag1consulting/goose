@@ -1258,13 +1258,16 @@ async fn gaggle_test_plan_ending_on_a_nonzero_hold_shuts_down_on_its_own() {
         .await;
     let folder = scratch("plan-nonzero-hold");
     // Ramp to 4 users over 1 second, then hold 4 users for 1 second: no
-    // trailing 0 users step.
+    // trailing 0 users step. Throttled, as a busy CI machine runs many
+    // Gaggle tests at once: unthrottled, 4 users against a server that
+    // answers at once make thousands of requests a second, for no benefit
+    // to what this test checks.
     let run = gaggle(
         quick,
         2,
         server.base_url(),
         &folder,
-        &["--test-plan", "4,1s;4,1s"],
+        &["--test-plan", "4,1s;4,1s", "--throttle-requests", "4"],
         &[],
         &[],
     );
