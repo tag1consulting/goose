@@ -1,5 +1,10 @@
 use std::str::FromStr;
+use std::time::Duration;
 
+use httpmock::{Method::GET, MockServer};
+
+use goose::config::GooseConfiguration;
+use goose::prelude::*;
 use goose::test_plan::TestPlan;
 use goose::GooseError;
 
@@ -265,4 +270,52 @@ fn test_realistic_load_test_scenarios() {
         ]
     );
     assert_eq!(plan.total_users(), 100);
+}
+
+// A test transaction for the plans run against a mock server below.
+async fn get_index(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get("/").await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial_test::serial]
+/// A test plan whose last step holds users (not 0) stops the run on its own
+/// once that hold's own time is up, exactly as a plan whose last step holds 0
+/// users already does: it must not run forever waiting for a Ctrl-C.
+async fn plan_ending_on_a_nonzero_hold_shuts_down_on_its_own() {
+    let server = MockServer::start();
+    let _mock = server.mock(|when, then| {
+        when.method(GET).path("/");
+        then.status(200);
+    });
+
+    // Ramp to 2 users over 2 seconds, then hold 2 users for 3 seconds: the
+    // whole plan should be done soon after 5 seconds.
+    let configuration = GooseConfiguration::parse_args_default(&[
+        "--host",
+        &server.base_url(),
+        "--co-mitigation",
+        "disabled",
+        "--quiet",
+        "--test-plan",
+        "2,2s;2,3s",
+    ])
+    .unwrap();
+
+    let goose_attack = GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario!("LoadTest").register_transaction(transaction!(get_index)));
+
+    let metrics = tokio::time::timeout(Duration::from_secs(15), goose_attack.execute())
+        .await
+        .expect(
+            "a test plan ending on a held nonzero step must shut down on its own, \
+             not run forever waiting for a Ctrl-C",
+        )
+        .expect("the run finishes and writes its metrics");
+
+    // The hold itself took at least its configured 3 seconds, on top of the
+    // 2 second ramp.
+    assert!(metrics.duration >= 5, "{}", metrics.duration);
 }

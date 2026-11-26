@@ -96,9 +96,12 @@ Load test:
           Steps separated by semicolons, each a number of users and the time to
           reach it: "10,60s;0,30s" starts 10 users over 60 seconds, then stops
           them over 30 seconds. A step that keeps the number of users holds them
-          for its time. TIME is as for --increase-time. Not allowed with
-          --users, --increase-rate, --increase-time, --decrease-rate,
-          --decrease-time, --run-time, --iterations or --no-reset-metrics.
+          for its time. TIME is as for --increase-time. Once its last step's
+          time is up the run ends on its own, whatever that step's users are,
+          unless the plan is only one step, which holds until canceled. Not
+          allowed with --users, --increase-rate, --increase-time,
+          --decrease-rate, --decrease-time, --run-time, --iterations or
+          --no-reset-metrics.
 
           Example: --test-plan "10,1m;10,5m;0,30s". Set in code with
           GooseDefault::TestPlan.

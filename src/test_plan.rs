@@ -282,7 +282,14 @@ impl GooseAttack {
         // left mid way, as by a Controller, never leaves a stale due time.
         goose_attack_run_state.adjust_user_in_ms = 0;
 
-        let action = if self.test_plan.current == self.test_plan.steps.len() - 1 {
+        // Whether this call finds the plan already on its last step, with
+        // nothing beyond it to compare against: either a plan of only one
+        // step (as a bare `--users`, with no `--run-time`, builds), reached
+        // here directly, or a step this same function already gave a step
+        // down to 0 below, reached here again once that one is due.
+        let was_already_on_last_step = self.test_plan.current == self.test_plan.steps.len() - 1;
+
+        let action = if was_already_on_last_step {
             // If this is the last TestPlan step and there are 0 users, stop the run
             // as a ramp down to 0 does: Decrease finds 0 users on the last step, so
             // it runs test_stop, keeps the metrics, judges the thresholds, writes the
@@ -329,6 +336,26 @@ impl GooseAttack {
 
         // Always advance the TestPlan step
         self.test_plan.current += 1;
+
+        // Entering a test plan's last step for the first time, with users
+        // still running: give it a step down to 0 right behind it, so once
+        // this step's own time is up, this same function finds that next
+        // step on its following call and decreases to shut down, exactly as
+        // an explicit last step of 0 users already does. A plan of only one
+        // step reaches its last step above instead, through
+        // `was_already_on_last_step`, with nothing earlier to compare
+        // against: that one is left maintaining until canceled, as a plain
+        // `--users` run with no `--run-time` must keep doing. A users ramp,
+        // which has a shape (a test plan never does), keeps whatever that
+        // shape gives it instead: `Hold::UntilStopped` already means hold
+        // forever, by a Controller's own choice.
+        if !was_already_on_last_step
+            && self.run_shape.is_none()
+            && self.test_plan.current == self.test_plan.steps.len() - 1
+            && self.test_plan.steps[self.test_plan.current].0 > 0
+        {
+            self.test_plan.steps.push((0, 0));
+        }
 
         // A users ramp starts its hold, or its ramp down, as it enters it.
         if let Some(shape) = self.run_shape.as_mut() {

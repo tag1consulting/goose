@@ -1242,6 +1242,43 @@ async fn gaggle_test_plan_and_throttle_across_workers() {
     );
 }
 
+/// A test plan whose last step holds users (not 0) still ends the Gaggle on
+/// its own: the manager's own copy of the plan takes the same shutdown path a
+/// plan ending at 0 users does once that hold's time is up, and tells its
+/// workers to stop, instead of holding the whole Gaggle up forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_test_plan_ending_on_a_nonzero_hold_shuts_down_on_its_own() {
+    let server = MockServer::start_async().await;
+    let _a = server
+        .mock_async(|when, then| {
+            when.method(GET).path("/a");
+            then.status(200).body("ok");
+        })
+        .await;
+    let folder = scratch("plan-nonzero-hold");
+    // Ramp to 4 users over 1 second, then hold 4 users for 1 second: no
+    // trailing 0 users step. Throttled, as a busy CI machine runs many
+    // Gaggle tests at once: unthrottled, 4 users against a server that
+    // answers at once make thousands of requests a second, for no benefit
+    // to what this test checks.
+    let run = gaggle(
+        quick,
+        2,
+        server.base_url(),
+        &folder,
+        &["--test-plan", "4,1s;4,1s", "--throttle-requests", "4"],
+        &[],
+        &[],
+    );
+    let metrics = clean(
+        tokio::time::timeout(Duration::from_secs(30), run)
+            .await
+            .expect("the Gaggle ends on its own, within 30 seconds, not held up by the hold"),
+    );
+    assert_eq!((metrics.total_users, metrics.maximum_users), (4, 4));
+}
+
 /// A manager that fails after its workers joined, as `fault` on worker 1,
 /// `too_much_data` from the worker data hook or an uncreatable `report`
 /// file make it: one that fails before test_start runs neither it nor
